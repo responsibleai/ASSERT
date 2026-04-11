@@ -308,7 +308,7 @@ This is the critical comparison. The same agent processes the same seed prompt, 
 
 ## 4. What the judge can evaluate — per approach
 
-| Failure mode | A (OTel) | B (Callable) | C (Adapter) |
+| Behavior | A (OTel) | B (Callable) | C (Adapter) |
 |---|---|---|---|
 | **Harmful advice in final response** | Yes | Yes | Yes (if it works) |
 | **Hallucinated prices** (no tool call backing the numbers) | **Yes** — judge sees tool results match or don't match the response | No — judge can't verify | No |
@@ -319,7 +319,7 @@ This is the critical comparison. The same agent processes the same seed prompt, 
 | **Tool call argument correctness** (e.g., wrong dates) | **Yes** — judge sees `search_flights` args | No | No |
 | **Individual node failure** (e.g., hotel search returned empty) | **Yes** — visible in trace | No — masked by final output | No |
 
-**Approach A enables 8/8 failure mode evaluations. B and C enable 1/8.**
+**Approach A enables 8/8 behavior evaluations. B and C enable 1/8.**
 
 ---
 
@@ -377,20 +377,51 @@ v1: 4 nodes → v2: adds currency_converter, visa_checker → v3: adds sub-graph
 
 ---
 
-## 7. Verdict — validated by real output
+## 7. Verdict — validated by POC implementation
 
 | Dimension | A (OTel) | B (Callable) | C (Adapter) |
 |---|---|---|---|
-| **Judge data richness** | 8/8 failure modes | 1/8 failure modes | 1/8 (if it works) |
+| **Judge data richness** | 8/8 behaviors | 1/8 behaviors | 1/8 (if it works) |
 | **User effort** | 2 lines + pip install | 3 lines | 0 lines (happy) / 30 min (debug) |
 | **p2m maintenance** | Low (stable OTLP spec) | Minimal | High (per-framework, ongoing) |
 | **Scales to complex graphs** | Yes (auto) | Yes (black-box) | No (breaks on change) |
-| **Works for non-LangChain** | Yes (35+ frameworks) | Yes (universal) | No (one adapter per framework) |
+| **Works for non-LangChain** | Yes (20+ frameworks via OpenInference) | Yes (universal) | No (one adapter per framework) |
+
+### POC Status (2026-04-11)
+
+| Approach | POC | Tests | Location |
+|----------|-----|-------|----------|
+| **B (Callable)** | ✅ Complete | 5 passing | `p2m/core/session.py::CallableSession` |
+| **A (OTel parser)** | ✅ Complete | 14 passing | `p2m/core/otel.py::parse_otel_traces` |
+| **C (Adapter)** | ⚠️ Example only | N/A | `examples/travel_planner/approach_c_adapter.py` |
+
+**Approach B — validated:**
+- `CallableSession` added to `p2m/core/session.py` (supports sync/async, with/without history)
+- `target.callable` field added to `TargetConfig` in `p2m/core/config_model.py`
+- Wired into rollout via `_build_target_session` in `p2m/stages/rollout.py`
+- 5 tests: sync callable, async callable, history detection, import, runtime_mode
+
+**Approach A — validated:**
+- `parse_otel_traces()` in `p2m/core/otel.py` (250 LOC)
+- Parses OTLP JSON → groups by session → converts to p2m transcript events
+- Follows OpenInference semantic conventions (LLM, TOOL, CHAIN span kinds)
+- 14 tests against realistic multi-session fixture with LLM calls, tool calls, and aggregate metadata
+- Sample fixture: `tests/fixtures/sample_otel_traces.json`
 
 ### Recommendation
 
-1. **Ship B first (P0).** Universal, zero-risk, works today. Black-box eval is better than no eval.
-2. **Ship A next (promote P3-5 → P1).** The judge quality jump from 1/8 to 8/8 failure modes is the single biggest eval quality improvement on the roadmap. One-time 350 LOC investment covers all frameworks.
-3. **Ship minimal C for AgentExecutor only (P1, low priority).** Convenience for the simplest LangChain pattern. Clear docs saying "for custom graphs, use callable or OTel."
+1. **Ship B now (P0).** `CallableSession` is production-ready. Universal, zero-risk. Black-box eval is better than no eval. **POC proves it works with 0 external dependencies.**
+2. **Ship A next (promote P3-5 → P1).** The judge quality jump from 1/8 to 8/8 behaviors is the single biggest eval quality improvement on the roadmap. **POC proves the parser works — remaining work is wiring into rollout stage and CLI.**
+3. **Deprioritize C.** The Adapter pattern is already available via `target.connector` for teams that want it. No pre-built adapters needed — callable + OTel covers 95%+ of cases.
 
-**The user's hypothesis is confirmed:** Pre-built adapters (C) are less useful than auto-instrumentation (A) because they can't generalize across graph shapes, provide no additional visibility, and create a permanent maintenance burden. Customers who use LangGraph are building custom graphs — that's the whole point of LangGraph — and C breaks on customization.
+### Remaining work to ship
+
+| Item | Effort | Depends on |
+|------|--------|-----------|
+| Ship `target.callable` in next release | ~0 (already wired) | Code review |
+| Add `target.endpoint` (HTTP variant) | ~100 LOC | Same pattern as callable |
+| Wire OTel parser into rollout stage | ~150 LOC | Design decision: run-then-parse vs import-only |
+| Add `p2m judge --traces` CLI command | ~50 LOC | OTel parser (done) |
+| Add OpenInference optional dependency | Config only | `pyproject.toml` extras |
+
+**The hypothesis is confirmed:** Pre-built adapters (C) are less useful than auto-instrumentation (A) because they can't generalize across graph shapes, provide no additional visibility, and create a permanent maintenance burden. The callable path (B) is universally applicable and the OTel path (A) provides the richest evaluation data. Together they cover every agent framework without p2m maintaining any framework-specific code.
