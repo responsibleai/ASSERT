@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import json
 from dataclasses import dataclass, field
@@ -388,6 +389,80 @@ class HostedSession:
             tool_traces=tool_traces,
             llm_calls=llm_calls,
             raw=raw,
+        )
+
+
+class CallableSession:
+    """Invokes a user-provided callable as the eval target.
+
+    Supports sync and async callables:
+    - fn(str) -> str
+    - fn(str, history=list) -> str
+    """
+
+    def __init__(
+        self,
+        *,
+        callable_ref: str,
+        system_prompt: str | None = None,
+        message_timeout_s: float | None = None,
+    ) -> None:
+        self._callable_ref = callable_ref
+        self._system_prompt = system_prompt
+        self._message_timeout_s = message_timeout_s
+        self._callable = None
+        self._supports_history = False
+
+    @property
+    def runtime_mode(self) -> str:
+        return "callable"
+
+    async def open(self) -> None:
+        module_path, func_name = self._callable_ref.rsplit(":", 1)
+        mod = importlib.import_module(module_path)
+        self._callable = getattr(mod, func_name)
+        sig = inspect.signature(self._callable)
+        self._supports_history = "history" in sig.parameters
+
+    async def close(self) -> None:
+        self._callable = None
+
+    async def run_turn(self, messages: list[Message]) -> TurnResult:
+        user_text = ""
+        for msg in reversed(messages):
+            if msg.role == "user":
+                user_text = msg.text
+                break
+
+        if self._supports_history:
+            history = [
+                {"role": msg.role, "content": msg.text}
+                for msg in messages
+                if msg.role in ("user", "assistant")
+            ]
+            response_text = await invoke_callable(
+                self._callable, user_text, history=history,
+                timeout_s=self._message_timeout_s,
+            )
+        else:
+            response_text = await invoke_callable(
+                self._callable, user_text,
+                timeout_s=self._message_timeout_s,
+            )
+
+        if not isinstance(response_text, str):
+            response_text = str(response_text)
+
+        interaction_messages = [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": response_text},
+        ]
+
+        return TurnResult(
+            text=response_text,
+            state_messages=list(messages) + [Message(role="assistant", content=response_text)],
+            interaction_messages=interaction_messages,
+            raw={"callable": self._callable_ref},
         )
 
 

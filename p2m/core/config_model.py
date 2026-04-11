@@ -67,27 +67,43 @@ class ToolsConfig:
 
 
 @dataclass
+class TraceConfig:
+    backend: str = "phoenix"
+    group_by: str = "session.id"
+
+
+@dataclass
 class TargetConfig:
     model: ModelConfig | str | None = None
     system_prompt: str | None = None
     tools: ToolsConfig | None = None
     connector: str | None = None
+    callable: str | None = None
+    trace: TraceConfig | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.model, str):
             self.model = ModelConfig(name=self.model)
         has_model = bool(self.model)
         has_connector = bool(self.connector)
-        if has_model == has_connector:
-            raise ValueError("target requires exactly one of 'model' or 'connector'")
+        has_callable = bool(self.callable)
+        count = sum([has_model, has_connector, has_callable])
+        if count != 1:
+            raise ValueError("target requires exactly one of 'model', 'connector', or 'callable'")
         if self.tools is not None and has_connector:
             raise ValueError("external target must not define target.tools")
+        if self.tools is not None and has_callable:
+            raise ValueError("callable target must not define target.tools")
         if self.tools is not None and not has_model:
             raise ValueError("target.tools requires target.model")
 
     @property
     def is_external(self) -> bool:
         return self.connector is not None
+
+    @property
+    def is_callable(self) -> bool:
+        return self.callable is not None
 
 
 @dataclass

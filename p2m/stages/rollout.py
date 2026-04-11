@@ -28,6 +28,7 @@ from p2m.core.io import (
 )
 from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
 from p2m.core.session import (
+    CallableSession,
     ExternalSession,
     HostedSession,
     SimulatedResolver,
@@ -414,8 +415,17 @@ def _build_target_session(
     rollout: RolloutConfig,
     max_tokens: int,
     config_path: Path | None,
-) -> HostedSession | ExternalSession:
+) -> HostedSession | ExternalSession | CallableSession:
     """Create the runtime session for one seed rollout."""
+    if target.is_callable:
+        if not target.callable:
+            raise ValueError("callable target requires a callable reference")
+        return CallableSession(
+            callable_ref=target.callable,
+            system_prompt=target.system_prompt,
+            message_timeout_s=rollout.tool_timeout_s,
+        )
+
     if target.is_external:
         if not target.connector:
             raise ValueError("external target requires a connector")
