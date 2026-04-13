@@ -2,7 +2,7 @@
 
 # Adaptive Eval
 
-## motivation
+## Motivation
 In the AI development lifecycle, engineers need constant iterations in the pre-deployment testing phase of AI applications, before the prototype reaches a quality bar to graduate into deployment stage. In this process, both testing requirements and the prototype are evolving quickly in tandem, so that their evals need to be **scenario-specific, easy-to-use, local-first, and framework-agnostic** to capture evolving product, domain, and compliance context. Existing evaluation tools often fall short in four ways:
 
 1. **Shallow coverage** — Static test suites miss scenario-specific requirements for testing, and cannot catch up to evolving requirements.
