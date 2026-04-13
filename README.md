@@ -1,5 +1,7 @@
 # p2m
 
+> **Status: Productizing as OSS.** This repo is being prepared for open-source release as a standalone evaluation package. The target product spec is [`docs/adaptive-eval-spec.md`](docs/adaptive-eval-spec.md). Current code works end-to-end but naming, config fields, and SDK surface are in active migration (see the spec's terminology section).
+
 <p align="center">
   <img src="logo.jpg" alt="p2m" width="100%">
 </p>
