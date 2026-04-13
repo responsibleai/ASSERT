@@ -1,6 +1,31 @@
-# p2m
 
-> **Status: Productizing as OSS.** This repo is being prepared for open-source release as a standalone evaluation package. The target product spec is [`docs/adaptive-eval-spec.md`](docs/adaptive-eval-spec.md). Current code works end-to-end but naming, config fields, and SDK surface are in active migration (see the spec's terminology section).
+
+> **Status: Productizing as OSS.** This repo is being prepared for open-source release. The target product spec is [`docs/adaptive-eval-spec.md`](docs/adaptive-eval-spec.md). Current code works end-to-end but naming, config fields, and SDK surface are in active migration.
+
+# Adaptive Eval - A Requirement-driven AI Test Harness
+
+## Motivation
+In the AI development lifecycle, engineers need constant iterations in the pre-deployment testing phase of AI applications, before the prototype reaches a quality bar to graduate into deployment stage. In this process, both testing requirements and the prototype are evolving quickly in tandem, so that their evals need to be **scenario-specific, easy-to-use, local-first, and framework-agnostic** to capture evolving product, domain, and compliance context. Existing evaluation tools often fall short in four ways:
+
+1. **Shallow coverage** — Static test suites miss scenario-specific requirements for testing, and cannot catch up to evolving requirements.
+2. **Platform lock-in** — Evaluation workflows are tightly coupled to a single hosted provider or framework (cloud SDK), or weak support for complex agent flow via custom call backs (local SDK).
+3. **Opaque artifacts** — Results are trapped in proprietary portals with no local inspection or CI integration.
+4. **Generic benchmarks** — Tests measure general capabilities rather than requirement-specific behaviors.
+
+Responsible AI development lifecycle share the same loop with GenAI Ops: identify -> map -> measurements -> mitigate in an iterative loop. Requirement-driven evaluation automates **identification, mapping, and measurements of behaviors specific to the requirements of the AI applications with human in the loop**, compared to generic "static evals". To this end, we developed adaptive eval as an open-source evaluation tool to address these gaps that allows engineers to:
+
+
+<img width="1600" height="900" alt="image" src="https://github.com/user-attachments/assets/8f85c0ef-e18b-4c53-a0d6-f66eca750ced" />
+
+- Define requirement-specific **behavior definitions** for their use case
+- Generate representative **eval set** including multi-turn **conversations** to elicit failure modes
+- Execute evaluations against **any target** (hosted models, tool-using agents, external frameworks)
+- Inspect **portable artifacts** directly without a service dependency
+- Iterate quickly from failure signal to product improvement
+
+This pipeline is backed by a science project called P2M. You can use the following to get started:
+
+## Policy to Metric (P2M)
 
 <p align="center">
   <img src="logo.jpg" alt="p2m" width="100%">
