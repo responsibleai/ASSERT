@@ -30,6 +30,7 @@ from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build
 from p2m.core.session import (
     CallableSession,
     ExternalSession,
+    HTTPEndpointSession,
     HostedSession,
     SimulatedResolver,
     TurnResult,
@@ -415,8 +416,17 @@ def _build_target_session(
     rollout: RolloutConfig,
     max_tokens: int,
     config_path: Path | None,
-) -> HostedSession | ExternalSession | CallableSession:
+) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession:
     """Create the runtime session for one seed rollout."""
+    if target.is_endpoint:
+        if not target.endpoint:
+            raise ValueError("endpoint target requires an endpoint URL")
+        return HTTPEndpointSession(
+            endpoint=target.endpoint,
+            system_prompt=target.system_prompt,
+            message_timeout_s=rollout.tool_timeout_s,
+        )
+
     if target.is_callable:
         if not target.callable:
             raise ValueError("callable target requires a callable reference")

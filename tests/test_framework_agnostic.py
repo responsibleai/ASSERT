@@ -1113,3 +1113,125 @@ class TestOTelTracedSessionCollector(unittest.TestCase):
             exporter=InMemoryTraceExporter(),
         )
         self.assertEqual(session.runtime_mode, "otel_traced")
+
+
+# ── HTTPEndpointSession tests ────────────────────────────────────
+
+
+class TestHTTPEndpointSession(unittest.TestCase):
+    """Validates HTTPEndpointSession import, config, and runtime_mode."""
+
+    def test_endpoint_import(self):
+        """HTTPEndpointSession should be importable from p2m.core.session."""
+        from p2m.core.session import HTTPEndpointSession
+        self.assertTrue(callable(HTTPEndpointSession))
+
+    def test_endpoint_runtime_mode(self):
+        """HTTPEndpointSession.runtime_mode should be 'http_endpoint'."""
+        from p2m.core.session import HTTPEndpointSession
+        session = HTTPEndpointSession(endpoint="http://localhost:8080/chat")
+        self.assertEqual(session.runtime_mode, "http_endpoint")
+
+    def test_endpoint_config_valid(self):
+        """TargetConfig(endpoint='http://...') should be accepted."""
+        from p2m.core.config_model import TargetConfig
+        tc = TargetConfig(endpoint="http://localhost:8080/chat")
+        self.assertTrue(tc.is_endpoint)
+        self.assertFalse(tc.is_callable)
+        self.assertFalse(tc.is_external)
+
+    def test_endpoint_config_conflicts_with_model(self):
+        """TargetConfig with both endpoint and model should raise."""
+        from p2m.core.config_model import TargetConfig
+        with self.assertRaises(ValueError):
+            TargetConfig(endpoint="http://localhost:8080/chat", model="openai/gpt-4o")
+
+    def test_endpoint_and_callable_conflicts(self):
+        """TargetConfig with both endpoint and callable should raise."""
+        from p2m.core.config_model import TargetConfig
+        with self.assertRaises(ValueError):
+            TargetConfig(endpoint="http://localhost:8080/chat", callable="my_module:fn")
+
+    def test_endpoint_and_connector_conflicts(self):
+        """TargetConfig with both endpoint and connector should raise."""
+        from p2m.core.config_model import TargetConfig
+        with self.assertRaises(ValueError):
+            TargetConfig(endpoint="http://localhost:8080/chat", connector="some.connector")
+
+    def test_endpoint_rollout_wiring(self):
+        """_build_target_session should return HTTPEndpointSession for endpoint targets."""
+        from p2m.core.config_model import TargetConfig, RolloutConfig
+        from p2m.stages.rollout import _build_target_session
+        from p2m.core.session import HTTPEndpointSession
+
+        target = TargetConfig(endpoint="http://localhost:8080/chat")
+        session = _build_target_session(
+            target=target,
+            seed_payload={},
+            rollout=RolloutConfig(),
+            max_tokens=1024,
+            config_path=None,
+        )
+        self.assertIsInstance(session, HTTPEndpointSession)
+
+
+# ── judge-traces CLI tests ───────────────────────────────────────
+
+
+class TestJudgeTracesCLI(unittest.TestCase):
+    """Validates the judge-traces CLI command."""
+
+    def test_judge_traces_parses_fixture(self):
+        """Invoke CLI with sample fixture, verify it finds conversations."""
+        from click.testing import CliRunner
+        from p2m.cli import cli
+
+        # We need a minimal config YAML for the --config option
+        import tempfile
+        import os
+        config_content = "target:\\n  model: openai/gpt-4o\\njudge:\\n  model: openai/gpt-4o\\n"
+        config_path = Path(FIXTURES) / "_test_judge_config.yaml"
+        try:
+            with open(config_path, "w") as f:
+                f.write("target:\n  model: openai/gpt-4o\njudge:\n  model: openai/gpt-4o\n")
+
+            runner = CliRunner()
+            result = runner.invoke(cli, [
+                "judge-traces",
+                "--traces", str(SAMPLE_TRACES),
+                "--config", str(config_path),
+                "--group-by", "session.id",
+            ])
+            self.assertIn("Found 2 conversations", result.output)
+            self.assertEqual(result.exit_code, 0)
+        finally:
+            if config_path.exists():
+                config_path.unlink()
+
+    def test_judge_traces_empty_traces_fails(self):
+        """CLI should exit 1 when no conversations are found."""
+        from click.testing import CliRunner
+        from p2m.cli import cli
+
+        # Create an empty traces file and a config
+        empty_traces = Path(FIXTURES) / "_test_empty_traces.json"
+        config_path = Path(FIXTURES) / "_test_judge_config2.yaml"
+        try:
+            with open(empty_traces, "w") as f:
+                json.dump({"resourceSpans": []}, f)
+            with open(config_path, "w") as f:
+                f.write("target:\n  model: openai/gpt-4o\n")
+
+            runner = CliRunner()
+            result = runner.invoke(cli, [
+                "judge-traces",
+                "--traces", str(empty_traces),
+                "--config", str(config_path),
+            ])
+            self.assertIn("No conversations found", result.output)
+            self.assertEqual(result.exit_code, 1)
+        finally:
+            if empty_traces.exists():
+                empty_traces.unlink()
+            if config_path.exists():
+                config_path.unlink()

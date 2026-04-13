@@ -31,7 +31,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                 Path("config.yaml"),
             )
 
-        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', or 'callable'"):
+        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"):
             parse_pipeline_config({"pipeline": {"rollout": {"target": {}}}}, Path("config.yaml"))
 
         with self.assertRaisesRegex(ValueError, "pipeline.rollout.environment is no longer supported"):
@@ -97,7 +97,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             )
 
     def test_parse_pipeline_config_rejects_conflicting_target_modes(self) -> None:
-        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', or 'callable'"):
+        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"):
             parse_pipeline_config(
                 {
                     "pipeline": {

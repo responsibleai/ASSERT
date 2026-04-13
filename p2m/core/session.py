@@ -466,6 +466,85 @@ class CallableSession:
         )
 
 
+class HTTPEndpointSession:
+    """Invokes an HTTP endpoint as the eval target.
+
+    POST {"message": text, "history": [...]} to the URL.
+    Expects {"response": "..."} back.
+    Same black-box visibility as CallableSession.
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        headers: dict[str, str] | None = None,
+        system_prompt: str | None = None,
+        message_timeout_s: float | None = None,
+    ) -> None:
+        self._endpoint = endpoint
+        self._headers = headers or {}
+        self._system_prompt = system_prompt
+        self._timeout_s = message_timeout_s
+        self._session = None  # aiohttp.ClientSession
+
+    @property
+    def runtime_mode(self) -> str:
+        return "http_endpoint"
+
+    async def open(self) -> None:
+        try:
+            import aiohttp
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(
+                "aiohttp is required for HTTPEndpointSession. "
+                "Install it with: pip install aiohttp"
+            )
+        timeout = aiohttp.ClientTimeout(total=self._timeout_s or 60)
+        self._session = aiohttp.ClientSession(timeout=timeout)
+
+    async def close(self) -> None:
+        if self._session:
+            await self._session.close()
+            self._session = None
+
+    async def run_turn(self, messages: list[Message]) -> TurnResult:
+        user_text = ""
+        for msg in reversed(messages):
+            if msg.role == "user":
+                user_text = msg.text
+                break
+
+        history = [
+            {"role": msg.role, "content": msg.text}
+            for msg in messages
+            if msg.role in ("user", "assistant")
+        ]
+
+        payload = {"message": user_text, "history": history}
+
+        async with self._session.post(
+            self._endpoint,
+            json=payload,
+            headers=self._headers,
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            response_text = data.get("response", "")
+
+        interaction_messages = [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": response_text},
+        ]
+
+        return TurnResult(
+            text=response_text,
+            state_messages=list(messages) + [Message(role="assistant", content=response_text)],
+            interaction_messages=interaction_messages,
+            raw={"endpoint": self._endpoint},
+        )
+
+
 class ExternalSession:
     def __init__(
         self,

@@ -79,6 +79,7 @@ class TargetConfig:
     tools: ToolsConfig | None = None
     connector: str | None = None
     callable: str | None = None
+    endpoint: str | None = None
     trace: TraceConfig | None = None
 
     def __post_init__(self) -> None:
@@ -87,13 +88,18 @@ class TargetConfig:
         has_model = bool(self.model)
         has_connector = bool(self.connector)
         has_callable = bool(self.callable)
-        count = sum([has_model, has_connector, has_callable])
+        has_endpoint = bool(self.endpoint)
+        count = sum([has_model, has_connector, has_callable, has_endpoint])
         if count != 1:
-            raise ValueError("target requires exactly one of 'model', 'connector', or 'callable'")
+            raise ValueError(
+                "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"
+            )
         if self.tools is not None and has_connector:
             raise ValueError("external target must not define target.tools")
         if self.tools is not None and has_callable:
             raise ValueError("callable target must not define target.tools")
+        if self.tools is not None and has_endpoint:
+            raise ValueError("endpoint target must not define target.tools")
         if self.tools is not None and not has_model:
             raise ValueError("target.tools requires target.model")
 
@@ -104,6 +110,10 @@ class TargetConfig:
     @property
     def is_callable(self) -> bool:
         return self.callable is not None
+
+    @property
+    def is_endpoint(self) -> bool:
+        return self.endpoint is not None
 
 
 @dataclass

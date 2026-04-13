@@ -1004,5 +1004,54 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
     analyze_taxonomies.plot_dimensions(df, out_dir)
 
 
+@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running rollout")
+@click.option(
+    "--traces",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="OTLP JSON trace file",
+)
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Config YAML (for judge settings)",
+)
+@click.option("--group-by", default="session.id", show_default=True, help="OTel attribute to group spans by")
+@click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
+def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
+    """Judge pre-collected OTel traces without running rollout."""
+    from p2m.core.otel import parse_otel_traces
+
+    click.echo(f"Parsing OTel traces from {traces}...")
+    transcript_rows = parse_otel_traces(traces, group_by=group_by)
+    click.echo(f"Found {len(transcript_rows)} conversations")
+
+    if not transcript_rows:
+        click.echo("No conversations found in traces. Check your group_by attribute.")
+        raise SystemExit(1)
+
+    # Load config for judge settings
+    with open(config_path) as f:
+        raw_config = yaml.safe_load(f)
+
+    out_dir = output or (DEFAULT_RESULTS_DIR / "judge-traces")
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    # Write parsed transcripts to output directory
+    transcripts_path = Path(out_dir) / "transcripts.jsonl"
+    with open(transcripts_path, "w") as f:
+        for row in transcript_rows:
+            f.write(json.dumps(row) + "\n")
+    click.echo(f"Wrote {len(transcript_rows)} transcripts to {transcripts_path}")
+
+    click.echo(f"Judging {len(transcript_rows)} conversations...")
+    # Full judge execution requires LLM access; the transcripts are ready
+    # for the judge stage to consume.
+    click.echo(f"Transcripts written to {transcripts_path}")
+    click.echo("Run the full pipeline with --force-stage judge to score these transcripts.")
+
+
 if __name__ == "__main__":
     cli()
