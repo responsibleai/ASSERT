@@ -21,7 +21,7 @@ Responsible AI development lifecycle share the same loop with GenAI Ops: identif
 - Inspect **portable artifacts** directly without a service dependency
 - Iterate quickly from failure signal to product improvement
 
-This pipeline is backed by a science project called P2M. 
+This pipeline is backed by a science project called P2M. You can use the following to get started:
 
 ## Policy to Metric (P2M)
 
