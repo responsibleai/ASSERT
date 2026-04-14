@@ -251,6 +251,112 @@ class TestCallableSession(unittest.TestCase):
         session = CallableSession(callable_ref="some.module:fn")
         self.assertEqual(session.runtime_mode, "callable")
 
+    def test_model_response_return(self):
+        """CallableSession should extract tool traces from ModelResponse returns."""
+        from p2m.core.session import CallableSession
+        from p2m.core.model_client import Message, ModelResponse, ToolCall
+
+        import sys
+        import types
+        mod = types.ModuleType("_test_model_response_target")
+        tool_calls = [
+            ToolCall(name="search", arguments={"query": "hotels"}, call_id="c1"),
+        ]
+        mod.target = lambda msg: ModelResponse(
+            text="Found 3 hotels.",
+            tool_calls=tool_calls,
+            model="gpt-4o",
+        )
+        sys.modules["_test_model_response_target"] = mod
+
+        try:
+            session = CallableSession(callable_ref="_test_model_response_target:target")
+
+            async def _run():
+                await session.open()
+                result = await session.run_turn([Message(role="user", content="find hotels")])
+                return result
+
+            result = asyncio.run(_run())
+            self.assertEqual(result.text, "Found 3 hotels.")
+            self.assertEqual(len(result.tool_traces), 1)
+            self.assertEqual(result.tool_traces[0].tool_name, "search")
+            self.assertEqual(result.tool_traces[0].tool_args, {"query": "hotels"})
+            self.assertEqual(len(result.llm_calls), 1)
+            self.assertEqual(result.llm_calls[0]["source"], "callable")
+            self.assertIn("model", result.raw)
+            self.assertEqual(result.raw["model"], "gpt-4o")
+        finally:
+            del sys.modules["_test_model_response_target"]
+
+    def test_litellm_style_dict_return(self):
+        """CallableSession should normalize a dict with 'choices' (litellm-style)."""
+        from p2m.core.session import CallableSession
+        from p2m.core.model_client import Message
+
+        import sys
+        import types
+        mod = types.ModuleType("_test_litellm_dict_target")
+        mod.target = lambda msg: {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "The weather is sunny.",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city": "SF"}'},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "model": "gpt-4o-mini",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        }
+        sys.modules["_test_litellm_dict_target"] = mod
+
+        try:
+            session = CallableSession(callable_ref="_test_litellm_dict_target:target")
+
+            async def _run():
+                await session.open()
+                result = await session.run_turn([Message(role="user", content="weather?")])
+                return result
+
+            result = asyncio.run(_run())
+            self.assertEqual(result.text, "The weather is sunny.")
+            self.assertEqual(len(result.tool_traces), 1)
+            self.assertEqual(result.tool_traces[0].tool_name, "get_weather")
+            self.assertIn("usage", result.raw)
+        finally:
+            del sys.modules["_test_litellm_dict_target"]
+
+    def test_plain_str_still_works(self):
+        """CallableSession backward compat: str return still produces basic TurnResult."""
+        from p2m.core.session import CallableSession
+        from p2m.core.model_client import Message
+
+        import sys
+        import types
+        mod = types.ModuleType("_test_str_compat_target")
+        mod.target = lambda msg: "plain text response"
+        sys.modules["_test_str_compat_target"] = mod
+
+        try:
+            session = CallableSession(callable_ref="_test_str_compat_target:target")
+
+            async def _run():
+                await session.open()
+                result = await session.run_turn([Message(role="user", content="hello")])
+                return result
+
+            result = asyncio.run(_run())
+            self.assertEqual(result.text, "plain text response")
+            self.assertEqual(result.tool_traces, [])
+            self.assertEqual(result.llm_calls, [])
+        finally:
+            del sys.modules["_test_str_compat_target"]
+
 
 # ── TargetConfig validation tests ────────────────────────────────
 
