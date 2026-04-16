@@ -1,0 +1,2 @@
+[console_scripts]
+p2m = p2m.cli:cli

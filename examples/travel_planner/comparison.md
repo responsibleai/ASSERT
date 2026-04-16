@@ -9,12 +9,12 @@
 ## Table of Contents
 
 - [Summary](#summary)
-- [1. What the developer writes](#1-what-the-developer-writes)
-- [2. What adaptive eval builds and maintains](#2-what-adaptive-eval-builds-and-maintains)
-- [3. What the judge sees](#3-what-the-judge-sees--transcript-comparison)
-- [4. Summary scorecard](#4-summary-scorecard)
+- [1. User ergonomics: What the developer writes](#1-what-the-developer-writes)
+- [2. Maintainer ergonomics: What adaptive eval builds and maintains](#2-what-adaptive-eval-builds-and-maintains)
+- [3. Science inputs: what the judge sees](#3-what-the-judge-sees--transcript-comparison)
+- [4. POC results: Summary scorecard](#4-summary-scorecard)
 - [5. POC status](#5-poc-status-and-remaining-work)
-- [6. What happens when the agent grows](#6-what-happens-when-the-agent-grows)
+- [6. Scalability: What happens when the agent grows](#6-what-happens-when-the-agent-grows)
 - [7. Verdict](#7-verdict)
 - [Appendix A: Detailed dimension-by-dimension comparison](#appendix-a-detailed-dimension-by-dimension-comparison)
 - [Appendix B: Comparison with Arize Phoenix Evals](#appendix-b-comparison-with-arize-phoenix-evals)

@@ -1,0 +1,55 @@
+"""Travel planner — Groq (fast inference).
+
+Instrumentation: 2 lines. Agent code: standard Groq SDK (OpenAI-compatible).
+Traces captured: LLM calls, tool calls, token counts, latency.
+"""
+
+from __future__ import annotations
+
+# pip install openinference-instrumentation-groq arize-phoenix-otel
+from phoenix.otel import register
+register(auto_instrument=True)
+
+import json
+from groq import Groq
+
+client = Groq()
+
+TOOLS = [
+    {"type": "function", "function": {"name": "search_flights", "description": "Search for flights to a destination", "parameters": {"type": "object", "properties": {"destination": {"type": "string"}, "max_price": {"type": "number"}}, "required": ["destination"]}}},
+    {"type": "function", "function": {"name": "search_hotels", "description": "Search for hotels in a city", "parameters": {"type": "object", "properties": {"city": {"type": "string"}, "max_price_per_night": {"type": "number"}}, "required": ["city"]}}},
+]
+
+SYSTEM_PROMPT = (
+    "You are a travel planning assistant. Help users plan trips by searching "
+    "for flights and hotels. Stay within their budget."
+)
+
+
+def _simulate_tool(name: str, args: dict) -> str:
+    if name == "search_flights":
+        return json.dumps([{"airline": "ANA", "price": 1180}, {"airline": "JAL", "price": 1350}])
+    elif name == "search_hotels":
+        return json.dumps([{"name": "Hotel Granbell", "price_per_night": 145}, {"name": "Mitsui Garden", "price_per_night": 195}])
+    return json.dumps({"error": f"Unknown tool: {name}"})
+
+
+def chat(message: str) -> str:
+    """Travel planner using Groq's fast inference."""
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": message}]
+
+    response = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, tools=TOOLS, tool_choice="auto")
+    msg = response.choices[0].message
+
+    if msg.tool_calls:
+        messages.append(msg)
+        for tc in msg.tool_calls:
+            result = _simulate_tool(tc.function.name, json.loads(tc.function.arguments))
+            messages.append({"tool_call_id": tc.id, "role": "tool", "content": result})
+        response = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages)
+
+    return response.choices[0].message.content or ""
+
+
+if __name__ == "__main__":
+    print(chat("Book me a week in Tokyo under $3000"))
