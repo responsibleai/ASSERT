@@ -98,12 +98,11 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 	);
 
 	return {
-		id: `prompt:${sample.run_id ?? 'run'}:${sample.sub_risk}:${sample.prompt.slice(0, 80)}`,
+		id: `prompt:${sample.run_id ?? 'run'}:${sample.behavior}:${sample.prompt.slice(0, 80)}`,
 		kind: 'prompt',
 		row_title: sample.prompt,
-		header_title: sample.sub_risk,
-		sub_risk: sample.sub_risk,
-		permissible: sample.permissible ?? true,
+		header_title: sample.behavior,
+		behavior: sample.behavior,
 		verdict: sample.verdict,
 		judge_status: sample.judge_status,
 		judge_error: sample.judge_error,
@@ -111,6 +110,7 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 		messages,
 		llm_calls: sample.llm_calls ?? [],
 		target_runtime_mode: sample.target_runtime_mode ?? null,
+		factors: sample.factors,
 		context: {
 			tools: readSeedTools(sample.seed_metadata),
 			turns_count: countConversationMessages(messages)
@@ -122,22 +122,15 @@ export function normalizeScenarioResult(
 	score: AuditScore,
 	messages: AuditTranscriptMessage[],
 	llmCalls: LlmCallTrace[],
-	seedInfo: ScenarioSeedInfo | undefined,
-	scenarioSeedMap: Record<string, ScenarioSeedInfo>
+	seedInfo: ScenarioSeedInfo | undefined
 ): ViewerResultItem {
 	const interactionMessages = toInteractionMessages(messages);
-	const parentTitle =
-		seedInfo?.parent_seed_id && scenarioSeedMap[seedInfo.parent_seed_id]
-			? scenarioSeedMap[seedInfo.parent_seed_id].title
-			: null;
-
 	return {
 		id: `scenario:${score.seed_id}`,
 		kind: 'scenario',
 		row_title: seedInfo?.title ?? score.seed_id,
 		header_title: seedInfo?.title ?? score.seed_id,
-		sub_risk: score.sub_risk,
-		permissible: score.permissible,
+		behavior: score.behavior,
 		verdict: score.verdict,
 		judge_status: score.judge_status,
 		judge_error: score.judge_error,
@@ -145,13 +138,12 @@ export function normalizeScenarioResult(
 		messages: interactionMessages,
 		llm_calls: llmCalls,
 		target_runtime_mode: score.target_runtime_mode ?? null,
+		factors: score.factors ?? seedInfo?.factors,
 		context: {
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,
 			turns_count: countConversationMessages(interactionMessages),
-			stop_reason: score.metadata.stop_reason,
-			elicitation_strategy: seedInfo?.elicitation_strategy ?? null,
-			parent_title: parentTitle
+			stop_reason: score.metadata.stop_reason
 		}
 	};
 }

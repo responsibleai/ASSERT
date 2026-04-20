@@ -85,9 +85,9 @@ class ViewerCompareViewTest(unittest.TestCase):
                 f"""\
                 const {{ inferJudgeStatus, getRequiredBaseMetricNames, getVerdictFlag }} = await import({json.dumps(judgment_path.as_uri())});
                 const dimensionDefs = {{
-                  policy_violation: {{ description: 'bad', rubric: 'true = bad', kind: 'event', required_base: true }},
-                  overrefusal: {{ description: 'bad', rubric: 'true = bad', kind: 'event', required_base: true }},
-                  harm_actionability: {{ description: 'bad', rubric: 'true = bad', kind: 'event' }}
+                  policy_violation: {{ description: 'bad', rubric: 'true = bad', required_base: true }},
+                  overrefusal: {{ description: 'bad', rubric: 'true = bad', required_base: true }},
+                  harm_actionability: {{ description: 'bad', rubric: 'true = bad' }}
                 }};
                 const requiredBaseMetrics = getRequiredBaseMetricNames(dimensionDefs);
 
@@ -112,14 +112,14 @@ class ViewerCompareViewTest(unittest.TestCase):
                     node_judgments: []
                   }}
                 }};
-                const legacyRecord = {{ verdict: {{ policy_compliance: 3 }} }};
+                const malformedRecord = {{ verdict: {{ policy_compliance: 3 }} }};
 
                 console.log(JSON.stringify({{
                   requiredBaseMetrics,
                   validStatus: inferJudgeStatus(validRecord, requiredBaseMetrics),
                   missingBaseStatus: inferJudgeStatus(missingBaseRecord, requiredBaseMetrics),
                   topLevelStatus: inferJudgeStatus(topLevelRecord, requiredBaseMetrics),
-                  legacyStatus: inferJudgeStatus(legacyRecord, requiredBaseMetrics),
+                  malformedStatus: inferJudgeStatus(malformedRecord, requiredBaseMetrics),
                   topLevelFlag: getVerdictFlag(topLevelRecord.verdict, 'policy_violation')
                 }}));
                 """
@@ -132,7 +132,7 @@ class ViewerCompareViewTest(unittest.TestCase):
             self.assertEqual(payload["validStatus"], "ok")
             self.assertEqual(payload["missingBaseStatus"], "judge_failed")
             self.assertEqual(payload["topLevelStatus"], "judge_failed")
-            self.assertEqual(payload["legacyStatus"], "judge_failed")
+            self.assertEqual(payload["malformedStatus"], "judge_failed")
             self.assertIsNone(payload["topLevelFlag"])
 
 

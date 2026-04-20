@@ -9,6 +9,7 @@ from unittest.mock import patch
 import yaml
 
 from p2m.core.model_client import ModelResponse
+from p2m.core.io import row_behavior
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,13 +122,12 @@ def _verdict_for_schema_prompt(schema_name: str, prompt: str, *, realism_winner:
 
 
 class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
-    def _seed_row(self, *, seed_id: str, sub_risk: str = "sub-risk") -> dict:
+    def _seed_row(self, *, seed_id: str, behavior: str = "behavior") -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": False,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "seed": {
                 "title": f"Title for {seed_id}",
                 "description": f"Scenario description for {seed_id}.",
@@ -140,15 +140,14 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         *,
         seed_id: str,
         run_label: str,
-        sub_risk: str = "sub-risk",
+        behavior: str = "behavior",
         stop_reason: str = "max_turns",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": False,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "target": "target-model",
             "auditor_model": f"auditor-{run_label}",
             "stop_reason": stop_reason,
@@ -203,7 +202,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         metrics = auditor_pairwise_eval.build_pairwise_metrics(
             [
                 {
-                    "sub_risk": "node-a",
+                    "factors": {"behavior": "node-a"},
                     "judge_status": "ok",
                     "winner": "A",
                     "confidence": "high",
@@ -222,7 +221,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "b_overrefusal": False,
                 },
                 {
-                    "sub_risk": "node-a",
+                    "factors": {"behavior": "node-a"},
                     "judge_status": "ok",
                     "winner": "tie",
                     "confidence": "low",
@@ -241,7 +240,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "b_overrefusal": True,
                 },
                 {
-                    "sub_risk": "node-b",
+                    "factors": {"behavior": "node-b"},
                     "judge_status": "order_inconsistent",
                     "winner": None,
                     "confidence": None,
@@ -252,7 +251,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "effectiveness_dimension_winners": {},
                 },
                 {
-                    "sub_risk": "node-b",
+                    "factors": {"behavior": "node-b"},
                     "judge_status": "judge_failed",
                     "winner": None,
                     "confidence": None,
@@ -276,9 +275,9 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         self.assertEqual(metrics["confidence"], {"high": 1, "medium": 0, "low": 1})
         self.assertEqual(metrics["low_confidence_pairs"], 1)
         self.assertEqual(metrics["wins"], {"A": 1, "B": 0, "tie": 1})
-        self.assertEqual(metrics["by_sub_risk"]["node-a"]["wins"], {"A": 1, "B": 0, "tie": 1})
-        self.assertEqual(metrics["by_sub_risk"]["node-b"]["judge_failures"], 1)
-        self.assertEqual(metrics["by_sub_risk"]["node-b"]["order_inconsistent"], 1)
+        self.assertEqual(metrics["by_behavior"]["node-a"]["wins"], {"A": 1, "B": 0, "tie": 1})
+        self.assertEqual(metrics["by_behavior"]["node-b"]["judge_failures"], 1)
+        self.assertEqual(metrics["by_behavior"]["node-b"]["order_inconsistent"], 1)
         self.assertEqual(metrics["by_dimension"]["realism"]["wins"]["A"], 1)
         self.assertEqual(metrics["effectiveness"]["wins"], {"A": 0, "B": 1, "tie": 1})
         self.assertEqual(metrics["effectiveness"]["by_dimension"]["effectiveness"]["wins"]["B"], 1)
@@ -289,7 +288,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         self.assertEqual(metrics["axis_comparison"]["winner_alignment"]["different"], 1)
         self.assertEqual(metrics["axis_comparison"]["winner_alignment"]["realism_a_effectiveness_b"], 1)
 
-    def test_render_pairwise_summary_includes_effectiveness_sub_risk_results(self) -> None:
+    def test_render_pairwise_summary_includes_effectiveness_behavior_results(self) -> None:
         summary = auditor_pairwise_eval.render_pairwise_summary(
             {
                 "run_a": "run-a",
@@ -305,7 +304,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                 "confidence": {"high": 1, "medium": 0, "low": 0},
                 "wins": {"A": 1, "B": 0, "tie": 0},
                 "by_dimension": {},
-                "by_sub_risk": {
+                "by_behavior": {
                     "realism-node": {
                         "wins": {"A": 1, "B": 0, "tie": 0},
                         "order_inconsistent": 0,
@@ -357,7 +356,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                             "unknown": {"count": 0},
                         },
                     },
-                    "by_sub_risk": {
+                    "by_behavior": {
                         "effectiveness-node": {
                             "wins": {"A": 0, "B": 1, "tie": 0},
                             "order_inconsistent": 0,
@@ -368,20 +367,19 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
             }
         )
 
-        self.assertIn("## Effectiveness Sub-risk Results", summary)
+        self.assertIn("## Effectiveness Behavior Results", summary)
         self.assertIn("effectiveness-node: A=0, B=1, tie=0", summary)
         self.assertIn("## Axis Comparison", summary)
         self.assertIn("## Effectiveness Outcome Slices", summary)
 
 
 class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
-    def _seed_row(self, *, seed_id: str, sub_risk: str = "sub-risk") -> dict:
+    def _seed_row(self, *, seed_id: str, behavior: str = "behavior") -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": False,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "seed": {
                 "title": f"Title for {seed_id}",
                 "description": f"Scenario description for {seed_id}.",
@@ -394,15 +392,14 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         *,
         seed_id: str,
         run_label: str,
-        sub_risk: str = "sub-risk",
+        behavior: str = "behavior",
         stop_reason: str = "max_turns",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": False,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "target": "target-model",
             "auditor_model": f"auditor-{run_label}",
             "stop_reason": stop_reason,
@@ -440,14 +437,13 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         seed_id: str,
         policy_violation: bool,
         overrefusal: bool,
-        sub_risk: str = "sub-risk",
+        behavior: str = "behavior",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": False,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "target": "target-model",
             "auditor_model": "auditor-model",
             "judge_model": "target-judge",
@@ -482,6 +478,25 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         score_rows: list[dict],
         judge_model: str = "saved-judge-model",
     ) -> Path:
+        if not (suite_dir / "policy.json").exists():
+            behavior_names = sorted(
+                {
+                    row_behavior(row)
+                    for row in [*transcript_rows, *score_rows]
+                    if row_behavior(row)
+                }
+            )
+            (suite_dir / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "behaviors": [
+                            {"name": name, "definition": f"{name} definition", "permissible": False}
+                            for name in behavior_names
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
         run_dir = suite_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         self._write_jsonl(run_dir / "transcripts.jsonl", transcript_rows)
@@ -491,9 +506,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "pipeline": {
                         "judge": {
-                            "judge": {
-                                "model": {"name": judge_model},
-                            }
+                            "model": {"name": judge_model},
                         }
                     }
                 },

@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-import yaml
 
 log = logging.getLogger(__name__)
 
@@ -103,41 +102,13 @@ def load_seeds(
 
 
 def normalize_seed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Assign canonical opaque seed IDs and stable parent-based variation IDs."""
+    """Assign canonical opaque seed IDs."""
     normalized = [dict(row) for row in rows]
-    base_id_by_original_id: dict[str, str] = {}
-    base_counter = 1
-
+    counter = 1
     for row in normalized:
-        if str(row.get("parent_seed_id") or ""):
-            continue
-        original_seed_id = str(row.get("seed_id") or "")
-        seed_id = f"seed_{base_counter:06d}"
-        if original_seed_id:
-            if original_seed_id in base_id_by_original_id:
-                raise ValueError(f"duplicate base seed_id: {original_seed_id}")
-            base_id_by_original_id[original_seed_id] = seed_id
-        row["seed_id"] = seed_id
-        base_counter += 1
-
-    variation_counts: dict[str, int] = {}
-    for row in normalized:
-        original_parent_seed_id = str(row.get("parent_seed_id") or "")
-        if not original_parent_seed_id:
-            row.pop("parent_seed_id", None)
-            continue
-        parent_seed_id = base_id_by_original_id.get(original_parent_seed_id)
-        if parent_seed_id is None:
-            raise ValueError("seed variation parent_seed_id must reference a base seed")
-        variation_counts[parent_seed_id] = variation_counts.get(parent_seed_id, 0) + 1
-        row["parent_seed_id"] = parent_seed_id
-        row["seed_id"] = f"{parent_seed_id}-v{variation_counts[parent_seed_id]}"
-
+        row["seed_id"] = f"seed_{counter:06d}"
+        counter += 1
     return normalized
-
-
-def dump_yaml(payload: dict[str, Any]) -> str:
-    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
 def slugify(text: str) -> str:
@@ -194,16 +165,133 @@ def normalize_seed_context(value: str | None) -> str | None:
 
 def get_permissible_flag(payload: dict[str, Any], default: bool | None = None) -> bool | None:
     """Read the canonical permissibility flag."""
-    if "permissible" in payload and payload.get("permissible") is not None:
-        return bool(payload["permissible"])
-    return default
+    raw = payload.get("permissible")
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.lower() not in ("false", "0", "no", "")
+    return bool(raw)
 
 
 # ── Output filenames (written by run stages, read by viewer) ──
 
 TRANSCRIPTS_FILE = "transcripts.jsonl"
 SCORES_FILE = "scores.jsonl"
-METRICS_FILE = "metrics.json"
+
+# ── Design helpers ────────────────────────────────────────────
+
+
+def design_factors(design: dict[str, Any]) -> tuple[str, ...]:
+    """Return user-defined design factors in stable order.
+
+    Excludes metadata keys and the reserved ``behavior`` factor.
+    """
+    return tuple(
+        key for key in design if not key.startswith("_") and key != "behavior"
+    )
+
+DESIGN_FILE = "design.json"
+
+
+# ── Template rendering ────────────────────────────────────────────
+
+
+def fill_template(template: str, replacements: dict[str, str]) -> str:
+    """Replace ``{{placeholders}}`` in *template*; error on leftovers."""
+    required = set(re.findall(r"\{\{(\w+)\}\}", template))
+    missing = required.difference(replacements)
+    if missing:
+        raise ValueError(
+            f"unreplaced template placeholders: {', '.join(sorted(missing))}"
+        )
+    rendered = template
+    for key, value in replacements.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", value)
+    return rendered
+
+
+# ── Policy loading ────────────────────────────────────────────────
+
+
+def load_policy(path: str | Path) -> dict[str, Any]:
+    """Load and normalize a policy JSON file."""
+    policy = json.loads(resolve_path(path).read_text(encoding="utf-8"))
+    for behavior in policy.get("behaviors", []):
+        permissible = get_permissible_flag(behavior)
+        if permissible is not None:
+            behavior["permissible"] = permissible
+    return policy
+
+
+def permissible_by_behavior(policy: dict[str, Any] | None) -> dict[str, bool]:
+    """Return canonical permissibility flags keyed by behavior name."""
+    behaviors = (policy or {}).get("behaviors")
+    if not isinstance(behaviors, list):
+        return {}
+    return {
+        str(entry.get("name") or ""): bool(entry.get("permissible"))
+        for entry in behaviors
+        if isinstance(entry, dict) and str(entry.get("name") or "")
+    }
+
+
+def definitions_by_behavior(policy: dict[str, Any] | None) -> dict[str, str]:
+    """Return canonical behavior definitions keyed by behavior name."""
+    behaviors = (policy or {}).get("behaviors")
+    if not isinstance(behaviors, list):
+        return {}
+    return {
+        str(entry.get("name") or ""): str(entry.get("definition") or "")
+        for entry in behaviors
+        if isinstance(entry, dict) and str(entry.get("name") or "")
+    }
+
+
+def policy_definition(
+    policy_definition_by_name: dict[str, str],
+    behavior_name: str,
+) -> str:
+    """Return a behavior's policy definition or raise on missing policy."""
+    try:
+        return policy_definition_by_name[behavior_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"behavior '{behavior_name}' is missing from policy.behaviors"
+        ) from exc
+
+
+def policy_permissible(
+    policy_permissible_by_name: dict[str, bool],
+    behavior_name: str,
+) -> bool:
+    """Return a behavior's policy permissibility or raise on missing policy."""
+    try:
+        return policy_permissible_by_name[behavior_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"behavior '{behavior_name}' is missing from policy.behaviors"
+        ) from exc
+
+
+def row_behavior(row: dict[str, Any]) -> str:
+    """Return behavior name from a row's factors, or empty string if absent.
+
+    Seed/transcript/score rows carry behavior inside `factors`; this is the
+    single, canonical accessor used everywhere downstream.
+    """
+    factors = row.get("factors")
+    if not isinstance(factors, dict):
+        return ""
+    value = factors.get("behavior")
+    return str(value) if value else ""
+
+
+def row_factors(row: dict[str, Any]) -> dict[str, str] | None:
+    """Return the row's `factors` dict if present and well-formed, else None."""
+    factors = row.get("factors")
+    return factors if isinstance(factors, dict) else None
 
 
 def _iter_nonempty_lines(path: Path) -> Iterable[tuple[int, str]]:

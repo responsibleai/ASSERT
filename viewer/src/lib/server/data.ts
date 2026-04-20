@@ -1,32 +1,42 @@
 import { ARTIFACTS_ROOT } from './config.js';
-import { loadDimensions, saveDimension } from './dimensions.js';
+import { loadDimensions } from './dimensions.js';
 import {
+	RUN_CONFIG_FILE,
+	RUN_MANIFEST_FILE,
+	ViewerReadModelError,
+	loadIndexedRunScoreRow,
+	loadIndexedRunTranscriptRow,
+	loadRunRuntimeMode,
+	loadRunScoreRow,
+	loadRunTranscriptRow,
 	type RunSnapshot,
 	type SuiteSnapshot,
 	type UnifiedSeedRow,
 	type UnifiedScoreRow,
 	type UnifiedTranscriptRow,
+	loadViewerRunIndexes,
+	loadViewerRunReadModel,
 	loadRunSnapshot,
 	loadSuiteSnapshot,
-	listSubdirectories
+	listSubdirectories,
+	readJsonFile,
+	readYamlFile,
+	runDirPath
 } from './artifacts.js';
 import {
 	computeAuditRunMetrics,
 	computeRunMetrics,
-	emptyScoreCounts,
-	resolveJudgedSamplePermissible,
-	resolvePermissible
+	emptyScoreCounts
 } from './metrics.js';
 import { getRecordFlag } from '$lib/judgment.js';
+import { normalizePromptResult, normalizeScenarioResult } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
 	AuditRunMetrics,
 	AuditScore,
 	AuditTranscript,
-	AuditTranscriptMessage,
 	BinaryCounts,
 	DimensionMetrics,
-	DimensionDef,
 	LlmCallTrace,
 	PromptSeed,
 	InteractionMessage,
@@ -42,10 +52,11 @@ import type {
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
-	SubRisk
+	Behavior,
+	ViewerResultItem
 } from '$lib/types.js';
 
-interface QueryMetricView {
+interface PromptMetricView {
 	total: number;
 	scoredTotal: number;
 	judgeFailures: number;
@@ -53,8 +64,6 @@ interface QueryMetricView {
 	counts: BinaryCounts;
 	policyViolationRate: number;
 	overrefusalRate: number;
-	permissibleOverrefusalRate: number;
-	notPermissiblePolicyViolationRate: number;
 	dimensions: Record<string, DimensionMetrics>;
 }
 
@@ -71,8 +80,7 @@ interface AuditMetricView {
 
 interface RolloutPreviewRow {
 	seed_id: string;
-	sub_risk: string;
-	permissible: boolean;
+	behavior: string;
 	turns_count: number;
 	stop_reason: string;
 }
@@ -108,9 +116,8 @@ interface CompareMetricSummary {
 	n: number;
 }
 
-interface SubRiskComparison {
-	subrisk: string;
-	permissible: boolean;
+interface BehaviorComparison {
+	behavior: string;
 	metrics: Record<string, Record<string, CompareMetricSummary>>;
 	deltas: Record<string, number>;
 }
@@ -129,28 +136,68 @@ function readSeedPayload(row: UnifiedSeedRow | undefined): Record<string, unknow
 	return readObject(row?.seed);
 }
 
-function normalizeSubRisk(subRisk: SubRisk): SubRisk {
-	return { ...subRisk, permissible: resolvePermissible(subRisk, false) };
+function normalizeFactorValue(value: string): string {
+	return value
+		.replace(/_/g, ' ')
+		.split(' ')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
 }
 
-function normalizePromptSeed(item: PromptSeed): PromptSeed {
-	return { ...item, permissible: resolvePermissible(item, false) };
+function readFactors(value: unknown): Record<string, string> | undefined {
+	const record = readObject(value);
+	if (!record) return undefined;
+	const factors = Object.fromEntries(Object.entries(record).filter((entry): entry is [string, string] => {
+		const [name, factor] = entry;
+		return typeof name === 'string' && typeof factor === 'string';
+	}).map(([name, factor]) => [name, name === 'behavior' ? factor : normalizeFactorValue(factor)]));
+	return Object.keys(factors).length > 0 ? factors : undefined;
 }
 
-function normalizeScenarioSeed(item: ScenarioSeed): ScenarioSeed {
-	return { ...item, permissible: resolvePermissible(item, false) };
+function readBehavior(value: unknown): string {
+	const factors = readFactors(value);
+	return typeof factors?.behavior === 'string' ? factors.behavior : '';
+}
+
+function behaviorDefinition(policy: Policy | null, behavior: string): string {
+	const entry = policy?.behaviors?.find((item) => item.name === behavior);
+	if (!entry) throw new Error(`behavior '${behavior}' is missing from policy.behaviors`);
+	return entry.definition;
+}
+
+
+function normalizeBehavior(b: Behavior): Behavior {
+	return { ...b, permissible: b.permissible ?? false };
+}
+
+function normalizePromptSeed(item: PromptSeed, policy: Policy | null): PromptSeed {
+	const factors = readFactors(item.factors);
+	const behavior = readBehavior(item.factors);
+	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
+	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
+}
+
+function normalizeScenarioSeed(item: ScenarioSeed, policy: Policy | null): ScenarioSeed {
+	const factors = readFactors(item.factors);
+	const behavior = readBehavior(item.factors);
+	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
+	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
 }
 
 function normalizeJudgedSample(sample: JudgedSample): JudgedSample {
-	return { ...sample, permissible: resolveJudgedSamplePermissible(sample) };
+	return sample;
 }
 
 function normalizeAuditScore(score: AuditScore): AuditScore {
-	return { ...score, permissible: resolvePermissible(score, true) };
+	return score;
 }
 
 function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript {
-	return { ...transcript, permissible: resolvePermissible(transcript, true) };
+	return {
+		...transcript,
+		behavior: readBehavior(transcript.factors),
+		factors: readFactors(transcript.factors)
+	};
 }
 
 function formatToolArgs(value: unknown): string {
@@ -184,6 +231,33 @@ function suiteSeedCounts(seedRows: UnifiedSeedRow[]): { prompt: number; scenario
 
 function countConversationMessages(messages: InteractionMessage[]): number {
 	return messages.filter((message) => message.role !== 'system').length;
+}
+
+function countTargetConversationMessages(transcript: UnifiedTranscriptRow): number {
+	const events = Array.isArray(transcript.events) ? transcript.events : [];
+	let count = 0;
+
+	for (const event of events) {
+		if (!event || typeof event !== 'object') continue;
+		const rawViewField = (event as Record<string, unknown>).view;
+		const rawViews = Array.isArray(rawViewField) ? rawViewField : [rawViewField];
+		const views = rawViews.filter((view): view is string => typeof view === 'string');
+		if (!views.includes('target')) continue;
+
+		const edit = (event as Record<string, unknown>).edit;
+		if (!edit || typeof edit !== 'object') continue;
+
+		if ((edit as Record<string, unknown>).type === 'tool_call') {
+			count += 1;
+			continue;
+		}
+
+		const message = (edit as Record<string, unknown>).message;
+		if (!message || typeof message !== 'object') continue;
+		if ((message as Record<string, unknown>).role !== 'system') count += 1;
+	}
+
+	return count;
 }
 
 function readLlmCalls(value: unknown): LlmCallTrace[] {
@@ -315,6 +389,57 @@ function scenarioSeedRows(seedRows: UnifiedSeedRow[]): UnifiedSeedRow[] {
 	return seedRows.filter((row) => hasKind(row, 'scenario'));
 }
 
+function buildJudgedSampleRow(
+	runId: string,
+	runtimeMode: string | null,
+	seedRow: UnifiedSeedRow | undefined,
+	scoreRow: UnifiedScoreRow,
+	transcriptRow: UnifiedTranscriptRow | undefined
+): JudgedSample {
+	const seedMetadata = readSeedPayload(seedRow);
+	const messages = transcriptRow ? materializeTargetMessages(transcriptRow) : [];
+	const prompt = messages.find((message) => message.role === 'user')?.content ?? '';
+	const response =
+		[...messages]
+			.reverse()
+			.find((message) => message.role === 'assistant' && message.content.trim().length > 0)?.content ?? '';
+	const verdict =
+		scoreRow.verdict && typeof scoreRow.verdict === 'object' && !Array.isArray(scoreRow.verdict)
+			? (scoreRow.verdict as JudgedSample['verdict'])
+			: null;
+
+	return normalizeJudgedSample({
+		seed_id: typeof scoreRow.seed_id === 'string' ? scoreRow.seed_id : undefined,
+		prompt,
+		response,
+		concept: typeof scoreRow.concept === 'string' ? scoreRow.concept : null,
+		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		run_id: runId,
+		judge_model: typeof scoreRow.judge_model === 'string' ? scoreRow.judge_model : undefined,
+		target:
+			typeof scoreRow.target === 'string'
+				? scoreRow.target
+				: typeof transcriptRow?.target === 'string'
+					? transcriptRow.target
+					: undefined,
+		seed_metadata: seedMetadata,
+		verdict,
+		judge_status:
+			typeof scoreRow.judge_status === 'string' ? (scoreRow.judge_status as JudgeStatus) : null,
+		judge_error: typeof scoreRow.judge_error === 'string' ? scoreRow.judge_error : null,
+		messages,
+		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
+		target_runtime_mode: runtimeMode,
+		factors: readFactors(scoreRow.factors) ?? readFactors(transcriptRow?.factors) ?? readFactors(seedRow?.factors),
+		multi_judge:
+			scoreRow.multi_judge &&
+			typeof scoreRow.multi_judge === 'object' &&
+			!Array.isArray(scoreRow.multi_judge)
+				? (scoreRow.multi_judge as MultiJudge)
+				: undefined
+	});
+}
+
 function buildJudgedSamplesFromSnapshot(snapshot: RunSnapshot): JudgedSample[] {
 	const scoreRows = snapshot.scoreRows.filter((row) => hasKind(row, 'prompt'));
 	const seedRows = promptSeedRows(snapshot.seedRows);
@@ -334,46 +459,34 @@ function buildJudgedSamplesFromSnapshot(snapshot: RunSnapshot): JudgedSample[] {
 
 	return scoreRows.map((row) => {
 		const seedId = typeof row.seed_id === 'string' ? row.seed_id : '';
-		const seedRow = seedById.get(seedId);
-		const transcriptRow = transcriptBySeedId.get(seedId);
-		const seedMetadata = readSeedPayload(seedRow);
-		const messages = transcriptRow ? materializeTargetMessages(transcriptRow) : [];
-		const prompt = messages.find((message) => message.role === 'user')?.content ?? '';
-		const response =
-			[...messages]
-				.reverse()
-				.find((message) => message.role === 'assistant' && message.content.trim().length > 0)?.content ?? '';
-		const verdict =
-			row.verdict && typeof row.verdict === 'object' && !Array.isArray(row.verdict)
-				? (row.verdict as JudgedSample['verdict'])
-				: null;
+		return buildJudgedSampleRow(
+			snapshot.runId,
+			snapshot.runtimeMode,
+			seedById.get(seedId),
+			row,
+			transcriptBySeedId.get(seedId)
+		);
+	});
+}
 
-		return normalizeJudgedSample({
-			prompt,
-			response,
-			risk: typeof row.risk === 'string' ? row.risk : null,
-			sub_risk: typeof row.sub_risk === 'string' ? row.sub_risk : '',
-			permissible: resolvePermissible(row as { permissible?: boolean | null }, false),
-			run_id: snapshot.runId,
-			judge_model: typeof row.judge_model === 'string' ? row.judge_model : undefined,
-			target:
-				typeof row.target === 'string'
-					? row.target
-					: typeof transcriptRow?.target === 'string'
-						? transcriptRow.target
-						: undefined,
-			seed_metadata: seedMetadata,
-			verdict,
-			judge_status: typeof row.judge_status === 'string' ? (row.judge_status as JudgeStatus) : null,
-			judge_error: typeof row.judge_error === 'string' ? row.judge_error : null,
-			messages,
-			llm_calls: readLlmCalls(transcriptRow?.llm_calls),
-			target_runtime_mode: snapshot.runtimeMode,
-			multi_judge:
-				row.multi_judge && typeof row.multi_judge === 'object' && !Array.isArray(row.multi_judge)
-					? (row.multi_judge as MultiJudge)
-					: undefined
-		});
+function buildAuditScoreRow(
+	runtimeMode: string | null,
+	scoreRow: UnifiedScoreRow,
+	transcriptRow: UnifiedTranscriptRow | undefined
+): AuditScore {
+	const turnsCount = transcriptRow ? countTargetConversationMessages(transcriptRow) : 0;
+	const stopReason = typeof transcriptRow?.stop_reason === 'string' ? transcriptRow.stop_reason : '';
+	const factors = readFactors(scoreRow.factors) ?? readFactors(transcriptRow?.factors);
+
+	return normalizeAuditScore({
+		...(scoreRow as AuditScore & UnifiedScoreRow),
+		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		target_runtime_mode: runtimeMode,
+		factors,
+		metadata: {
+			turns_count: turnsCount,
+			stop_reason: stopReason
+		}
 	});
 }
 
@@ -389,20 +502,27 @@ function buildAuditScoresFromSnapshot(snapshot: RunSnapshot): AuditScore[] {
 		.filter((row): row is AuditScore & UnifiedScoreRow => hasKind(row, 'scenario'))
 		.map((row) => {
 			const seedId = typeof row.seed_id === 'string' ? row.seed_id : '';
-			const transcriptRow = transcriptBySeedId.get(seedId);
-			const messages = transcriptRow ? materializeTargetMessages(transcriptRow) : [];
-			const turnsCount = countConversationMessages(messages);
-			const stopReason = typeof transcriptRow?.stop_reason === 'string' ? transcriptRow.stop_reason : '';
-
-			return normalizeAuditScore({
-				...row,
-				target_runtime_mode: snapshot.runtimeMode,
-				metadata: {
-					turns_count: turnsCount,
-					stop_reason: stopReason
-				}
-			});
+			return buildAuditScoreRow(snapshot.runtimeMode, row, transcriptBySeedId.get(seedId));
 		});
+}
+
+function buildPromptMetricSamplesFromScoreRows(
+	runId: string,
+	runtimeMode: string | null,
+	scoreRows: UnifiedScoreRow[]
+): JudgedSample[] {
+	return scoreRows
+		.filter((row) => hasKind(row, 'prompt'))
+		.map((row) => buildJudgedSampleRow(runId, runtimeMode, undefined, row, undefined));
+}
+
+function buildAuditMetricScoresFromScoreRows(
+	runtimeMode: string | null,
+	scoreRows: UnifiedScoreRow[]
+): AuditScore[] {
+	return scoreRows
+		.filter((row): row is AuditScore & UnifiedScoreRow => hasKind(row, 'scenario'))
+		.map((row) => buildAuditScoreRow(runtimeMode, row, undefined));
 }
 
 function buildAuditTranscriptsFromSnapshot(snapshot: RunSnapshot): AuditTranscript[] {
@@ -423,12 +543,52 @@ function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPrev
 			const messages = materializeTargetMessages(row);
 			return [{
 				seed_id: seedId,
-				sub_risk: typeof row.sub_risk === 'string' ? row.sub_risk : '',
-				permissible: resolvePermissible(row as { permissible?: boolean | null }, true),
+				behavior: readBehavior(row.factors),
 				turns_count: countConversationMessages(messages),
 				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
 			}];
-		});
+			});
+}
+
+function buildScenarioDrawerItem(
+	runtimeMode: string | null,
+	transcriptRow: UnifiedTranscriptRow,
+	scoreRow: UnifiedScoreRow | undefined,
+	seedInfo: ScenarioSeedInfo | undefined
+): ViewerResultItem | null {
+	const seedId = typeof transcriptRow.seed_id === 'string' ? transcriptRow.seed_id : '';
+	if (!seedId) return null;
+
+	const turnsCount = countTargetConversationMessages(transcriptRow);
+	const stopReason = typeof transcriptRow.stop_reason === 'string' ? transcriptRow.stop_reason : '';
+	const matchedScore = scoreRow ? buildAuditScoreRow(runtimeMode, scoreRow, transcriptRow) : null;
+	const score: AuditScore = matchedScore
+		? matchedScore
+		: {
+				seed_id: seedId,
+				concept: typeof transcriptRow.concept === 'string' ? transcriptRow.concept : '',
+				behavior: readBehavior(transcriptRow.factors),
+				judge_model: '',
+				target: typeof transcriptRow.target === 'string' ? transcriptRow.target : undefined,
+				auditor_model:
+					typeof transcriptRow.auditor_model === 'string' ? transcriptRow.auditor_model : undefined,
+				verdict: null,
+				judge_status: null,
+				judge_error: null,
+				target_runtime_mode: runtimeMode,
+				factors: readFactors(transcriptRow.factors) ?? seedInfo?.factors,
+				metadata: {
+					turns_count: turnsCount,
+					stop_reason: stopReason
+				}
+			};
+
+	return normalizeScenarioResult(
+		score,
+		materializeTargetMessages(transcriptRow),
+		readLlmCalls(transcriptRow.llm_calls),
+		seedInfo
+	);
 }
 
 function buildRunListEntries(snapshot: SuiteSnapshot): {
@@ -439,10 +599,16 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 	const auditRuns: AuditRunListItem[] = [];
 
 	for (const runId of snapshot.runIds) {
-		const runSnapshot = loadRunSnapshot(snapshot.suiteId, runId, snapshot.seedRows);
+		const runSnapshot = loadRunSnapshot(snapshot.suiteId, runId, snapshot.seedRows, {
+			includeTranscripts: false
+		});
 		const manifest = runSnapshot.manifest;
-		const promptScores = buildJudgedSamplesFromSnapshot(runSnapshot);
-		const auditScores = buildAuditScoresFromSnapshot(runSnapshot);
+		const promptScores = buildPromptMetricSamplesFromScoreRows(
+			runSnapshot.runId,
+			runSnapshot.runtimeMode,
+			runSnapshot.scoreRows
+		);
+		const auditScores = buildAuditMetricScoresFromScoreRows(runSnapshot.runtimeMode, runSnapshot.scoreRows);
 
 		const hasPromptScores = promptScores.length > 0;
 		const hasAuditScores = auditScores.length > 0;
@@ -471,7 +637,7 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 	return { runs, auditRuns };
 }
 
-function buildZeroQueryMetrics(): QueryMetricView {
+function buildZeroPromptMetrics(): PromptMetricView {
 	return {
 		total: 0,
 		scoredTotal: 0,
@@ -480,8 +646,6 @@ function buildZeroQueryMetrics(): QueryMetricView {
 		counts: emptyScoreCounts(),
 		policyViolationRate: 0,
 		overrefusalRate: 0,
-		permissibleOverrefusalRate: 0,
-		notPermissiblePolicyViolationRate: 0,
 		dimensions: {}
 	};
 }
@@ -499,8 +663,8 @@ function buildZeroAuditMetrics(): AuditMetricView {
 	};
 }
 
-function toQueryMetricView(metrics: RunMetrics | null): QueryMetricView {
-	if (!metrics) return buildZeroQueryMetrics();
+function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
+	if (!metrics) return buildZeroPromptMetrics();
 	return {
 		total: metrics.total,
 		scoredTotal: metrics.scored_total,
@@ -509,8 +673,6 @@ function toQueryMetricView(metrics: RunMetrics | null): QueryMetricView {
 		counts: metrics.counts,
 		policyViolationRate: metrics.policy_violation_rate,
 		overrefusalRate: metrics.overrefusal_rate,
-		permissibleOverrefusalRate: metrics.permissible_overrefusal_rate,
-		notPermissiblePolicyViolationRate: metrics.not_permissible_policy_violation_rate,
 		dimensions: metrics.dimensions
 	};
 }
@@ -529,82 +691,6 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 	};
 }
 
-function buildAuditTranscriptMap(
-	auditTranscripts: AuditTranscript[]
-): Record<string, AuditTranscriptMessage[]> {
-	const transcriptMap: Record<string, AuditTranscriptMessage[]> = {};
-
-	for (const transcript of auditTranscripts) {
-		const messages: AuditTranscriptMessage[] = [];
-		let judgeTurn = 0;
-
-		for (const [eventIndex, event] of transcript.events.entries()) {
-			const views = Array.isArray(event.view) ? event.view : [event.view];
-			if (!views.includes('target')) continue;
-
-			const id = `event:${eventIndex}`;
-			const raw = event.raw || undefined;
-
-			if (event.edit?.type === 'add_message' && event.edit.message) {
-				const messageJudgeTurn = event.edit.message.role === 'system' ? null : judgeTurn + 1;
-				if (messageJudgeTurn != null) judgeTurn = messageJudgeTurn;
-				messages.push({
-					id,
-					role: event.edit.message.role,
-					content: event.edit.message.content,
-					type: event.edit.message.type ?? 'message',
-					judgeTurn: messageJudgeTurn,
-					tool_calls: Array.isArray(event.edit.message.tool_calls) ? event.edit.message.tool_calls : undefined,
-					tool_call_id: event.edit.message.tool_call_id,
-					function: event.edit.message.function,
-					arguments: event.edit.message.arguments,
-					raw
-				});
-				continue;
-			}
-
-			if (event.edit?.type === 'tool_call' && event.edit.tool_name) {
-				judgeTurn += 1;
-				messages.push({
-					id,
-					role: 'tool',
-					content: formatToolCallContent(event.edit.tool_name, event.edit.tool_args ?? {}, event.edit.tool_result),
-					type: 'tool_call',
-					judgeTurn,
-					tool_call_id: event.edit.tool_call_id,
-					function: event.edit.tool_name,
-					arguments: event.edit.tool_args ?? {},
-					raw
-				});
-				continue;
-			}
-
-			if (event.edit?.type === 'set_system_message' && event.edit.message) {
-				messages.push({
-					id,
-					role: 'system',
-					content: event.edit.message.content,
-					type: 'set_system_message',
-					judgeTurn: null,
-					raw
-				});
-			}
-		}
-
-		transcriptMap[transcript.seed_id] = messages;
-	}
-
-	return transcriptMap;
-}
-
-function buildAuditLlmCallMap(
-	auditTranscripts: AuditTranscript[]
-): Record<string, LlmCallTrace[]> {
-	return Object.fromEntries(
-		auditTranscripts.map((transcript) => [transcript.seed_id, readLlmCalls(transcript.llm_calls)])
-	);
-}
-
 function buildScenarioSeedMap(
 	scenarioSeeds: ScenarioSeed[],
 	auditScores: AuditScore[]
@@ -620,8 +706,7 @@ function buildScenarioSeedMap(
 					title: scenarioSeed.seed.title,
 					description: scenarioSeed.seed.description,
 					tools: scenarioSeed.seed.tools,
-					parent_seed_id: scenarioSeed.parent_seed_id ?? null,
-					elicitation_strategy: scenarioSeed.elicitation_strategy ?? null,
+					factors: scenarioSeed.factors,
 					target_runtime_mode:
 						typeof score?.target_runtime_mode === 'string' ? score.target_runtime_mode : null
 				}
@@ -630,18 +715,35 @@ function buildScenarioSeedMap(
 	);
 }
 
+function buildScenarioSeedInfo(
+	scenarioSeeds: ScenarioSeed[],
+	seedId: string,
+	auditScores: AuditScore[]
+): ScenarioSeedInfo | undefined {
+	const scenarioSeed = scenarioSeeds.find((item) => item.seed_id === seedId);
+	if (!scenarioSeed) return undefined;
+	const score = auditScores.find((item) => item.seed_id === seedId);
+	return {
+		title: scenarioSeed.seed.title,
+		description: scenarioSeed.seed.description,
+		tools: scenarioSeed.seed.tools,
+		factors: scenarioSeed.factors,
+		target_runtime_mode: typeof score?.target_runtime_mode === 'string' ? score.target_runtime_mode : null
+	};
+}
+
 function buildMultiJudgeStats(samples: JudgedSample[], auditScores: AuditScore[]) {
-	const queryMultiJudge = samples.filter((sample) => sample.multi_judge);
+	const promptMultiJudge = samples.filter((sample) => sample.multi_judge);
 	const auditMultiJudge = auditScores.filter((score) => score.multi_judge);
 	const agreements = [
-		...queryMultiJudge.map((sample) => sample.multi_judge!.agreement),
+		...promptMultiJudge.map((sample) => sample.multi_judge!.agreement),
 		...auditMultiJudge.map((score) => score.multi_judge!.agreement)
 	];
 	if (agreements.length === 0) return null;
 
 	return {
 		total: agreements.length,
-		judgeN: queryMultiJudge[0]?.multi_judge?.n ?? auditMultiJudge[0]?.multi_judge?.n ?? 0,
+		judgeN: promptMultiJudge[0]?.multi_judge?.n ?? auditMultiJudge[0]?.multi_judge?.n ?? 0,
 		meanAgreement: agreements.reduce((sum, agreement) => sum + agreement, 0) / agreements.length,
 		unanimous: agreements.filter((agreement) => agreement === 1).length,
 		split: agreements.filter((agreement) => agreement > 0.5 && agreement < 1).length,
@@ -702,39 +804,38 @@ function buildCompareRunSummary(runId: string, manifest: Manifest | null, sample
 	};
 }
 
-function buildSubRiskComparisons(
+function buildBehaviorComparisons(
 	runSummaries: CompareRunSummary[],
 	runIds: string[],
 	allMetrics: string[]
 ): {
-	comparisons: SubRiskComparison[];
-	samplesBySubrisk: Record<string, Record<string, JudgedSample[]>>;
+	comparisons: BehaviorComparison[];
+	samplesByBehavior: Record<string, Record<string, JudgedSample[]>>;
 } {
-	const comparisonBySubrisk = new Map<string, SubRiskComparison>();
-	const samplesBySubrisk: Record<string, Record<string, JudgedSample[]>> = {};
+	const comparisonByBehavior = new Map<string, BehaviorComparison>();
+	const samplesByBehavior: Record<string, Record<string, JudgedSample[]>> = {};
 
 	for (const run of runSummaries) {
 		const grouped = new Map<string, JudgedSample[]>();
 		for (const sample of run.samples) {
-			if (!grouped.has(sample.sub_risk)) grouped.set(sample.sub_risk, []);
-			grouped.get(sample.sub_risk)!.push(sample);
+			if (!grouped.has(sample.behavior)) grouped.set(sample.behavior, []);
+			grouped.get(sample.behavior)!.push(sample);
 
-			samplesBySubrisk[sample.sub_risk] ??= {};
-			samplesBySubrisk[sample.sub_risk][run.run_id] ??= [];
-			samplesBySubrisk[sample.sub_risk][run.run_id].push(sample);
+			samplesByBehavior[sample.behavior] ??= {};
+			samplesByBehavior[sample.behavior][run.run_id] ??= [];
+			samplesByBehavior[sample.behavior][run.run_id].push(sample);
 		}
 
-		for (const [subrisk, samples] of grouped) {
-			if (!comparisonBySubrisk.has(subrisk)) {
-				comparisonBySubrisk.set(subrisk, {
-					subrisk,
-					permissible: samples[0]?.permissible ?? false,
+		for (const [behavior, samples] of grouped) {
+			if (!comparisonByBehavior.has(behavior)) {
+				comparisonByBehavior.set(behavior, {
+					behavior,
 					metrics: Object.fromEntries(allMetrics.map((metric) => [metric, {}])),
 					deltas: {}
 				});
 			}
 
-			const comparison = comparisonBySubrisk.get(subrisk)!;
+			const comparison = comparisonByBehavior.get(behavior)!;
 			for (const metric of allMetrics) {
 				const scores = emptyScoreCounts();
 				let count = 0;
@@ -755,7 +856,7 @@ function buildSubRiskComparisons(
 		}
 	}
 
-	const comparisons = Array.from(comparisonBySubrisk.values());
+	const comparisons = Array.from(comparisonByBehavior.values());
 	for (const comparison of comparisons) {
 		for (const metric of allMetrics) {
 			const first = comparison.metrics[metric]?.[runIds[0]];
@@ -769,7 +870,7 @@ function buildSubRiskComparisons(
 			Math.abs(right.deltas.policy_violation ?? 0) - Math.abs(left.deltas.policy_violation ?? 0)
 	);
 
-	return { comparisons, samplesBySubrisk };
+	return { comparisons, samplesByBehavior };
 }
 
 export function listSuites(): SuiteListItem[] {
@@ -787,7 +888,9 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 	let hasResults = false;
 
 	for (const runId of snapshot.runIds) {
-		const runSnapshot = loadRunSnapshot(suiteId, runId, snapshot.seedRows);
+		const runSnapshot = loadRunSnapshot(suiteId, runId, snapshot.seedRows, {
+			includeTranscripts: false
+		});
 		const promptRows = runSnapshot.scoreRows.filter((row) => hasKind(row, 'prompt'));
 		const scenarioRows = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario'));
 		const hasData = promptRows.length > 0 || scenarioRows.length > 0;
@@ -805,8 +908,8 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 
 	return {
 		suite_id: suiteId,
-		risk_name: snapshot.policy?.risk?.name ?? suiteId,
-		sub_risk_count: snapshot.policy?.sub_risks?.length ?? 0,
+		concept_name: snapshot.policy?.concept?.name ?? suiteId,
+		behavior_count: snapshot.policy?.behaviors?.length ?? 0,
 		seed_count: itemCounts.prompt,
 		scenario_seed_count: itemCounts.scenario,
 		run_count: evalRunCount,
@@ -819,13 +922,25 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 
 function buildPromptSeeds(snapshot: SuiteSnapshot | null): PromptSeed[] {
 	if (!snapshot) return [];
-	return promptSeedRows(snapshot.seedRows).map((row) => normalizePromptSeed(row as unknown as PromptSeed));
+	return promptSeedRows(snapshot.seedRows).map((row) =>
+		normalizePromptSeed(row as unknown as PromptSeed, snapshot.policy)
+	);
+}
+
+function buildPromptSeedTitleMap(snapshot: SuiteSnapshot | null): Record<string, string> {
+	if (!snapshot) return {};
+	const map: Record<string, string> = {};
+	for (const row of promptSeedRows(snapshot.seedRows)) {
+		const seed = row as unknown as PromptSeed;
+		if (seed.seed_id && seed.seed?.title) map[seed.seed_id] = seed.seed.title;
+	}
+	return map;
 }
 
 function buildScenarioSeeds(snapshot: SuiteSnapshot | null): ScenarioSeed[] {
 	if (!snapshot) return [];
 	return scenarioSeedRows(snapshot.seedRows).map((row) =>
-		normalizeScenarioSeed(row as unknown as ScenarioSeed)
+		normalizeScenarioSeed(row as unknown as ScenarioSeed, snapshot.policy)
 	);
 }
 
@@ -834,7 +949,7 @@ export function loadPolicy(suiteId: string): Policy | null {
 	if (!snapshot?.policy) return null;
 	return {
 		...snapshot.policy,
-		sub_risks: (snapshot.policy.sub_risks ?? []).map(normalizeSubRisk)
+		behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior)
 	};
 }
 
@@ -894,7 +1009,7 @@ export function loadSuitePageData(suiteId: string) {
 		suite_id: suiteId,
 		suite: snapshot.suite,
 		policy: snapshot.policy
-			? { ...snapshot.policy, sub_risks: (snapshot.policy.sub_risks ?? []).map(normalizeSubRisk) }
+			? { ...snapshot.policy, behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior) }
 			: null,
 		promptSeeds,
 		scenarioSeeds,
@@ -905,49 +1020,254 @@ export function loadSuitePageData(suiteId: string) {
 	};
 }
 
-export function loadRunPageData(suiteId: string, runId: string) {
-	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows);
-	const samples = buildJudgedSamplesFromSnapshot(runSnapshot);
-	const auditScores = buildAuditScoresFromSnapshot(runSnapshot);
-	const rolloutPreviewRows =
-		auditScores.length === 0 ? buildRolloutPreviewRowsFromSnapshot(runSnapshot) : [];
+function loadRunManifestRecord(suiteId: string, runId: string): Manifest | null {
+	return readJsonFile<Manifest>(`${runDirPath(suiteId, runId)}/${RUN_MANIFEST_FILE}`, { missingOk: true });
+}
 
-	if (!runSnapshot.manifest && samples.length === 0 && auditScores.length === 0 && rolloutPreviewRows.length === 0) {
-		return null;
-	}
+function loadRuntimeModeForRun(suiteId: string, runId: string): string | null {
+	return loadRunRuntimeMode(
+		readYamlFile<Record<string, unknown>>(`${runDirPath(suiteId, runId)}/${RUN_CONFIG_FILE}`, {
+			missingOk: true
+		})
+	);
+}
 
-	const auditTranscripts = buildAuditTranscriptsFromSnapshot(runSnapshot);
+function hasCompletedJudge(manifest: Manifest | null): boolean {
+	return manifest?.stages?.judge === 'completed';
+}
+
+function loadCompletedRunPageData(
+	suiteId: string,
+	runId: string,
+	suiteSnapshot: SuiteSnapshot | null,
+	manifest: Manifest | null,
+	activeTab: 'prompts' | 'audit'
+) {
+	const viewerReadModel = loadViewerRunReadModel(suiteId, runId);
+	const promptRows = viewerReadModel.promptRows.map((row) =>
+		normalizeJudgedSample(row as unknown as JudgedSample)
+	);
+	const auditRows = viewerReadModel.auditRows.map((row) =>
+		normalizeAuditScore(row as unknown as AuditScore)
+	);
+	const promptCount = promptRows.length;
+	const auditCount = auditRows.length;
+	const hasAuditContent = auditCount > 0;
+	const resolvedTab = activeTab === 'prompts' && promptCount === 0 && hasAuditContent ? 'audit' : activeTab;
+	const samples = resolvedTab === 'prompts' ? promptRows : [];
+	const auditScores = resolvedTab === 'audit' ? auditRows : [];
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
-	const queryMetrics = computeRunMetrics(samples);
-	const auditMetrics = computeAuditRunMetrics(auditScores);
+	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples) : null;
+	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores) : null;
 
 	return {
 		suite_id: suiteId,
 		run_id: runId,
+		activeTab: resolvedTab,
+		promptCount,
+		auditCount,
+		hasAuditContent,
+		manifest,
+		policy: suiteSnapshot?.policy
+			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
+			: null,
+		samples,
+		auditScores,
+		rolloutPreviewRows: [],
+		scenarioDrawerItems: {},
+		rolloutPreviewTotal: scenarioSeeds.length,
+		scenarioSeedMap: buildScenarioSeedMap(scenarioSeeds, auditRows),
+		promptSeedTitleMap: buildPromptSeedTitleMap(suiteSnapshot),
+		dimensionDefs: loadDimensions(),
+		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
+		metrics: toPromptMetricView(promptMetrics),
+		auditMetrics: toAuditMetricView(auditMetrics)
+	};
+}
+
+export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prompts' | 'audit' = 'prompts') {
+	const suiteSnapshot = loadSuiteSnapshot(suiteId);
+	const manifest = loadRunManifestRecord(suiteId, runId);
+	if (hasCompletedJudge(manifest)) {
+		try {
+			return loadCompletedRunPageData(suiteId, runId, suiteSnapshot, manifest, activeTab);
+		} catch (err) {
+			if (!(err instanceof ViewerReadModelError)) throw err;
+			// Stale or missing read model — fall through to raw-file path
+		}
+	}
+
+	let resolvedTab = activeTab;
+	let runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows, {
+		transcriptKind: activeTab === 'audit' ? 'scenario' : 'prompt'
+	});
+	const promptCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'prompt')).length;
+	const auditCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario')).length;
+	const hasAuditContent = auditCount > 0 || runSnapshot.manifest?.stages?.rollout === 'running';
+
+	if (resolvedTab === 'prompts' && promptCount === 0 && hasAuditContent) {
+		resolvedTab = 'audit';
+		runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows, {
+			transcriptKind: 'scenario'
+		});
+	}
+
+	const samples = resolvedTab === 'prompts' ? buildJudgedSamplesFromSnapshot(runSnapshot) : [];
+	const auditScores = resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [];
+	const rolloutPreviewRows =
+		resolvedTab === 'audit' && auditScores.length === 0
+			? buildRolloutPreviewRowsFromSnapshot(runSnapshot)
+			: [];
+
+	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && rolloutPreviewRows.length === 0) {
+		return null;
+	}
+
+	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
+	const promptSeedTitleMap = buildPromptSeedTitleMap(suiteSnapshot);
+	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples) : null;
+	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores) : null;
+	const scenarioSeedMap = resolvedTab === 'audit' ? buildScenarioSeedMap(scenarioSeeds, auditScores) : {};
+
+	return {
+		suite_id: suiteId,
+		run_id: runId,
+		activeTab: resolvedTab,
+		promptCount,
+		auditCount,
+		hasAuditContent,
 		manifest: runSnapshot.manifest,
 		policy: suiteSnapshot?.policy
-			? { ...suiteSnapshot.policy, sub_risks: (suiteSnapshot.policy.sub_risks ?? []).map(normalizeSubRisk) }
+			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
 			: null,
 		samples,
 		auditScores,
 		rolloutPreviewRows,
+		scenarioDrawerItems: {},
 		rolloutPreviewTotal: scenarioSeeds.length,
-		transcriptMap: buildAuditTranscriptMap(auditTranscripts),
-		llmCallMap: buildAuditLlmCallMap(auditTranscripts),
-		scenarioSeedMap: buildScenarioSeedMap(scenarioSeeds, auditScores),
-		hasVariations: scenarioSeeds.some((item) => item.parent_seed_id != null),
+		scenarioSeedMap,
+		promptSeedTitleMap,
 		dimensionDefs: loadDimensions(),
 		multiJudgeStats: buildMultiJudgeStats(samples, auditScores),
-		metrics: toQueryMetricView(queryMetrics),
+		metrics: toPromptMetricView(promptMetrics),
 		auditMetrics: toAuditMetricView(auditMetrics)
 	};
+}
+
+function findSeedRowById(seedRows: UnifiedSeedRow[], seedId: string): UnifiedSeedRow | undefined {
+	return seedRows.find((row) => row.seed_id === seedId);
+}
+
+function loadPromptDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
+	const suiteSnapshot = loadSuiteSnapshot(suiteId);
+	const viewerReadModel = loadViewerRunIndexes(suiteId, runId);
+	const transcriptRow = loadIndexedRunTranscriptRow(
+		suiteId,
+		runId,
+		viewerReadModel.transcriptIndex,
+		seedId,
+		'prompt'
+	);
+	const scoreRow = loadIndexedRunScoreRow(suiteId, runId, viewerReadModel.scoreIndex, seedId, 'prompt');
+	if (!transcriptRow || !scoreRow) return null;
+
+	const sample = buildJudgedSampleRow(
+		runId,
+		loadRuntimeModeForRun(suiteId, runId),
+		findSeedRowById(suiteSnapshot?.seedRows ?? [], seedId),
+		scoreRow,
+		transcriptRow
+	);
+	return normalizePromptResult(sample);
+}
+
+async function loadPromptDrawerItemFromCanonical(suiteId: string, runId: string, seedId: string) {
+	const suiteSnapshot = loadSuiteSnapshot(suiteId);
+	const [transcriptRow, scoreRow] = await Promise.all([
+		loadRunTranscriptRow(suiteId, runId, seedId, 'prompt'),
+		loadRunScoreRow(suiteId, runId, seedId, 'prompt')
+	]);
+	if (!transcriptRow) return null;
+	if (!scoreRow) return null;
+
+	const sample = buildJudgedSampleRow(
+		runId,
+		loadRuntimeModeForRun(suiteId, runId),
+		findSeedRowById(suiteSnapshot?.seedRows ?? [], seedId),
+		scoreRow,
+		transcriptRow
+	);
+	return normalizePromptResult(sample);
+}
+
+function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
+	const suiteSnapshot = loadSuiteSnapshot(suiteId);
+	const viewerReadModel = loadViewerRunIndexes(suiteId, runId);
+	const transcriptRow = loadIndexedRunTranscriptRow(
+		suiteId,
+		runId,
+		viewerReadModel.transcriptIndex,
+		seedId,
+		'scenario'
+	);
+	const scoreRow = loadIndexedRunScoreRow(suiteId, runId, viewerReadModel.scoreIndex, seedId, 'scenario');
+	if (!transcriptRow || !scoreRow) return null;
+
+	const auditScore = buildAuditScoreRow(loadRuntimeModeForRun(suiteId, runId), scoreRow, transcriptRow);
+	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
+	return normalizeScenarioResult(
+		auditScore,
+		materializeTargetMessages(transcriptRow),
+		readLlmCalls(transcriptRow.llm_calls),
+		buildScenarioSeedInfo(scenarioSeeds, seedId, [])
+	);
+}
+
+export async function loadPromptDrawerItem(suiteId: string, runId: string, seedId: string) {
+	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
+		try {
+			return loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
+		} catch (err) {
+			if (!(err instanceof ViewerReadModelError)) throw err;
+		}
+	}
+	return loadPromptDrawerItemFromCanonical(suiteId, runId, seedId);
+}
+
+export async function loadScenarioDrawerItem(suiteId: string, runId: string, seedId: string) {
+	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
+		try {
+			return loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
+		} catch (err) {
+			if (!(err instanceof ViewerReadModelError)) throw err;
+		}
+	}
+
+	const suiteSnapshot = loadSuiteSnapshot(suiteId);
+	const [transcriptRow, matchedScoreRow] = await Promise.all([
+		loadRunTranscriptRow(suiteId, runId, seedId, 'scenario'),
+		loadRunScoreRow(suiteId, runId, seedId, 'scenario')
+	]);
+	if (!transcriptRow) return null;
+
+	const runtimeMode = loadRuntimeModeForRun(suiteId, runId);
+	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
+	return buildScenarioDrawerItem(
+		runtimeMode,
+		transcriptRow,
+		matchedScoreRow ?? undefined,
+		buildScenarioSeedInfo(
+			scenarioSeeds,
+			seedId,
+			matchedScoreRow ? [buildAuditScoreRow(runtimeMode, matchedScoreRow, transcriptRow)] : []
+		)
+	);
 }
 
 export function loadComparePageData(suiteId: string, runIds: string[]) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
 	const policy = suiteSnapshot?.policy
-		? { ...suiteSnapshot.policy, sub_risks: (suiteSnapshot.policy.sub_risks ?? []).map(normalizeSubRisk) }
+		? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
 		: null;
 
 	const runSummaries: CompareRunSummary[] = [];
@@ -964,17 +1284,15 @@ export function loadComparePageData(suiteId: string, runIds: string[]) {
 	}
 
 	const allMetrics = Array.from(metricNames);
-	const { comparisons, samplesBySubrisk } = buildSubRiskComparisons(runSummaries, runIds, allMetrics);
+	const { comparisons, samplesByBehavior } = buildBehaviorComparisons(runSummaries, runIds, allMetrics);
 
 	return {
 		suite_id: suiteId,
 		policy,
 		runs: runSummaries.map(({ samples, ...summary }) => summary),
 		comparisons,
-		samplesBySubrisk,
+		samplesByBehavior,
 		allMetrics,
 		dimensionDefs: loadDimensions()
 	};
 }
-
-export { loadDimensions, saveDimension, computeAuditRunMetrics, computeRunMetrics };

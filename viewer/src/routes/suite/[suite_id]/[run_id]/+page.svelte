@@ -4,21 +4,19 @@
 		AuditScore,
 		BinaryCounts,
 		DimensionDef,
-		InteractionMessage,
+		GroupAxis,
 		MultiJudge,
 		ViewerResultItem
 	} from '$lib/types.js';
-	import { AUDIT_GROUP_AXES, groupByAxis } from '$lib/grouping.js';
+	import { AUDIT_GROUP_AXES, PROMPT_GROUP_AXES, buildFactorAxes, groupByAxis } from '$lib/grouping.js';
 	import ResultDrawer from '$lib/ResultDrawer.svelte';
-	import { normalizePromptResult, normalizeScenarioResult } from '$lib/result-view.js';
+	import { normalizePromptResult } from '$lib/result-view.js';
 	import {
 		getRecordFlag,
 		getRequiredBaseMetricNames,
 		inferJudgeStatus,
 		scoreSortValue
 	} from '$lib/judgment.js';
-	import { slide } from 'svelte/transition';
-	import { quintOut } from 'svelte/easing';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -30,8 +28,7 @@
 
 	type RolloutPreviewItem = {
 		seed_id: string;
-		sub_risk: string;
-		permissible: boolean;
+		behavior: string;
 		turns_count: number;
 		stop_reason: string;
 	};
@@ -47,41 +44,48 @@
 		return inferJudgeStatus(record, requiredBaseMetrics);
 	}
 
-	function normalizeMessageRole(role: string): InteractionMessage['role'] {
-		if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
-			return role;
-		}
-		return 'assistant';
+	// --- Tab state ---
+	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
+	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
+	let hasAuditPreview = $derived((data.rolloutPreviewRows?.length ?? 0) > 0);
+	let hasAuditContent = $derived(data.hasAuditContent ?? (hasAuditEval || hasAuditPreview));
+	let activeTab = $derived((data.activeTab ?? (page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts')) as 'prompts' | 'audit');
+
+	function setActiveTab(tab: 'prompts' | 'audit') {
+		if (tab === activeTab) return;
+		const url = new URL(page.url);
+		if (tab === 'audit') url.searchParams.set('tab', 'audit');
+		else url.searchParams.delete('tab');
+		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
-	// --- Tab state ---
-	let hasQueryEval = $derived(data.samples.length > 0);
-	let hasAuditEval = $derived(data.auditScores.length > 0);
-	let hasAuditPreview = $derived((data.rolloutPreviewRows?.length ?? 0) > 0);
-	let hasAuditContent = $derived(hasAuditEval || hasAuditPreview);
-	let activeTab = $state<'query' | 'audit'>(page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'query');
-	$effect(() => {
-		if (!hasQueryEval && hasAuditContent) activeTab = 'audit';
-		if (activeTab === 'audit' && !hasAuditContent && hasQueryEval) activeTab = 'query';
-	});
-
-	// --- Query eval state ---
-	let expandedSubRisk = $state<string | null>(null);
+	// --- Prompt eval state ---
+	let expandedBehavior = $state<string | null>(null);
 	let drawerSample = $state<JudgedSample | null>(null);
-	let queryGrouped = $state(true);
-	let querySortMetric = $state('policy_violation');
+	let promptGroupBy = $state('none');
+	let promptSortMetric = $state('policy_violation');
 
 	// --- Audit eval state ---
-	let expandedAuditSubRisk = $state<string | null>(null);
+	let expandedAuditBehavior = $state<string | null>(null);
 	let drawerAuditScore = $state<AuditScore | null>(null);
 	let drawerPreviewSeedId = $state<string | null>(null);
-	let auditGroupBy = $state(page.url.searchParams.get('audit_group') ?? 'sub_risk');
+	let auditGroupBy = $state('none');
 	let auditSortMetric = $state('policy_violation');
 	let runMetaOpen = $state(false);
 
 	// --- Multi-judge state ---
 	let mjFilter = $state<'all' | 'disagreements'>('all');
 	let auditMjFilter = $state<'all' | 'disagreements'>('all');
+
+	// Totals for judge failures banner
+	let promptTotal = $derived(data.samples.length);
+	let promptScored = $derived(data.samples.filter(s => judgeStatus(s) === 'ok').length);
+	let promptJudgeFailures = $derived(promptTotal - promptScored);
+
+	let auditTotal = $derived(data.auditScores.length);
+	let auditScored = $derived(data.auditScores.filter(s => judgeStatus(s) === 'ok').length);
+	let auditJudgeFailures = $derived(auditTotal - auditScored);
+
 	function metricLabel(metric: string): string {
 		return metric.replace(/_/g, ' ');
 	}
@@ -100,6 +104,19 @@
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
 	}
 
+	function getBehaviorViolated(score: { verdict?: Record<string, unknown> | null }, behaviorName: string): boolean | null {
+		const nj = score.verdict?.node_judgments;
+		if (!Array.isArray(nj)) return null;
+		for (const node of nj) {
+			const name = ((node as Record<string, unknown>).node_name as string ?? '').trim();
+			const label = name || `(node ${(node as Record<string, unknown>).node_index ?? '?'})`;
+			if (label === behaviorName && (node as Record<string, unknown>).relevant) {
+				return (node as Record<string, unknown>).violated === true;
+			}
+		}
+		return null;
+	}
+
 	function metricRateClass(rate: number): string {
 		if (rate >= 0.5) return 'text-score-fail';
 		if (rate > 0) return 'text-score-border';
@@ -108,12 +125,6 @@
 
 	function metricRateText(rate: number): string {
 		return `${(rate * 100).toFixed(0)}%`;
-	}
-
-	function metricDeltaText(delta: number): string {
-		if (delta > 0) return `+${(delta * 100).toFixed(0)}%`;
-		if (delta < 0) return `${(delta * 100).toFixed(0)}%`;
-		return '0%';
 	}
 
 	function binaryBar(counts: BinaryCounts): { clear: number; flagged: number } {
@@ -132,47 +143,24 @@
 	};
 
 	let dimensionNames = $derived(Object.keys(data.metrics.dimensions ?? {}));
-	let hasDimensions = $derived(dimensionNames.length > 0);
 	let metricNames = $derived(dimensionNames);
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
 
-	// --- Query eval groups ---
-	let subRiskGroups = $derived.by(() => {
-		type GroupAgg = { permissible: boolean; samples: JudgedSample[]; metricSums: Record<string, number>; metricCounts: Record<string, number> };
-		const map = new Map<string, GroupAgg>();
-		for (const s of data.samples) {
-			if (!map.has(s.sub_risk)) {
-				map.set(s.sub_risk, { permissible: s.permissible ?? true, samples: [], metricSums: {}, metricCounts: {} });
-			}
-			const g = map.get(s.sub_risk)!;
-			g.samples.push(s);
-			for (const m of metricNames) {
-				const v = getRecordFlag(s, m);
-				if (v !== null) {
-					g.metricSums[m] = (g.metricSums[m] ?? 0) + Number(v);
-					g.metricCounts[m] = (g.metricCounts[m] ?? 0) + 1;
-				}
-			}
-		}
-		return [...map.entries()]
-			.sort((a, b) => {
-				if (a[1].permissible !== b[1].permissible) return a[1].permissible ? 1 : -1;
-				return a[0].localeCompare(b[0]);
-			})
-			.map(([name, g]) => {
-				const avgs: Record<string, number> = {};
-				for (const m of metricNames) {
-					if (g.metricCounts[m]) avgs[m] = g.metricSums[m] / g.metricCounts[m];
-				}
-				return {
-					name,
-					permissible: g.permissible,
-					avgs,
-					total: g.samples.length,
-					samples: [...g.samples].sort((a, b) => scoreSortValue(a, querySortMetric) - scoreSortValue(b, querySortMetric))
-				};
-			});
-	});
+	// Active metrics use server-computed dimensions
+	let activePromptDimensions = $derived(data.metrics.dimensions);
+
+	let promptFactorAxes = $derived(buildFactorAxes(data.samples));
+	let availablePromptAxes = $derived([...promptFactorAxes, ...PROMPT_GROUP_AXES]);
+
+	// --- Prompt eval groups ---
+	let activePromptAxis = $derived(
+		availablePromptAxes.find((axis: GroupAxis<JudgedSample>) => axis.key === promptGroupBy) ??
+			availablePromptAxes[0]
+	);
+
+	let promptGroupsRaw = $derived(
+		groupByAxis(data.samples, activePromptAxis, metricNames)
+	);
 
 	function mjFilterFn(mj: MultiJudge | undefined): boolean {
 		if (mjFilter === 'all') return true;
@@ -180,19 +168,25 @@
 		return mj.agreement < 1;
 	}
 
-	let filteredGroups = $derived.by(() => {
-		if (mjFilter === 'all') return subRiskGroups;
-		return subRiskGroups
-			.map(g => ({ ...g, samples: g.samples.filter(s => mjFilterFn(s.multi_judge)) }))
-			.filter(g => g.samples.length > 0);
+	let promptGroups = $derived.by(() => {
+		if (mjFilter === 'all') return promptGroupsRaw;
+		return promptGroupsRaw
+			.map(g => ({ ...g, items: g.items.filter(s => mjFilterFn(s.multi_judge)), total: 0 }))
+			.map(g => ({ ...g, total: g.items.length }))
+			.filter(g => g.items.length > 0);
 	});
 
-	let flatQuerySamples = $derived.by(() => {
+	let flatPromptSamples = $derived.by(() => {
 		let items = [...data.samples];
 		if (mjFilter !== 'all') items = items.filter(s => mjFilterFn(s.multi_judge));
-		const m = querySortMetric;
+		const m = promptSortMetric;
 		return items.sort((a, b) => scoreSortValue(a, m) - scoreSortValue(b, m));
 	});
+
+	function setPromptGroupBy(key: string) {
+		expandedBehavior = null;
+		promptGroupBy = key;
+	}
 
 	// --- Audit eval groups ---
 	let auditDimNames = $derived(Object.keys(data.auditMetrics.dimensions ?? {}));
@@ -200,12 +194,16 @@
 	let auditMetricNames = $derived(auditDimNames);
 	let primaryAuditMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
+	let activeAuditDimensions = $derived(data.auditMetrics.dimensions);
+
+	let auditFactorAxes = $derived(buildFactorAxes(data.auditScores));
+	let availableAxes = $derived([...auditFactorAxes, ...AUDIT_GROUP_AXES]);
+	let groupContext = $derived({ scenarioSeedMap: data.scenarioSeedMap });
+
 	// --- Generic audit grouping ---
 	let activeAuditAxis = $derived(
-		AUDIT_GROUP_AXES.find(a => a.key === auditGroupBy) ?? AUDIT_GROUP_AXES[0]
+		availableAxes.find((axis: GroupAxis<AuditScore>) => axis.key === auditGroupBy) ?? availableAxes[0]
 	);
-
-	let groupContext = $derived({ scenarioSeedMap: data.scenarioSeedMap });
 
 	let auditGroupsRaw = $derived(
 		groupByAxis(data.auditScores, activeAuditAxis, auditMetricNames, groupContext)
@@ -225,23 +223,11 @@
 			.filter(g => g.items.length > 0);
 	});
 
-	// Available axes: disable variation-specific ones when no variations exist
-	let availableAxes = $derived(
-		AUDIT_GROUP_AXES.map(a => ({
-			...a,
-			disabled: (a.key === 'elicitation_strategy' || a.key === 'seed_family') && !data.hasVariations,
-		}))
-	);
-
 	let hasAuditMultiJudge = $derived(data.auditScores.some(s => s.multi_judge));
 
 	function setAuditGroupBy(key: string) {
+		expandedAuditBehavior = null;
 		auditGroupBy = key;
-		expandedAuditSubRisk = null;
-		const url = new URL(page.url);
-		if (key === 'sub_risk') url.searchParams.delete('audit_group');
-		else url.searchParams.set('audit_group', key);
-		goto(url.toString(), { replaceState: true, noScroll: true });
 	}
 
 	let flatAuditScores = $derived.by(() => {
@@ -251,62 +237,200 @@
 		return items.sort((a, b) => scoreSortValue(a, m) - scoreSortValue(b, m));
 	});
 
-	function toggleSubRisk(name: string) {
-		expandedSubRisk = expandedSubRisk === name ? null : name;
+	function toggleBehavior(name: string) {
+		expandedBehavior = expandedBehavior === name ? null : name;
 	}
 
-	function openSampleModal(sample: JudgedSample) {
+	function isActivePromptSample(sample: JudgedSample): boolean {
+		return Boolean(sample.seed_id && drawerSample?.seed_id === sample.seed_id);
+	}
+
+	function isActiveAuditScore(score: AuditScore): boolean {
+		return drawerAuditScore?.seed_id === score.seed_id;
+	}
+
+	let nextPromptDrawerLoadToken = 0;
+	let nextScenarioDrawerLoadToken = 0;
+
+	function bumpPromptDrawerLoadToken(): number {
+		nextPromptDrawerLoadToken += 1;
+		promptDrawerLoadToken = nextPromptDrawerLoadToken;
+		return nextPromptDrawerLoadToken;
+	}
+
+	function bumpScenarioDrawerLoadToken(): number {
+		nextScenarioDrawerLoadToken += 1;
+		scenarioDrawerLoadToken = nextScenarioDrawerLoadToken;
+		return nextScenarioDrawerLoadToken;
+	}
+
+	function buildLocalPromptDrawerItem(sample: JudgedSample): ViewerResultItem | null {
+		if (!sample.seed_id) return null;
+		if (!Array.isArray(sample.messages) || sample.messages.length === 0) return null;
+		return normalizePromptResult(sample);
+	}
+
+	function buildLocalScenarioDrawerItem(seedId: string): ViewerResultItem | null {
+		const item = (data.scenarioDrawerItems ?? {}) as Record<string, ViewerResultItem>;
+		const resolved = item[seedId];
+		return resolved ?? null;
+	}
+
+	async function openSampleModal(sample: JudgedSample) {
+		if (!sample.seed_id) {
+			promptDrawerError = 'Prompt is missing a seed id.';
+			return;
+		}
+		const token = bumpPromptDrawerLoadToken();
 		drawerSample = sample;
-		queryNavIdx = queryNavList.findIndex(s => s === sample);
+		promptNavIdx = promptNavList.findIndex((entry) => entry.seed_id === sample.seed_id);
+		drawerAuditScore = null;
+		drawerPreviewSeedId = null;
+		auditDrawerItem = null;
+		previewDrawerItem = null;
+		promptDrawerItem = null;
+		promptDrawerLoadingSeedId = sample.seed_id;
+		promptDrawerError = null;
+
+		const localItem = buildLocalPromptDrawerItem(sample);
+		if (localItem) {
+			const cacheKey = promptDrawerCacheKey(sample.seed_id);
+			promptDrawerCache = { ...promptDrawerCache, [cacheKey]: localItem };
+			promptDrawerItem = localItem;
+			promptDrawerLoadingSeedId = null;
+			return;
+		}
+
+		try {
+			const item = await fetchPromptDrawerItem(sample.seed_id);
+			if (promptDrawerLoadToken !== token || drawerSample?.seed_id !== sample.seed_id) return;
+			promptDrawerItem = item;
+		} catch (error) {
+			if (promptDrawerLoadToken !== token || drawerSample?.seed_id !== sample.seed_id) return;
+			promptDrawerError = error instanceof Error ? error.message : 'Failed to load prompt';
+		} finally {
+			if (promptDrawerLoadToken === token) promptDrawerLoadingSeedId = null;
+		}
 	}
 
 	function closeSampleModal() {
+		bumpPromptDrawerLoadToken();
 		drawerSample = null;
-		queryNavIdx = -1;
+		promptNavIdx = -1;
+		promptDrawerItem = null;
+		promptDrawerLoadingSeedId = null;
+		promptDrawerError = null;
 	}
 
-	// Navigation for query samples
-	let queryNavList = $derived.by(() => {
-		if (queryGrouped) {
+	// Navigation for prompt samples
+	let promptNavList = $derived.by(() => {
+		if (promptGroupBy !== 'none') {
+			const seen = new Set<string>();
 			const items: JudgedSample[] = [];
-			for (const g of filteredGroups) items.push(...g.samples);
+			for (const g of promptGroups) {
+				for (const s of g.items) {
+					const key = s.seed_id ?? s.prompt;
+					if (seen.has(key)) continue;
+					seen.add(key);
+					items.push(s);
+				}
+			}
 			return items;
 		}
-		return flatQuerySamples;
+		return flatPromptSamples;
 	});
 
-	let queryNavIdx = $state(-1);
+	let promptNavIdx = $state(-1);
 
-	function navigateQuery(delta: number) {
-		const next = queryNavIdx + delta;
-		if (next >= 0 && next < queryNavList.length) {
-			queryNavIdx = next;
-			drawerSample = queryNavList[next];
+	function navigatePrompt(delta: number) {
+		const next = promptNavIdx + delta;
+		if (next >= 0 && next < promptNavList.length) {
+			void openSampleModal(promptNavList[next]);
 		}
 	}
 
-	function toggleAuditSubRisk(name: string) {
-		expandedAuditSubRisk = expandedAuditSubRisk === name ? null : name;
+	function toggleAuditBehavior(name: string) {
+		expandedAuditBehavior = expandedAuditBehavior === name ? null : name;
 	}
 
-	function openDrawer(score: AuditScore) {
+	async function openDrawer(score: AuditScore) {
+		const token = bumpScenarioDrawerLoadToken();
 		drawerAuditScore = score;
-		auditNavIdx = auditNavList.findIndex(s => s === score);
+		auditNavIdx = auditNavList.findIndex((entry) => entry.seed_id === score.seed_id);
+		drawerPreviewSeedId = null;
+		previewDrawerItem = null;
+		auditDrawerItem = null;
+		scenarioDrawerLoadingSeedId = score.seed_id;
+		scenarioDrawerError = null;
+
+		const localItem = buildLocalScenarioDrawerItem(score.seed_id);
+		if (localItem) {
+			const cacheKey = scenarioDrawerCacheKey(score.seed_id);
+			scenarioDrawerCache = { ...scenarioDrawerCache, [cacheKey]: localItem };
+			auditDrawerItem = localItem;
+			scenarioDrawerLoadingSeedId = null;
+			return;
+		}
+
+		try {
+			const item = await fetchScenarioDrawerItem(score.seed_id);
+			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.seed_id !== score.seed_id) return;
+			auditDrawerItem = item;
+		} catch (error) {
+			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.seed_id !== score.seed_id) return;
+			scenarioDrawerError = error instanceof Error ? error.message : 'Failed to load scenario';
+		} finally {
+			if (scenarioDrawerLoadToken === token) scenarioDrawerLoadingSeedId = null;
+		}
 	}
 
 	function closeDrawer() {
+		bumpScenarioDrawerLoadToken();
 		drawerAuditScore = null;
 		auditNavIdx = -1;
+		auditDrawerItem = null;
+		scenarioDrawerLoadingSeedId = null;
+		scenarioDrawerError = null;
 	}
 
-	function openPreviewDrawer(item: RolloutPreviewItem) {
+	async function openPreviewDrawer(item: RolloutPreviewItem) {
+		const token = bumpScenarioDrawerLoadToken();
 		drawerPreviewSeedId = item.seed_id;
 		previewNavIdx = previewNavList.findIndex((entry) => entry.seed_id === item.seed_id);
+		drawerAuditScore = null;
+		auditDrawerItem = null;
+		previewDrawerItem = null;
+		scenarioDrawerLoadingSeedId = item.seed_id;
+		scenarioDrawerError = null;
+
+		const localItem = buildLocalScenarioDrawerItem(item.seed_id);
+		if (localItem) {
+			const cacheKey = scenarioDrawerCacheKey(item.seed_id);
+			scenarioDrawerCache = { ...scenarioDrawerCache, [cacheKey]: localItem };
+			previewDrawerItem = localItem;
+			scenarioDrawerLoadingSeedId = null;
+			return;
+		}
+
+		try {
+			const drawerItem = await fetchScenarioDrawerItem(item.seed_id);
+			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.seed_id) return;
+			previewDrawerItem = drawerItem;
+		} catch (error) {
+			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.seed_id) return;
+			scenarioDrawerError = error instanceof Error ? error.message : 'Failed to load scenario';
+		} finally {
+			if (scenarioDrawerLoadToken === token) scenarioDrawerLoadingSeedId = null;
+		}
 	}
 
 	function closePreviewDrawer() {
+		bumpScenarioDrawerLoadToken();
 		drawerPreviewSeedId = null;
 		previewNavIdx = -1;
+		previewDrawerItem = null;
+		scenarioDrawerLoadingSeedId = null;
+		scenarioDrawerError = null;
 	}
 
 	function closeActiveDrawer() {
@@ -324,8 +448,15 @@
 	// Navigation for audit scores
 	let auditNavList = $derived.by(() => {
 		if (auditGroupBy !== 'none') {
+			const seen = new Set<string>();
 			const items: AuditScore[] = [];
-			for (const g of auditGroups) items.push(...g.items);
+			for (const g of auditGroups) {
+				for (const s of g.items) {
+					if (seen.has(s.seed_id)) continue;
+					seen.add(s.seed_id);
+					items.push(s);
+				}
+			}
 			return items;
 		}
 		return flatAuditScores;
@@ -334,78 +465,129 @@
 	let previewNavList = $derived((data.rolloutPreviewRows ?? []) as RolloutPreviewItem[]);
 	let auditNavIdx = $state(-1);
 	let previewNavIdx = $state(-1);
-	let queryDrawerItem = $derived(drawerSample ? normalizePromptResult(drawerSample) : null);
-	let auditDrawerItem = $derived(
-		drawerAuditScore
-			? normalizeScenarioResult(
-				drawerAuditScore,
-				data.transcriptMap[drawerAuditScore.seed_id] ?? [],
-				data.llmCallMap?.[drawerAuditScore.seed_id] ?? [],
-				data.scenarioSeedMap[drawerAuditScore.seed_id],
-				data.scenarioSeedMap
-			)
-			: null
-	);
-	let previewDrawerItem = $derived.by(() => {
-		if (!drawerPreviewSeedId) return null;
-		const preview = ((data.rolloutPreviewRows ?? []) as RolloutPreviewItem[]).find(
-			(item) => item.seed_id === drawerPreviewSeedId
-		);
-		if (!preview) return null;
+	let currentRunKey = $derived(`${data.suite_id}:${data.run_id}`);
+	let promptDrawerCache = $state<Record<string, ViewerResultItem>>({});
+	let promptDrawerLoadingSeedId = $state<string | null>(null);
+	let promptDrawerError = $state<string | null>(null);
+	let promptDrawerLoadToken = $state(0);
+	let promptDrawerItem = $state<ViewerResultItem | null>(null);
+	let scenarioDrawerCache = $state<Record<string, ViewerResultItem>>({});
+	let scenarioDrawerLoadingSeedId = $state<string | null>(null);
+	let scenarioDrawerError = $state<string | null>(null);
+	let scenarioDrawerLoadToken = $state(0);
+	let auditDrawerItem = $state<ViewerResultItem | null>(null);
+	let previewDrawerItem = $state<ViewerResultItem | null>(null);
 
-		const seedInfo = data.scenarioSeedMap[preview.seed_id];
-		const parentTitle =
-			seedInfo?.parent_seed_id && data.scenarioSeedMap[seedInfo.parent_seed_id]
-				? data.scenarioSeedMap[seedInfo.parent_seed_id].title
-				: null;
-		const messages = (data.transcriptMap[preview.seed_id] ?? []).map((message) => ({
-			...message,
-			role: normalizeMessageRole(message.role)
-		})) as InteractionMessage[];
+	function promptDrawerCacheKey(seedId: string): string {
+		return `${currentRunKey}:${seedId}`;
+	}
 
-		return {
-			id: `scenario-preview:${preview.seed_id}`,
-			kind: 'scenario',
-			row_title: seedInfo?.title ?? preview.seed_id,
-			header_title: seedInfo?.title ?? preview.seed_id,
-			sub_risk: preview.sub_risk,
-			permissible: preview.permissible,
-			messages,
-			llm_calls: data.llmCallMap?.[preview.seed_id] ?? [],
-			target_runtime_mode: seedInfo?.target_runtime_mode ?? null,
-			context: {
-				description: seedInfo?.description ?? null,
-				tools: seedInfo?.tools,
-				turns_count: preview.turns_count,
-				stop_reason: preview.stop_reason,
-				elicitation_strategy: seedInfo?.elicitation_strategy ?? null,
-				parent_title: parentTitle
-			}
-		} as ViewerResultItem;
+	function scenarioDrawerCacheKey(seedId: string): string {
+		return `${currentRunKey}:${seedId}`;
+	}
+
+	$effect(() => {
+		currentRunKey;
+		expandedBehavior = null;
+		expandedAuditBehavior = null;
+		promptGroupBy = 'none';
+		auditGroupBy = 'none';
+		promptSortMetric = 'policy_violation';
+		auditSortMetric = 'policy_violation';
+		runMetaOpen = false;
+		mjFilter = 'all';
+		auditMjFilter = 'all';
+		promptDrawerCache = {};
+		promptDrawerLoadingSeedId = null;
+		promptDrawerError = null;
+		bumpPromptDrawerLoadToken();
+		promptDrawerItem = null;
+		scenarioDrawerCache = {};
+		scenarioDrawerLoadingSeedId = null;
+		scenarioDrawerError = null;
+		bumpScenarioDrawerLoadToken();
+		drawerSample = null;
+		drawerAuditScore = null;
+		drawerPreviewSeedId = null;
+		auditDrawerItem = null;
+		previewDrawerItem = null;
+		auditNavIdx = -1;
+		previewNavIdx = -1;
 	});
-	let drawerItem = $derived(queryDrawerItem ?? auditDrawerItem ?? previewDrawerItem);
+
+	$effect(() => {
+		if (promptGroupBy !== 'none' && !availablePromptAxes.some((axis) => axis.key === promptGroupBy)) {
+			promptGroupBy = 'none';
+		}
+	});
+
+	$effect(() => {
+		if (auditGroupBy !== 'none' && !availableAxes.some((axis) => axis.key === auditGroupBy)) {
+			auditGroupBy = 'none';
+		}
+	});
+
+	async function fetchPromptDrawerItem(seedId: string): Promise<ViewerResultItem> {
+		const cacheKey = promptDrawerCacheKey(seedId);
+		const runKey = currentRunKey;
+		const cached = promptDrawerCache[cacheKey];
+		if (cached) return cached;
+
+		const res = await fetch(
+			`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(data.run_id)}/prompt/${encodeURIComponent(seedId)}`
+		);
+		const body = await res.json();
+		if (!res.ok) {
+			throw new Error(body.error ?? 'Failed to load prompt');
+		}
+		const item = body as ViewerResultItem;
+		if (runKey === currentRunKey) {
+			promptDrawerCache = { ...promptDrawerCache, [cacheKey]: item };
+		}
+		return item;
+	}
+
+	async function fetchScenarioDrawerItem(seedId: string): Promise<ViewerResultItem> {
+		const cacheKey = scenarioDrawerCacheKey(seedId);
+		const runKey = currentRunKey;
+		const cached = scenarioDrawerCache[cacheKey];
+		if (cached) return cached;
+
+		const res = await fetch(
+			`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(data.run_id)}/scenario/${encodeURIComponent(seedId)}`
+		);
+		const body = await res.json();
+		if (!res.ok) {
+			throw new Error(body.error ?? 'Failed to load scenario');
+		}
+		const item = body as ViewerResultItem;
+		if (runKey === currentRunKey) {
+			scenarioDrawerCache = { ...scenarioDrawerCache, [cacheKey]: item };
+		}
+		return item;
+	}
+
+	let drawerItem = $derived(promptDrawerItem ?? auditDrawerItem ?? previewDrawerItem);
 	let drawerMetricNames = $derived(drawerAuditScore ? auditMetricNames : drawerPreviewSeedId ? [] : metricNames);
 	let drawerPrimaryMetric = $derived(drawerAuditScore ? primaryAuditMetric : primaryMetric);
 	let drawerNavIdx = $derived(
-		drawerAuditScore ? auditNavIdx : drawerPreviewSeedId ? previewNavIdx : drawerSample ? queryNavIdx : -1
+		drawerAuditScore ? auditNavIdx : drawerPreviewSeedId ? previewNavIdx : drawerSample ? promptNavIdx : -1
 	);
 	let drawerNavTotal = $derived(
-		drawerAuditScore ? auditNavList.length : drawerPreviewSeedId ? previewNavList.length : drawerSample ? queryNavList.length : 0
+		drawerAuditScore ? auditNavList.length : drawerPreviewSeedId ? previewNavList.length : drawerSample ? promptNavList.length : 0
 	);
 
 	function navigateAudit(delta: number) {
 		const next = auditNavIdx + delta;
 		if (next >= 0 && next < auditNavList.length) {
-			auditNavIdx = next;
-			drawerAuditScore = auditNavList[next];
+			void openDrawer(auditNavList[next]);
 		}
 	}
 
 	function navigatePreview(delta: number) {
 		const next = previewNavIdx + delta;
 		if (next >= 0 && next < previewNavList.length) {
-			previewNavIdx = next;
-			drawerPreviewSeedId = previewNavList[next].seed_id;
+			void openPreviewDrawer(previewNavList[next]);
 		}
 	}
 
@@ -418,7 +600,7 @@
 			navigateAudit(delta);
 			return;
 		}
-		if (drawerSample) navigateQuery(delta);
+		if (drawerSample) navigatePrompt(delta);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -448,7 +630,7 @@
 	<div class="flex items-center gap-1.5 text-xs text-text-muted">
 		<a href="/" class="transition-colors hover:text-interactive">Measurement Suites</a>
 		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-		<a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.policy?.risk?.name ?? data.suite_id}</a>
+		<a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.policy?.concept?.name ?? data.suite_id}</a>
 		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 		<span class="text-text-secondary">{data.run_id}</span>
 	</div>
@@ -466,7 +648,7 @@
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
 						Failed
 					</span>
-				{:else if data.samples.length > 0 || data.auditScores.length > 0}
+				{:else if hasPromptEval || hasAuditEval}
 					<span class="inline-flex items-center gap-1 rounded-full bg-score-pass/10 px-2 py-0.5 text-xs text-score-pass">
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
 						Completed
@@ -492,7 +674,7 @@
 		{/if}
 	</div>
 	{#if runMetaOpen && data.manifest?.stages}
-	<div class="mt-3 max-w-2xl rounded-lg border border-border bg-surface p-4" transition:slide={{ duration: 200, easing: quintOut }}>
+	<div class="mt-3 max-w-2xl rounded-lg border border-border bg-surface p-4">
 		<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted">Run Pipeline</h3>
 		<div class="grid gap-2">
 			{#each Object.entries(data.manifest.stages) as [stage, info]}
@@ -515,7 +697,7 @@
 	{/if}
 </div>
 
-{#if !hasQueryEval && !hasAuditContent}
+{#if !hasPromptEval && !hasAuditContent}
 	<!-- Empty state -->
 	<div class="rounded-lg border border-border bg-surface px-6 py-12 text-center">
 		<svg class="mx-auto mb-4 h-10 w-10 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -537,28 +719,28 @@
 	</div>
 {:else}
 	<!-- Toggle (only show if both types exist) -->
-	{#if hasQueryEval && hasAuditContent}
+	{#if hasPromptEval && hasAuditContent}
 		<div class="mb-6 flex justify-center">
 		<div class="flex items-center gap-1 rounded-lg bg-surface p-1">
 			<button
-				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'query' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
-				onclick={() => activeTab = 'query'}
+				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'prompts' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
+				onclick={() => setActiveTab('prompts')}
 				title="Single-turn prompt results"
-			>Prompts <span class="ml-1 font-mono text-text-muted">{data.samples.length}</span></button>
+			>Prompts <span class="ml-1 font-mono text-text-muted">{data.promptCount ?? data.samples.length}</span></button>
 			<button
 				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'audit' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
-				onclick={() => activeTab = 'audit'}
+				onclick={() => setActiveTab('audit')}
 				title="Multi-turn scenario results"
-			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? data.auditScores.length : data.rolloutPreviewRows.length}</span></button>
+			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.rolloutPreviewRows.length}</span></button>
 		</div>
 		</div>
 	{/if}
 
 	<!-- ==================== QUERY EVAL TAB ==================== -->
-	{#if activeTab === 'query' && hasQueryEval}
+	{#if activeTab === 'prompts' && hasPromptEval}
 		<!-- Metrics -->
-		{@const allMetrics = metricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: data.metrics.dimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
-		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
+		{@const allMetrics = metricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activePromptDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
+		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each allMetrics as m}
 				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
 				<div class="rounded-lg border border-border bg-surface px-5 py-4">
@@ -588,21 +770,22 @@
 				</div>
 			{/each}
 		</div>
-		{#if data.metrics.judgeFailures > 0}
+
+		{#if promptJudgeFailures > 0}
 			<p class="mb-6 text-xs text-amber-400">
-				Scored {data.metrics.scoredTotal} of {data.metrics.total} prompts. {data.metrics.judgeFailures} judge failures were excluded from the rates.
+				Scored {promptScored} of {promptTotal} prompts. {promptJudgeFailures} judge failures were excluded from the rates.
 			</p>
 		{/if}
 
 		<!-- Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">{queryGrouped ? 'Results by Category' : 'All Results'}</h2>
+				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">{promptGroupBy === 'none' ? 'All Results' : `Results by ${activePromptAxis.label}`}</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.samples.length} prompts{#if queryGrouped} · {subRiskGroups.length} categories{/if}</span>
+				<span class="text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
 			</div>
 
-			<!-- Controls row: view toggle + sort + multi-judge filter -->
+			<!-- Controls row: multi-judge filter + group-by dropdown + sort -->
 			<div class="mb-3 flex items-center gap-3 flex-wrap">
 				{#if data.multiJudgeStats}
 					{@const mjDisagreementCount = data.samples.filter(s => s.multi_judge && s.multi_judge.agreement < 1).length}
@@ -618,46 +801,51 @@
 					</div>
 				{/if}
 				<div class="ml-auto flex items-center gap-2">
-					{#if !queryGrouped}
+					{#if promptGroupBy === 'none'}
 						<span class="text-[10px] text-text-muted">Sort by</span>
 						<select
 							class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
-							value={querySortMetric}
-							onchange={(e) => querySortMetric = e.currentTarget.value}
+							value={promptSortMetric}
+							onchange={(e) => promptSortMetric = e.currentTarget.value}
 						>
 							{#each metricNames as m}
 								<option value={m}>{metricLabel(m)}</option>
 							{/each}
 						</select>
 					{/if}
-					<div class="flex rounded-md bg-surface p-0.5">
-						<button
-							class="rounded px-2 py-1 text-[10px] font-medium transition-colors {queryGrouped ? 'bg-interactive text-white' : 'text-text-muted hover:text-text'}"
-							onclick={() => queryGrouped = true}
-						>Grouped</button>
-						<button
-							class="rounded px-2 py-1 text-[10px] font-medium transition-colors {!queryGrouped ? 'bg-interactive text-white' : 'text-text-muted hover:text-text'}"
-							onclick={() => queryGrouped = false}
-						>Flat</button>
-					</div>
+					<span class="text-[10px] text-text-muted">Group by</span>
+					<select
+						class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
+						value={promptGroupBy}
+						onchange={(e) => setPromptGroupBy(e.currentTarget.value)}
+					>
+						{#each availablePromptAxes as axis}
+							<option value={axis.key}>{axis.label}</option>
+						{/each}
+						<option value="none">None (flat)</option>
+					</select>
 				</div>
 			</div>
 
-			{#if queryGrouped}
+			{#if promptGroupBy !== 'none'}
 			<!-- Grouped accordion -->
 			<div class="overflow-hidden rounded-lg border border-border">
-				{#each filteredGroups as group, gIdx (group.name)}
+				{#each promptGroups as group, gIdx (group.key)}
 					<div class="{gIdx > 0 ? 'border-t border-border' : ''}">
-						<!-- Category header -->
+						<!-- Group header -->
 						<button
-							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedSubRisk === group.name ? 'bg-surface' : ''}"
-							onclick={() => toggleSubRisk(group.name)}
+							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedBehavior === group.key ? 'bg-surface' : ''}"
+							onclick={() => toggleBehavior(group.key)}
 						>
-							<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {group.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">
-								{group.permissible ? 'permissible' : 'not permissible'}
-							</span>
-							<span class="flex-1 truncate text-sm font-medium text-text">{group.name}</span>
+							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
 							<div class="flex items-center gap-2">
+								{#if group.avgs['behavior_violation'] !== undefined}
+									{@const bv = group.avgs['behavior_violation']}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
+										<span class="text-text-muted">behavior violated</span>
+										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
+									</span>
+								{/if}
 								{#each metricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
@@ -668,22 +856,28 @@
 									{/if}
 								{/each}
 							</div>
-							<span class="rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.samples.length}</span>
-							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedSubRisk === group.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<span class="rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
+							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedBehavior === group.key ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path d="M9 5l7 7-7 7"/>
 							</svg>
 						</button>
 
-						{#if expandedSubRisk === group.name}
-							<div transition:slide={{ duration: 200, easing: quintOut }} class="border-t border-border">
-								{#each group.samples as sample, sIdx}
+						{#if expandedBehavior === group.key}
+							<div class="border-t border-border">
+								{#each group.items as sample, sIdx}
 									<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 										<button
-											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerSample === sample ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
-											onclick={() => openSampleModal(sample)}
+											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActivePromptSample(sample) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+											onclick={() => void openSampleModal(sample)}
 										>
-											<span class="flex-1 truncate text-sm text-text-secondary">{sample.prompt}</span>
+											<span class="flex-1 truncate text-sm text-text-secondary">{(sample.seed_id && data.promptSeedTitleMap?.[sample.seed_id]) || sample.prompt}</span>
 											<div class="flex items-center gap-1.5 flex-shrink-0">
+												{#if getBehaviorViolated(sample, group.key) !== null}
+													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
+														<span class="text-text-muted">behavior</span>
+														<span class="font-semibold tabular-nums {metricOutcomeClass(getBehaviorViolated(sample, group.key))}">{metricOutcomeText(getBehaviorViolated(sample, group.key))}</span>
+													</span>
+												{/if}
 												{#each metricNames as m}
 													{@const v = getRecordFlag(sample, m)}
 													{#if v !== null}
@@ -725,14 +919,13 @@
 			{:else}
 			<!-- Flat list sorted by metric -->
 			<div class="overflow-hidden rounded-lg border border-border">
-				{#each flatQuerySamples as sample, sIdx}
+				{#each flatPromptSamples as sample, sIdx}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
-							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerSample === sample ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
-							onclick={() => openSampleModal(sample)}
+							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActivePromptSample(sample) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+							onclick={() => void openSampleModal(sample)}
 						>
-							<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {sample.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">{sample.permissible ? 'permissible' : 'not permissible'}</span>
-							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{sample.prompt}</span>
+							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{(sample.seed_id && data.promptSeedTitleMap?.[sample.seed_id]) || sample.prompt}</span>
 							<div class="flex items-center gap-1.5 flex-shrink-0">
 								{#each metricNames as m}
 									{@const v = getRecordFlag(sample, m)}
@@ -775,8 +968,8 @@
 	<!-- ==================== AUDIT EVAL TAB ==================== -->
 	{#if activeTab === 'audit' && hasAuditEval}
 		<!-- Audit Metrics -->
-		{@const auditAllMetrics = auditMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: data.auditMetrics.dimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
-		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
+		{@const auditAllMetrics = auditMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activeAuditDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
+		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each auditAllMetrics as m}
 				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
 				<div class="rounded-lg border border-border bg-surface px-5 py-4">
@@ -802,9 +995,10 @@
 				</div>
 			{/each}
 		</div>
-		{#if data.auditMetrics.judgeFailures > 0}
+
+		{#if auditJudgeFailures > 0}
 			<p class="mb-6 text-xs text-amber-400">
-				Scored {data.auditMetrics.scoredTotal} of {data.auditMetrics.total} scenarios. {data.auditMetrics.judgeFailures} judge failures were excluded from the rates.
+				Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
 			</p>
 		{/if}
 
@@ -851,7 +1045,7 @@
 						onchange={(e) => setAuditGroupBy(e.currentTarget.value)}
 					>
 						{#each availableAxes as axis}
-							<option value={axis.key} disabled={axis.disabled}>{axis.label}{axis.disabled ? ' (n/a)' : ''}</option>
+							<option value={axis.key}>{axis.label}</option>
 						{/each}
 						<option value="none">None (flat)</option>
 					</select>
@@ -864,24 +1058,18 @@
 					<div class="{gIdx > 0 ? 'border-t border-border' : ''}">
 						<!-- Group header -->
 						<button
-							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedAuditSubRisk === group.key ? 'bg-surface' : ''}"
-							onclick={() => toggleAuditSubRisk(group.key)}
+							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedAuditBehavior === group.key ? 'bg-surface' : ''}"
+							onclick={() => toggleAuditBehavior(group.key)}
 						>
-							<!-- Contextual badge: show permissible/not permissible when grouping by sub_risk -->
-							{#if auditGroupBy === 'sub_risk'}
-								{@const groupPermissible = group.items[0]?.permissible ?? true}
-								<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {groupPermissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">
-									{groupPermissible ? 'permissible' : 'not permissible'}
-								</span>
-							{/if}
-							<!-- Elicitation strategy badge -->
-							{#if auditGroupBy === 'elicitation_strategy'}
-								<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {group.key === 'base' ? 'bg-surface-2 text-text-muted' : 'bg-violet-500/10 text-violet-400'}">
-									{group.key === 'base' ? 'base' : group.key}
-								</span>
-							{/if}
 							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
 							<div class="flex items-center gap-2">
+								{#if group.avgs['behavior_violation'] !== undefined}
+									{@const bv = group.avgs['behavior_violation']}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
+										<span class="text-text-muted">behavior violated</span>
+										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
+									</span>
+								{/if}
 								{#each auditMetricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
@@ -893,35 +1081,30 @@
 								{/each}
 							</div>
 							<span class="rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
-							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedAuditSubRisk === group.key ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedAuditBehavior === group.key ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path d="M9 5l7 7-7 7"/>
 							</svg>
 						</button>
 
-						{#if expandedAuditSubRisk === group.key}
-							<div transition:slide={{ duration: 200, easing: quintOut }} class="border-t border-border">
+						{#if expandedAuditBehavior === group.key}
+							<div class="border-t border-border">
 								{#each group.items as auditScore, sIdx}
 									{@const seedInfo = data.scenarioSeedMap[auditScore.seed_id]}
 									<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 										<button
-											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerAuditScore === auditScore ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
-											onclick={() => openDrawer(auditScore)}
+											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActiveAuditScore(auditScore) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+											onclick={() => void openDrawer(auditScore)}
 										>
-											<!-- Cross-cutting context: show sub-risk + permissible when not grouping by sub_risk -->
-											{#if auditGroupBy !== 'sub_risk'}
-												<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {auditScore.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">{auditScore.permissible ? 'permissible' : 'not permissible'}</span>
-												<span class="text-[10px] text-text-muted truncate max-w-[140px]" title={auditScore.sub_risk}>{auditScore.sub_risk}</span>
-											{/if}
 											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.seed_id}</span>
-											<!-- Variation badge after title -->
-											{#if auditGroupBy !== 'elicitation_strategy' && seedInfo?.elicitation_strategy}
-												<span class="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-medium bg-violet-500/10 text-violet-400">
-													{seedInfo.elicitation_strategy}
-												</span>
-											{/if}
 											<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
 											<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
 											<div class="flex items-center gap-1.5 flex-shrink-0">
+												{#if getBehaviorViolated(auditScore, group.key) !== null}
+													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
+														<span class="text-text-muted">behavior</span>
+														<span class="font-semibold tabular-nums {metricOutcomeClass(getBehaviorViolated(auditScore, group.key))}">{metricOutcomeText(getBehaviorViolated(auditScore, group.key))}</span>
+													</span>
+												{/if}
 												{#each auditMetricNames as m}
 													{@const v = getRecordFlag(auditScore, m)}
 													{#if v !== null}
@@ -967,16 +1150,10 @@
 					{@const seedInfo = data.scenarioSeedMap[auditScore.seed_id]}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
-							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerAuditScore === auditScore ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
-							onclick={() => openDrawer(auditScore)}
+							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActiveAuditScore(auditScore) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+							onclick={() => void openDrawer(auditScore)}
 						>
-							<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {auditScore.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">{auditScore.permissible ? 'permissible' : 'not permissible'}</span>
 							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.seed_id}</span>
-							{#if seedInfo?.elicitation_strategy}
-								<span class="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-medium bg-violet-500/10 text-violet-400">
-									{seedInfo.elicitation_strategy}
-								</span>
-							{/if}
 							<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
 							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
 							<div class="flex items-center gap-1.5 flex-shrink-0">
@@ -993,6 +1170,18 @@
 									<span class="inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
 										judge failed
 									</span>
+								{/if}
+								{#if auditScore.multi_judge}
+									<div class="flex items-center gap-0.5 ml-1" aria-label="Judge votes: {auditScore.multi_judge.votes?.[primaryAuditMetric]?.join(', ')}">
+										{#each auditScore.multi_judge.votes?.[primaryAuditMetric] ?? [] as vote}
+											{@const agreed = vote === getRecordFlag(auditScore, primaryAuditMetric)}
+											<span
+												class="inline-block size-[6px] rounded-full transition-transform duration-150"
+												style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}
+												title={metricOutcomeText(vote)}
+											></span>
+										{/each}
+									</div>
 								{/if}
 							</div>
 							<svg class="h-3 w-3 flex-shrink-0 text-text-muted/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1027,20 +1216,12 @@
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
 							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerPreviewSeedId === preview.seed_id ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
-							onclick={() => openPreviewDrawer(preview)}
+							onclick={() => void openPreviewDrawer(preview)}
 						>
-							<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {preview.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">
-								{preview.permissible ? 'permissible' : 'not permissible'}
-							</span>
 							<div class="min-w-0 flex-1">
 								<div class="truncate text-sm text-text-secondary">{seedInfo?.title ?? preview.seed_id}</div>
-								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.sub_risk}>{preview.sub_risk}</div>
+								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
 							</div>
-							{#if seedInfo?.elicitation_strategy}
-								<span class="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-medium bg-violet-500/10 text-violet-400">
-									{seedInfo.elicitation_strategy}
-								</span>
-							{/if}
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>
 							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{preview.stop_reason}</span>
 							<span class="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
@@ -1058,6 +1239,54 @@
 {/if}
 
 <!-- Unified detail modal -->
+{#if drawerSample && !drawerItem && promptDrawerLoadingSeedId}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
+			<div class="text-sm font-semibold text-text">Loading prompt</div>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {promptDrawerLoadingSeedId}.</p>
+			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
+				Cancel
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if drawerSample && !drawerItem && promptDrawerError}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
+			<div class="text-sm font-semibold text-text">Could not load prompt</div>
+			<p class="mt-2 text-sm text-text-secondary">{promptDrawerError}</p>
+			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
+				Close
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerLoadingSeedId}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
+			<div class="text-sm font-semibold text-text">Loading conversation</div>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {scenarioDrawerLoadingSeedId}.</p>
+			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
+				Cancel
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerError}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
+			<div class="text-sm font-semibold text-text">Could not load conversation</div>
+			<p class="mt-2 text-sm text-text-secondary">{scenarioDrawerError}</p>
+			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
+				Close
+			</button>
+		</div>
+	</div>
+{/if}
+
 {#if drawerItem}
 	<ResultDrawer
 		item={drawerItem}
@@ -1067,7 +1296,7 @@
 		navIdx={drawerNavIdx}
 		navTotal={drawerNavTotal}
 		onClose={closeActiveDrawer}
-		onPrev={() => navigateActiveDrawer(-1)}
-		onNext={() => navigateActiveDrawer(1)}
+		onPrev={() => void navigateActiveDrawer(-1)}
+		onNext={() => void navigateActiveDrawer(1)}
 	/>
 {/if}

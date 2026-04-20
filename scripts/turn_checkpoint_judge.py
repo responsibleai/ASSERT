@@ -19,11 +19,14 @@ from p2m.core.config_model import (
 )
 from p2m.core.io import (
     append_jsonl_row,
-    get_permissible_flag,
     load_jsonl,
+    permissible_by_behavior,
+    policy_permissible,
     resolve_path,
     write_json,
     write_jsonl,
+    row_behavior,
+    row_factors,
 )
 from p2m.core.judge import (
     build_judge_contract,
@@ -42,7 +45,7 @@ class CheckpointJudgeConfig:
     judge_temperature: float | None
     judge_max_tokens: int | None
     judge_n: int
-    judge_dimensions: list[str]
+    judge_dimensions: list[dict[str, Any]]
     concurrency: int
 
 
@@ -118,7 +121,7 @@ def load_checkpoint_judge_config(
     config_path: Path,
     *,
     judge_model_override: str | None = None,
-    judge_dimensions_override: list[str] | None = None,
+    judge_dimensions_override: list[dict[str, Any] | str] | None = None,
     judge_n_override: int | None = None,
     concurrency_override: int | None = None,
 ) -> CheckpointJudgeConfig:
@@ -130,20 +133,17 @@ def load_checkpoint_judge_config(
     judge_stage_raw = pipeline_raw.get("judge")
     if not isinstance(judge_stage_raw, dict):
         raise ValueError(f"Run config missing pipeline.judge mapping: {config_path}")
-    judge_raw = judge_stage_raw.get("judge")
-    if not isinstance(judge_raw, dict):
-        raise ValueError(f"Run config missing pipeline.judge.judge mapping: {config_path}")
 
     judge_model = judge_model_override
     if judge_model is None:
-        model_raw = judge_raw.get("model")
+        model_raw = judge_stage_raw.get("model")
         if not isinstance(model_raw, dict):
-            raise ValueError(f"Run config missing pipeline.judge.judge.model mapping: {config_path}")
+            raise ValueError(f"Run config missing pipeline.judge.model mapping: {config_path}")
         judge_model = str(model_raw.get("name") or "").strip()
         if not judge_model:
-            raise ValueError(f"Run config missing pipeline.judge.judge.model.name: {config_path}")
+            raise ValueError(f"Run config missing pipeline.judge.model.name: {config_path}")
 
-    model_settings = judge_raw.get("model")
+    model_settings = judge_stage_raw.get("model")
     if isinstance(model_settings, dict):
         judge_temperature = model_settings.get("temperature", DEFAULT_JUDGE_TEMPERATURE)
         judge_max_tokens = model_settings.get("max_tokens", DEFAULT_JUDGE_MAX_TOKENS)
@@ -151,17 +151,29 @@ def load_checkpoint_judge_config(
         judge_temperature = DEFAULT_JUDGE_TEMPERATURE
         judge_max_tokens = DEFAULT_JUDGE_MAX_TOKENS
 
-    judge_n = judge_n_override if judge_n_override is not None else int(judge_raw.get("n") or 1)
+    judge_n = judge_n_override if judge_n_override is not None else int(judge_stage_raw.get("n") or 1)
     if judge_n <= 0:
         raise ValueError("judge_n must be > 0")
 
     if judge_dimensions_override is None:
-        raw_dimensions = judge_raw.get("dimensions") or []
-        if not isinstance(raw_dimensions, list):
-            raise ValueError(f"pipeline.judge.judge.dimensions must be a list: {config_path}")
-        judge_dimensions = [str(value) for value in raw_dimensions]
+        raw_dimensions = judge_stage_raw.get("dimensions") or {}
+        if not isinstance(raw_dimensions, dict):
+            raise ValueError(f"pipeline.judge.dimensions must be a mapping: {config_path}")
+        judge_dimensions = [
+            {"name": str(name), **dimension}
+            for name, dimension in raw_dimensions.items()
+        ]
     else:
-        judge_dimensions = [str(value) for value in judge_dimensions_override]
+        judge_dimensions = [
+            value
+            if isinstance(value, dict)
+            else {
+                "name": str(value),
+                "description": f"{value} description",
+                "rubric": f"true = {value}; false = not {value}",
+            }
+            for value in judge_dimensions_override
+        ]
 
     rollout_stage_raw = pipeline_raw.get("rollout")
     rollout_concurrency = DEFAULT_ROLLOUT_CONCURRENCY
@@ -189,11 +201,10 @@ def transcript_from_row(row: dict[str, Any]) -> Transcript:
         metadata=TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            risk=str(row.get("risk") or ""),
-            sub_risk=str(row.get("sub_risk") or ""),
-            permissible=bool(get_permissible_flag(row, default=True)),
+            concept=str(row.get("concept") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
+            factors=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -444,7 +455,7 @@ async def run_checkpoint_judge(
     dimension: str = "policy_violation",
     out_dir: str | Path | None = None,
     judge_model_override: str | None = None,
-    judge_dimensions_override: list[str] | None = None,
+    judge_dimensions_override: list[dict[str, Any] | str] | None = None,
     judge_n_override: int | None = None,
     concurrency_override: int | None = None,
 ) -> dict[str, Any]:
@@ -477,11 +488,11 @@ async def run_checkpoint_judge(
         raise ValueError(f"No transcripts found in {transcripts_path}")
 
     policy_raw = json.loads(policy_path.read_text(encoding="utf-8"))
+    permissible_by_name = permissible_by_behavior(policy_raw)
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
         judge_dimensions=config.judge_dimensions,
-        citation_style="xml",
         schema_name="transcript_judgment",
     )
     if dimension not in judge_contract["score_keys"]:
@@ -537,12 +548,18 @@ async def run_checkpoint_judge(
                 judge_max_tokens=config.judge_max_tokens,
                 response_schema=judge_contract["response_schema"],
             )
+            behavior = str(
+                row_behavior(task.transcript_row)
+                or ""
+            )
             row = {
                 "kind": task.transcript_row.get("kind", ""),
                 "seed_id": task.transcript_row.get("seed_id", ""),
-                "risk": task.transcript_row.get("risk", ""),
-                "sub_risk": task.transcript_row.get("sub_risk", ""),
-                "permissible": bool(get_permissible_flag(task.transcript_row, default=True)),
+                "concept": task.transcript_row.get("concept", ""),
+                "permissible": policy_permissible(
+                    permissible_by_name,
+                    behavior,
+                ),
                 "target": task.transcript_row.get("target", ""),
                 "auditor_model": task.transcript_row.get("auditor_model", ""),
                 "checkpoint_turn": task.checkpoint_turn,
@@ -551,6 +568,7 @@ async def run_checkpoint_judge(
                 "judge_status": judge_result["judge_status"],
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
+                "factors": {"behavior": behavior},
             }
             if judge_result.get("multi_judge") is not None:
                 row["multi_judge"] = judge_result["multi_judge"]

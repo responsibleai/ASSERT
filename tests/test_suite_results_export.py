@@ -6,8 +6,6 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.stages.judge import write_metrics
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "export_suite_results.py"
@@ -42,7 +40,7 @@ class SuiteResultsExportTest(unittest.TestCase):
         self,
         *,
         seed_id: str,
-        sub_risk: str,
+        behavior: str,
         permissible: bool,
         policy_violation: bool,
         overrefusal: bool,
@@ -54,9 +52,8 @@ class SuiteResultsExportTest(unittest.TestCase):
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "risk": "risk",
-            "sub_risk": sub_risk,
-            "permissible": permissible,
+            "concept": "concept",
+            "factors": {"behavior": behavior},
             "target": "target-model",
             "auditor_model": "auditor-model",
             "judge_model": "judge-model",
@@ -114,10 +111,10 @@ class SuiteResultsExportTest(unittest.TestCase):
             encoding="utf-8",
         )
         policy_raw = {
-            "risk": {"name": "Risk Name"},
-            "sub_risks": [
-                {"name": "node-a", "permissible": False},
-                {"name": "node-b", "permissible": True},
+            "concept": {"name": "Risk Name"},
+            "behaviors": [
+                {"name": "node-a", "definition": "def a", "permissible": False},
+                {"name": "node-b", "definition": "def b", "permissible": True},
             ],
         }
         (suite_dir / "policy.json").write_text(json.dumps(policy_raw), encoding="utf-8")
@@ -128,32 +125,26 @@ class SuiteResultsExportTest(unittest.TestCase):
                         {
                             "kind": "scenario",
                             "seed_id": "seed-1",
-                            "risk": "risk",
-                            "sub_risk": "node-a",
-                            "permissible": False,
-                            "definition": "def a",
+                            "concept": "concept",
+                            "factors": {"behavior": "node-a"},
                             "seed": {
                                 "title": "Title A",
                                 "description": "Description A",
                                 "system_prompt": "Prompt A",
                             },
-                            "elicitation_strategy": "direct",
                         }
                     ),
                     json.dumps(
                         {
                             "kind": "scenario",
                             "seed_id": "seed-2",
-                            "risk": "risk",
-                            "sub_risk": "node-b",
-                            "permissible": True,
-                            "definition": "def b",
+                            "concept": "concept",
+                            "factors": {"behavior": "node-b"},
                             "seed": {
                                 "title": "Title B",
                                 "description": "Description B",
                                 "system_prompt": "Prompt B",
                             },
-                            "elicitation_strategy": "escalation",
                         }
                     ),
                 ]
@@ -184,9 +175,8 @@ class SuiteResultsExportTest(unittest.TestCase):
             {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "risk": "risk",
-                "sub_risk": "node-a",
-                "permissible": False,
+                "concept": "concept",
+                "factors": {"behavior": "node-a"},
                 "target": "target-model",
                 "auditor_model": "auditor-model",
                 "stop_reason": "auditor_ended",
@@ -205,9 +195,8 @@ class SuiteResultsExportTest(unittest.TestCase):
                 {
                     "kind": "scenario",
                     "seed_id": "seed-2",
-                    "risk": "risk",
-                    "sub_risk": "node-b",
-                    "permissible": True,
+                    "concept": "concept",
+                    "factors": {"behavior": "node-b"},
                     "target": "target-model-2",
                     "auditor_model": "auditor-model-2",
                     "stop_reason": "max_turns",
@@ -224,7 +213,7 @@ class SuiteResultsExportTest(unittest.TestCase):
         score_rows = [
             self._score_row(
                 seed_id="seed-1",
-                sub_risk="node-a",
+                behavior="node-a",
                 permissible=False,
                 policy_violation=True,
                 overrefusal=False,
@@ -235,7 +224,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             ),
             self._score_row(
                 seed_id="seed-2",
-                sub_risk="node-b",
+                behavior="node-b",
                 permissible=True,
                 policy_violation=False,
                 overrefusal=True,
@@ -250,14 +239,11 @@ class SuiteResultsExportTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        metrics_path = run_a_dir / "metrics.json"
         if old_metrics:
-            metrics_path.write_text(
-                json.dumps({"overall_permissible": {}, "overall_not_permissible": {}, "by_sub_risk": []}),
+            (run_a_dir / "metrics.json").write_text(
+                json.dumps({"overall_permissible": {}, "overall_not_permissible": {}, "by_behavior": []}),
                 encoding="utf-8",
             )
-        else:
-            write_metrics(score_rows, metrics_path, policy_raw=policy_raw)
 
         scenario_sampling_dir = suite_dir / "scenario_sampling"
         scenario_sampling_dir.mkdir(parents=True, exist_ok=True)
@@ -306,6 +292,22 @@ class SuiteResultsExportTest(unittest.TestCase):
             scores_text = (export_dir / "scores.csv").read_text(encoding="utf-8")
             self.assertIn("policy_violation", scores_text)
             self.assertIn("overrefusal_justification", scores_text)
+            self.assertIn("node-a_relevant", scores_text)
+            self.assertIn("node-a_violated", scores_text)
+            self.assertIn("node-a_confidence", scores_text)
+            self.assertIn("node-a_reasoning", scores_text)
+            self.assertIn("node-b_relevant", scores_text)
+            self.assertIn("node-b_violated", scores_text)
+
+            scores_lines = scores_text.splitlines()
+            scores_reader = csv.DictReader(scores_lines)
+            score_dicts = list(scores_reader)
+            seed1_row = next(r for r in score_dicts if r["seed_id"] == "seed-1")
+            self.assertEqual(seed1_row["node-a_relevant"], "True")
+            self.assertEqual(seed1_row["node-a_violated"], "True")
+            self.assertEqual(seed1_row["node-a_confidence"], "high")
+            self.assertEqual(seed1_row["node-b_relevant"], "False")
+            self.assertEqual(seed1_row["node-b_violated"], "")
 
             relevant_text = (export_dir / "relevant_nodes.csv").read_text(encoding="utf-8")
             self.assertIn("node_violated_rate", relevant_text)
@@ -426,21 +428,223 @@ class SuiteResultsExportTest(unittest.TestCase):
             self.assertEqual(rows[1]["run_id"], "run-b")
             self.assertEqual(rows[1]["started_at"], "")
 
-    def test_export_rejects_runs_without_relevant_node_metrics(self) -> None:
+    def test_export_ignores_stale_metrics_file(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             results_root = self._write_fixture_suite(Path(tmp_dir), old_metrics=True)
 
-            with self.assertRaisesRegex(ValueError, "missing metrics.by_relevant_node"):
-                suite_export.main(
-                    [
-                        "--results-root",
-                        str(results_root),
-                        "--suite",
-                        "suite-a",
-                        "--format",
-                        "csv",
-                    ]
-                )
+            rc = suite_export.main(
+                [
+                    "--results-root",
+                    str(results_root),
+                    "--suite",
+                    "suite-a",
+                    "--format",
+                    "csv",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            relevant_text = (results_root / "suite-a" / "exports" / "relevant_nodes.csv").read_text(encoding="utf-8")
+            self.assertIn("node-a", relevant_text)
+            self.assertIn("1.0", relevant_text)
+
+    def test_build_score_metrics_excludes_failed_judgments_from_event_rates(self) -> None:
+        rows = [
+            {
+                "seed_id": "ok",
+                "concept": "concept",
+                "factors": {"behavior": "behavior"},
+                "judge_model": "judge",
+                "judge_status": "ok",
+                "judge_error": None,
+                "verdict": {
+                    "dimensions": {
+                        "policy_violation": False,
+                        "overrefusal": False,
+                    },
+                    "justification": "good",
+                    "node_judgments": [],
+                },
+            },
+            {
+                "seed_id": "bad",
+                "concept": "concept",
+                "factors": {"behavior": "behavior"},
+                "judge_model": "judge",
+                "judge_status": "judge_failed",
+                "judge_error": "judge_failed",
+                "verdict": {"error": "judge_failed"},
+            },
+        ]
+
+        metrics = suite_export._build_score_metrics(
+            rows,
+            policy_raw={
+                "concept": {"name": "concept"},
+                "behaviors": [{"name": "behavior", "definition": "def", "permissible": True}],
+            },
+        )
+        overall = metrics["overall_permissible"]
+        [node_metrics] = metrics["by_relevant_node"]
+
+        self.assertEqual(overall["count"], 2)
+        self.assertEqual(overall["scored_count"], 1)
+        self.assertEqual(overall["judge_failures"], 1)
+        self.assertEqual(overall["judge_failure_rate"], 0.5)
+        self.assertEqual(overall["policy_violation_rate"], 0.0)
+        self.assertEqual(overall["overrefusal_rate"], 0.0)
+        self.assertEqual(overall["dimensions"]["policy_violation"]["rate"], 0.0)
+        self.assertEqual(overall["dimensions"]["policy_violation"]["clear_count"], 1)
+        self.assertEqual(overall["dimensions"]["overrefusal"]["rate"], 0.0)
+        self.assertEqual(node_metrics["support"], 0)
+        self.assertEqual(node_metrics["node_violated_count"], 0)
+        self.assertEqual(node_metrics["node_violated_rate"], 0.0)
+        self.assertEqual(node_metrics["dimensions"]["policy_violation"]["count"], 0)
+        self.assertEqual(node_metrics["dimensions"]["policy_violation"]["rate"], 0.0)
+
+    def test_build_score_metrics_adds_per_node_conditional_rates(self) -> None:
+        rows = [
+            {
+                "seed_id": "row-1",
+                "concept": "concept",
+                "factors": {"behavior": "node-a"},
+                "judge_model": "judge",
+                "judge_status": "ok",
+                "judge_error": None,
+                "verdict": {
+                    "dimensions": {
+                        "policy_violation": True,
+                        "overrefusal": False,
+                    },
+                    "justification": "bad",
+                    "node_judgments": [
+                        {
+                            "node_index": 0,
+                            "node_name": "node-a",
+                            "relevant": True,
+                            "violated": True,
+                            "confidence": "high",
+                            "evidence_turns": [2],
+                            "reasoning": "bad",
+                        },
+                        {
+                            "node_index": 1,
+                            "node_name": "node-b",
+                            "relevant": False,
+                            "violated": None,
+                            "confidence": "low",
+                            "evidence_turns": [],
+                            "reasoning": "",
+                        },
+                        {
+                            "node_index": 2,
+                            "node_name": "node-c",
+                            "relevant": False,
+                            "violated": None,
+                            "confidence": "low",
+                            "evidence_turns": [],
+                            "reasoning": "",
+                        },
+                    ],
+                },
+            },
+            {
+                "seed_id": "row-2",
+                "concept": "concept",
+                "factors": {"behavior": "node-b"},
+                "judge_model": "judge",
+                "judge_status": "ok",
+                "judge_error": None,
+                "verdict": {
+                    "dimensions": {
+                        "policy_violation": False,
+                        "overrefusal": True,
+                    },
+                    "justification": "mixed",
+                    "node_judgments": [
+                        {
+                            "node_index": 0,
+                            "node_name": "node-a",
+                            "relevant": True,
+                            "violated": False,
+                            "confidence": "medium",
+                            "evidence_turns": [3],
+                            "reasoning": "mixed",
+                        },
+                        {
+                            "node_index": 1,
+                            "node_name": "node-b",
+                            "relevant": True,
+                            "violated": False,
+                            "confidence": "high",
+                            "evidence_turns": [3],
+                            "reasoning": "mixed",
+                        },
+                        {
+                            "node_index": 2,
+                            "node_name": "node-c",
+                            "relevant": False,
+                            "violated": None,
+                            "confidence": "low",
+                            "evidence_turns": [],
+                            "reasoning": "",
+                        },
+                    ],
+                },
+            },
+            {
+                "seed_id": "row-3",
+                "concept": "concept",
+                "factors": {"behavior": "node-c"},
+                "judge_model": "judge",
+                "judge_status": "judge_failed",
+                "judge_error": "judge_failed",
+                "verdict": {"error": "judge_failed"},
+            },
+        ]
+
+        metrics = suite_export._build_score_metrics(
+            rows,
+            policy_raw={
+                "concept": {"name": "concept"},
+                "behaviors": [
+                    {"name": "node-a", "definition": "def a", "permissible": False},
+                    {"name": "node-b", "definition": "def b", "permissible": True},
+                    {"name": "node-c", "definition": "def c", "permissible": False},
+                ],
+            },
+        )
+        node_a, node_b, node_c = metrics["by_relevant_node"]
+
+        self.assertEqual(node_a["node_index"], 0)
+        self.assertEqual(node_a["node_name"], "node-a")
+        self.assertFalse(node_a["permissible"])
+        self.assertEqual(node_a["support"], 2)
+        self.assertEqual(node_a["node_violated_count"], 1)
+        self.assertEqual(node_a["node_violated_rate"], 0.5)
+        self.assertEqual(node_a["dimensions"]["policy_violation"]["count"], 2)
+        self.assertEqual(node_a["dimensions"]["policy_violation"]["flagged_count"], 1)
+        self.assertEqual(node_a["dimensions"]["policy_violation"]["clear_count"], 1)
+        self.assertEqual(node_a["dimensions"]["policy_violation"]["rate"], 0.5)
+        self.assertEqual(node_a["dimensions"]["overrefusal"]["rate"], 0.5)
+
+        self.assertEqual(node_b["node_index"], 1)
+        self.assertEqual(node_b["support"], 1)
+        self.assertEqual(node_b["node_violated_count"], 0)
+        self.assertEqual(node_b["node_violated_rate"], 0.0)
+        self.assertEqual(node_b["dimensions"]["policy_violation"]["count"], 1)
+        self.assertEqual(node_b["dimensions"]["policy_violation"]["rate"], 0.0)
+        self.assertEqual(node_b["dimensions"]["overrefusal"]["rate"], 1.0)
+
+        self.assertEqual(node_c["node_index"], 2)
+        self.assertEqual(node_c["node_name"], "node-c")
+        self.assertEqual(node_c["support"], 0)
+        self.assertEqual(node_c["node_violated_count"], 0)
+        self.assertEqual(node_c["node_violated_rate"], 0.0)
+        self.assertEqual(node_c["dimensions"]["policy_violation"]["count"], 0)
+        self.assertEqual(node_c["dimensions"]["policy_violation"]["flagged_count"], 0)
+        self.assertEqual(node_c["dimensions"]["policy_violation"]["clear_count"], 0)
+        self.assertEqual(node_c["dimensions"]["policy_violation"]["rate"], 0.0)
 
 
 class FormatHtmlValueTest(unittest.TestCase):

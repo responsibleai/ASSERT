@@ -13,31 +13,31 @@ class RuntimeContextTest(unittest.TestCase):
     def test_load_runtime_context_supports_target_strings(self) -> None:
         context = load_runtime_context(
             {
-                "suite_id": "suite-a",
-                "run_id": "run-a",
-                "risk": "harmful_medical_advice",
+                "suite": "suite-a",
+                "run": "run-a",
+                "concept": {"name": "harmful_medical_advice"},
                 "pipeline": {
                     "seeds": {"prompt": {"model": {"name": "azure/gpt-5.4"}}},
                     "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
-                    "judge": {"judge": {"model": {"name": "azure/gpt-5.4"}}},
+                    "judge": {"model": {"name": "azure/gpt-5.4"}},
                 },
             },
             Path("examples/pipes/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
-        self.assertEqual(context["target"].model, "azure/gpt-5.4")
+        self.assertEqual(context["target"].model.name, "azure/gpt-5.4")
         self.assertEqual(context["run_id"], "run-a")
 
     def test_load_runtime_context_rejects_missing_rollout_target(self) -> None:
         with self.assertRaisesRegex(ConfigError, "pipeline.rollout.target is required"):
             load_runtime_context(
                 {
-                    "suite_id": "suite-a",
-                    "risk": "harmful_medical_advice",
+                    "suite": "suite-a",
+                    "concept": {"name": "harmful_medical_advice"},
                     "pipeline": {
                         "rollout": {"seed_path": "seeds.jsonl"},
-                        "judge": {"judge": {"model": {"name": "azure/gpt-5.4"}}},
+                        "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
                 Path("examples/pipes/health_assistant.yaml"),
@@ -45,23 +45,136 @@ class RuntimeContextTest(unittest.TestCase):
             )
 
     def test_load_runtime_context_allows_disabled_stage_family(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            cfg_path = Path(tmp_dir) / "config.yaml"
+            (cfg_path.parent / "concept.md").write_text(
+                "Help with harmful medical advice.",
+                encoding="utf-8",
+            )
+            context = load_runtime_context(
+                {
+                    "suite": "suite-a",
+                    "concept": {"name": "harmful_medical_advice"},
+                    "pipeline": {
+                        "policy": {"enabled": False, "model": {"name": "azure/gpt-5.4"}},
+                        "design": {},
+                    },
+                },
+                cfg_path,
+                stage_modules=STAGES,
+            )
+
+            self.assertEqual(
+                [stage_name for stage_name, _ in context["stages"]],
+                ["policy", "design"],
+            )
+
+    def test_load_runtime_context_allows_disabled_rollout_without_target(self) -> None:
         context = load_runtime_context(
             {
-                "suite_id": "suite-a",
-                "risk": "harmful_medical_advice",
+                "suite": "suite-a",
                 "pipeline": {
-                    "policy": {"enabled": False, "model": {"name": "azure/gpt-5.4"}},
-                    "systematization": {"concept": "harmful medical advice"},
+                    "rollout": {"enabled": False, "seed_path": "seeds.jsonl"},
                 },
             },
             Path("examples/pipes/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
-        self.assertEqual(
-            [stage_name for stage_name, _ in context["stages"]],
-            ["policy", "systematization"],
+        self.assertIsNone(context["target"])
+        self.assertIsNone(context["evaluation"])
+        self.assertIsNone(context["run_id"])
+
+    def test_load_runtime_context_allows_disabled_judge_without_judge_config(self) -> None:
+        context = load_runtime_context(
+            {
+                "suite": "suite-a",
+                "pipeline": {
+                    "judge": {"enabled": False, "transcripts_path": "transcripts.jsonl"},
+                },
+            },
+            Path("examples/pipes/health_assistant.yaml"),
+            stage_modules=STAGES,
         )
+
+        self.assertIsNone(context["evaluation"])
+        self.assertIsNone(context["run_id"])
+
+class IdentifierValidationTest(unittest.TestCase):
+    """Tests for _validate_identifier and path confinement in config.py."""
+
+    _BASE_CONFIG = {
+        "concept": {"name": "harmful_medical_advice"},
+        "pipeline": {
+            "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
+            "judge": {"model": {"name": "azure/gpt-5.4"}},
+        },
+    }
+
+    def _load(self, **overrides):
+        raw = {**self._BASE_CONFIG, **overrides}
+        return load_runtime_context(
+            raw,
+            Path("examples/pipes/health_assistant.yaml"),
+            stage_modules=STAGES,
+        )
+
+    def test_valid_suite_and_run_ids(self) -> None:
+        ctx = self._load(suite="my-suite.v1", run="run_2026")
+        self.assertEqual(ctx["suite_id"], "my-suite.v1")
+        self.assertEqual(ctx["run_id"], "run_2026")
+
+    def test_autogenerated_suite_id_passes(self) -> None:
+        ctx = self._load()
+        self.assertTrue(ctx["suite_id"].startswith("eval-"))
+
+    def test_rejects_suite_id_with_path_traversal(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="../escape")
+
+    def test_rejects_suite_id_with_slash(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="a/b")
+
+    def test_rejects_absolute_suite_id(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="/etc/passwd")
+
+    def test_empty_suite_id_falls_back_to_autogenerated(self) -> None:
+        ctx = self._load(suite="")
+        self.assertTrue(ctx["suite_id"].startswith("eval-"))
+
+    def test_rejects_old_suite_and_run_keys(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported field\\(s\\): run_id, suite_id"):
+            load_runtime_context(
+                {
+                    "suite_id": "suite-a",
+                    "run_id": "run-a",
+                    "concept": {"name": "harmful_medical_advice"},
+                    "pipeline": {
+                        "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
+                        "judge": {"model": {"name": "azure/gpt-5.4"}},
+                    },
+                },
+                Path("examples/pipes/health_assistant.yaml"),
+                stage_modules=STAGES,
+            )
+
+    def test_rejects_run_id_with_traversal(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="suite-a", run="../../etc")
+
+    def test_rejects_overlong_suite_id(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="a" * 256)
+
+    def test_rejects_suite_id_starting_with_dot(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite=".hidden")
+
+    def test_rejects_concept_with_traversal(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._load(suite="suite-a", concept={"name": "../../../etc/passwd"})
 
 
 class RunnerManifestTest(unittest.TestCase):
@@ -80,31 +193,29 @@ class RunnerManifestTest(unittest.TestCase):
             cfg_path.write_text(
                 "\n".join(
                     [
-                        "suite_id: suite-a",
-                        "run_id: run-a",
+                        "suite: suite-a",
+                        "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "risk: harmful_medical_advice",
+                        "concept:",
+                        "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
-                        "    judge:",
-                        "      model:",
-                        "        name: azure/gpt-5.4",
+                        "    model:",
+                        "      name: azure/gpt-5.4",
                         f"    transcripts_path: {transcripts_path}",
                     ]
                 ),
                 encoding="utf-8",
             )
+            (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
                 run_root.mkdir(parents=True, exist_ok=True)
                 scores = run_root / "scores.jsonl"
-                metrics = run_root / "metrics.json"
                 scores.write_text("", encoding="utf-8")
-                metrics.write_text("{}", encoding="utf-8")
                 return {
                     "scores_path": str(scores),
-                    "metrics_path": str(metrics),
                 }
 
             with patch("p2m.stages.judge.run_judge", new=fake_run_judge):

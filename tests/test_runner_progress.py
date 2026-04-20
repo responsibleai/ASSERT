@@ -11,6 +11,9 @@ from p2m.runner import run_pipeline
 
 
 class RunnerProgressTest(unittest.TestCase):
+    def _write_concept_markdown(self, root: Path) -> None:
+        (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+
     def test_run_pipeline_writes_minimal_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -23,31 +26,29 @@ class RunnerProgressTest(unittest.TestCase):
             cfg_path.write_text(
                 "\n".join(
                     [
-                        "suite_id: suite-a",
-                        "run_id: run-a",
+                        "suite: suite-a",
+                        "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "risk: harmful_medical_advice",
+                        "concept:",
+                        "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
-                        "    judge:",
-                        "      model:",
-                        "        name: azure/gpt-5.4",
+                        "    model:",
+                        "      name: azure/gpt-5.4",
                         f"    transcripts_path: {transcripts_path}",
                     ]
                 ),
                 encoding="utf-8",
             )
+            self._write_concept_markdown(root)
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
                 run_root.mkdir(parents=True, exist_ok=True)
                 scores = run_root / "scores.jsonl"
-                metrics = run_root / "metrics.json"
                 scores.write_text("", encoding="utf-8")
-                metrics.write_text("{}", encoding="utf-8")
                 return {
                     "scores_path": str(scores),
-                    "metrics_path": str(metrics),
                 }
 
             with patch("p2m.stages.judge.run_judge", new=fake_run_judge):
@@ -71,13 +72,35 @@ class RunnerProgressTest(unittest.TestCase):
             cfg_path.write_text(
                 "\n".join(
                     [
-                        "suite_id: suite-a",
-                        "run_id: run-a",
+                        "suite: suite-a",
+                        "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "risk: harmful_medical_advice",
+                        "concept:",
+                        "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
-                        "    judge:",
+                        "    model:",
+                        "      name: azure/gpt-5.4",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self._write_concept_markdown(root)
+
+            self.assertEqual(run_pipeline(config=str(cfg_path)), 1)
+
+    def test_run_pipeline_reports_old_config_keys_as_config_errors(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            cfg_path = root / "config.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        "suite_id: suite-a",
+                        "run_id: run-a",
+                        "pipeline:",
+                        "  rollout:",
+                        "    target:",
                         "      model:",
                         "        name: azure/gpt-5.4",
                     ]
@@ -85,10 +108,37 @@ class RunnerProgressTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            self.assertEqual(run_pipeline(config=str(cfg_path)), 1)
+            with patch("sys.stderr", new_callable=io.StringIO) as fake_err:
+                rc = run_pipeline(config=str(cfg_path))
 
+            self.assertEqual(rc, 1)
+            self.assertIn("[config error]", fake_err.getvalue())
+            self.assertIn("run_id, suite_id", fake_err.getvalue())
 
-    # ── helpers ──────────────────────────────────────────────────
+    def test_run_pipeline_allows_existing_run_directory_with_resume(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            cfg_path = self._make_judge_config(root)
+            run_root = root / "results" / "suite-a" / "run-a"
+            run_root.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(cfg_path, run_root / "config.yaml")
+
+            fake_judge = self._make_fake_run_judge(root)
+            with patch("p2m.stages.judge.run_judge", new=fake_judge):
+                rc = run_pipeline(config=str(cfg_path), resume=True)
+            self.assertEqual(rc, 0)
+
+    def test_run_pipeline_rejects_resume_with_changed_config(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            cfg_path = self._make_judge_config(root)
+            run_root = root / "results" / "suite-a" / "run-a"
+            run_root.mkdir(parents=True, exist_ok=True)
+            (run_root / "config.yaml").write_text("different: config\n", encoding="utf-8")
+
+            rc = run_pipeline(config=str(cfg_path), resume=True)
+            self.assertEqual(rc, 1)
 
     def _make_judge_config(self, root: Path) -> Path:
         """Return path to a minimal config with one judge stage."""
@@ -103,20 +153,21 @@ class RunnerProgressTest(unittest.TestCase):
         cfg_path.write_text(
             "\n".join(
                 [
-                    "suite_id: suite-a",
-                    "run_id: run-a",
+                    "suite: suite-a",
+                    "run: run-a",
                     f"results_dir: {root / 'results'}",
-                    "risk: harmful_medical_advice",
+                    "concept:",
+                    "  name: harmful_medical_advice",
                     "pipeline:",
                     "  judge:",
-                    "    judge:",
-                    "      model:",
-                    "        name: azure/gpt-5.4",
+                    "    model:",
+                    "      name: azure/gpt-5.4",
                     f"    transcripts_path: {transcripts_path}",
                 ]
             ),
             encoding="utf-8",
         )
+        self._write_concept_markdown(root)
         return cfg_path
 
     def _make_fake_run_judge(self, root: Path):
@@ -125,12 +176,9 @@ class RunnerProgressTest(unittest.TestCase):
             run_root = root / "results" / "suite-a" / "run-a"
             run_root.mkdir(parents=True, exist_ok=True)
             scores = run_root / "scores.jsonl"
-            metrics = run_root / "metrics.json"
             scores.write_text("", encoding="utf-8")
-            metrics.write_text("{}", encoding="utf-8")
             return {
                 "scores_path": str(scores),
-                "metrics_path": str(metrics),
             }
         return fake_run_judge
 
@@ -187,12 +235,9 @@ class RunnerProgressTest(unittest.TestCase):
 
                 run_root = manifest_path.parent
                 scores = run_root / "scores.jsonl"
-                metrics = run_root / "metrics.json"
                 scores.write_text("", encoding="utf-8")
-                metrics.write_text("{}", encoding="utf-8")
                 return {
                     "scores_path": str(scores),
-                    "metrics_path": str(metrics),
                 }
 
             with patch("p2m.stages.judge.run_judge", new=spy_run_judge):

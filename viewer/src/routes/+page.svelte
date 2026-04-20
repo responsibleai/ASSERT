@@ -17,7 +17,7 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.risk_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') {
@@ -26,7 +26,7 @@
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.risk_name.localeCompare(b.risk_name);
+			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -39,7 +39,7 @@
 	<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 		<div>
 			<h1 class="text-xl font-semibold tracking-tight">Measurement Suites</h1>
-			<p class="mt-1 text-sm text-text-muted">Browse risk policies, seeds, and measurement results.</p>
+			<p class="mt-1 text-sm text-text-muted">Browse concept policies, seeds, and measurement results.</p>
 		</div>
 	</div>
 </div>
@@ -153,7 +153,7 @@
 			<div class="flex items-start justify-between gap-3">
 				<div class="min-w-0">
 					<p class="truncate font-mono text-[10px] uppercase tracking-wider text-text-muted">{suite.suite_id}</p>
-					<h2 class="mt-1 text-sm font-semibold text-text group-hover:text-interactive">{suite.risk_name}</h2>
+					<h2 class="mt-1 text-sm font-semibold text-text group-hover:text-interactive">{suite.concept_name}</h2>
 				</div>
 				<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {statusConfig[suite.status].class}">
 					<span>{statusConfig[suite.status].icon}</span>
@@ -163,7 +163,7 @@
 			<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-bg/60 px-3 py-2">
 				<div>
 					<div class="text-[10px] uppercase tracking-wider text-text-muted">Categories</div>
-					<div class="mt-1 text-sm text-text-secondary">{suite.sub_risk_count}</div>
+					<div class="mt-1 text-sm text-text-secondary">{suite.behavior_count}</div>
 				</div>
 				<div>
 					<div class="text-[10px] uppercase tracking-wider text-text-muted">Seeds</div>

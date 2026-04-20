@@ -7,11 +7,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from p2m.config import resolve_stage_paths
 from p2m.core.config_model import (
     DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
     DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE,
     DEFAULT_SYSTEMATIZATION_MODEL,
+    ModelConfig,
 )
 from p2m.core.model_client import GenerateOptions, generate_structured
 from p2m.stages.policy import policy_schema
@@ -20,9 +20,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 GUIDELINE_PROMPT = (BASE_DIR / "prompts" / "systematization_convert_single.md").read_text()
 
 POLICY_SCHEMA: dict[str, Any] = policy_schema()
-SCOPE = "suite"
-SUITE_OUTPUT = "policy.json"
-DEFAULT_SUB_RISK_COUNT_HINT = 30
+DEFAULT_BEHAVIOR_COUNT_HINT = 30
 
 
 def _require_nonempty_string(value: Any, *, field: str) -> str:
@@ -67,48 +65,49 @@ def _normalize_definition_of_terms(payload: Any) -> list[dict[str, Any]]:
     return terms
 
 
-def _normalize_sub_risks(payload: Any) -> list[dict[str, Any]]:
+def _normalize_behaviors(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
-        raise ValueError("systematization_convert returned invalid sub_risks")
-    sub_risks = []
-    for sub_risk_payload in payload:
-        if not isinstance(sub_risk_payload, dict):
-            raise ValueError("systematization_convert returned invalid sub_risks")
-        permissible = sub_risk_payload.get("permissible")
+        raise ValueError("systematization_convert returned invalid behaviors")
+    behaviors = []
+    for behavior_payload in payload:
+        if not isinstance(behavior_payload, dict):
+            raise ValueError("systematization_convert returned invalid behaviors")
+        permissible = behavior_payload.get("permissible")
         if not isinstance(permissible, bool):
-            raise ValueError("systematization_convert returned invalid sub_risks.permissible")
-        sub_risks.append(
+            raise ValueError("systematization_convert returned invalid behaviors.permissible")
+        behaviors.append(
             {
-                "name": _require_nonempty_string(sub_risk_payload.get("name"), field="sub_risks.name"),
+                "name": _require_nonempty_string(behavior_payload.get("name"), field="behaviors.name"),
                 "definition": _require_nonempty_string(
-                    sub_risk_payload.get("definition"),
-                    field="sub_risks.definition",
+                    behavior_payload.get("definition"),
+                    field="behaviors.definition",
                 ),
                 "examples": _require_examples(
-                    sub_risk_payload.get("examples"),
-                    field="sub_risks.examples",
+                    behavior_payload.get("examples"),
+                    field="behaviors.examples",
                 ),
                 "permissible": permissible,
             }
         )
-    if not sub_risks:
-        raise ValueError("systematization_convert returned no sub_risks")
-    return sub_risks
+    if not behaviors:
+        raise ValueError("systematization_convert returned no behaviors")
+    return behaviors
 
 
 async def run_systematization_to_policy(
     *,
     systematization_path: str,
-    save_path: str = f"artifacts/taxonomies/{SUITE_OUTPUT}",
-    model: str | None = None,
-    max_tokens: int | None = None,
-    temperature: float | None = None,
-    sub_risk_count_hint: int = DEFAULT_SUB_RISK_COUNT_HINT,
+    save_path: str = "artifacts/taxonomies/policy.json",
+    model_cfg: ModelConfig | None = None,
+    behavior_count_hint: int = DEFAULT_BEHAVIOR_COUNT_HINT,
 ) -> Path:
     """Convert the systematization artifact into the policy JSON artifact."""
-    model = model or DEFAULT_SYSTEMATIZATION_MODEL
-    max_tokens = max_tokens if max_tokens is not None else DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS
-    temperature = temperature if temperature is not None else DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE
+    if model_cfg is None:
+        model_cfg = ModelConfig(
+            name=DEFAULT_SYSTEMATIZATION_MODEL,
+            temperature=DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE,
+            max_tokens=DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
+        )
     data_path = Path(systematization_path).expanduser()
     if not data_path.is_absolute():
         data_path = BASE_DIR / data_path
@@ -124,39 +123,44 @@ async def run_systematization_to_policy(
         raise ValueError("systematization_convert requires summary_items to be a list when present")
 
     prompt = (
-        GUIDELINE_PROMPT.replace("{{sub_risk_count}}", str(sub_risk_count_hint))
+        GUIDELINE_PROMPT.replace("{{behavior_count}}", str(behavior_count_hint))
         + "\n\n# SYSTEMATIZATION\n"
         + systematization_text
     )
     if summary_items:
         prompt += "\n\n# SUMMARY ITEMS\n" + json.dumps(summary_items, ensure_ascii=False, indent=2)
+    temperature = model_cfg.temperature
+    # Reasoning models don't support temperature
+    if model_cfg.reasoning_effort is not None:
+        temperature = None
     response = await generate_structured(
-        model,
+        model_cfg.name,
         prompt,
         schema_name="policy",
         json_schema=POLICY_SCHEMA,
         options=GenerateOptions(
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=model_cfg.max_tokens,
+            reasoning_effort=model_cfg.reasoning_effort,
         ),
     )
     policy_payload = response.parsed
     if not isinstance(policy_payload, dict) or not policy_payload:
         raise ValueError("systematization_convert returned no structured policy")
 
-    risk = policy_payload.get("risk")
-    if not isinstance(risk, dict):
-        raise ValueError("systematization_convert returned invalid risk")
-    risk_definition = _require_nonempty_string(risk.get("definition"), field="risk.definition")
+    concept_block = policy_payload.get("concept")
+    if not isinstance(concept_block, dict):
+        raise ValueError("systematization_convert returned invalid concept")
+    concept_definition = _require_nonempty_string(concept_block.get("definition"), field="concept.definition")
     terms = _normalize_definition_of_terms(policy_payload.get("definition_of_terms"))
-    sub_risks = _normalize_sub_risks(policy_payload.get("sub_risks"))
+    behaviors = _normalize_behaviors(policy_payload.get("behaviors"))
     policy = {
-        "risk": {
+        "concept": {
             "name": concept,
-            "definition": risk_definition,
+            "definition": concept_definition,
         },
         "definition_of_terms": terms,
-        "sub_risks": sub_risks,
+        "behaviors": behaviors,
         "meta": {
             "source": "systematization",
             "systematization_path": systematization_path,
@@ -170,29 +174,3 @@ async def run_systematization_to_policy(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
-
-
-async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Validate config and run the systematization conversion workflow."""
-    cfg = resolve_stage_paths(
-        {
-            "systematization_path": raw_cfg.get("systematization_path")
-            or str(Path(ctx["suite_root"]) / "systematization.json"),
-            "save_path": raw_cfg.get("save_path") or str(Path(ctx["suite_root"]) / SUITE_OUTPUT),
-            "model": raw_cfg.get("model"),
-            "max_tokens": raw_cfg.get("max_tokens", DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS),
-            "temperature": raw_cfg.get("temperature", DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE),
-            "sub_risk_count_hint": raw_cfg.get("sub_risk_count_hint", DEFAULT_SUB_RISK_COUNT_HINT),
-        },
-        cfg_path=ctx["config_path"],
-        artifacts_root=ctx["artifacts_root"],
-    )
-    generated_path = await run_systematization_to_policy(
-        systematization_path=cfg["systematization_path"],
-        save_path=cfg["save_path"],
-        model=cfg.get("model"),
-        max_tokens=cfg["max_tokens"],
-        temperature=cfg["temperature"],
-        sub_risk_count_hint=int(cfg["sub_risk_count_hint"]),
-    )
-    return {"policy_generated_path": str(generated_path.resolve())}

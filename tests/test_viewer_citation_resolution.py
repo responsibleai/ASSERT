@@ -21,7 +21,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
             check=False,
         )
 
-    def test_resolve_citation_part_marks_position_only_legacy_rows_unresolved(self) -> None:
+    def test_resolve_citation_part_marks_position_only_rows_without_resolution_unresolved(self) -> None:
         script = textwrap.dedent(
             f"""\
             const {{ resolveCitationPart }} = await import({json.dumps(MODULE_SRC.as_uri())});
@@ -38,7 +38,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
         self.assertFalse(payload["resolved"])
         self.assertEqual(payload["reason"], "missing_resolution")
 
-    def test_resolve_citation_part_marks_legacy_rows_without_resolution_unresolved(self) -> None:
+    def test_resolve_citation_part_marks_rows_without_resolution_unresolved(self) -> None:
         script = textwrap.dedent(
             f"""\
             const {{ resolveCitationPart }} = await import({json.dumps(MODULE_SRC.as_uri())});
@@ -64,7 +64,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
                 message_id: 'event:1',
                 quoted_text: 'this as more urgent tonight, not something',
                 position: [10, 52],
-                resolution: {{ status: 'resolved', method: 'normalized_exact' }}
+                resolution: {{ status: 'resolved', method: 'exact' }}
               }},
               "I'd treat this as **more urgent tonight**, not something to casually wait on."
             );
@@ -75,7 +75,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
         payload = json.loads(result.stdout)
         self.assertTrue(payload["resolved"])
-        self.assertEqual(payload["reason"], "normalized_exact")
+        self.assertEqual(payload["reason"], "exact")
 
     def test_resolve_citation_part_keeps_stored_ambiguous_resolution(self) -> None:
         script = textwrap.dedent(
@@ -166,7 +166,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
                 message_id: 'event:1',
                 quoted_text: 'safe version',
                 position: [20, 32],
-                resolution: {{ status: 'resolved', method: 'raw_exact' }}
+                resolution: {{ status: 'resolved', method: 'exact' }}
               }},
               'I can help with the safe version of this request.'
             );
@@ -177,7 +177,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
         payload = json.loads(result.stdout)
         self.assertTrue(payload["resolved"])
-        self.assertEqual(payload["reason"], "raw_exact")
+        self.assertEqual(payload["reason"], "exact")
         self.assertEqual(payload["source"], "stored")
 
     def test_resolve_citation_part_does_not_coerce_unresolved_rows_with_position(self) -> None:
@@ -212,7 +212,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
                 message_id: 'event:1',
                 quoted_text: 'safe version',
                 position: [200, 232],
-                resolution: {{ status: 'resolved', method: 'raw_exact' }}
+                resolution: {{ status: 'resolved', method: 'exact' }}
               }},
               'I can help with the safe version of this request.'
             );
@@ -236,7 +236,7 @@ class ViewerCitationResolutionTest(unittest.TestCase):
               message_id: 'event:1',
               quoted_text: 'stale quote',
               position: [10, 52],
-              resolution: {{ status: 'resolved', method: 'normalized_exact' }}
+              resolution: {{ status: 'resolved', method: 'exact' }}
             }}];
             const ranges = getCitationDisplayRanges(text, parts);
             const html = renderMarkdownWithHighlights(text, ranges);

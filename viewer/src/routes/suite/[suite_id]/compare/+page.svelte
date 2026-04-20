@@ -19,7 +19,7 @@ const RUN_COLORS = ['#a78bfa', '#60a5fa', '#2dd4bf', '#fbbf24'];
 // Baseline is always the first run
 let baselineIdx = $state(0);
 
-// Expanded sub-risk rows
+// Expanded behavior rows
 let expandedRows = $state<Set<string>>(new Set());
 
 // "Disagreements only" filter
@@ -39,14 +39,14 @@ let sortedComparisons = $derived.by(() => {
 	);
 });
 
-function toggleRow(subrisk: string) {
+function toggleRow(behavior: string) {
 	const next = new Set(expandedRows);
-	if (next.has(subrisk)) next.delete(subrisk);
-	else next.add(subrisk);
+	if (next.has(behavior)) next.delete(behavior);
+	else next.add(behavior);
 	expandedRows = next;
 }
 
-// Show-all tracker per sub-risk
+// Show-all tracker per behavior
 let showAllMap = $state<Record<string, boolean>>({});
 
 function rateColor(rate: number): string {
@@ -81,9 +81,9 @@ function deltaArrow(d: number): string {
 
 let runIds = $derived(data.runs.map((run) => run.run_id));
 
-function getMatchedSamples(subrisk: string) {
+function getMatchedSamples(behavior: string) {
 	return buildMatchedSampleRows(
-		data.samplesBySubrisk[subrisk] ?? {},
+		data.samplesByBehavior[behavior] ?? {},
 		runIds,
 		activeMetric,
 		disagreementsOnly
@@ -139,7 +139,7 @@ function sampleGridMinWidth(runCount: number): string {
 		<h1 class="text-lg font-semibold text-text">
 			Comparing {data.runs.length} runs
 			<span class="text-text-muted font-normal">on</span>
-			<span class="text-interactive">{data.policy?.risk?.name ?? data.suite_id}</span>
+			<span class="text-interactive">{data.policy?.concept?.name ?? data.suite_id}</span>
 		</h1>
 
 		<div class="flex flex-wrap gap-3">
@@ -264,10 +264,10 @@ function sampleGridMinWidth(runCount: number): string {
 		</div>
 	</section>
 
-	<!-- ═══ SECTION 3: Sub-Risk Heatmap ═══ -->
+	<!-- ═══ SECTION 3: Behavior Heatmap ═══ -->
 	<section class="space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">By Sub-Risk</h2>
+			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">By Behavior</h2>
 
 			<!-- Disagreements toggle -->
 			<label class="flex items-center gap-2 cursor-pointer select-none">
@@ -289,7 +289,7 @@ function sampleGridMinWidth(runCount: number): string {
 			<div class="min-w-max" style="min-width: {comparisonTableMinWidth(data.runs.length)};">
 				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-[10px] font-semibold uppercase tracking-wider text-text-muted border-b border-border"
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
-					<span>Sub-risk</span>
+					<span>Behavior</span>
 					{#each data.runs as run, i}
 						<span class="text-center" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
 					{/each}
@@ -297,29 +297,26 @@ function sampleGridMinWidth(runCount: number): string {
 				</div>
 
 				<!-- Rows -->
-				{#each sortedComparisons as row (row.subrisk)}
-					{@const isExpanded = expandedRows.has(row.subrisk)}
-					{@const matched = isExpanded ? getMatchedSamples(row.subrisk) : []}
-					{@const showAll = showAllMap[row.subrisk] ?? false}
+				{#each sortedComparisons as row (row.behavior)}
+					{@const isExpanded = expandedRows.has(row.behavior)}
+					{@const matched = isExpanded ? getMatchedSamples(row.behavior) : []}
+					{@const showAll = showAllMap[row.behavior] ?? false}
 					{@const displaySamples = showAll ? matched : matched.slice(0, 3)}
 					{@const rowDelta = row.deltas[activeMetric] ?? 0}
 
 					<div class="border-b border-border/50 last:border-b-0">
 						<!-- Row -->
 						<button
-							onclick={() => toggleRow(row.subrisk)}
+							onclick={() => toggleRow(row.behavior)}
 							class="w-full grid items-center gap-2 px-4 py-3 text-left transition-colors duration-150 hover:bg-white/[0.02] cursor-pointer"
 							style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};"
 						>
-						<!-- Sub-risk name -->
+						<!-- Behavior name -->
 						<div class="flex items-center gap-2 min-w-0">
 							<svg class="h-3 w-3 flex-shrink-0 text-text-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
 							</svg>
-							<span class="text-xs text-text-secondary truncate">{row.subrisk}</span>
-							{#if row.permissible}
-								<span class="flex-shrink-0 rounded px-1 py-0.5 text-[8px] font-semibold uppercase bg-score-pass/10 text-score-pass">permissible</span>
-							{/if}
+							<span class="text-xs text-text-secondary truncate">{row.behavior}</span>
 						</div>
 
 						<!-- Score cells -->
@@ -351,7 +348,7 @@ function sampleGridMinWidth(runCount: number): string {
 								<div class="border-t border-border/30 bg-white/[0.01] px-4 py-4 space-y-3">
 									{#if matched.length === 0}
 										<div class="text-xs text-text-muted text-center py-4">
-											{disagreementsOnly ? 'No disagreements for this sub-risk' : 'No samples'}
+											{disagreementsOnly ? 'No disagreements for this behavior' : 'No samples'}
 										</div>
 									{:else}
 										{#each displaySamples as pair, pairIdx (pair.prompt)}
@@ -418,7 +415,7 @@ function sampleGridMinWidth(runCount: number): string {
 										<!-- Show all toggle -->
 										{#if matched.length > 3 && !showAll}
 											<button
-												onclick={() => { showAllMap[row.subrisk] = true; }}
+												onclick={() => { showAllMap[row.behavior] = true; }}
 												class="w-full rounded-lg border border-border/30 py-2 text-[11px] text-text-muted hover:text-interactive hover:border-interactive/30 transition-colors"
 											>
 												Show all {matched.length} samples
@@ -433,7 +430,7 @@ function sampleGridMinWidth(runCount: number): string {
 
 				{#if data.comparisons.length === 0}
 					<div class="px-4 py-10 text-center text-xs text-text-muted">
-						No sub-risk data to compare
+						No behavior data to compare
 					</div>
 				{/if}
 			</div>

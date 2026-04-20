@@ -18,11 +18,11 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             return ModelResponse(
                 text=json.dumps(
                     {
-                        "risk": {"name": "Risk", "definition": "Definition"},
+                        "concept": {"name": "Risk", "definition": "Definition"},
                         "definition_of_terms": [],
-                        "sub_risks": [
+                        "behaviors": [
                             {
-                                "name": f"sub-risk-{idx}",
+                                "name": f"behavior-{idx}",
                                 "definition": f"definition-{idx}",
                                 "examples": [f"example-{idx}"],
                                 "permissible": False,
@@ -32,11 +32,11 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ),
                 parsed={
-                    "risk": {"name": "Risk", "definition": "Definition"},
+                    "concept": {"name": "Risk", "definition": "Definition"},
                     "definition_of_terms": [],
-                    "sub_risks": [
+                    "behaviors": [
                         {
-                            "name": f"sub-risk-{idx}",
+                            "name": f"behavior-{idx}",
                             "definition": f"definition-{idx}",
                             "examples": [f"example-{idx}"],
                             "permissible": False,
@@ -50,7 +50,7 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             with patch("p2m.stages.policy.generate_structured", new=fake_generate_structured):
                 result = await run_policy(
-                    risk="Harmful advice",
+                    concept="Harmful advice",
                     model="azure/gpt-5.4",
                     save_dir=tmp_dir,
                 )
@@ -71,11 +71,11 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             return ModelResponse(
                 text=json.dumps(
                     {
-                        "risk": {"name": "Risk", "definition": "Definition"},
+                        "concept": {"name": "Risk", "definition": "Definition"},
                         "definition_of_terms": [],
-                        "sub_risks": [
+                        "behaviors": [
                             {
-                                "name": f"sub-risk-{idx}",
+                                "name": f"behavior-{idx}",
                                 "definition": f"definition-{idx}",
                                 "examples": [f"example-{idx}"],
                                 "permissible": False,
@@ -85,11 +85,11 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ),
                 parsed={
-                    "risk": {"name": "Risk", "definition": "Definition"},
+                    "concept": {"name": "Risk", "definition": "Definition"},
                     "definition_of_terms": [],
-                    "sub_risks": [
+                    "behaviors": [
                         {
-                            "name": f"sub-risk-{idx}",
+                            "name": f"behavior-{idx}",
                             "definition": f"definition-{idx}",
                             "examples": [f"example-{idx}"],
                             "permissible": False,
@@ -103,12 +103,12 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             with patch("p2m.stages.policy.generate_structured", new=fake_generate_structured):
                 result = await run_policy(
-                    risk="Harmful advice",
+                    concept="Harmful advice",
                     model="azure/gpt-5.4",
                     save_dir=tmp_dir,
                 )
 
             self.assertEqual(calls, ["policy"])
-            self.assertEqual(result["policy"]["risk"]["name"], "Risk")
+            self.assertEqual(result["policy"]["concept"]["name"], "Risk")
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
   "click>=8.0",
   "litellm>=1.79.1",
+  "matplotlib>=3.10.8",
   "pydantic>=2.0",
   "PyYAML>=6.0",
   "rapidfuzz>=3.9.0",
@@ -15,11 +16,13 @@ dependencies = [
 
 [project.optional-dependencies]
 analysis = [
-  "matplotlib>=3.8.0",
+  "markdown-it-py>=3.0.0",
   "numpy>=2.0.0",
   "openai>=1.30.0",
   "openpyxl>=3.1.5",
   "pandas>=2.2.0",
+  "requests>=2.32.0",
+  "scikit-learn>=1.5.0",
   "seaborn>=0.13.0",
   "sentence-transformers>=3.0.0",
 ]

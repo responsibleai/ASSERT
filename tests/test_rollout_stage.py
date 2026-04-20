@@ -10,6 +10,7 @@ from p2m.core.io import load_seeds
 from p2m.core.model_client import Message, ModelResponse
 from p2m.core.session import TurnResult
 from p2m.stages.rollout import _prepare_seeds, run_rollout
+from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
 class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
@@ -107,9 +108,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             "kind": "prompt",
             "seed_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
         }
         captured_messages: list[Message] = []
 
@@ -161,9 +161,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 "description": "seed prompt",
                 "system_prompt": "Per-seed prompt",
             },
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
         }
         captured_messages: list[Message] = []
 
@@ -206,14 +205,64 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_messages[0].role, "system")
         self.assertEqual(captured_messages[0].content, "Per-seed prompt")
 
+    async def test_run_rollout_fails_when_viewer_artifact_build_fails(self) -> None:
+        seed_row = {
+            "kind": "prompt",
+            "seed_id": "seed-1",
+            "seed": {"description": "seed prompt"},
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
+        }
+
+        class FakeSession:
+            runtime_mode = "chat"
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def run_turn(self, initial_messages):
+                return TurnResult(
+                    text="model response",
+                    state_messages=list(initial_messages) + [Message(role="assistant", content="model response")],
+                    interaction_messages=[
+                        {"role": "user", "content": "seed prompt"},
+                        {"role": "assistant", "content": "model response"},
+                    ],
+                    raw={"response": {"content": "model response"}},
+                )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+
+            with (
+                patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()),
+                patch(
+                    "p2m.stages.rollout.build_run_viewer_artifacts",
+                    side_effect=ViewerReadModelBuildError("viewer build failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(ViewerReadModelBuildError, "viewer build failed"):
+                    await run_rollout(
+                        seed_path=str(seed_path),
+                        target=TargetConfig(model="azure/gpt-5.4"),
+                        evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
+                        save_dir=str(out_dir),
+                        run_id="run-rollout",
+                    )
+
     async def test_run_rollout_persists_owned_llm_calls_and_links_message_ids(self) -> None:
         seed_row = {
             "kind": "prompt",
             "seed_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -275,26 +324,17 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcript_row["llm_calls"][0]["response"]["id"], "resp_1")
         self.assertEqual(transcript_row["llm_calls"][0]["message_ids"], ["event:1"])
 
-    async def test_run_rollout_records_runtime_close_error_metadata(self) -> None:
+    async def test_run_rollout_sets_runtime_close_error_stop_reason(self) -> None:
         seed_row = {
             "kind": "prompt",
             "seed_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
             runtime_mode = "tool_module"
-
-            @property
-            def session_metadata(self) -> dict[str, object]:
-                return {
-                    "session_id": "sandbox-1",
-                    "startup": {"status": "ok"},
-                    "shutdown": {"status": "failed", "error": "close failed"},
-                }
 
             async def open(self) -> None:
                 return None
@@ -333,22 +373,15 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        runtime_events = [
-            event for event in transcript_rows[0]["events"]
-            if event["edit"]["message"]["content"] == "[Runtime session metadata]"
-        ]
         self.assertEqual(transcript_rows[0]["stop_reason"], "runtime_close_error")
-        self.assertEqual(runtime_events[0]["raw"]["session"]["session_id"], "sandbox-1")
-        self.assertEqual(runtime_events[0]["raw"]["error"], "close failed")
 
     async def test_run_rollout_external_transcript_writes_minimal_rows(self) -> None:
         seed_row = {
             "kind": "prompt",
             "seed_id": "seed-1",
             "seed": {"description": "Please help", "system_prompt": "You are a health assistant."},
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "permissible": True,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
         }
 
         class FakeExternalSession:
@@ -399,10 +432,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         seed_row = {
             "kind": "scenario",
             "seed_id": "seed-1",
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "definition": "definition",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -474,14 +505,12 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             "You are a careful health assistant.",
         )
 
-    async def test_run_rollout_scenario_retries_hidden_setup_before_forwarding(self) -> None:
+    async def test_run_rollout_scenario_forwards_setup_like_text_unchanged(self) -> None:
         seed_row = {
             "kind": "scenario",
             "seed_id": "seed-1",
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "definition": "definition",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -552,16 +581,14 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             for event in transcript_rows[0]["events"]
             if "target" in event["view"] and event["edit"]["type"] == "add_message"
         ]
-        self.assertEqual(target_events[0]["edit"]["message"]["content"], "hey, can you help me figure out this headache?")
+        self.assertEqual(target_events[0]["edit"]["message"]["content"], "Be a careful health assistant for Mara.")
 
     async def test_run_rollout_scenario_keeps_setup_hidden_for_hosted_target(self) -> None:
         seed_row = {
             "kind": "scenario",
             "seed_id": "seed-1",
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "definition": "definition",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -626,10 +653,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         seed_row = {
             "kind": "scenario",
             "seed_id": "seed-1",
-            "risk": "Risk",
-            "sub_risk": "sub-risk-a",
-            "definition": "definition",
-            "permissible": False,
+            "concept": "Risk",
+            "factors": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -816,7 +841,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual([row["seed_id"] for row in transcript_rows], ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["seed_id"] for row in transcript_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
         seed_rows = [
@@ -880,7 +905,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["seed_id"] for row in final_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
         seed_rows = [
@@ -948,7 +973,97 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
 
-    async def test_run_rollout_rewrites_seed_file_with_canonical_ids(self) -> None:
+    async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
+        """Pre-populated transcripts.jsonl causes completed seeds to be skipped."""
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": "already done"}},
+            {"kind": "prompt", "seed": {"description": "still pending"}},
+        ]
+        call_log: list[str] = []
+
+        async def fake_run_prompt_seed(**kwargs):
+            seed_id = str(kwargs["seed"]["seed_id"])
+            call_log.append(seed_id)
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": seed_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            out_dir.mkdir()
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            # First run: let both seeds complete.
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    save_dir=str(out_dir),
+                    run_id="run-resume",
+                )
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(sorted(call_log), ["seed_000001", "seed_000002"])
+
+            # Second run: seed_000001 and seed_000002 already exist — nothing to do.
+            call_log.clear()
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    save_dir=str(out_dir),
+                    run_id="run-resume",
+                )
+            self.assertEqual(call_log, [], "No seeds should have been re-run")
+            self.assertEqual(result["count"], 2)
+
+    async def test_run_rollout_discards_transcripts_on_config_change(self) -> None:
+        """Changing target model invalidates existing transcripts."""
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": "a prompt"}},
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            seed_id = str(kwargs["seed"]["seed_id"])
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": seed_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(json.dumps(seed_rows[0]) + "\n", encoding="utf-8")
+
+            # First run with model A.
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/model-a"),
+                    save_dir=str(out_dir),
+                    run_id="run-cfg",
+                )
+
+            # Second run with model B — should discard and re-run.
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/model-b"),
+                    save_dir=str(out_dir),
+                    run_id="run-cfg",
+                )
+            # count is 1 (re-ran, not 2 = resumed + new)
+            self.assertEqual(result["count"], 1)
         seed_rows = [
             {"kind": "prompt", "seed": {"description": "base prompt"}},
             {
@@ -958,9 +1073,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             },
             {
                 "kind": "scenario",
-                "seed_id": "scenario-variation",
-                "parent_seed_id": "scenario-base",
-                "seed": {"title": "Variation", "description": "variation description"},
+                "seed_id": "scenario-second",
+                "seed": {"title": "Second scenario", "description": "second description"},
             },
         ]
 
@@ -1004,9 +1118,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [row["seed_id"] for row in canonical_rows],
-            ["seed_000001", "seed_000002", "seed_000002-v1"],
+            ["seed_000001", "seed_000002", "seed_000003"],
         )
-        self.assertEqual(canonical_rows[2]["parent_seed_id"], "seed_000002")
+        self.assertNotIn("parent_seed_id", canonical_rows[2])
 
 
 if __name__ == "__main__":

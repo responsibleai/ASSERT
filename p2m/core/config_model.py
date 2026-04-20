@@ -7,22 +7,39 @@ from typing import Any
 
 DEFAULT_SYSTEMATIZATION_MODEL = "azure/gpt-5.4"
 
-DEFAULT_GENERATION_TEMPERATURE = 1.0
+DEFAULT_GENERATION_TEMPERATURE = None
 DEFAULT_GENERATION_MAX_TOKENS = 3000
-DEFAULT_POLICY_TEMPERATURE = 1.0
+DEFAULT_POLICY_TEMPERATURE = None
 DEFAULT_POLICY_MAX_TOKENS = 10000
-DEFAULT_SYSTEMATIZATION_TEMPERATURE = 0.3
+DEFAULT_SYSTEMATIZATION_TEMPERATURE = None
 DEFAULT_SYSTEMATIZATION_MAX_TOKENS = None  # uncapped; model uses its own limit
-DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE = 0.0
+DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE = None
 DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS = None  # uncapped; model uses its own limit
 
 DEFAULT_ROLLOUT_MAX_TOOL_CALLS = 10
-DEFAULT_ROLLOUT_TEMPERATURE = 0.0
+DEFAULT_ROLLOUT_TEMPERATURE = None
 DEFAULT_ROLLOUT_MAX_TOKENS = 10000
 DEFAULT_ROLLOUT_CONCURRENCY = 10
 DEFAULT_AUDITOR_MAX_TURNS = 10
-DEFAULT_JUDGE_TEMPERATURE = 0.0
+DEFAULT_JUDGE_TEMPERATURE = None
 DEFAULT_JUDGE_MAX_TOKENS = 12000
+DEFAULT_MODEL_TIMEOUT_S = 300.0  # 5 minutes per API call
+
+
+def _normalize_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("expected a string value")
+    stripped = value.strip()
+    return stripped or None
+
+
+def _require_nonempty_string(value: str, *, field_name: str) -> str:
+    normalized = _normalize_optional_string(value)
+    if normalized is None:
+        raise ValueError(f"{field_name} is required")
+    return normalized
 
 
 @dataclass
@@ -30,20 +47,23 @@ class ModelConfig:
     name: str
     temperature: float | None = None
     max_tokens: int | None = None
+    reasoning_effort: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("model.name is required")
+        self.name = _require_nonempty_string(self.name, field_name="model.name")
         if self.max_tokens is not None and self.max_tokens <= 0:
             raise ValueError("model.max_tokens must be > 0")
+        if self.reasoning_effort is not None:
+            if not isinstance(self.reasoning_effort, str):
+                raise ValueError("model.reasoning_effort must be a string")
+            self.reasoning_effort = self.reasoning_effort.strip()
+            if not self.reasoning_effort:
+                raise ValueError("model.reasoning_effort must be a non-empty string")
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
             return self.name == other
         return super().__eq__(other)
-
-    def __str__(self) -> str:
-        return self.name
 
 
 @dataclass
@@ -53,6 +73,9 @@ class ToolsConfig:
     simulator: str | None = None
 
     def __post_init__(self) -> None:
+        self.module = _normalize_optional_string(self.module)
+        self.toolset = _normalize_optional_string(self.toolset)
+        self.simulator = _normalize_optional_string(self.simulator)
         if not self.module and not self.toolset and not self.simulator:
             raise ValueError("target.tools must define module or toolset+simulator")
         if self.module and self.toolset:
@@ -61,9 +84,6 @@ class ToolsConfig:
             raise ValueError("target.tools.module and target.tools.simulator are mutually exclusive")
         if self.toolset and not self.simulator:
             raise ValueError("target.tools.toolset requires target.tools.simulator")
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
@@ -76,6 +96,8 @@ class TargetConfig:
     def __post_init__(self) -> None:
         if isinstance(self.model, str):
             self.model = ModelConfig(name=self.model)
+        self.system_prompt = _normalize_optional_string(self.system_prompt)
+        self.connector = _normalize_optional_string(self.connector)
         has_model = bool(self.model)
         has_connector = bool(self.connector)
         if has_model == has_connector:
@@ -118,23 +140,24 @@ class AuditorConfig:
     def __post_init__(self) -> None:
         if isinstance(self.model, str):
             self.model = ModelConfig(name=self.model)
-        if not self.model.name:
-            raise ValueError("auditor.model.name is required")
 
 
 @dataclass
 class JudgeConfig:
     model: ModelConfig | str
     n: int = 1
-    dimensions: list[str] = field(default_factory=list)
+    dimensions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if isinstance(self.model, str):
             self.model = ModelConfig(name=self.model)
-        if not self.model.name:
-            raise ValueError("judge.model.name is required")
         if self.n <= 0:
             raise ValueError("judge.n must be > 0")
+        if not isinstance(self.dimensions, list):
+            raise ValueError("judge.dimensions must be a list")
+        for dimension in self.dimensions:
+            if not isinstance(dimension, dict):
+                raise ValueError("judge.dimensions entries must be mappings")
 
 
 @dataclass

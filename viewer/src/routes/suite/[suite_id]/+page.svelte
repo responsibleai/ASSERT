@@ -1,38 +1,42 @@
 <script lang="ts">
 import type { Policy } from '$lib/types.js';
-import { invalidateAll, replaceState } from '$app/navigation';
+import { goto, invalidateAll } from '$app/navigation';
 import { page } from '$app/state';
 import { slide } from 'svelte/transition';
 import { quintOut } from 'svelte/easing';
 import { renderMarkdown } from '$lib/markdown';
+import { formatFactorLabel } from '$lib/grouping.js';
+import { observedFactorNames } from '$lib/factor-filters.js';
 import SeedGroupList from '$lib/SeedGroupList.svelte';
 import SystematizationModal from '$lib/SystematizationModal.svelte';
 import {
 	filterViewerSeeds,
 	mergeRunLists,
-	groupViewerSeedsByPolicy,
+	groupSeedsByFactor,
+	groupSeedsByCrossFactors,
 	normalizePromptSeeds,
 	normalizeScenarioSeeds
 } from '$lib/suite-view.js';
 
 let { data } = $props();
 
-// Tab state — initialize from URL ?section= param
+// Tab state — source of truth is URL ?section=
 type Tab = 'policy' | 'seeds' | 'results';
 const VALID_TABS = new Set<string>(['policy', 'seeds', 'results']);
-let initialTab = page.url.searchParams.get('section');
-let activeTab = $state<Tab | null>(VALID_TABS.has(initialTab ?? '') ? initialTab as Tab : null);
+let activeTab = $derived.by(() => {
+	const section = page.url.searchParams.get('section');
+	return VALID_TABS.has(section ?? '') ? (section as Tab) : null;
+});
 
-// Sync activeTab to URL
-$effect(() => {
+function setActiveTab(tab: Tab | null) {
 	const url = new URL(page.url);
-	if (activeTab) {
-		url.searchParams.set('section', activeTab);
+	if (tab) {
+		url.searchParams.set('section', tab);
 	} else {
 		url.searchParams.delete('section');
 	}
-	replaceState(url, {});
-});
+	goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+}
 
 // Description expand
 let descExpanded = $state(false);
@@ -57,42 +61,28 @@ function toggleRunSelection(runId: string | null) {
 let canCompare = $derived(selectedRuns.size >= 2 && selectedRuns.size <= 4);
 
 // Policy editing
-interface EditableSubRisk {
+interface EditableBehavior {
 	name: string;
 	definition: string;
 	examples: string[];
 	permissible: boolean;
 }
-type EditablePolicy = Omit<Policy, 'sub_risks'> & { sub_risks: EditableSubRisk[] };
-
-function cloneEditablePolicy(): EditablePolicy | null {
-	if (!data.policy) return null;
-	return structuredClone(data.policy) as EditablePolicy;
-}
+type EditablePolicy = Omit<Policy, 'behaviors'> & { behaviors: EditableBehavior[] };
 
 let editModalOpen = $state(false);
-let editingIndex = $state<number | null>(null); // null = adding new
-let editForm = $state<EditableSubRisk>({ name: '', definition: '', examples: [], permissible: false });
+let editingIndex = $state<number | null>(null);
+let editForm = $state<EditableBehavior>({ name: '', definition: '', examples: [], permissible: false });
 let editExamplesText = $state('');
 let editSaving = $state(false);
 let editError = $state<string | null>(null);
-let deleteConfirmIndex = $state<number | null>(null);
 let seedsWarningPending = $state(false);
 let pendingPolicy = $state<Record<string, unknown> | null>(null);
 
 function openEditModal(idx: number) {
-	const sr = sortedSubRisks[idx];
+	const sr = sortedBehaviors[idx];
 	editingIndex = idx;
 	editForm = { name: sr.name, definition: sr.definition, examples: [...sr.examples], permissible: sr.permissible };
 	editExamplesText = sr.examples.join('\n');
-	editError = null;
-	editModalOpen = true;
-}
-
-function openAddModal() {
-	editingIndex = null;
-	editForm = { name: '', definition: '', examples: [], permissible: false };
-	editExamplesText = '';
 	editError = null;
 	editModalOpen = true;
 }
@@ -123,26 +113,20 @@ async function savePolicy(policy: Record<string, unknown>) {
 	}
 }
 
-async function handleSaveSubRisk() {
+async function handleSaveBehavior() {
 	const examples = editExamplesText.split('\n').map(e => e.trim()).filter(Boolean);
 	if (!editForm.name.trim()) { editError = 'Name is required'; return; }
 	if (!editForm.definition.trim()) { editError = 'Definition is required'; return; }
 
-	const currentTax = cloneEditablePolicy();
+	const currentTax = data.policy ? structuredClone(data.policy) as EditablePolicy : null;
 	if (!currentTax) return;
-	const subRisks = currentTax.sub_risks;
+	const behaviors = currentTax.behaviors;
 	const entry = { name: editForm.name.trim(), definition: editForm.definition.trim(), examples, permissible: editForm.permissible };
 
-	if (editingIndex !== null) {
-		const origName = sortedSubRisks[editingIndex].name;
-		const realIdx = subRisks.findIndex(sr => sr.name === origName);
-		if (realIdx >= 0) subRisks[realIdx] = entry;
-	} else {
-		if (subRisks.some(sr => sr.name.toLowerCase() === entry.name.toLowerCase())) {
-			editError = 'A category with this name already exists'; return;
-		}
-		subRisks.push(entry);
-	}
+	if (editingIndex === null) return;
+	const origName = sortedBehaviors[editingIndex].name;
+	const realIdx = behaviors.findIndex(sr => sr.name === origName);
+	if (realIdx >= 0) behaviors[realIdx] = entry;
 
 	const hasSeeds = data.promptSeeds.length > 0 || data.scenarioSeeds.length > 0;
 	if (hasSeeds) {
@@ -156,26 +140,6 @@ async function handleSaveSubRisk() {
 	if (ok) { closeEditModal(); await invalidateAll(); }
 }
 
-async function handleDeleteSubRisk(idx: number) {
-	const currentTax = cloneEditablePolicy();
-	if (!currentTax) return;
-	const subRisks = currentTax.sub_risks;
-	const origName = sortedSubRisks[idx].name;
-	const realIdx = subRisks.findIndex(sr => sr.name === origName);
-	if (realIdx >= 0) subRisks.splice(realIdx, 1);
-
-	const hasSeeds = data.promptSeeds.length > 0 || data.scenarioSeeds.length > 0;
-	if (hasSeeds) {
-		pendingPolicy = currentTax;
-		seedsWarningPending = true;
-		deleteConfirmIndex = null;
-		return;
-	}
-
-	const ok = await savePolicy(currentTax);
-	if (ok) { deleteConfirmIndex = null; await invalidateAll(); }
-}
-
 async function confirmSaveWithSeeds() {
 	if (!pendingPolicy) return;
 	const ok = await savePolicy(pendingPolicy);
@@ -183,54 +147,45 @@ async function confirmSaveWithSeeds() {
 }
 
 // Seeds sub-tab
-let seedsSubTab = $state<'query' | 'scenarios'>('query');
+let seedsSubTab = $state<'prompts' | 'scenarios'>('prompts');
 
-let expandedSubRisk = $state<string | null>(null);
-let expandedPromptSeedSubRisk = $state<string | null>(null);
+let expandedBehavior = $state<string | null>(null);
+let expandedPromptSeedBehavior = $state<string | null>(null);
 let promptSeedFilter = $state('');
-let promptSeedPermissibleFilter = $state<string>('all');
+let promptSeedGroupBy = $state('none');
 
-let expandedAuditSubRisk = $state<string | null>(null);
+let expandedAuditBehavior = $state<string | null>(null);
 let scenarioSeedFilter = $state('');
-let scenarioSeedPermissibleFilter = $state<string>('all');
+let scenarioSeedGroupBy = $state('none');
 
 function toggle(name: string) {
-	expandedSubRisk = expandedSubRisk === name ? null : name;
+	expandedBehavior = expandedBehavior === name ? null : name;
 }
 
-function togglePromptSeedSubRisk(name: string) {
-	expandedPromptSeedSubRisk = expandedPromptSeedSubRisk === name ? null : name;
+function togglePromptSeedBehavior(name: string) {
+	expandedPromptSeedBehavior = expandedPromptSeedBehavior === name ? null : name;
 }
 
-function toggleAuditSubRisk(name: string) {
-	expandedAuditSubRisk = expandedAuditSubRisk === name ? null : name;
+function toggleAuditBehavior(name: string) {
+	expandedAuditBehavior = expandedAuditBehavior === name ? null : name;
 }
 
 let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
 
-let filteredPromptSeeds = $derived.by(() => {
-	return filterViewerSeeds(promptSeedItems, promptSeedFilter, promptSeedPermissibleFilter);
-});
+let promptSeedFactorNames = $derived(observedFactorNames(promptSeedItems));
+let scenarioSeedFactorNames = $derived(observedFactorNames(scenarioSeedItems));
 
-let sortedSubRisks = $derived(data.policy?.sub_risks ?? []);
+let filteredPromptSeeds = $derived(filterViewerSeeds(promptSeedItems, promptSeedFilter));
 
-let promptSeedsBySubRisk = $derived.by(() => {
-	return groupViewerSeedsByPolicy(filteredPromptSeeds, sortedSubRisks);
-});
+let sortedBehaviors = $derived(data.policy?.behaviors ?? []);
 
-let filteredScenarioSeeds = $derived.by(() => {
-	return filterViewerSeeds(scenarioSeedItems, scenarioSeedFilter, scenarioSeedPermissibleFilter);
-});
-
-let scenarioSeedsBySubRisk = $derived.by(() => {
-	return groupViewerSeedsByPolicy(filteredScenarioSeeds, sortedSubRisks);
-});
+let filteredScenarioSeeds = $derived(filterViewerSeeds(scenarioSeedItems, scenarioSeedFilter));
 
 // Truncated description
-let riskDef = $derived(data.policy?.risk?.definition ?? '');
-let needsTruncation = $derived(riskDef.length > 120);
-let displayDef = $derived(needsTruncation && !descExpanded ? riskDef.slice(0, 120) + '…' : riskDef);
+let conceptDef = $derived(data.policy?.concept?.definition ?? '');
+let needsTruncation = $derived(conceptDef.length > 120);
+let displayDef = $derived(needsTruncation && !descExpanded ? conceptDef.slice(0, 120) + '…' : conceptDef);
 
 function summaryItemCountFor(systematization: Record<string, unknown> | null): number {
 	if (!systematization) return 0;
@@ -256,12 +211,12 @@ let systematizationMode = $derived(
 );
 
 const TAB_DESCRIPTIONS: Record<string, string> = {
-	policy: 'Risk policy broken into categories with definitions and examples',
+	policy: 'Concept policy broken into categories with definitions and examples',
 	seeds: 'Test seeds and multi-turn scenarios used to evaluate the model',
 	results: 'Results from measurement runs',
 };
 
-// Merge query/audit results that share the same run id.
+// Merge prompt/audit results that share the same run id.
 let allRuns = $derived.by(() => {
 	return mergeRunLists(data.runs, data.auditRuns);
 });
@@ -273,7 +228,7 @@ const TAB_ICONS: Record<string, string> = {
 };
 
 const tabs: { key: Tab; label: string; count: number }[] = $derived([
-	{ key: 'policy', label: 'Policy', count: sortedSubRisks.length },
+	{ key: 'policy', label: 'Policy', count: sortedBehaviors.length },
 	{ key: 'seeds', label: 'Seeds', count: data.promptSeeds.length + data.scenarioSeeds.length },
 	{ key: 'results', label: 'Results', count: allRuns.length },
 ]);
@@ -288,9 +243,9 @@ const tabs: { key: Tab; label: string; count: number }[] = $derived([
 All measurement suites
 </a>
 <div class="text-center">
-<h1 class="mt-2 text-xl font-semibold tracking-tight">{data.policy?.risk?.name ?? data.suite_id}</h1>
+<h1 class="mt-2 text-xl font-semibold tracking-tight">{data.policy?.concept?.name ?? data.suite_id}</h1>
 <span class="mt-1.5 inline-block rounded bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-muted">{data.suite_id}</span>
-{#if data.policy?.risk}
+{#if data.policy?.concept}
 <p class="mx-auto mt-2 max-w-2xl text-sm text-text-secondary leading-relaxed">
 {displayDef}
 {#if needsTruncation}
@@ -329,7 +284,7 @@ title="Suite metadata"
 {#if summaryItemCount > 0}
 <span class="text-xs text-text-muted"><span class="text-text-secondary">pattern summaries:</span> {summaryItemCount}</span>
 {/if}
-<span class="text-xs text-text-muted"><span class="text-text-secondary">policy categories:</span> {sortedSubRisks.length}</span>
+<span class="text-xs text-text-muted"><span class="text-text-secondary">policy categories:</span> {sortedBehaviors.length}</span>
 </div>
 </div>
 {/if}
@@ -343,7 +298,7 @@ title="Suite metadata"
 {#each tabs as tab}
 <button
 class="group rounded-lg border p-5 text-left transition-all {activeTab === tab.key ? 'border-interactive bg-surface shadow-sm' : 'border-border bg-surface hover:border-interactive/50 hover:shadow-sm'}"
-onclick={() => activeTab = activeTab === tab.key ? null : tab.key}
+onclick={() => setActiveTab(activeTab === tab.key ? null : tab.key)}
 >
 <div class="mb-3 flex items-center justify-between">
 <div class="flex items-center gap-2.5">
@@ -366,7 +321,7 @@ onclick={() => activeTab = activeTab === tab.key ? null : tab.key}
 <!-- Systematization banner -->
 <div class="mb-4 rounded-lg border border-border bg-surface p-4">
 <div class="flex items-center gap-3 text-xs text-text-muted">
-<span class="text-text-secondary font-medium">{sortedSubRisks.length > 0 ? 'Policy generated via' : 'Systematization available'}</span>
+<span class="text-text-secondary font-medium">{sortedBehaviors.length > 0 ? 'Policy generated via' : 'Systematization available'}</span>
 <div class="flex items-center gap-1.5">
 <button
 class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-text-secondary hover:text-text border border-transparent hover:border-interactive/30 transition-colors"
@@ -375,7 +330,7 @@ onclick={() => systematizationModalOpen = true}
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
 Systematization
 </button>
-{#if sortedSubRisks.length > 0}
+{#if sortedBehaviors.length > 0}
 <svg class="h-3 w-3 text-text-muted/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 <span class="inline-flex items-center gap-1 rounded-full bg-interactive/10 border border-interactive/20 px-2.5 py-1 font-medium text-interactive">
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
@@ -386,39 +341,36 @@ Policy
 </div>
 </div>
 {/if}
-{#if sortedSubRisks.length === 0}
+{#if sortedBehaviors.length === 0}
 <div class="rounded-lg border border-border bg-surface px-6 py-10 text-center">
 <svg class="mx-auto mb-3 h-8 w-8 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
 </svg>
 <p class="text-sm text-text-secondary">No policy generated yet.</p>
-<p class="mt-1 text-xs text-text-muted">Run the pipeline to generate a risk policy.</p>
+<p class="mt-1 text-xs text-text-muted">Run the pipeline to generate a concept policy.</p>
 </div>
 {:else}
 <div class="overflow-hidden rounded-lg border border-border">
-{#each sortedSubRisks as sr, idx (sr.name)}
+{#each sortedBehaviors as sr, idx (sr.name)}
 <div class="{idx > 0 ? 'border-t border-border' : ''}">
 <div class="flex w-full items-center gap-3 px-4 py-2.5 text-sm">
 <button
 class="flex flex-1 items-center gap-3 text-left transition-colors hover:text-interactive"
 onclick={() => toggle(sr.name)}
 >
-<span class="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {sr.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">
+<span class="flex-shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium {sr.permissible ? 'border-interactive/30 bg-interactive/10 text-interactive' : 'border-not-permissible/30 bg-not-permissible/10 text-not-permissible'}">
 {sr.permissible ? 'permissible' : 'not permissible'}
 </span>
 <span class="flex-1 truncate font-medium">{sr.name}</span>
-<svg class="h-3.5 w-3.5 text-text-muted transition-transform duration-200 {expandedSubRisk === sr.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+<svg class="h-3.5 w-3.5 text-text-muted transition-transform duration-200 {expandedBehavior === sr.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 <path d="M9 5l7 7-7 7"/>
 </svg>
 </button>
 <button onclick={(e) => { e.stopPropagation(); openEditModal(idx); }} class="flex-shrink-0 rounded p-1 text-text-muted hover:text-interactive hover:bg-interactive/10 transition-colors" title="Edit">
 <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
 </button>
-<button onclick={(e) => { e.stopPropagation(); deleteConfirmIndex = idx; }} class="flex-shrink-0 rounded p-1 text-text-muted hover:text-not-permissible hover:bg-not-permissible/10 transition-colors" title="Delete">
-<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-</button>
 </div>
-{#if expandedSubRisk === sr.name}
+{#if expandedBehavior === sr.name}
 <div transition:slide={{ duration: 200, easing: quintOut }} class="border-t border-border bg-surface px-5 py-5">
 <!-- Definition -->
 <div class="mb-4">
@@ -442,14 +394,6 @@ onclick={() => toggle(sr.name)}
 </div>
 {/each}
 </div>
-<!-- Add category button -->
-<button
-onclick={() => openAddModal()}
-class="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-surface/50 px-4 py-3 text-sm text-text-muted transition-colors hover:border-interactive/50 hover:text-interactive"
->
-<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg>
-Add category
-</button>
 {/if}
 {/if}
 
@@ -459,8 +403,8 @@ Add category
 <div class="mb-4 flex justify-center">
 <div class="flex items-center gap-1 rounded-lg bg-surface p-1">
 	<button
-		class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {seedsSubTab === 'query' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
-		onclick={() => seedsSubTab = 'query'}
+		class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {seedsSubTab === 'prompts' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
+		onclick={() => seedsSubTab = 'prompts'}
 	>
 		Prompts <span class="ml-1 font-mono text-text-muted">{data.promptSeeds.length}</span>
 	</button>
@@ -473,7 +417,7 @@ Add category
 </div>
 </div>
 
-{#if seedsSubTab === 'query'}
+{#if seedsSubTab === 'prompts'}
 {#if data.promptSeeds.length === 0}
 <div class="rounded-lg border border-border bg-surface px-6 py-10 text-center">
 <svg class="mx-auto mb-3 h-8 w-8 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -495,21 +439,46 @@ bind:value={promptSeedFilter}
 class="rounded-md border border-border bg-surface py-1.5 pl-8 pr-3 text-sm text-text placeholder-text-muted outline-none transition-colors focus:border-interactive focus:ring-1 focus:ring-interactive/50"
 />
 </div>
-<select
-bind:value={promptSeedPermissibleFilter}
-class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-interactive"
->
-<option value="all">All behaviors</option>
-<option value="true">Permissible</option>
-<option value="false">Not permissible</option>
-</select>
 <span class="text-xs text-text-muted">{filteredPromptSeeds.length} of {data.promptSeeds.length}</span>
+<div class="ml-auto flex items-center gap-2">
+	<span class="text-[10px] text-text-muted">Group by</span>
+	<select
+		class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
+		bind:value={promptSeedGroupBy}
+	>
+		<option value="none">None (flat)</option>
+		{#each promptSeedFactorNames as name}
+			<option value="factor:{name}">{formatFactorLabel(name)}</option>
+		{/each}
+		{#each promptSeedFactorNames as name, i}
+			{#each promptSeedFactorNames.slice(i + 1) as other}
+				<option value="cross:{name}:{other}">{formatFactorLabel(name)} × {formatFactorLabel(other)}</option>
+			{/each}
+		{/each}
+	</select>
 </div>
+</div>
+{#if promptSeedGroupBy === 'none'}
 <SeedGroupList
-	groups={promptSeedsBySubRisk}
-	expandedGroup={expandedPromptSeedSubRisk}
-	onToggle={togglePromptSeedSubRisk}
+	groups={[{ name: '', items: filteredPromptSeeds }]}
+	expandedGroup={''}
+	onToggle={() => {}}
 />
+{:else if promptSeedGroupBy.startsWith('cross:')}
+{@const parts = promptSeedGroupBy.split(':')}
+<SeedGroupList
+	groups={groupSeedsByCrossFactors(filteredPromptSeeds, parts[1], parts[2])}
+	expandedGroup={expandedPromptSeedBehavior}
+	onToggle={togglePromptSeedBehavior}
+/>
+{:else}
+{@const factorName = promptSeedGroupBy.replace('factor:', '')}
+<SeedGroupList
+	groups={groupSeedsByFactor(filteredPromptSeeds, factorName)}
+	expandedGroup={expandedPromptSeedBehavior}
+	onToggle={togglePromptSeedBehavior}
+/>
+{/if}
 {/if}
 
 {:else}
@@ -535,21 +504,46 @@ bind:value={scenarioSeedFilter}
 class="rounded-md border border-border bg-surface py-1.5 pl-8 pr-3 text-sm text-text placeholder-text-muted outline-none transition-colors focus:border-interactive focus:ring-1 focus:ring-interactive/50"
 />
 </div>
-<select
-bind:value={scenarioSeedPermissibleFilter}
-class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-interactive"
->
-<option value="all">All behaviors</option>
-<option value="true">Permissible</option>
-<option value="false">Not permissible</option>
-</select>
 <span class="text-xs text-text-muted">{filteredScenarioSeeds.length} of {data.scenarioSeeds.length}</span>
+<div class="ml-auto flex items-center gap-2">
+	<span class="text-[10px] text-text-muted">Group by</span>
+	<select
+		class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
+		bind:value={scenarioSeedGroupBy}
+	>
+		<option value="none">None (flat)</option>
+		{#each scenarioSeedFactorNames as name}
+			<option value="factor:{name}">{formatFactorLabel(name)}</option>
+		{/each}
+		{#each scenarioSeedFactorNames as name, i}
+			{#each scenarioSeedFactorNames.slice(i + 1) as other}
+				<option value="cross:{name}:{other}">{formatFactorLabel(name)} × {formatFactorLabel(other)}</option>
+			{/each}
+		{/each}
+	</select>
 </div>
+</div>
+{#if scenarioSeedGroupBy === 'none'}
 <SeedGroupList
-	groups={scenarioSeedsBySubRisk}
-	expandedGroup={expandedAuditSubRisk}
-	onToggle={toggleAuditSubRisk}
+	groups={[{ name: '', items: filteredScenarioSeeds }]}
+	expandedGroup={''}
+	onToggle={() => {}}
 />
+{:else if scenarioSeedGroupBy.startsWith('cross:')}
+{@const parts = scenarioSeedGroupBy.split(':')}
+<SeedGroupList
+	groups={groupSeedsByCrossFactors(filteredScenarioSeeds, parts[1], parts[2])}
+	expandedGroup={expandedAuditBehavior}
+	onToggle={toggleAuditBehavior}
+/>
+{:else}
+{@const factorName = scenarioSeedGroupBy.replace('factor:', '')}
+<SeedGroupList
+	groups={groupSeedsByFactor(filteredScenarioSeeds, factorName)}
+	expandedGroup={expandedAuditBehavior}
+	onToggle={toggleAuditBehavior}
+/>
+{/if}
 {/if}
 {/if}
 {/if}
@@ -585,7 +579,7 @@ class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text 
 
 <div class="space-y-3">
 {#each allRuns as run (run.run_id)}
-{@const qRun = run.query}
+{@const qRun = run.prompt}
 {@const aRun = run.audit}
 {@const qAvg = qRun?.metrics ? qRun.metrics.policy_violation_rate : 0}
 {@const aAvg = aRun?.metrics ? aRun.metrics.policy_violation_rate : 0}
@@ -597,7 +591,7 @@ class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text 
 <div class="flex items-center gap-3 px-4 py-2.5 border-b border-border/50">
 <button onclick={() => toggleRunSelection(run.compare_run_id)}
 	class="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors duration-150 {compareDisabled ? 'cursor-not-allowed border-text-muted/20 opacity-40' : isSelected ? 'border-interactive bg-interactive' : 'border-text-muted/40 hover:border-interactive/60'}"
-	title={compareDisabled ? 'Query results required for compare' : 'Select for comparison'}
+	title={compareDisabled ? 'Prompt results required for compare' : 'Select for comparison'}
 	disabled={compareDisabled}>
 	{#if isSelected}
 		<svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
@@ -611,7 +605,7 @@ class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text 
 
 <!-- Query row -->
 {#if qRun}
-<a href="/suite/{data.suite_id}/{run.query_run_id ?? run.run_id}"
+<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.run_id}?tab=prompts"
 class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-surface/50 {aRun ? 'border-b border-border/30' : ''}">
 <span class="w-20 flex-shrink-0 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Prompts</span>
 {#if qRun.metrics}
@@ -622,7 +616,7 @@ class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-
 <span class="text-text-muted">policy violation</span>
 <span class="font-semibold tabular-nums {avg >= 0.5 ? 'text-score-fail' : avg > 0 ? 'text-score-border' : 'text-score-pass'}">{(avg * 100).toFixed(0)}%</span>
 </span>
-{#each Object.entries(qRun.metrics.dimensions ?? {}) as [dim, d]}
+{#each Object.entries(qRun.metrics.dimensions ?? {}).filter(([k]) => k !== 'policy_violation' && k !== 'overrefusal') as [dim, d]}
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px]">
 <span class="text-text-muted">{dim.replace(/_/g, ' ')}</span>
 <span class="font-semibold tabular-nums {d.rate >= 0.5 ? 'text-score-fail' : d.rate > 0 ? 'text-score-border' : 'text-score-pass'}">{(d.rate * 100).toFixed(0)}%</span>
@@ -658,7 +652,7 @@ class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-
 <span class="text-text-muted">policy violation</span>
 <span class="font-semibold tabular-nums {avg >= 0.5 ? 'text-score-fail' : avg > 0 ? 'text-score-border' : 'text-score-pass'}">{(avg * 100).toFixed(0)}%</span>
 </span>
-{#each Object.entries(aRun.metrics.dimensions ?? {}) as [dim, d]}
+{#each Object.entries(aRun.metrics.dimensions ?? {}).filter(([k]) => k !== 'policy_violation' && k !== 'overrefusal') as [dim, d]}
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px]">
 <span class="text-text-muted">{dim.replace(/_/g, ' ')}</span>
 <span class="font-semibold tabular-nums {d.rate >= 0.5 ? 'text-score-fail' : d.rate > 0 ? 'text-score-border' : 'text-score-pass'}">{(d.rate * 100).toFixed(0)}%</span>
@@ -693,14 +687,14 @@ judge: <span class="font-mono">{aRun.metrics.judge_model}</span>
 {/if}
 {/if}
 
-<!-- Sub-risk Editor Modal -->
+<!-- Behavior Editor Modal -->
 {#if editModalOpen}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="fixed inset-0 z-50 flex items-center justify-center p-4" onkeydown={(e) => { if (e.key === 'Escape') closeEditModal(); }}>
 <button class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick={() => closeEditModal()} aria-label="Close"></button>
 <div class="relative w-full max-w-lg rounded-xl border border-border bg-bg shadow-2xl flex flex-col">
 <div class="flex items-center justify-between border-b border-border px-6 py-4">
-<h2 class="text-base font-semibold text-text">{editingIndex !== null ? 'Edit Category' : 'Add Category'}</h2>
+<h2 class="text-base font-semibold text-text">Edit Category</h2>
 <button onclick={() => closeEditModal()} aria-label="Close category editor" class="rounded-lg p-1.5 text-text-muted hover:text-text hover:bg-surface transition-colors">
 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
 </button>
@@ -708,8 +702,8 @@ judge: <span class="font-mono">{aRun.metrics.judge_model}</span>
 <div class="px-6 py-5 space-y-4">
 <div>
 <label for="sr-name" class="block text-xs font-medium text-text-secondary mb-1">Name</label>
-<input id="sr-name" type="text" bind:value={editForm.name} disabled={editingIndex !== null}
-class="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-interactive {editingIndex !== null ? 'opacity-60' : ''}" />
+<input id="sr-name" type="text" bind:value={editForm.name} disabled
+class="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-interactive opacity-60" />
 </div>
 <div>
 <label for="sr-def" class="block text-xs font-medium text-text-secondary mb-1">Definition</label>
@@ -736,26 +730,10 @@ class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medi
 </div>
 <div class="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
 <button onclick={() => closeEditModal()} class="rounded-md px-4 py-2 text-sm text-text-muted hover:text-text transition-colors">Cancel</button>
-<button onclick={() => handleSaveSubRisk()} disabled={editSaving}
+<button onclick={() => handleSaveBehavior()} disabled={editSaving}
 class="rounded-md bg-interactive px-4 py-2 text-sm font-medium text-white hover:bg-interactive-hover transition-colors disabled:opacity-50">
-{editSaving ? 'Saving…' : editingIndex !== null ? 'Save changes' : 'Add category'}
+{editSaving ? 'Saving…' : 'Save changes'}
 </button>
-</div>
-</div>
-</div>
-{/if}
-
-<!-- Delete Confirmation -->
-{#if deleteConfirmIndex !== null}
-<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-<button class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick={() => deleteConfirmIndex = null} aria-label="Close"></button>
-<div class="relative w-full max-w-sm rounded-xl border border-border bg-bg shadow-2xl p-6 text-center">
-<svg class="mx-auto mb-3 h-10 w-10 text-not-permissible/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-<h3 class="text-sm font-semibold text-text">Delete "{sortedSubRisks[deleteConfirmIndex]?.name}"?</h3>
-<p class="mt-1.5 text-xs text-text-muted">This category will be removed from the policy. This cannot be undone.</p>
-<div class="mt-5 flex justify-center gap-3">
-<button onclick={() => deleteConfirmIndex = null} class="rounded-md px-4 py-2 text-sm text-text-muted hover:text-text transition-colors">Cancel</button>
-<button onclick={() => { if (deleteConfirmIndex !== null) handleDeleteSubRisk(deleteConfirmIndex); }} class="rounded-md bg-not-permissible px-4 py-2 text-sm font-medium text-white hover:bg-not-permissible/80 transition-colors">Delete</button>
 </div>
 </div>
 </div>

@@ -7,6 +7,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from p2m.core.io import load_jsonl, row_behavior
+
 try:
     import numpy as np
 except ModuleNotFoundError:
@@ -62,29 +64,18 @@ def _require_openai() -> Any:
 
 def load_policy(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    sub_risks = data.get("sub_risks") or []
+    behaviors = data.get("behaviors") or []
     flattened = []
-    for idx, sr in enumerate(sub_risks):
+    for idx, sr in enumerate(behaviors):
         flattened.append(
             {
                 "id": idx,
-                "name": sr.get("name", f"sub_risk_{idx}"),
+                "name": sr.get("name", f"behavior_{idx}"),
                 "definition": sr.get("definition", ""),
                 "examples": sr.get("examples", []) or [],
             }
         )
-    return {"raw": data, "sub_risks": flattened}
-
-
-def load_seeds(path: Path) -> List[Dict[str, Any]]:
-    seeds = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        seeds.append(row)
-    return seeds
+    return {"raw": data, "behaviors": flattened}
 
 
 def _prompt_seed_text(row: Dict[str, Any]) -> str | None:
@@ -184,11 +175,11 @@ def embed_texts(
     return embed_texts_openai(client, model, texts)
 
 
-def coverage_at_k(subrisk_counts: Dict[str, int], k: int, total_subrisks: int) -> float:
-    if total_subrisks == 0:
+def coverage_at_k(behavior_counts: Dict[str, int], k: int, total_behaviors: int) -> float:
+    if total_behaviors == 0:
         return 0.0
-    hits = sum(1 for c in subrisk_counts.values() if c >= k)
-    return hits / total_subrisks
+    hits = sum(1 for c in behavior_counts.values() if c >= k)
+    return hits / total_behaviors
 
 
 # ---------------------- Main logic ----------------------
@@ -197,16 +188,16 @@ def coverage_at_k(subrisk_counts: Dict[str, int], k: int, total_subrisks: int) -
 def compute_metrics(cfg: Config):
     np_mod = _require_numpy()
     tax = load_policy(Path(cfg.policy_path))
-    sub_risks = tax["sub_risks"]
-    subrisk_names = [sr["name"] for sr in sub_risks]
+    behaviors = tax["behaviors"]
+    behavior_names = [sr["name"] for sr in behaviors]
 
-    seeds = load_seeds(Path(cfg.seeds_path))
+    seeds = load_jsonl(Path(cfg.seeds_path))
 
     client = _require_openai()() if cfg.embed_backend == "openai" else None
 
     # Embed policy examples for coverage calc
     example_texts = []
-    for sr in sub_risks:
+    for sr in behaviors:
         for ex in sr.get("examples", []):
             example_texts.append(ex)
     example_vecs = embed_texts(
@@ -214,9 +205,9 @@ def compute_metrics(cfg: Config):
     )
 
     # Collect seed info
-    per_subrisk_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
-    per_subrisk_valid: Dict[str, List[bool]] = defaultdict(list)
-    per_subrisk_len: Dict[str, List[int]] = defaultdict(list)
+    per_behavior_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
+    per_behavior_valid: Dict[str, List[bool]] = defaultdict(list)
+    per_behavior_len: Dict[str, List[int]] = defaultdict(list)
 
     prompt_seeds = [entry for entry in seeds if _prompt_seed_text(entry) is not None]
     seed_prompts = [_prompt_seed_text(entry) or "" for entry in prompt_seeds]
@@ -229,20 +220,31 @@ def compute_metrics(cfg: Config):
             return example_vecs.shape[1]
         return 1
 
+    unknown_behavior_counts: Dict[str, int] = defaultdict(int)
     for entry, vec in zip(prompt_seeds, seed_vecs):
-        sr = entry.get("sub_risk") or ""
-        if sr not in subrisk_names:
-            continue  # skip seeds whose sub_risk not in policy
-        per_subrisk_vecs[sr].append(vec)
-        per_subrisk_valid[sr].append(True)
-        per_subrisk_len[sr].append(len(_prompt_seed_text(entry) or ""))
+        sr = row_behavior(entry)
+        if sr not in behavior_names:
+            unknown_behavior_counts[sr] += 1
+            continue
+        per_behavior_vecs[sr].append(vec)
+        per_behavior_valid[sr].append(True)
+        per_behavior_len[sr].append(len(_prompt_seed_text(entry) or ""))
 
-    # Metrics per subrisk
+    if unknown_behavior_counts:
+        summary = ", ".join(
+            f"{name} ({count})" for name, count in sorted(unknown_behavior_counts.items())
+        )
+        print(
+            f"[seed_metrics] Skipping {sum(unknown_behavior_counts.values())} seeds "
+            f"with behaviors not in policy.json: {summary}"
+        )
+
+    # Metrics per behavior
     per_stats = {}
-    for sr in subrisk_names:
-        vecs = per_subrisk_vecs.get(sr, [])
-        valids = per_subrisk_valid.get(sr, [])
-        lens = per_subrisk_len.get(sr, [])
+    for sr in behavior_names:
+        vecs = per_behavior_vecs.get(sr, [])
+        valids = per_behavior_valid.get(sr, [])
+        lens = per_behavior_len.get(sr, [])
         valid_vecs = [v for v, ok in zip(vecs, valids) if ok]
         valid_mat = np_mod.vstack(valid_vecs) if valid_vecs else np_mod.zeros((0, embed_dim()))
 
@@ -275,12 +277,12 @@ def compute_metrics(cfg: Config):
         }
 
     # Overall coverage
-    counts = {sr: per_stats[sr]["valid_count"] for sr in subrisk_names}
+    counts = {sr: per_stats[sr]["valid_count"] for sr in behavior_names}
     if cfg.presence_coverage:
         covered = sum(1 for c in counts.values() if c > 0)
-        coverage = {"presence": covered / len(subrisk_names) if subrisk_names else 0.0}
+        coverage = {"presence": covered / len(behavior_names) if behavior_names else 0.0}
     else:
-        coverage = {k: coverage_at_k(counts, k, len(subrisk_names)) for k in cfg.k_list}
+        coverage = {k: coverage_at_k(counts, k, len(behavior_names)) for k in cfg.k_list}
 
     # Skew
     count_vals = list(counts.values())
@@ -292,9 +294,9 @@ def compute_metrics(cfg: Config):
     if example_vecs.shape[0] > 0:
         valid_all_list = [
             vec
-            for sr in subrisk_names
+            for sr in behavior_names
             for vec, ok in zip(
-                per_subrisk_vecs.get(sr, []), per_subrisk_valid.get(sr, [])
+                per_behavior_vecs.get(sr, []), per_behavior_valid.get(sr, [])
             )
             if ok
         ]
@@ -325,7 +327,7 @@ def compute_metrics(cfg: Config):
     report = {
         "config": asdict(cfg),
         "overall": overall,
-        "per_sub_risk": per_stats,
+        "per_behavior": per_stats,
     }
 
     Path(cfg.out_json).parent.mkdir(parents=True, exist_ok=True)
@@ -351,13 +353,13 @@ def compute_metrics(cfg: Config):
         else:
             lines.append("Example coverage: n/a")
         lines.append("")
-        lines.append("## Per sub-risk")
+        lines.append("## Per behavior")
         lines.append("")
         lines.append(
-            "| sub_risk | valid | total | valid_rate | vendi | vendi/n | near_dup | mean_len | var_len |"
+            "| behavior | valid | total | valid_rate | vendi | vendi/n | near_dup | mean_len | var_len |"
         )
         lines.append("|---|---|---|---|---|---|---|---|---|")
-        for sr in subrisk_names:
+        for sr in behavior_names:
             ps = per_stats[sr]
             lines.append(
                 f"| {sr} | {ps['valid_count']} | {ps['total_count']} | {ps['valid_rate']:.3f} | "

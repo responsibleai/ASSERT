@@ -10,7 +10,6 @@ cp .env.example .env
 source .env
 
 uv run p2m run --config examples/pipes/health_assistant.yaml
-uv run p2m results status health-assistant-v1 gpt54-eval
 ```
 
 ## Which config to start with
@@ -30,9 +29,8 @@ See [pipes/README.md](pipes/README.md) for what each config demonstrates.
 ```text
 examples/
 ├── pipes/             pipeline configs
-├── risks/             risk definitions loaded by `risk: <name>`
-├── eval-definitions/  judge dimensions and elicitation strategies
+├── concepts/           concept definitions loaded by `concept: <name>`
 └── agents/            tool modules, toolsets, and external connectors
 ```
 
-See [risks/README.md](risks/README.md) for available risk definitions.
+See [concepts/README.md](concepts/README.md) for available concept definitions.

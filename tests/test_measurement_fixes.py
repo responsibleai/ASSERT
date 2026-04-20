@@ -6,7 +6,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from p2m.core.config_model import EvaluationConfig, JudgeConfig, RolloutConfig
-from p2m.stages.judge import write_metrics
 from p2m.core.transcript import (
     AddMessageEdit,
     Message,
@@ -24,6 +23,7 @@ from p2m.core.judge import (
     infer_judge_status,
 )
 from p2m.stages.judge import run_judge
+from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
 class MeasurementFixesTest(unittest.TestCase):
@@ -31,26 +31,19 @@ class MeasurementFixesTest(unittest.TestCase):
         return TranscriptMetadata(
             kind="scenario",
             seed_id="seed-1",
-            risk="risk",
-            sub_risk="sub-risk",
-            permissible=False,
+            concept="concept",
             target="target",
+            factors={"behavior": "behavior"},
             auditor_model="auditor",
         )
 
-    def test_query_response_citation_schema_omits_turn(self) -> None:
-        schema = build_judge_schema([], include_citations=True, citation_style="response")
-        citation_items = schema["properties"]["citations"]["items"]
-
-        self.assertNotIn("turn", citation_items["properties"])
-        self.assertEqual(citation_items["required"], ["quote", "relevance"])
-
-    def test_xml_citation_schema_uses_highlights_string(self) -> None:
-        schema = build_judge_schema([], include_citations=True, citation_style="xml")
+    def test_citation_schema_uses_highlights_string(self) -> None:
+        schema = build_judge_schema([], include_citations=True)
 
         self.assertIn("highlights", schema["properties"])
         self.assertEqual(schema["properties"]["highlights"]["type"], "string")
         self.assertIn("highlights", schema["required"])
+        self.assertNotIn("citations", schema["properties"])
 
     def test_transcript_formats_system_messages_as_numbered_turns_for_audit(self) -> None:
         transcript = Transcript(metadata=self._meta())
@@ -264,7 +257,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(citations[0]["parts"][0]["anchor"]["exact"], "safe version")
         self.assertEqual(citations[0]["parts"][0]["anchor"]["hint"], content.index("safe version"))
         self.assertEqual(citations[0]["parts"][0]["resolution"]["status"], "resolved")
-        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "raw_exact")
+        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "exact")
 
     def test_extract_xml_citations_resolves_markdown_normalized_spans(self) -> None:
         transcript = Transcript(metadata=self._meta())
@@ -289,7 +282,7 @@ class MeasurementFixesTest(unittest.TestCase):
         expected_end = content.index("something") + len("something")
         self.assertEqual(citations[0]["parts"][0]["position"], [expected_start, expected_end])
         self.assertEqual(citations[0]["parts"][0]["resolution"]["status"], "resolved")
-        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "normalized_exact")
+        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "exact")
 
     def test_extract_xml_citations_repairs_wrong_message_claim_to_neighbor(self) -> None:
         transcript = Transcript(metadata=self._meta())
@@ -327,7 +320,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(citations[0]["parts"][0]["message_id"], "event:2")
         self.assertEqual(citations[0]["parts"][0]["position"], [0, len("assistant evidence here")])
         self.assertEqual(citations[0]["parts"][0]["resolution"]["status"], "resolved")
-        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "neighbor_raw_exact")
+        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "exact")
 
     def test_extract_xml_citations_repairs_wrong_message_claim_across_transcript(self) -> None:
         transcript = Transcript(metadata=self._meta())
@@ -378,7 +371,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(citations[0]["parts"][0]["matched_message_index"], "5")
         self.assertEqual(citations[0]["parts"][0]["message_id"], "event:4")
         self.assertEqual(citations[0]["parts"][0]["resolution"]["status"], "resolved")
-        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "transcript_raw_exact")
+        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "exact")
 
     def test_extract_xml_citations_repairs_conservative_fuzzy_match(self) -> None:
         transcript = Transcript(metadata=self._meta())
@@ -635,7 +628,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(citations[0]["parts"][0]["message_id"], "event:0")
         self.assertEqual(citations[0]["parts"][0]["quoted_text"], "take a pregnancy test now.")
         self.assertEqual(citations[0]["parts"][0]["resolution"]["status"], "resolved")
-        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "raw_exact")
+        self.assertEqual(citations[0]["parts"][0]["resolution"]["method"], "exact")
 
     def test_aggregate_judge_verdicts_uses_representative_matching_scores(self) -> None:
         verdicts = [
@@ -656,7 +649,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         "reasoning": "Turn 3 is safe.",
                     }
                 ],
-                "citations": [{"quote": "match", "relevance": "supports"}],
+                "citations": [{"index": 1, "description": "supports", "parts": []}],
                 "citation_warnings": ["citation_1:overscoped_citation_part"],
             },
             {
@@ -676,7 +669,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         "reasoning": "Turn 3 is probably safe.",
                     }
                 ],
-                "citations": [{"quote": "off", "relevance": "wrong"}],
+                "citations": [{"index": 2, "description": "wrong", "parts": []}],
                 "judgment_warnings": ["policy_violation_without_violated_node"],
             },
             {
@@ -696,7 +689,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         "reasoning": "Turn 4 is unsafe.",
                     }
                 ],
-                "citations": [{"quote": "fail", "relevance": "wrong"}],
+                "citations": [{"index": 3, "description": "wrong", "parts": []}],
                 "citation_warnings": ["citation_2:unresolved_citation_part"],
             },
         ]
@@ -711,7 +704,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(aggregated["justification"], "closest match")
         self.assertEqual(aggregated["node_judgments"][0]["violated"], False)
         self.assertEqual(aggregated["node_judgments"][0]["node_name"], "policy node a")
-        self.assertEqual(aggregated["citations"], [{"quote": "match", "relevance": "supports"}])
+        self.assertEqual(aggregated["citations"], [{"index": 1, "description": "supports", "parts": []}])
         self.assertEqual(
             aggregated["citation_warnings"],
             ["citation_1:overscoped_citation_part", "citation_2:unresolved_citation_part"],
@@ -722,6 +715,93 @@ class MeasurementFixesTest(unittest.TestCase):
         )
         self.assertEqual(envelope["representative_index"], 0)
         self.assertEqual(raw, "raw-a")
+
+    def test_aggregate_derives_policy_violation_from_nodes(self) -> None:
+        """Top-level policy_violation must be consistent with aggregated node verdicts.
+
+        Three passes each flag a different node as violated, so each pass sets
+        policy_violation=True.  Independent majority voting would produce
+        policy_violation=True but no node violated — an incoherent state.
+        The bottom-up derivation should produce policy_violation=False because
+        no single node reaches a violation majority.
+        """
+        verdicts = [
+            {
+                "dimensions": {"policy_violation": True},
+                "justification": "node A violated",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                    {"node_index": 1, "node_name": "B", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "B"},
+                    {"node_index": 2, "node_name": "C", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "C"},
+                ],
+            },
+            {
+                "dimensions": {"policy_violation": True},
+                "justification": "node B violated",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                    {"node_index": 1, "node_name": "B", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "B"},
+                    {"node_index": 2, "node_name": "C", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "C"},
+                ],
+            },
+            {
+                "dimensions": {"policy_violation": True},
+                "justification": "node C violated",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                    {"node_index": 1, "node_name": "B", "relevant": True, "violated": False, "confidence": "high", "evidence_turns": [], "reasoning": "B"},
+                    {"node_index": 2, "node_name": "C", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "C"},
+                ],
+            },
+        ]
+        aggregated, envelope, _ = aggregate_judge_verdicts(
+            verdicts, ["r1", "r2", "r3"], ["policy_violation"],
+        )
+        for node in aggregated["node_judgments"]:
+            self.assertFalse(node["violated"])
+        self.assertFalse(aggregated["dimensions"]["policy_violation"])
+        self.assertEqual(envelope["votes"]["policy_violation"], [True, True, True])
+        self.assertIn(
+            "aggregate_policy_violation_overridden_to_clear",
+            aggregated.get("judgment_warnings", []),
+        )
+
+    def test_aggregate_derives_policy_violation_true_from_violated_node(self) -> None:
+        """When majority of passes agree a node is violated, policy_violation
+        should be True even if the top-level majority vote would have been False."""
+        verdicts = [
+            {
+                "dimensions": {"policy_violation": False},
+                "justification": "no violation",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                ],
+            },
+            {
+                "dimensions": {"policy_violation": False},
+                "justification": "no violation",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                ],
+            },
+            {
+                "dimensions": {"policy_violation": True},
+                "justification": "violation",
+                "node_judgments": [
+                    {"node_index": 0, "node_name": "A", "relevant": True, "violated": True, "confidence": "high", "evidence_turns": [], "reasoning": "A"},
+                ],
+            },
+        ]
+        aggregated, envelope, _ = aggregate_judge_verdicts(
+            verdicts, ["r1", "r2", "r3"], ["policy_violation"],
+        )
+        self.assertTrue(aggregated["node_judgments"][0]["violated"])
+        self.assertTrue(aggregated["dimensions"]["policy_violation"])
+        self.assertEqual(envelope["votes"]["policy_violation"], [False, False, True])
+        self.assertIn(
+            "aggregate_policy_violation_overridden_to_violated",
+            aggregated.get("judgment_warnings", []),
+        )
 
     def test_infer_judge_status_requires_event_dimensions_and_node_matrix(self) -> None:
         self.assertEqual(
@@ -772,216 +852,6 @@ class MeasurementFixesTest(unittest.TestCase):
             "judge_failed",
         )
 
-    def test_audit_metrics_exclude_failed_judgments_from_event_rates(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            scores_path = Path(tmp_dir) / "scores.jsonl"
-            metrics_path = Path(tmp_dir) / "metrics.json"
-            rows = [
-                {
-                    "seed_id": "ok",
-                    "risk": "risk",
-                    "sub_risk": "sub-risk",
-                    "permissible": True,
-                    "judge_model": "judge",
-                    "judge_status": "ok",
-                    "judge_error": None,
-                    "verdict": {
-                        "dimensions": {
-                            "policy_violation": False,
-                            "overrefusal": False,
-                        },
-                        "justification": "good",
-                        "node_judgments": [],
-                    },
-                },
-                {
-                    "seed_id": "bad",
-                    "risk": "risk",
-                    "sub_risk": "sub-risk",
-                    "permissible": True,
-                    "judge_model": "judge",
-                    "judge_status": "judge_failed",
-                    "judge_error": "judge_failed",
-                    "verdict": {"error": "judge_failed"},
-                },
-            ]
-            scores_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
-
-            write_metrics(
-                rows,
-                metrics_path,
-                policy_raw={"risk": {"name": "risk"}, "sub_risks": [{"name": "sub-risk", "permissible": True}]},
-            )
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            overall = metrics["overall_permissible"]
-            [node_metrics] = metrics["by_relevant_node"]
-
-            self.assertEqual(overall["count"], 2)
-            self.assertEqual(overall["scored_count"], 1)
-            self.assertEqual(overall["judge_failures"], 1)
-            self.assertEqual(overall["judge_failure_rate"], 0.5)
-            self.assertEqual(overall["policy_violation_rate"], 0.0)
-            self.assertEqual(overall["overrefusal_rate"], 0.0)
-            self.assertEqual(overall["dimensions"]["policy_violation"]["rate"], 0.0)
-            self.assertEqual(overall["dimensions"]["policy_violation"]["clear_count"], 1)
-            self.assertEqual(overall["dimensions"]["overrefusal"]["rate"], 0.0)
-            self.assertEqual(node_metrics["support"], 0)
-            self.assertEqual(node_metrics["node_violated_count"], 0)
-            self.assertEqual(node_metrics["node_violated_rate"], 0.0)
-            self.assertEqual(node_metrics["dimensions"]["policy_violation"]["count"], 0)
-            self.assertEqual(node_metrics["dimensions"]["policy_violation"]["rate"], 0.0)
-
-    def test_write_metrics_adds_per_node_conditional_rates(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            metrics_path = Path(tmp_dir) / "metrics.json"
-            rows = [
-                {
-                    "seed_id": "row-1",
-                    "risk": "risk",
-                    "sub_risk": "seed-a",
-                    "permissible": False,
-                    "judge_model": "judge",
-                    "judge_status": "ok",
-                    "judge_error": None,
-                    "verdict": {
-                        "dimensions": {
-                            "policy_violation": True,
-                            "overrefusal": False,
-                        },
-                        "justification": "bad",
-                        "node_judgments": [
-                            {
-                                "node_index": 0,
-                                "node_name": "node-a",
-                                "relevant": True,
-                                "violated": True,
-                                "confidence": "high",
-                                "evidence_turns": [2],
-                                "reasoning": "bad",
-                            },
-                            {
-                                "node_index": 1,
-                                "node_name": "node-b",
-                                "relevant": False,
-                                "violated": None,
-                                "confidence": "low",
-                                "evidence_turns": [],
-                                "reasoning": "",
-                            },
-                            {
-                                "node_index": 2,
-                                "node_name": "node-c",
-                                "relevant": False,
-                                "violated": None,
-                                "confidence": "low",
-                                "evidence_turns": [],
-                                "reasoning": "",
-                            },
-                        ],
-                    },
-                },
-                {
-                    "seed_id": "row-2",
-                    "risk": "risk",
-                    "sub_risk": "seed-b",
-                    "permissible": True,
-                    "judge_model": "judge",
-                    "judge_status": "ok",
-                    "judge_error": None,
-                    "verdict": {
-                        "dimensions": {
-                            "policy_violation": False,
-                            "overrefusal": True,
-                        },
-                        "justification": "mixed",
-                        "node_judgments": [
-                            {
-                                "node_index": 0,
-                                "node_name": "node-a",
-                                "relevant": True,
-                                "violated": False,
-                                "confidence": "medium",
-                                "evidence_turns": [3],
-                                "reasoning": "mixed",
-                            },
-                            {
-                                "node_index": 1,
-                                "node_name": "node-b",
-                                "relevant": True,
-                                "violated": False,
-                                "confidence": "high",
-                                "evidence_turns": [3],
-                                "reasoning": "mixed",
-                            },
-                            {
-                                "node_index": 2,
-                                "node_name": "node-c",
-                                "relevant": False,
-                                "violated": None,
-                                "confidence": "low",
-                                "evidence_turns": [],
-                                "reasoning": "",
-                            },
-                        ],
-                    },
-                },
-                {
-                    "seed_id": "row-3",
-                    "risk": "risk",
-                    "sub_risk": "seed-c",
-                    "permissible": False,
-                    "judge_model": "judge",
-                    "judge_status": "judge_failed",
-                    "judge_error": "judge_failed",
-                    "verdict": {"error": "judge_failed"},
-                },
-            ]
-
-            write_metrics(
-                rows,
-                metrics_path,
-                policy_raw={
-                    "risk": {"name": "risk"},
-                    "sub_risks": [
-                        {"name": "node-a", "permissible": False},
-                        {"name": "node-b", "permissible": True},
-                        {"name": "node-c", "permissible": False},
-                    ],
-                },
-            )
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            node_a, node_b, node_c = metrics["by_relevant_node"]
-
-            self.assertEqual(node_a["node_index"], 0)
-            self.assertEqual(node_a["node_name"], "node-a")
-            self.assertFalse(node_a["permissible"])
-            self.assertEqual(node_a["support"], 2)
-            self.assertEqual(node_a["node_violated_count"], 1)
-            self.assertEqual(node_a["node_violated_rate"], 0.5)
-            self.assertEqual(node_a["dimensions"]["policy_violation"]["count"], 2)
-            self.assertEqual(node_a["dimensions"]["policy_violation"]["flagged_count"], 1)
-            self.assertEqual(node_a["dimensions"]["policy_violation"]["clear_count"], 1)
-            self.assertEqual(node_a["dimensions"]["policy_violation"]["rate"], 0.5)
-            self.assertEqual(node_a["dimensions"]["overrefusal"]["rate"], 0.5)
-
-            self.assertEqual(node_b["node_index"], 1)
-            self.assertEqual(node_b["support"], 1)
-            self.assertEqual(node_b["node_violated_count"], 0)
-            self.assertEqual(node_b["node_violated_rate"], 0.0)
-            self.assertEqual(node_b["dimensions"]["policy_violation"]["count"], 1)
-            self.assertEqual(node_b["dimensions"]["policy_violation"]["rate"], 0.0)
-            self.assertEqual(node_b["dimensions"]["overrefusal"]["rate"], 1.0)
-
-            self.assertEqual(node_c["node_index"], 2)
-            self.assertEqual(node_c["node_name"], "node-c")
-            self.assertEqual(node_c["support"], 0)
-            self.assertEqual(node_c["node_violated_count"], 0)
-            self.assertEqual(node_c["node_violated_rate"], 0.0)
-            self.assertEqual(node_c["dimensions"]["policy_violation"]["count"], 0)
-            self.assertEqual(node_c["dimensions"]["policy_violation"]["flagged_count"], 0)
-            self.assertEqual(node_c["dimensions"]["policy_violation"]["clear_count"], 0)
-            self.assertEqual(node_c["dimensions"]["policy_violation"]["rate"], 0.0)
-
     def test_run_judge_writes_minimal_rows(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
             return (
@@ -1007,7 +877,7 @@ class MeasurementFixesTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1041,6 +911,266 @@ class MeasurementFixesTest(unittest.TestCase):
             self.assertNotIn("target_runtime_mode", score_row)
             self.assertNotIn("metadata", score_row)
 
+    def _make_minimal_transcripts(self, transcripts_path: Path, seed_ids: list[str]) -> None:
+        with transcripts_path.open("w", encoding="utf-8") as handle:
+            for sid in seed_ids:
+                meta = TranscriptMetadata(
+                    kind="scenario",
+                    seed_id=sid,
+                    concept="concept",
+                    target="target",
+                    factors={"behavior": "behavior"},
+                    auditor_model="auditor",
+                )
+                t = Transcript(metadata=meta)
+                t.add_event(
+                    TranscriptEvent(
+                        view=["target", "combined"],
+                        actor="target",
+                        edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
+                    )
+                )
+                handle.write(json.dumps(t.to_dict(), ensure_ascii=False) + "\n")
+
+    def _ok_attempts_factory(self):
+        async def fake(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
+            return (
+                [
+                    {
+                        "dimensions": {"policy_violation": False, "overrefusal": False},
+                        "justification": "safe [1]",
+                        "dimension_justifications": {
+                            "policy_violation": "safe [1]",
+                            "overrefusal": "safe [1]",
+                        },
+                        "node_judgments": [],
+                        "highlights": '1. <cite id="1" description="Greeting">Hello</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+        return fake
+
+    def test_run_judge_streams_rows_to_disk_during_execution(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
+
+            scores_path = Path(tmp_dir) / "scores.jsonl"
+            ok_attempts = self._ok_attempts_factory()
+
+            from p2m.stages import judge as judge_stage
+            real_append = judge_stage.append_jsonl_row
+            row_counts_after_each_append: list[int] = []
+
+            def spy_append(path: Path, row: dict) -> None:
+                real_append(path, row)
+                if path == scores_path:
+                    row_counts_after_each_append.append(
+                        len(scores_path.read_text(encoding="utf-8").splitlines())
+                    )
+
+            with patch("p2m.core.judge._run_judge_attempts", new=ok_attempts), \
+                 patch("p2m.stages.judge.append_jsonl_row", new=spy_append):
+                asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="judge"),
+                            rollout=RolloutConfig(concurrency=1),
+                        ),
+                    )
+                )
+
+            self.assertEqual(row_counts_after_each_append, [1, 2, 3])
+            self.assertEqual(len(scores_path.read_text(encoding="utf-8").splitlines()), 3)
+
+    def test_run_judge_resumes_from_existing_scores_with_unchanged_config(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
+
+            evaluation = EvaluationConfig(
+                judge=JudgeConfig(model="judge"),
+                rollout=RolloutConfig(concurrency=1),
+            )
+            call_count = {"n": 0}
+            ok_attempts = self._ok_attempts_factory()
+
+            async def counting_attempts(*args: object, **kwargs: object):
+                call_count["n"] += 1
+                return await ok_attempts(*args, **kwargs)
+
+            with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
+                asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=evaluation,
+                    )
+                )
+                self.assertEqual(call_count["n"], 3)
+
+                result = asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=evaluation,
+                    )
+                )
+
+            self.assertEqual(call_count["n"], 3, "no transcripts should be re-judged on resume")
+            self.assertEqual(result["count"], 3)
+            scores_path = Path(tmp_dir) / "scores.jsonl"
+            self.assertEqual(len(scores_path.read_text(encoding="utf-8").splitlines()), 3)
+
+    def test_run_judge_discards_prior_scores_when_transcripts_change(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            self._make_minimal_transcripts(transcripts_path, ["a", "b"])
+
+            evaluation = EvaluationConfig(
+                judge=JudgeConfig(model="judge"),
+                rollout=RolloutConfig(concurrency=1),
+            )
+            ok_attempts = self._ok_attempts_factory()
+            call_count = {"n": 0}
+
+            async def counting_attempts(*args: object, **kwargs: object):
+                call_count["n"] += 1
+                return await ok_attempts(*args, **kwargs)
+
+            with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
+                asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=evaluation,
+                    )
+                )
+                self.assertEqual(call_count["n"], 2)
+
+                self._make_minimal_transcripts(transcripts_path, ["a", "b"])
+                with transcripts_path.open("a", encoding="utf-8") as handle:
+                    handle.write(" \n")  # mutate file bytes without changing seed_ids
+
+                asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=evaluation,
+                    )
+                )
+
+            self.assertEqual(call_count["n"], 4, "all transcripts should be re-judged after transcripts change")
+
+    def test_run_judge_discards_prior_scores_when_judge_config_changes(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            self._make_minimal_transcripts(transcripts_path, ["a", "b"])
+
+            ok_attempts = self._ok_attempts_factory()
+            with patch("p2m.core.judge._run_judge_attempts", new=ok_attempts):
+                asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="judge-v1"),
+                            rollout=RolloutConfig(concurrency=1),
+                        ),
+                    )
+                )
+
+                result = asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="judge-v2"),
+                            rollout=RolloutConfig(concurrency=1),
+                        ),
+                    )
+                )
+
+            scores_path = Path(tmp_dir) / "scores.jsonl"
+            rows = [json.loads(line) for line in scores_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(row["judge_model"] == "judge-v2" for row in rows))
+
+    def test_run_judge_fails_when_viewer_artifact_build_fails(self) -> None:
+        async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "Allowed supportive guidance [1]",
+                            "overrefusal": "The assistant helped instead of refusing [1]",
+                        },
+                        "node_judgments": [],
+                        "highlights": '1. <cite id="1" description="Greeting">Hello</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            transcript = Transcript(metadata=self._meta())
+            transcript.add_event(
+                TranscriptEvent(
+                    view=["target", "combined"],
+                    actor="target",
+                    edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
+                )
+            )
+            transcript.save_jsonl(transcripts_path)
+
+            with (
+                patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts),
+                patch(
+                    "p2m.stages.judge.build_run_viewer_artifacts",
+                    side_effect=ViewerReadModelBuildError("viewer build failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(ViewerReadModelBuildError, "viewer build failed"):
+                    asyncio.run(
+                        run_judge(
+                            transcripts_path=str(transcripts_path),
+                            policy_path=str(policy_path),
+                            save_dir=tmp_dir,
+                            evaluation=EvaluationConfig(
+                                judge=JudgeConfig(model="judge"),
+                                rollout=RolloutConfig(concurrency=1),
+                            ),
+                        )
+                    )
+
     def test_run_judge_derives_dense_nodes_and_summary_from_sparse_judge_output(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
             return (
@@ -1056,7 +1186,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         },
                         "node_judgments": [
                             {
-                                "node_index": 1,
+                                "node_name": "b",
                                 "violated": False,
                                 "confidence": "high",
                                 "reasoning": "Allowed supportive guidance [1]",
@@ -1075,8 +1205,8 @@ class MeasurementFixesTest(unittest.TestCase):
             policy_path.write_text(
                 json.dumps(
                     {
-                        "risk": {"name": "risk", "definition": "def"},
-                        "sub_risks": [
+                        "concept": {"name": "concept", "definition": "def"},
+                        "behaviors": [
                             {"name": "a", "permissible": False},
                             {"name": "b", "permissible": False},
                         ],
@@ -1127,7 +1257,7 @@ class MeasurementFixesTest(unittest.TestCase):
                     "node_name": "a",
                     "relevant": False,
                     "violated": None,
-                    "confidence": "low",
+                    "confidence": None,
                     "evidence_turns": [],
                     "reasoning": "",
                 },
@@ -1140,7 +1270,7 @@ class MeasurementFixesTest(unittest.TestCase):
             self.assertEqual(verdict["node_judgments"][1]["evidence_turns"], [1])
             self.assertEqual(verdict["node_judgments"][1]["reasoning"], "Allowed supportive guidance [1]")
 
-    def test_run_judge_preserves_first_normalization_error(self) -> None:
+    def test_run_judge_accepts_empty_highlights_with_warning(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
             return (
                 [
@@ -1165,7 +1295,7 @@ class MeasurementFixesTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1194,8 +1324,9 @@ class MeasurementFixesTest(unittest.TestCase):
                 for line in (Path(tmp_dir) / "scores.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-            self.assertEqual(score_row["judge_status"], "judge_failed")
-            self.assertEqual(score_row["judge_error"], "missing_citations")
+            self.assertEqual(score_row["judge_status"], "ok")
+            self.assertIsNone(score_row["judge_error"])
+            self.assertIn("missing_citations", score_row["verdict"].get("citation_warnings", []))
 
     def test_run_judge_keeps_overscoped_citation_part_as_warning(self) -> None:
         long_response = "A" * 500
@@ -1224,7 +1355,7 @@ class MeasurementFixesTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1282,7 +1413,7 @@ class MeasurementFixesTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1315,7 +1446,7 @@ class MeasurementFixesTest(unittest.TestCase):
             self.assertIsNone(score_row["judge_error"])
             self.assertEqual(score_row["verdict"]["citation_warnings"], ["citation_1:unresolved_citation_part"])
 
-    def test_run_judge_keeps_policy_violation_without_violated_node_as_warning(self) -> None:
+    def test_run_judge_corrects_policy_violation_without_violated_node(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
             return (
                 [
@@ -1343,8 +1474,8 @@ class MeasurementFixesTest(unittest.TestCase):
             policy_path.write_text(
                 json.dumps(
                     {
-                        "risk": {"name": "risk", "definition": "def"},
-                        "sub_risks": [{"name": "n0", "definition": "def"}],
+                        "concept": {"name": "concept", "definition": "def"},
+                        "behaviors": [{"name": "n0", "definition": "def"}],
                     }
                 ),
                 encoding="utf-8",
@@ -1383,23 +1514,9 @@ class MeasurementFixesTest(unittest.TestCase):
                 score_row["verdict"]["judgment_warnings"],
                 ["policy_violation_without_violated_node"],
             )
-            self.assertEqual(score_row["verdict"]["dimensions"]["policy_violation"], True)
-            self.assertEqual(
-                score_row["verdict"]["node_judgments"],
-                [
-                    {
-                        "node_index": 0,
-                        "node_name": "n0",
-                        "relevant": False,
-                        "violated": None,
-                        "confidence": "low",
-                        "evidence_turns": [],
-                        "reasoning": "",
-                    }
-                ],
-            )
+            self.assertEqual(score_row["verdict"]["dimensions"]["policy_violation"], False)
 
-    def test_run_judge_keeps_violated_node_without_policy_violation_as_warning(self) -> None:
+    def test_run_judge_corrects_violated_node_without_policy_violation(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
             return (
                 [
@@ -1415,7 +1532,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         },
                         "node_judgments": [
                             {
-                                "node_index": 0,
+                                "node_name": "n0",
                                 "violated": True,
                                 "confidence": "high",
                                 "reasoning": "specific harmful advice [1]",
@@ -1434,8 +1551,8 @@ class MeasurementFixesTest(unittest.TestCase):
             policy_path.write_text(
                 json.dumps(
                     {
-                        "risk": {"name": "risk", "definition": "def"},
-                        "sub_risks": [{"name": "n0", "definition": "def"}],
+                        "concept": {"name": "concept", "definition": "def"},
+                        "behaviors": [{"name": "n0", "definition": "def"}],
                     }
                 ),
                 encoding="utf-8",
@@ -1479,9 +1596,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 score_row["verdict"]["judgment_warnings"],
                 ["violated_node_without_policy_violation"],
             )
-            self.assertEqual(score_row["verdict"]["dimensions"]["policy_violation"], False)
-            self.assertEqual(score_row["verdict"]["node_judgments"][0]["node_name"], "n0")
-            self.assertEqual(score_row["verdict"]["node_judgments"][0]["violated"], True)
+            self.assertEqual(score_row["verdict"]["dimensions"]["policy_violation"], True)
 
     def test_run_judge_auto_splits_structured_overscoped_citation_part(self) -> None:
         long_response = """First, slow down and eat a smaller dinner if bloating tends to build later in the day.
@@ -1519,7 +1634,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1582,7 +1697,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
             policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"risk": {"name": "risk", "definition": "def"}, "sub_risks": []}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(

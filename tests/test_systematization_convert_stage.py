@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from p2m.core.model_client import ModelResponse
+from p2m.core.config_model import ModelConfig
 from p2m.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_policy
 
 _FIXTURE_SYSTEMATIZATION = (
@@ -42,14 +43,13 @@ _FIXTURE_SYSTEMATIZATION = (
 
 class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
     def test_guideline_prompt_preserves_converter_specific_contract(self) -> None:
-        self.assertIn("single model response from text alone", GUIDELINE_PROMPT)
-        self.assertIn("Do not broaden the space using common usage or adjacent patterns", GUIDELINE_PROMPT)
-        self.assertIn("A single response may trigger multiple sub-risks.", GUIDELINE_PROMPT)
-        self.assertIn("Use `Variables` carefully.", GUIDELINE_PROMPT)
-        self.assertIn("not an instruction to create one sub-risk per value", GUIDELINE_PROMPT)
-        self.assertIn("`risk.definition` should capture the overall scope and boundaries", GUIDELINE_PROMPT)
-        self.assertIn("2-4 short, realistic, raw text examples", GUIDELINE_PROMPT)
-        self.assertIn("slot-based patterns", GUIDELINE_PROMPT)
+        self.assertIn("Source-faithful", GUIDELINE_PROMPT)
+        self.assertIn("pattern_role", GUIDELINE_PROMPT)
+        self.assertIn("A single conversation may trigger multiple behaviors.", GUIDELINE_PROMPT)
+        self.assertIn("Expand patterns via slot values", GUIDELINE_PROMPT)
+        self.assertIn("`concept.definition` must capture the overall scope", GUIDELINE_PROMPT)
+        self.assertIn("4–8 concrete text snippets", GUIDELINE_PROMPT)
+        self.assertIn("slot_components", GUIDELINE_PROMPT)
 
     async def test_run_systematization_to_policy_writes_policy(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
@@ -61,7 +61,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             return ModelResponse(
                 model=model,
                 parsed={
-                    "risk": {"definition": "Structured definition"},
+                    "concept": {"definition": "Structured definition"},
                     "definition_of_terms": [
                         {
                             "term": "term-a",
@@ -69,10 +69,10 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                             "examples": ["example"],
                         }
                     ],
-                    "sub_risks": [
+                    "behaviors": [
                         {
-                            "name": "sub-risk-a",
-                            "definition": "sub-risk definition",
+                            "name": "behavior-a",
+                            "definition": "behavior definition",
                             "examples": ["example-a"],
                             "permissible": False,
                         }
@@ -103,14 +103,14 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 result_path = await run_systematization_to_policy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "policy.json"),
-                    model="azure/gpt-5.4",
-                    sub_risk_count_hint=12,
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
+                    behavior_count_hint=12,
                 )
 
             payload = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["risk"]["name"], "Harmful advice")
-            self.assertEqual(payload["risk"]["definition"], "Structured definition")
-            self.assertEqual(payload["sub_risks"][0]["name"], "sub-risk-a")
+            self.assertEqual(payload["concept"]["name"], "Harmful advice")
+            self.assertEqual(payload["concept"]["definition"], "Structured definition")
+            self.assertEqual(payload["behaviors"][0]["name"], "behavior-a")
             self.assertEqual(payload["definition_of_terms"][0]["term"], "term-a")
             self.assertEqual(payload["meta"]["source"], "systematization")
             self.assertEqual(payload["meta"]["systematization_path"], str(systematization_path))
@@ -140,7 +140,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 await run_systematization_to_policy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "policy.json"),
-                    model="azure/gpt-5.4",
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
     async def test_run_systematization_to_policy_rejects_non_boolean_permissible(self) -> None:
@@ -148,12 +148,12 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             return ModelResponse(
                 model=model,
                 parsed={
-                    "risk": {"definition": "Structured definition"},
+                    "concept": {"definition": "Structured definition"},
                     "definition_of_terms": [],
-                    "sub_risks": [
+                    "behaviors": [
                         {
-                            "name": "sub-risk-a",
-                            "definition": "sub-risk definition",
+                            "name": "behavior-a",
+                            "definition": "behavior definition",
                             "examples": ["example-a"],
                             "permissible": "false",
                         }
@@ -177,24 +177,24 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
-                self.assertRaisesRegex(ValueError, "sub_risks.permissible"),
+                self.assertRaisesRegex(ValueError, "behaviors.permissible"),
             ):
                 await run_systematization_to_policy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "policy.json"),
-                    model="azure/gpt-5.4",
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
-    async def test_run_systematization_to_policy_rejects_missing_sub_risk_name(self) -> None:
+    async def test_run_systematization_to_policy_rejects_missing_behavior_name(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             return ModelResponse(
                 model=model,
                 parsed={
-                    "risk": {"definition": "Structured definition"},
+                    "concept": {"definition": "Structured definition"},
                     "definition_of_terms": [],
-                    "sub_risks": [
+                    "behaviors": [
                         {
-                            "definition": "sub-risk definition",
+                            "definition": "behavior definition",
                             "examples": ["example-a"],
                             "permissible": False,
                         }
@@ -218,12 +218,12 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
-                self.assertRaisesRegex(ValueError, "sub_risks.name"),
+                self.assertRaisesRegex(ValueError, "behaviors.name"),
             ):
                 await run_systematization_to_policy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "policy.json"),
-                    model="azure/gpt-5.4",
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
     async def test_run_systematization_to_policy_rejects_missing_systematization(self) -> None:
@@ -244,7 +244,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 await run_systematization_to_policy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "policy.json"),
-                    model="azure/gpt-5.4",
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
 

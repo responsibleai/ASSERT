@@ -9,11 +9,10 @@ from p2m.core.io import (
     resolve_path,
     write_jsonl,
 )
-import p2m.core.judge as judge_module
 from p2m.core.judge import (
+    BUILT_IN_DIMENSIONS,
     build_judge_contract,
     multi_judge,
-    resolve_dimensions,
     run_judge,
     run_transcript_judge,
 )
@@ -28,10 +27,9 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             metadata=TranscriptMetadata(
                 kind="scenario",
                 seed_id="seed-1",
-                risk="risk",
-                sub_risk="sub-risk",
-                permissible=False,
+                concept="concept",
                 target="target",
+                factors={"behavior": "behavior"},
                 auditor_model="auditor",
             )
         )
@@ -91,23 +89,11 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 load_seeds(path, strict=True)
 
-    def test_utils_shim_resolve_dimensions_uses_bundled_dimension_data(self) -> None:
-        dims = resolve_dimensions(["overrefusal"])
-        self.assertEqual(len(dims), 1)
-        self.assertEqual(dims[0]["name"], "overrefusal")
-        self.assertIn("description", dims[0])
-        self.assertIn("rubric", dims[0])
-
-    def test_resolve_dimensions_rejects_non_event_dimension_kinds(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            dimensions_path = Path(tmp_dir) / "judge_dimensions.yaml"
-            dimensions_path.write_text(
-                "bad_metric:\n  kind: rubric\n  description: Bad\n  rubric: bad\n",
-                encoding="utf-8",
-            )
-            with patch.object(judge_module, "DIMENSIONS_PATH", dimensions_path):
-                with self.assertRaisesRegex(ValueError, "must declare kind: 'event'"):
-                    resolve_dimensions(["bad_metric"])
+    def test_built_in_dimensions_include_required_base_metrics(self) -> None:
+        self.assertEqual(
+            [dim["name"] for dim in BUILT_IN_DIMENSIONS],
+            ["policy_violation", "overrefusal"],
+        )
 
     def test_utils_shim_resolve_path_preserves_absolute_paths(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -358,55 +344,57 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["failures"], 1)
         self.assertIsNone(result["verdict"])
 
-    def test_build_judge_contract_respects_citation_style(self) -> None:
-        response_contract = build_judge_contract(
+    def test_build_judge_contract_uses_highlight_citations(self) -> None:
+        contract = build_judge_contract(
             template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"sub_risks": []},
-            judge_dimensions=["overrefusal"],
-            citation_style="response",
-            schema_name="response_judgment",
-        )
-        turn_contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"sub_risks": []},
-            judge_dimensions=["overrefusal"],
-            citation_style="turn",
-            schema_name="turn_judgment",
-        )
-        xml_contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"sub_risks": []},
-            judge_dimensions=["overrefusal"],
-            citation_style="xml",
+            policy_raw={"behaviors": []},
+            judge_dimensions=[],
             schema_name="xml_judgment",
         )
 
-        response_required = response_contract["response_schema"]["json_schema"]["properties"]["citations"]["items"]["required"]
-        turn_required = turn_contract["response_schema"]["json_schema"]["properties"]["citations"]["items"]["required"]
+        self.assertEqual(contract["response_schema"]["name"], "xml_judgment")
+        self.assertIn("policy_violation", contract["score_keys"])
+        self.assertIn("overrefusal", contract["score_keys"])
+        self.assertIn("dimension_justifications", contract["response_schema"]["json_schema"]["required"])
+        self.assertIn("highlights", contract["response_schema"]["json_schema"]["required"])
+        self.assertEqual(contract["response_schema"]["json_schema"]["properties"]["highlights"]["type"], "string")
+        self.assertNotIn("citations", contract["response_schema"]["json_schema"]["properties"])
+        self.assertIn('"behaviors": []', contract["system_prompt"])
 
-        self.assertEqual(response_contract["response_schema"]["name"], "response_judgment")
-        self.assertEqual(turn_contract["response_schema"]["name"], "turn_judgment")
-        self.assertEqual(xml_contract["response_schema"]["name"], "xml_judgment")
-        self.assertIn("policy_violation", response_contract["score_keys"])
-        self.assertIn("overrefusal", response_contract["score_keys"])
-        self.assertIn("dimension_justifications", response_contract["response_schema"]["json_schema"]["required"])
-        self.assertNotIn("turn", response_required)
-        self.assertIn("turn", turn_required)
-        self.assertEqual(xml_contract["response_schema"]["json_schema"]["properties"]["highlights"]["type"], "string")
-        self.assertIn('"sub_risks": []', response_contract["system_prompt"])
-
-    def test_build_judge_contract_sets_exact_node_count(self) -> None:
+    def test_build_judge_contract_uses_behavior_names_enum(self) -> None:
         contract = build_judge_contract(
             template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"sub_risks": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
-            judge_dimensions=["overrefusal"],
-            citation_style="xml",
+            policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
+            judge_dimensions=[],
             schema_name="xml_judgment",
         )
 
         node_schema = contract["response_schema"]["json_schema"]["properties"]["node_judgments"]
         self.assertEqual(node_schema["maxItems"], 3)
-        self.assertEqual(node_schema["items"]["properties"]["node_index"]["maximum"], 2)
+        self.assertEqual(
+            node_schema["items"]["properties"]["node_name"]["enum"],
+            ["a", "b", "c"],
+        )
+
+    def test_build_judge_contract_rejects_duplicate_behavior_names(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate name"):
+            build_judge_contract(
+                template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+                policy_raw={"behaviors": [{"name": "a"}, {"name": "a"}]},
+                judge_dimensions=[],
+            )
+
+    def test_build_judge_contract_strips_behavior_names_in_enum(self) -> None:
+        contract = build_judge_contract(
+            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+            policy_raw={"behaviors": [{"name": "  a  "}, {"name": "b"}]},
+            judge_dimensions=[],
+        )
+        node_schema = contract["response_schema"]["json_schema"]["properties"]["node_judgments"]
+        self.assertEqual(
+            node_schema["items"]["properties"]["node_name"]["enum"],
+            ["a", "b"],
+        )
 
     async def test_run_judge_returns_normalized_success_payload(self) -> None:
         async def fake_multi_judge(**kwargs):
@@ -497,7 +485,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                         },
                         "node_judgments": [
                             {
-                                "node_index": 1,
+                                "node_name": "b",
                                 "violated": False,
                                 "confidence": "high",
                                 "reasoning": "Allowed supportive guidance [1]",
@@ -518,7 +506,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"sub_risks": [{"name": "a"}, {"name": "b"}]},
+                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -530,7 +518,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verdict"]["node_judgments"][1]["evidence_turns"], [1])
         self.assertIn("citations", result["verdict"])
 
-    async def test_run_transcript_judge_returns_first_normalization_error(self) -> None:
+    async def test_run_transcript_judge_accepts_empty_highlights_with_warning(self) -> None:
         transcript, index_to_message_id = self._transcript_with_assistant_message("Hello")
 
         async def fake_run_judge_attempts(*args, **kwargs):
@@ -549,6 +537,36 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                         "highlights": "",
                     }
                 ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": []},
+            )
+
+        self.assertEqual(result["judge_status"], "ok")
+        self.assertIsNone(result["judge_error"])
+        self.assertIn("missing_citations", result["verdict"].get("citation_warnings", []))
+
+    async def test_run_transcript_judge_returns_hard_failure_for_missing_dimensions(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message("Hello")
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "node_judgments": [],
+                        "highlights": "",
+                    }
+                ],
                 ['{"judge":"bad"}'],
                 0,
             )
@@ -561,14 +579,246 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"sub_risks": []},
+                policy_raw={"behaviors": []},
             )
 
         self.assertEqual(result["judge_status"], "judge_failed")
-        self.assertEqual(result["judge_error"], "missing_citations")
-        self.assertEqual(result["verdict"], {"error": "judge_failed"})
-        self.assertEqual(result["score_values"], {"policy_violation": 0.0, "overrefusal": 0.0})
-        self.assertEqual(result["raw"], '{"judge":"bad"}')
+        self.assertEqual(result["judge_error"], "missing_dimensions")
+
+    async def test_run_transcript_judge_deduplicates_node_name_with_warning(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message(
+            "Stay calm and call the nurse if this keeps getting worse."
+        )
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "Allowed supportive guidance [1]",
+                            "overrefusal": "The assistant helped [1]",
+                        },
+                        "node_judgments": [
+                            {
+                                "node_name": "a",
+                                "violated": False,
+                                "confidence": "high",
+                                "reasoning": "First occurrence [1]",
+                            },
+                            {
+                                "node_name": "a",
+                                "violated": True,
+                                "confidence": "medium",
+                                "reasoning": "Duplicate [1]",
+                            },
+                        ],
+                        "highlights": '1. <cite id="1" description="Supportive guidance">Stay calm and call the nurse if this keeps getting worse.</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+            )
+
+        self.assertEqual(result["judge_status"], "ok")
+        self.assertIn("duplicate_node_name:a", result["verdict"].get("judgment_warnings", []))
+        relevant_nodes = [n for n in result["verdict"]["node_judgments"] if n.get("relevant")]
+        self.assertEqual(len(relevant_nodes), 1)
+        self.assertFalse(relevant_nodes[0]["violated"])
+
+    async def test_run_transcript_judge_rejects_unknown_node_name(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message(
+            "Stay calm and call the nurse if this keeps getting worse."
+        )
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "Allowed supportive guidance [1]",
+                            "overrefusal": "The assistant helped [1]",
+                        },
+                        "node_judgments": [
+                            {
+                                "node_name": "not-a-real-behavior",
+                                "violated": False,
+                                "confidence": "high",
+                                "reasoning": "Allowed supportive guidance [1]",
+                            },
+                        ],
+                        "highlights": '1. <cite id="1" description="Supportive guidance">Stay calm and call the nurse if this keeps getting worse.</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+            )
+
+        self.assertEqual(result["judge_status"], "judge_failed")
+        self.assertEqual(result["judge_error"], "unknown_node_name")
+
+    async def test_run_transcript_judge_accepts_missing_citation_markers_with_warning(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message(
+            "Stay calm and call the nurse if this keeps getting worse."
+        )
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "No violation found [1]",
+                            "overrefusal": "The assistant did not overrefuse.",
+                        },
+                        "node_judgments": [
+                            {
+                                "node_name": "a",
+                                "violated": False,
+                                "confidence": "high",
+                                "reasoning": "Allowed supportive guidance [1]",
+                            },
+                        ],
+                        "highlights": '1. <cite id="1" description="Supportive guidance">Stay calm and call the nurse if this keeps getting worse.</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": [{"name": "a"}]},
+            )
+
+        self.assertEqual(result["judge_status"], "ok")
+        self.assertIn("missing_inline_citation_marker", result["verdict"].get("judgment_warnings", []))
+
+    async def test_run_transcript_judge_accepts_dangling_citation_marker_with_warning(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message(
+            "Stay calm and call the nurse if this keeps getting worse."
+        )
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "No violation [1]",
+                            "overrefusal": "No overrefusal [2]",
+                        },
+                        "node_judgments": [],
+                        "highlights": '1. <cite id="1" description="Evidence">Stay calm and call the nurse if this keeps getting worse.</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": []},
+            )
+
+        self.assertEqual(result["judge_status"], "ok")
+        self.assertIn("dangling_inline_citation_marker", result["verdict"].get("judgment_warnings", []))
+
+    async def test_run_transcript_judge_nodes_with_empty_highlights_get_empty_evidence(self) -> None:
+        transcript, index_to_message_id = self._transcript_with_assistant_message(
+            "Stay calm and call the nurse if this keeps getting worse."
+        )
+
+        async def fake_run_judge_attempts(*args, **kwargs):
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "dimension_justifications": {
+                            "policy_violation": "No violation found",
+                            "overrefusal": "No overrefusal",
+                        },
+                        "node_judgments": [
+                            {
+                                "node_name": "a",
+                                "violated": False,
+                                "confidence": "high",
+                                "reasoning": "Allowed supportive guidance",
+                            },
+                        ],
+                        "highlights": "",
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            result = await run_transcript_judge(
+                judge_model="azure/gpt-5.4",
+                system_prompt="system",
+                user_message="user",
+                transcript=transcript,
+                index_to_message_id=index_to_message_id,
+                score_keys=["policy_violation", "overrefusal"],
+                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+            )
+
+        self.assertEqual(result["judge_status"], "ok")
+        self.assertIn("missing_citations", result["verdict"].get("citation_warnings", []))
+        relevant = [n for n in result["verdict"]["node_judgments"] if n.get("relevant")]
+        self.assertEqual(len(relevant), 1)
+        self.assertEqual(relevant[0]["evidence_turns"], [])
 
 
 if __name__ == "__main__":

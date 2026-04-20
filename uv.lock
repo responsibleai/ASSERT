@@ -1606,6 +1606,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "litellm" },
+    { name = "matplotlib" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rapidfuzz" },
@@ -1614,11 +1615,13 @@ dependencies = [
 
 [package.optional-dependencies]
 analysis = [
-    { name = "matplotlib" },
+    { name = "markdown-it-py" },
     { name = "numpy" },
     { name = "openai" },
     { name = "openpyxl" },
     { name = "pandas" },
+    { name = "requests" },
+    { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "sentence-transformers" },
 ]
@@ -1632,7 +1635,8 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "litellm", specifier = ">=1.79.1" },
-    { name = "matplotlib", marker = "extra == 'analysis'", specifier = ">=3.8.0" },
+    { name = "markdown-it-py", marker = "extra == 'analysis'", specifier = ">=3.0.0" },
+    { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "numpy", marker = "extra == 'analysis'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'analysis'", specifier = ">=1.30.0" },
     { name = "openpyxl", marker = "extra == 'analysis'", specifier = ">=3.1.5" },
@@ -1640,7 +1644,9 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rapidfuzz", specifier = ">=3.9.0" },
+    { name = "requests", marker = "extra == 'analysis'", specifier = ">=2.32.0" },
     { name = "rich", specifier = ">=13.7.0" },
+    { name = "scikit-learn", marker = "extra == 'analysis'", specifier = ">=1.5.0" },
     { name = "seaborn", marker = "extra == 'analysis'", specifier = ">=0.13.0" },
     { name = "sentence-transformers", marker = "extra == 'analysis'", specifier = ">=3.0.0" },
 ]

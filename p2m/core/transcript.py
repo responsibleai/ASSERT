@@ -5,18 +5,18 @@ Supports append-only event log with multiple views.
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from .io import get_permissible_flag
-
-
 ROLE_LABEL_BY_ROLE = {"user": "User", "assistant": "Assistant", "system": "System", "tool": "Tool"}
 MESSAGE_ROLES = set(ROLE_LABEL_BY_ROLE.keys())
+
+_DEFAULT_MAX_MESSAGE_CHARS = 10_000
 
 
 class EditType(str, Enum):
@@ -48,20 +48,6 @@ class ToolCallEdit(BaseModel):
 
 
 Edit = Union[AddMessageEdit, SetSystemMessageEdit, ToolCallEdit]
-
-
-class CitationSearchSource(TypedDict):
-    kind: Literal["message", "tool_arg", "tool_result"]
-    text: str
-    span: tuple[int, int]
-    tool_call_id: str | None
-    tool_arg: str | None
-
-
-class CitationSearchEntry(TypedDict):
-    message_id: str
-    message_text: str
-    sources: List[CitationSearchSource]
 
 
 @dataclass(frozen=True)
@@ -238,120 +224,6 @@ def _collect_messages_for_view(events: List[Any], view: str) -> List["Message"]:
     return [message for _, message in _collect_message_entries_for_view(events, view)]
 
 
-def _tool_call_id_from_event_raw(raw: Any) -> str | None:
-    if not isinstance(raw, dict):
-        return None
-    for key in ("tool_call_id", "id", "toolUseId"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _collect_message_search_entries_for_view(events: List[Any], view: str) -> List[CitationSearchEntry]:
-    entries: List[CitationSearchEntry] = []
-    for event_index, event in enumerate(events):
-        views = _event_views(event.get("view") if isinstance(event, dict) else getattr(event, "view", None))
-        if view not in views:
-            continue
-
-        edit = event.get("edit") if isinstance(event, dict) else getattr(event, "edit", None)
-        kind = _edit_type(edit)
-        message_id = _message_id_for_event_index(event_index)
-
-        if kind in (EditType.ADD_MESSAGE.value, EditType.SET_SYSTEM_MESSAGE.value):
-            message = _message_from_edit(edit)
-            if message is None:
-                continue
-            content = message.content
-            entries.append(
-                CitationSearchEntry(
-                    message_id=message_id,
-                    message_text=content,
-                    sources=[
-                        CitationSearchSource(
-                            kind="message",
-                            text=content,
-                            span=(0, len(content)),
-                            tool_call_id=None,
-                            tool_arg=None,
-                        )
-                    ],
-                )
-            )
-            continue
-
-        if kind != EditType.TOOL_CALL.value:
-            continue
-
-        tool_name = edit.get("tool_name", "") if isinstance(edit, dict) else getattr(edit, "tool_name", "")
-        tool_args = edit.get("tool_args", {}) if isinstance(edit, dict) else getattr(edit, "tool_args", {})
-        tool_result = edit.get("tool_result", "") if isinstance(edit, dict) else getattr(edit, "tool_result", "")
-        if not isinstance(tool_name, str):
-            tool_name = str(tool_name)
-        if not isinstance(tool_args, dict):
-            tool_args = {}
-        if not isinstance(tool_result, str):
-            tool_result = str(tool_result)
-
-        message_text = _format_tool_call_content(tool_name, tool_args, tool_result)
-        raw = event.get("raw") if isinstance(event, dict) else getattr(event, "raw", None)
-        tool_call_id = _tool_call_id_from_event_raw(raw)
-
-        sources: List[CitationSearchSource] = [
-            CitationSearchSource(
-                kind="message",
-                text=message_text,
-                span=(0, len(message_text)),
-                tool_call_id=tool_call_id,
-                tool_arg=None,
-            )
-        ]
-
-        args_json = json.dumps(tool_args, ensure_ascii=False)
-        args_offset = len(f"[Tool call: {tool_name}(")
-        for arg_name, arg_value in tool_args.items():
-            arg_text = str(arg_value)
-            if not arg_text:
-                continue
-            rel_start = args_json.find(arg_text)
-            while rel_start >= 0:
-                start = args_offset + rel_start
-                end = start + len(arg_text)
-                sources.append(
-                    CitationSearchSource(
-                        kind="tool_arg",
-                        text=arg_text,
-                        span=(start, end),
-                        tool_call_id=tool_call_id,
-                        tool_arg=str(arg_name),
-                    )
-                )
-                rel_start = args_json.find(arg_text, rel_start + 1)
-
-        if tool_result:
-            result_offset = args_offset + len(args_json) + len(") → ")
-            sources.append(
-                CitationSearchSource(
-                    kind="tool_result",
-                    text=tool_result,
-                    span=(result_offset, result_offset + len(tool_result)),
-                    tool_call_id=tool_call_id,
-                    tool_arg=None,
-                )
-            )
-
-        entries.append(
-            CitationSearchEntry(
-                message_id=message_id,
-                message_text=message_text,
-                sources=sources,
-            )
-        )
-
-    return entries
-
-
 def _count_turns(messages: List["Message"], *, skip_system: bool, number_system: bool) -> int:
     turns = 0
     for msg in messages:
@@ -366,11 +238,12 @@ def _metadata_from_dict(data: Dict[str, Any]) -> "TranscriptMetadata":
     return TranscriptMetadata(
         kind=data["kind"],
         seed_id=data["seed_id"],
-        risk=data["risk"],
-        sub_risk=data["sub_risk"],
-        permissible=get_permissible_flag(data, default=True),
+        concept=data["concept"],
         target=data["target"],
         auditor_model=data["auditor_model"],
+        target_reasoning_effort=data.get("target_reasoning_effort"),
+        auditor_reasoning_effort=data.get("auditor_reasoning_effort"),
+        factors=data.get("factors"),
     )
 
 
@@ -415,6 +288,7 @@ def _transcript_from_dict(data: Dict[str, Any]) -> "Transcript":
         try:
             llm_calls.append(LLMCallTrace(**call_data))
         except Exception:
+            logging.warning("Skipping malformed LLM call trace in transcript")
             continue
     return Transcript(
         metadata=_metadata_from_dict(data),
@@ -436,11 +310,12 @@ class TranscriptMetadata(BaseModel):
     """Metadata for a transcript."""
     kind: str
     seed_id: str
-    risk: str
-    sub_risk: str
-    permissible: bool
+    concept: str
     target: str
     auditor_model: str
+    target_reasoning_effort: Optional[str] = None
+    auditor_reasoning_effort: Optional[str] = None
+    factors: Optional[Dict[str, str]] = None
 
 
 class LLMCallTrace(BaseModel):
@@ -525,13 +400,6 @@ class Transcript(BaseModel):
         """Collect view-specific synthetic message IDs alongside display messages."""
         return _collect_message_entries_for_view(self.events, view)
 
-    def collect_message_search_entries(
-        self,
-        view: str,
-    ) -> List[CitationSearchEntry]:
-        """Collect citation-searchable message records for a view."""
-        return _collect_message_search_entries_for_view(self.events, view)
-
     def collect_searchable_messages_with_ids(
         self,
         view: str,
@@ -584,6 +452,7 @@ class Transcript(BaseModel):
         self,
         view: str,
         skip_system: bool = True,
+        max_message_chars: int | None = None,
     ) -> tuple[str, Dict[str, str]]:
         """
         Format a transcript view as indexed XML for citation-friendly judging.
@@ -591,6 +460,7 @@ class Transcript(BaseModel):
         Returns the XML transcript plus a mapping from XML message index to
         synthetic message ID.
         """
+        limit = max_message_chars if max_message_chars is not None else _DEFAULT_MAX_MESSAGE_CHARS
         entries = self.collect_messages_with_ids(view)
         parts: List[str] = []
         index_to_message_id: Dict[str, str] = {}
@@ -601,8 +471,13 @@ class Transcript(BaseModel):
                 continue
             index_to_message_id[str(xml_index)] = message_id
             tag = ROLE_LABEL_BY_ROLE.get(msg.role, msg.role).lower()
-            content = _escape_xml_text(msg.content)
-            parts.append(f'<{tag} index="{xml_index}">\n{content}\n</{tag}>')
+            raw_content = msg.content or ""
+            truncated = len(raw_content) > limit
+            if truncated:
+                raw_content = raw_content[:limit] + f"\n[... truncated, {len(msg.content)} chars total ...]"
+            content = _escape_xml_text(raw_content)
+            truncated_attr = ' truncated="true"' if truncated else ""
+            parts.append(f'<{tag} index="{xml_index}"{truncated_attr}>\n{content}\n</{tag}>')
             xml_index += 1
 
         transcript = "<transcript>\n"
@@ -613,18 +488,21 @@ class Transcript(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "kind": self.metadata.kind,
             "seed_id": self.metadata.seed_id,
-            "risk": self.metadata.risk,
-            "sub_risk": self.metadata.sub_risk,
-            "permissible": self.metadata.permissible,
+            "concept": self.metadata.concept,
             "events": [e.model_dump() for e in self.events],
             "llm_calls": [call.model_dump() for call in self.llm_calls],
             "stop_reason": self.stop_reason,
             "target": self.metadata.target,
             "auditor_model": self.metadata.auditor_model,
+            "target_reasoning_effort": self.metadata.target_reasoning_effort,
+            "auditor_reasoning_effort": self.metadata.auditor_reasoning_effort,
         }
+        if self.metadata.factors:
+            result["factors"] = self.metadata.factors
+        return result
 
     def save_jsonl(self, path: Path) -> None:
         """Append transcript as single JSONL line."""
@@ -646,7 +524,7 @@ class Transcript(BaseModel):
                 try:
                     transcripts.append(_transcript_from_dict(json.loads(line)))
                 except Exception:
-                    continue  # Skip malformed lines
+                    logging.warning("Skipping malformed JSONL line in %s", path)
         return transcripts
 
 

@@ -2,164 +2,61 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from p2m.config import resolve_stage_paths
-from p2m.core.async_utils import gather_limited
-from p2m.core.io import METRICS_FILE, SCORES_FILE, TRANSCRIPTS_FILE
-from p2m.core.io import get_permissible_flag
-from p2m.core.io import load_jsonl, load_prompt_text, resolve_path, write_json, write_jsonl
+from p2m.core.io import SCORES_FILE, TRANSCRIPTS_FILE, row_factors
+from p2m.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
 from p2m.core.judge import (
     build_judge_contract,
-    get_verdict_dimension,
     infer_judge_status,
-    is_valid_event_flag,
-    resolve_dimensions,
     run_transcript_judge as run_llm_judge,
 )
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from p2m.viewer_read_model import build_run_viewer_artifacts
 
 SCOPE = "run"
 SUITE_OUTPUT = None
 
 JUDGE_SYSTEM_PROMPT = load_prompt_text("judge_system.md")
 
+_JUDGE_CONFIG_HASH_FILE = ".judge_config_hash"
 
-def write_metrics(
-    records: list[dict[str, Any]],
-    metrics_path: Path,
+
+def _judge_config_fingerprint(
     *,
+    judge_model: str,
+    judge_temperature: float | None,
+    judge_max_tokens: int | None,
+    judge_reasoning_effort: str | None,
+    judge_n: int,
+    judge_dimensions: list[dict[str, Any]],
     policy_raw: dict[str, Any],
-) -> None:
-    """Aggregate score rows into the metrics artifact."""
-    if not records:
-        return
-    sub_risks = policy_raw.get("sub_risks")
-    if not isinstance(sub_risks, list):
-        raise ValueError("policy_raw must contain sub_risks list")
-
-    permissible_records = [row for row in records if get_permissible_flag(row, default=True)]
-    not_permissible_records = [row for row in records if not get_permissible_flag(row, default=True)]
-
-    all_dims = sorted(
+    system_prompt: str,
+    transcripts_path: Path,
+) -> str:
+    """Deterministic hash of inputs that affect judge output."""
+    transcripts_sha = hashlib.sha256(transcripts_path.read_bytes()).hexdigest()
+    key = json.dumps(
         {
-            key
-            for row in records
-            for key, value in (((row.get("verdict") or {}).get("dimensions")) or {}).items()
-            if isinstance(row.get("verdict"), dict) and is_valid_event_flag(value)
-        }
-    )
-
-    def compute_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
-        """Compute aggregate judge stats for one slice of score rows."""
-        scored_items = [item for item in items if infer_judge_status(item) == "ok"]
-        total = len(items)
-        failures = total - len(scored_items)
-        result: dict[str, Any] = {
-            "count": total,
-            "scored_count": len(scored_items),
-            "judge_failures": failures,
-            "judge_failure_rate": failures / total if total else 0.0,
-            "dimensions": {},
-        }
-        for dim in all_dims:
-            raw_values = []
-            for item in scored_items:
-                value = get_verdict_dimension(item.get("verdict"), dim)
-                if is_valid_event_flag(value):
-                    raw_values.append(bool(value))
-            flagged_count = sum(1 for value in raw_values if value)
-            clear_count = len(raw_values) - flagged_count
-            rate = flagged_count / len(raw_values) if raw_values else 0.0
-            result["dimensions"][dim] = {
-                "count": len(raw_values),
-                "flagged_count": flagged_count,
-                "clear_count": clear_count,
-                "rate": rate,
-            }
-            result[f"{dim}_rate"] = rate
-        return result
-
-    by_sub_risk: dict[str, dict[str, Any]] = {}
-    for row in records:
-        sub_risk = str(row.get("sub_risk", ""))
-        payload = by_sub_risk.setdefault(
-            sub_risk,
-            {"permissible": get_permissible_flag(row, default=True), "items": []},
-        )
-        payload["items"].append(row)
-
-    scored_records = [row for row in records if infer_judge_status(row) == "ok"]
-    by_relevant_node = []
-    for node_index, node_payload in enumerate(sub_risks):
-        node_name = str(node_payload.get("name") or "") if isinstance(node_payload, dict) else ""
-        relevant_rows: list[dict[str, Any]] = []
-        node_violated_count = 0
-        for row in scored_records:
-            verdict = row.get("verdict")
-            if not isinstance(verdict, dict):
-                continue
-            node_judgments = verdict.get("node_judgments")
-            if not isinstance(node_judgments, list) or node_index >= len(node_judgments):
-                continue
-            node = node_judgments[node_index]
-            if not isinstance(node, dict) or node.get("relevant") is not True:
-                continue
-            relevant_rows.append(row)
-            if node.get("violated") is True:
-                node_violated_count += 1
-
-        support = len(relevant_rows)
-        node_dimensions: dict[str, dict[str, Any]] = {}
-        for dim in all_dims:
-            flagged_count = 0
-            for row in relevant_rows:
-                value = get_verdict_dimension(row.get("verdict"), dim)
-                if not is_valid_event_flag(value):
-                    raise ValueError(f"missing or invalid dimension '{dim}' in scored row")
-                flagged_count += int(value)
-            clear_count = support - flagged_count
-            node_dimensions[dim] = {
-                "count": support,
-                "flagged_count": flagged_count,
-                "clear_count": clear_count,
-                "rate": flagged_count / support if support else 0.0,
-            }
-
-        by_relevant_node.append(
-            {
-                "node_index": node_index,
-                "node_name": node_name,
-                "permissible": (
-                    get_permissible_flag(node_payload, default=True)
-                    if isinstance(node_payload, dict)
-                    else True
-                ),
-                "support": support,
-                "node_violated_count": node_violated_count,
-                "node_violated_rate": node_violated_count / support if support else 0.0,
-                "dimensions": node_dimensions,
-            }
-        )
-
-    write_json(
-        metrics_path,
-        {
-            "overall_permissible": compute_stats(permissible_records),
-            "overall_not_permissible": compute_stats(not_permissible_records),
-            "by_sub_risk": [
-                {
-                    "sub_risk": sub_risk,
-                    "permissible": payload["permissible"],
-                    **compute_stats(payload["items"]),
-                }
-                for sub_risk, payload in sorted(by_sub_risk.items())
-            ],
-            "by_relevant_node": by_relevant_node,
+            "judge_model": judge_model,
+            "judge_temperature": judge_temperature,
+            "judge_max_tokens": judge_max_tokens,
+            "judge_reasoning_effort": judge_reasoning_effort,
+            "judge_n": judge_n,
+            "judge_dimensions": judge_dimensions,
+            "policy": policy_raw,
+            "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+            "transcripts_sha": transcripts_sha,
         },
+        sort_keys=True,
     )
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
 async def run_judge(
@@ -168,13 +65,14 @@ async def run_judge(
     policy_path: str | None = None,
     save_dir: str | None = None,
     evaluation: Any,
+    judge_dimensions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Score transcript rows and write score and metric artifacts."""
+    """Score transcript rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
     judge_temperature = evaluation.judge.model.temperature
     judge_max_tokens = evaluation.judge.model.max_tokens
+    judge_reasoning_effort = evaluation.judge.model.reasoning_effort
     judge_n = evaluation.judge.n
-    judge_dimensions = evaluation.judge.dimensions
     resolved_transcripts_path = resolve_path(transcripts_path)
     rows = load_jsonl(resolved_transcripts_path)
     if not rows:
@@ -192,20 +90,18 @@ async def run_judge(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
         judge_dimensions=judge_dimensions or [],
-        citation_style="xml",
         schema_name="transcript_judgment",
     )
 
-    async def score_row(output_index: int, row: dict[str, Any]) -> dict[str, Any]:
+    async def score_row(row: dict[str, Any]) -> dict[str, Any]:
         """Score a single transcript row with the judge model."""
         transcript_metadata = TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            risk=str(row.get("risk") or ""),
-            sub_risk=str(row.get("sub_risk") or ""),
-            permissible=get_permissible_flag(row, default=True),
+            concept=str(row.get("concept") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
+            factors=row_factors(row),
         )
         transcript = Transcript(
             metadata=transcript_metadata,
@@ -232,64 +128,119 @@ async def run_judge(
             judge_temperature=judge_temperature,
             judge_max_tokens=judge_max_tokens,
             response_schema=judge_contract["response_schema"],
+            reasoning_effort=judge_reasoning_effort,
         )
 
         score_row = {
             "kind": row.get("kind", ""),
             "seed_id": row.get("seed_id", ""),
-            "risk": row.get("risk", ""),
-            "sub_risk": row.get("sub_risk", ""),
-            "permissible": get_permissible_flag(row, default=True),
+            "concept": row.get("concept", ""),
             "judge_model": judge_model,
             "target": row.get("target", ""),
             "auditor_model": row.get("auditor_model", ""),
-            "judge_status": judge_result["judge_status"],
+            "judge_status": infer_judge_status({
+                "judge_status": judge_result["judge_status"],
+                "verdict": judge_result["verdict"],
+            }),
             "judge_error": judge_result["judge_error"],
             "verdict": judge_result["verdict"],
         }
+        factors = row_factors(row)
+        if factors:
+            score_row["factors"] = factors
         if judge_result.get("multi_judge") is not None:
             score_row["multi_judge"] = judge_result["multi_judge"]
-        return {
-            "output_index": output_index,
-            "judge_status": judge_result["judge_status"],
-            "score_row": score_row,
-            "raw": judge_result["raw"],
-        }
+        return score_row
 
     async def worker(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         """Wrap row scoring so concurrent execution returns structured errors."""
         output_index, row = item
         try:
-            return await score_row(output_index, row)
+            return {
+                "output_index": output_index,
+                "score_row": await score_row(row),
+            }
         except Exception as exc:
             return {
                 "output_index": output_index,
                 "error": exc,
             }
 
-    results = sorted(
-        await gather_limited(
-            list(enumerate(rows)),
-            limit=evaluation.rollout.concurrency,
-            worker=worker,
-        ),
-        key=lambda result: result["output_index"],
-    )
-    successful_results = [result for result in results if result.get("error") is None]
-    score_rows = [result["score_row"] for result in successful_results]
     scores_path = out_dir / SCORES_FILE
-    write_jsonl(scores_path, score_rows)
-    metrics_path = out_dir / METRICS_FILE
-    write_metrics(score_rows, metrics_path, policy_raw=policy_raw)
-    for result in results:
+
+    # Resume: load already-scored (kind, seed_id) pairs and skip them, but only
+    # if the judge configuration and transcripts file haven't changed since the
+    # last run.
+    completed_keys: set[tuple[str, str]] = set()
+    config_hash = _judge_config_fingerprint(
+        judge_model=judge_model,
+        judge_temperature=judge_temperature,
+        judge_max_tokens=judge_max_tokens,
+        judge_reasoning_effort=judge_reasoning_effort,
+        judge_n=judge_n,
+        judge_dimensions=judge_dimensions or [],
+        policy_raw=policy_raw,
+        system_prompt=judge_contract["system_prompt"],
+        transcripts_path=resolved_transcripts_path,
+    )
+    config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
+    if scores_path.exists():
+        stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
+        if stored_hash is not None and stored_hash != config_hash:
+            logging.warning(
+                "Judge config or transcripts changed since last run — discarding %s and starting fresh",
+                scores_path,
+            )
+            scores_path.unlink()
+        else:
+            for prior in load_jsonl(scores_path):
+                sid = prior.get("seed_id")
+                if sid:
+                    completed_keys.add((str(prior.get("kind") or ""), str(sid)))
+    if completed_keys:
+        logging.info(
+            "Resuming judge: %d transcripts already scored, skipping",
+            len(completed_keys),
+        )
+    config_hash_path.write_text(config_hash, encoding="utf-8")
+
+    pending = [
+        (i, row) for i, row in enumerate(rows)
+        if (str(row.get("kind") or ""), str(row.get("seed_id", ""))) not in completed_keys
+    ]
+
+    semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
+
+    async def guard(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+        async with semaphore:
+            return await worker(item)
+
+    tasks = [asyncio.create_task(guard(item)) for item in pending]
+    errors: list[Exception] = []
+    written_rows = 0
+    for completed_task in asyncio.as_completed(tasks):
+        result = await completed_task
+        score = result.get("score_row")
+        if score is not None:
+            append_jsonl_row(scores_path, score)
+            written_rows += 1
         error = result.get("error")
         if error is not None:
-            raise error
+            errors.append(error)
+
+    # Always rebuild viewer artifacts so the on-disk read model reflects the
+    # current scores.jsonl, even when a row failed and we are about to raise.
+    build_run_viewer_artifacts(out_dir)
+    if errors:
+        raise errors[0]
+
+    judge_failures = sum(
+        1 for row in load_jsonl(scores_path) if infer_judge_status(row) != "ok"
+    )
     return {
         "scores_path": str(scores_path),
-        "metrics_path": str(metrics_path),
-        "count": len(results),
-        "judge_failures": sum(1 for result in successful_results if result["judge_status"] != "ok"),
+        "count": len(completed_keys) + written_rows,
+        "judge_failures": judge_failures,
     }
 
 
@@ -298,8 +249,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     evaluation = ctx.get("evaluation")
     if evaluation is None or not evaluation.judge.model:
         raise ValueError("judge stage requires evaluation.judge.model")
-    if evaluation.judge.dimensions:
-        resolve_dimensions(list(evaluation.judge.dimensions))
+    judge_dimensions = evaluation.judge.dimensions if evaluation.judge is not None else []
     cfg = resolve_stage_paths(
         {
             "transcripts_path": raw_cfg.get("transcripts_path") or str(Path(ctx["run_root"]) / TRANSCRIPTS_FILE),
@@ -314,8 +264,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         policy_path=cfg.get("policy_path"),
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],
+        judge_dimensions=judge_dimensions,
     )
     return {
         "scores_path": result["scores_path"],
-        "metrics_path": result["metrics_path"],
     }

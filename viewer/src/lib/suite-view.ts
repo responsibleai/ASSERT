@@ -3,7 +3,7 @@ import type {
 	PromptSeed,
 	RunListItem,
 	ScenarioSeed,
-	SubRisk,
+	Behavior,
 	ViewerSeedGroup,
 	ViewerSeedItem
 } from '$lib/types.js';
@@ -11,27 +11,23 @@ import type {
 export interface CombinedRunEntry {
 	run_id: string;
 	compare_run_id: string | null;
-	query_run_id: string | null;
+	prompt_run_id: string | null;
 	audit_run_id: string | null;
-	query: RunListItem | null;
+	prompt: RunListItem | null;
 	audit: AuditRunListItem | null;
-}
-
-function matchesPermissibleFilter(value: boolean, filter: string): boolean {
-	return filter === 'all' || String(value) === filter;
 }
 
 export function normalizePromptSeeds(items: PromptSeed[]): ViewerSeedItem[] {
 	return items.map((seed) => ({
 		id: seed.seed_id,
 		kind: 'prompt',
-		title: seed.seed.title || seed.sub_risk,
+		title: seed.seed.title || seed.behavior,
 		description: seed.seed.description,
-		sub_risk: seed.sub_risk,
+		behavior: seed.behavior,
 		definition: seed.definition,
-		permissible: seed.permissible,
 		system_prompt: seed.seed.system_prompt ?? null,
-		tools: seed.seed.tools
+		tools: seed.seed.tools,
+		factors: seed.factors
 	}));
 }
 
@@ -41,66 +37,93 @@ export function normalizeScenarioSeeds(items: ScenarioSeed[]): ViewerSeedItem[] 
 		kind: 'scenario',
 		title: seed.seed.title,
 		description: seed.seed.description,
-		sub_risk: seed.sub_risk,
+		behavior: seed.behavior,
 		definition: seed.definition,
-		permissible: seed.permissible,
 		system_prompt: seed.seed.system_prompt ?? null,
 		tools: seed.seed.tools,
-		elicitation_strategy: seed.elicitation_strategy ?? null
+		factors: seed.factors
 	}));
 }
 
 export function filterViewerSeeds(
 	items: ViewerSeedItem[],
-	query: string,
-	permissibleFilter: string
+	query: string
 ): ViewerSeedItem[] {
-	let filteredSeeds = items;
-	if (query) {
-		const normalizedQuery = query.toLowerCase();
-		filteredSeeds = filteredSeeds.filter(
-			(seed) =>
-				seed.title.toLowerCase().includes(normalizedQuery) ||
-				seed.description.toLowerCase().includes(normalizedQuery) ||
-				seed.sub_risk.toLowerCase().includes(normalizedQuery)
-		);
-	}
-	return filteredSeeds.filter((seed) => matchesPermissibleFilter(seed.permissible, permissibleFilter));
+	if (!query) return items;
+	const normalizedQuery = query.toLowerCase();
+	return items.filter(
+		(seed) =>
+			seed.title.toLowerCase().includes(normalizedQuery) ||
+			seed.description.toLowerCase().includes(normalizedQuery) ||
+			seed.behavior.toLowerCase().includes(normalizedQuery)
+	);
 }
 
 export function groupViewerSeedsByPolicy(
 	items: ViewerSeedItem[],
-	subRisks: SubRisk[]
+	behaviors: Behavior[]
 ): ViewerSeedGroup[] {
 	const groupedSeeds = new Map<string, ViewerSeedItem[]>();
 	for (const seed of items) {
-		if (!groupedSeeds.has(seed.sub_risk)) groupedSeeds.set(seed.sub_risk, []);
-		groupedSeeds.get(seed.sub_risk)!.push(seed);
+		if (!groupedSeeds.has(seed.behavior)) groupedSeeds.set(seed.behavior, []);
+		groupedSeeds.get(seed.behavior)!.push(seed);
 	}
 
 	const orderedGroups: ViewerSeedGroup[] = [];
-	for (const subRisk of subRisks) {
-		const matchingSeeds = groupedSeeds.get(subRisk.name);
+	for (const beh of behaviors) {
+		const matchingSeeds = groupedSeeds.get(beh.name);
 		if (!matchingSeeds) continue;
 		orderedGroups.push({
-			name: subRisk.name,
-			permissible: subRisk.permissible,
-			definition: subRisk.definition,
+			name: beh.name,
+			permissible: beh.permissible,
+			definition: beh.definition,
 			items: matchingSeeds
 		});
-		groupedSeeds.delete(subRisk.name);
+		groupedSeeds.delete(beh.name);
 	}
 
 	for (const [name, remainingSeeds] of groupedSeeds) {
 		orderedGroups.push({
 			name,
-			permissible: remainingSeeds[0]?.permissible ?? true,
 			definition: remainingSeeds[0]?.definition ?? '',
 			items: remainingSeeds
 		});
 	}
 
 	return orderedGroups;
+}
+
+export function groupSeedsByFactor(
+	items: ViewerSeedItem[],
+	factorName: string
+): ViewerSeedGroup[] {
+	const groups = new Map<string, ViewerSeedItem[]>();
+	for (const item of items) {
+		const level = item.factors?.[factorName] ?? '(none)';
+		if (!groups.has(level)) groups.set(level, []);
+		groups.get(level)!.push(item);
+	}
+	return [...groups.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, groupItems]) => ({ name, items: groupItems }));
+}
+
+export function groupSeedsByCrossFactors(
+	items: ViewerSeedItem[],
+	factorA: string,
+	factorB: string
+): ViewerSeedGroup[] {
+	const groups = new Map<string, ViewerSeedItem[]>();
+	for (const item of items) {
+		const a = item.factors?.[factorA] ?? '(none)';
+		const b = item.factors?.[factorB] ?? '(none)';
+		const key = `${a} · ${b}`;
+		if (!groups.has(key)) groups.set(key, []);
+		groups.get(key)!.push(item);
+	}
+	return [...groups.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, groupItems]) => ({ name, items: groupItems }));
 }
 
 export function mergeRunLists(
@@ -113,9 +136,9 @@ export function mergeRunLists(
 		combinedRuns.set(run.run_id, {
 			run_id: run.run_id,
 			compare_run_id: run.run_id,
-			query_run_id: run.run_id,
+			prompt_run_id: run.run_id,
 			audit_run_id: null,
-			query: run,
+			prompt: run,
 			audit: null
 		});
 	}
@@ -131,9 +154,9 @@ export function mergeRunLists(
 		combinedRuns.set(auditRun.run_id, {
 			run_id: auditRun.run_id,
 			compare_run_id: null,
-			query_run_id: null,
+			prompt_run_id: null,
 			audit_run_id: auditRun.run_id,
-			query: null,
+			prompt: null,
 			audit: auditRun
 		});
 	}

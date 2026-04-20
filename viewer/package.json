@@ -26,5 +26,10 @@
 	"dependencies": {
 		"marked": "^17.0.1",
 		"yaml": "^2.8.3"
+	},
+	"overrides": {
+		"@sveltejs/kit": {
+			"cookie": "0.7.2"
+		}
 	}
 }

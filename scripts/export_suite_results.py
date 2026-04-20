@@ -10,7 +10,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-from p2m.core.io import load_json, load_jsonl, resolve_path
+from p2m.core.io import (
+    get_permissible_flag,
+    load_json,
+    load_jsonl,
+    definitions_by_behavior,
+    permissible_by_behavior,
+    policy_definition,
+    policy_permissible,
+    resolve_path,
+    row_behavior,
+    row_factors,
+)
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
@@ -115,6 +126,147 @@ def _judge_failure_count(rows: list[dict[str, Any]]) -> int:
     return sum(1 for row in rows if infer_judge_status(row) != "ok")
 
 
+def _row_permissible(
+    row: dict[str, Any],
+    permissible_by_name: dict[str, bool],
+) -> bool:
+    return policy_permissible(permissible_by_name, row_behavior(row))
+
+
+def _seed_definition(
+    seed_row: dict[str, Any],
+    definitions_by_name: dict[str, str],
+) -> str:
+    return policy_definition(definitions_by_name, row_behavior(seed_row))
+
+
+def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str, Any]) -> dict[str, Any]:
+    behaviors = policy_raw.get("behaviors")
+    if not isinstance(behaviors, list):
+        raise ValueError("policy.json must contain a behaviors list")
+
+    permissible_by_name = permissible_by_behavior(policy_raw)
+    permissible_records = [
+        row for row in records if _row_permissible(row, permissible_by_name)
+    ]
+    not_permissible_records = [
+        row for row in records if not _row_permissible(row, permissible_by_name)
+    ]
+    all_dims = sorted(
+        {
+            key
+            for row in records
+            for key, value in (((row.get("verdict") or {}).get("dimensions")) or {}).items()
+            if isinstance(row.get("verdict"), dict) and is_valid_event_flag(value)
+        }
+    )
+
+    def compute_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
+        scored_items = [item for item in items if infer_judge_status(item) == "ok"]
+        total = len(items)
+        failures = total - len(scored_items)
+        result: dict[str, Any] = {
+            "count": total,
+            "scored_count": len(scored_items),
+            "judge_failures": failures,
+            "judge_failure_rate": failures / total if total else 0.0,
+            "dimensions": {},
+        }
+        for dim in all_dims:
+            raw_values = []
+            for item in scored_items:
+                value = get_verdict_dimension(item.get("verdict"), dim)
+                if is_valid_event_flag(value):
+                    raw_values.append(bool(value))
+            flagged_count = sum(1 for value in raw_values if value)
+            clear_count = len(raw_values) - flagged_count
+            rate = flagged_count / len(raw_values) if raw_values else None
+            result["dimensions"][dim] = {
+                "count": len(raw_values),
+                "flagged_count": flagged_count,
+                "clear_count": clear_count,
+                "rate": rate,
+            }
+            result[f"{dim}_rate"] = rate
+        return result
+
+    by_behavior: dict[str, dict[str, Any]] = {}
+    for row in records:
+        behavior = row_behavior(row)
+        payload = by_behavior.setdefault(
+            behavior,
+            {"permissible": _row_permissible(row, permissible_by_name), "items": []},
+        )
+        payload["items"].append(row)
+
+    scored_records = [row for row in records if infer_judge_status(row) == "ok"]
+    by_relevant_node = []
+    for node_index, node_payload in enumerate(behaviors):
+        node_name = str(node_payload.get("name") or "") if isinstance(node_payload, dict) else ""
+        relevant_rows: list[dict[str, Any]] = []
+        node_violated_count = 0
+        for row in scored_records:
+            verdict = row.get("verdict")
+            if not isinstance(verdict, dict):
+                continue
+            node_judgments = verdict.get("node_judgments")
+            if not isinstance(node_judgments, list) or node_index >= len(node_judgments):
+                continue
+            node = node_judgments[node_index]
+            if not isinstance(node, dict) or node.get("relevant") is not True:
+                continue
+            relevant_rows.append(row)
+            if node.get("violated") is True:
+                node_violated_count += 1
+
+        support = len(relevant_rows)
+        node_dimensions: dict[str, dict[str, Any]] = {}
+        for dim in all_dims:
+            flagged_count = 0
+            for row in relevant_rows:
+                value = get_verdict_dimension(row.get("verdict"), dim)
+                if not is_valid_event_flag(value):
+                    raise ValueError(f"missing or invalid dimension '{dim}' in scored row")
+                flagged_count += int(value)
+            clear_count = support - flagged_count
+            node_dimensions[dim] = {
+                "count": support,
+                "flagged_count": flagged_count,
+                "clear_count": clear_count,
+                "rate": flagged_count / support if support else 0.0,
+            }
+
+        by_relevant_node.append(
+            {
+                "node_index": node_index,
+                "node_name": node_name,
+                "permissible": (
+                    get_permissible_flag(node_payload, default=True)
+                    if isinstance(node_payload, dict)
+                    else True
+                ),
+                "support": support,
+                "node_violated_count": node_violated_count,
+                "node_violated_rate": node_violated_count / support if support else 0.0,
+                "dimensions": node_dimensions,
+            }
+        )
+
+    return {
+        "overall_permissible": compute_stats(permissible_records),
+        "overall_not_permissible": compute_stats(not_permissible_records),
+        "by_behavior": [
+            {
+                "behavior": behavior,
+                "permissible": payload["permissible"],
+                **compute_stats(payload["items"]),
+            }
+            for behavior, payload in sorted(by_behavior.items())
+        ],
+        "by_relevant_node": by_relevant_node,
+    }
+
+
 def _prompt_seed_counts(seed_rows: list[dict[str, Any]]) -> tuple[int, int]:
     prompt_count = sum(1 for row in seed_rows if row.get("kind") == "prompt")
     scenario_count = sum(1 for row in seed_rows if row.get("kind") == "scenario")
@@ -126,11 +278,10 @@ def _transcript_from_row(row: dict[str, Any]) -> Transcript:
         metadata=TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            risk=str(row.get("risk") or ""),
-            sub_risk=str(row.get("sub_risk") or ""),
-            permissible=bool(row.get("permissible")),
+            concept=str(row.get("concept") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
+            factors=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -141,7 +292,12 @@ def _transcript_from_row(row: dict[str, Any]) -> Transcript:
     )
 
 
-def _seed_row(seed_row: dict[str, Any], suite_id: str) -> dict[str, Any]:
+def _seed_row(
+    seed_row: dict[str, Any],
+    suite_id: str,
+    permissible_by_name: dict[str, bool],
+    definitions_by_name: dict[str, str],
+) -> dict[str, Any]:
     payload = seed_row.get("seed")
     seed_payload = payload if isinstance(payload, dict) else {}
     kind = str(seed_row.get("kind") or "")
@@ -151,10 +307,10 @@ def _seed_row(seed_row: dict[str, Any], suite_id: str) -> dict[str, Any]:
         "suite_id": suite_id,
         "seed_id": str(seed_row.get("seed_id") or ""),
         "kind": kind,
-        "risk": str(seed_row.get("risk") or ""),
-        "sub_risk": str(seed_row.get("sub_risk") or ""),
-        "permissible": seed_row.get("permissible"),
-        "definition": str(seed_row.get("definition") or ""),
+        "concept": str(seed_row.get("concept") or ""),
+        "behavior": row_behavior(seed_row),
+        "permissible": _row_permissible(seed_row, permissible_by_name),
+        "definition": _seed_definition(seed_row, definitions_by_name),
         "title": title,
         "description": description,
         "system_prompt": str(seed_payload.get("system_prompt") or ""),
@@ -166,6 +322,8 @@ def _score_row(
     suite_id: str,
     run_id: str,
     score_dimensions: list[str],
+    node_names: list[str],
+    permissible_by_name: dict[str, bool],
 ) -> dict[str, Any]:
     verdict = score_row.get("verdict")
     verdict_payload = verdict if isinstance(verdict, dict) else {}
@@ -180,8 +338,8 @@ def _score_row(
         "run_id": run_id,
         "seed_id": str(score_row.get("seed_id") or ""),
         "kind": str(score_row.get("kind") or ""),
-        "sub_risk": str(score_row.get("sub_risk") or ""),
-        "permissible": score_row.get("permissible"),
+        "behavior": row_behavior(score_row),
+        "permissible": _row_permissible(score_row, permissible_by_name),
         "judge_status": str(score_row.get("judge_status") or ""),
         "judge_error": str(score_row.get("judge_error") or ""),
         "target": str(score_row.get("target") or ""),
@@ -196,7 +354,35 @@ def _score_row(
         row[f"{dimension}_justification"] = (
             str(justification) if isinstance(justification, str) else ""
         )
+
+    node_judgments_by_name = _index_node_judgments(verdict_payload)
+    for name in node_names:
+        judgment = node_judgments_by_name.get(name)
+        if judgment is not None:
+            row[f"{name}_relevant"] = judgment.get("relevant")
+            row[f"{name}_violated"] = judgment.get("violated")
+            row[f"{name}_confidence"] = str(judgment.get("confidence") or "")
+            row[f"{name}_reasoning"] = str(judgment.get("reasoning") or "")
+        else:
+            row[f"{name}_relevant"] = ""
+            row[f"{name}_violated"] = ""
+            row[f"{name}_confidence"] = ""
+            row[f"{name}_reasoning"] = ""
     return row
+
+
+def _index_node_judgments(verdict: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build a dict from node_name → judgment entry for fast lookup."""
+    raw = verdict.get("node_judgments")
+    if not isinstance(raw, list):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for entry in raw:
+        if isinstance(entry, dict):
+            name = entry.get("node_name")
+            if isinstance(name, str) and name:
+                result[name] = entry
+    return result
 
 
 def _relevant_node_row(
@@ -315,7 +501,7 @@ def _format_html_value(value: Any, header: str) -> str:
         else:
             cls = "badge-neutral"
         return f'<span class="badge {cls}">{text}</span>'
-    is_long = header in _LONG_TEXT_HEADERS or header.endswith("_justification")
+    is_long = header in _LONG_TEXT_HEADERS or header.endswith("_justification") or header.endswith("_reasoning")
     is_conv = header == "conversation_text"
     if is_conv:
         formatted = _format_conversation(text_raw)
@@ -350,32 +536,34 @@ def load_suite_tables(
     suite_id: str,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
     policy = load_json(suite_dir / "policy.json") or {}
+    definitions_by_name = definitions_by_behavior(policy)
+    permissible_by_name = permissible_by_behavior(policy)
     seed_rows = load_jsonl(suite_dir / "seeds.jsonl")
     prompt_seed_count, scenario_seed_count = _prompt_seed_counts(seed_rows)
     run_rows: list[dict[str, Any]] = []
-    seed_table = [_seed_row(seed_row, suite_id) for seed_row in seed_rows]
+    seed_table = [
+        _seed_row(seed_row, suite_id, permissible_by_name, definitions_by_name)
+        for seed_row in seed_rows
+    ]
     conversation_rows: list[dict[str, Any]] = []
     raw_score_rows: list[tuple[str, dict[str, Any]]] = []
     raw_relevant_node_rows: list[tuple[str, dict[str, Any]]] = []
     score_dimensions: set[str] = set()
     relevant_dimensions: set[str] = set()
+    score_node_names: list[str] = []
+    seen_node_names: set[str] = set()
 
-    risk_payload = policy.get("risk") if isinstance(policy.get("risk"), dict) else {}
-    risk_name = str(risk_payload.get("name") or "")
-    if not risk_name:
-        risk_name = str(seed_rows[0].get("risk") or "") if seed_rows else ""
+    concept_payload = policy.get("concept") if isinstance(policy.get("concept"), dict) else {}
+    concept_name = str(concept_payload.get("name") or "")
+    if not concept_name:
+        concept_name = str(seed_rows[0].get("concept") or "") if seed_rows else ""
 
     for run_dir in _run_dirs(suite_dir):
         run_id = run_dir.name
         manifest = load_json(run_dir / "manifest.json") or {}
         transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
-        metrics = load_json(run_dir / "metrics.json")
-
-        if score_rows and (not isinstance(metrics, dict) or "by_relevant_node" not in metrics):
-            raise ValueError(
-                f"Run {suite_id}/{run_id} is missing metrics.by_relevant_node and is not supported by this export."
-            )
+        metrics = _build_score_metrics(score_rows, policy_raw=policy) if score_rows else None
 
         target = _first_nonempty(score_rows, "target") or _first_nonempty(transcript_rows, "target")
         auditor_model = _first_nonempty(score_rows, "auditor_model") or _first_nonempty(transcript_rows, "auditor_model")
@@ -389,8 +577,11 @@ def load_suite_tables(
                     "run_id": run_id,
                     "seed_id": str(transcript_row.get("seed_id") or ""),
                     "kind": str(transcript_row.get("kind") or ""),
-                    "sub_risk": str(transcript_row.get("sub_risk") or ""),
-                    "permissible": transcript_row.get("permissible"),
+                    "behavior": row_behavior(transcript_row),
+                    "permissible": _row_permissible(
+                        transcript_row,
+                        permissible_by_name,
+                    ),
                     "stop_reason": str(transcript_row.get("stop_reason") or ""),
                     "turn_count": transcript.count_turns("target", skip_system=True),
                     "target": str(transcript_row.get("target") or ""),
@@ -412,6 +603,14 @@ def load_suite_tables(
                 for key, value in dimensions_payload.items():
                     if is_valid_event_flag(value):
                         score_dimensions.add(str(key))
+            node_judgments = verdict.get("node_judgments") if isinstance(verdict, dict) else None
+            if isinstance(node_judgments, list):
+                for entry in node_judgments:
+                    if isinstance(entry, dict):
+                        name = entry.get("node_name")
+                        if isinstance(name, str) and name and name not in seen_node_names:
+                            seen_node_names.add(name)
+                            score_node_names.append(name)
 
         if isinstance(metrics, dict):
             for node_row in metrics.get("by_relevant_node", []):
@@ -426,11 +625,13 @@ def load_suite_tables(
 
         permissible_scores = [
             row for row in score_rows
-            if infer_judge_status(row) == "ok" and bool(row.get("permissible"))
+            if infer_judge_status(row) == "ok"
+            and _row_permissible(row, permissible_by_name)
         ]
         not_permissible_scores = [
             row for row in score_rows
-            if infer_judge_status(row) == "ok" and not bool(row.get("permissible"))
+            if infer_judge_status(row) == "ok"
+            and not _row_permissible(row, permissible_by_name)
         ]
         run_rows.append(
             {
@@ -439,7 +640,7 @@ def load_suite_tables(
                 "status": str(manifest.get("status") or ""),
                 "started_at": str(manifest.get("started_at") or ""),
                 "ended_at": str(manifest.get("ended_at") or ""),
-                "risk_name": risk_name,
+                "concept_name": concept_name,
                 "target": target,
                 "auditor_model": auditor_model,
                 "judge_model": judge_model,
@@ -461,7 +662,14 @@ def load_suite_tables(
     relevant_dimension_names = sorted(relevant_dimensions)
 
     score_table = [
-        _score_row(score_row, suite_id, run_id, score_dimension_names)
+        _score_row(
+            score_row,
+            suite_id,
+            run_id,
+            score_dimension_names,
+            score_node_names,
+            permissible_by_name,
+        )
         for run_id, score_row in raw_score_rows
     ]
     relevant_node_table = [
@@ -484,7 +692,7 @@ def load_suite_tables(
             "status",
             "started_at",
             "ended_at",
-            "risk_name",
+            "concept_name",
             "target",
             "auditor_model",
             "judge_model",
@@ -501,8 +709,8 @@ def load_suite_tables(
             "suite_id",
             "seed_id",
             "kind",
-            "risk",
-            "sub_risk",
+            "concept",
+            "behavior",
             "permissible",
             "definition",
             "title",
@@ -514,7 +722,7 @@ def load_suite_tables(
             "run_id",
             "seed_id",
             "kind",
-            "sub_risk",
+            "behavior",
             "permissible",
             "stop_reason",
             "turn_count",
@@ -527,7 +735,7 @@ def load_suite_tables(
             "run_id",
             "seed_id",
             "kind",
-            "sub_risk",
+            "behavior",
             "permissible",
             "judge_status",
             "judge_error",
@@ -537,6 +745,16 @@ def load_suite_tables(
             *score_dimension_names,
             "justification",
             *[f"{dimension}_justification" for dimension in score_dimension_names],
+            *[
+                field
+                for name in score_node_names
+                for field in (
+                    f"{name}_relevant",
+                    f"{name}_violated",
+                    f"{name}_confidence",
+                    f"{name}_reasoning",
+                )
+            ],
         ],
         RELEVANT_NODES_TABLE: [
             "suite_id",
@@ -830,11 +1048,11 @@ def write_html_export(
     # --- summary cards ---
     cards: list[str] = []
     if runs:
-        risk = runs[0].get("risk_name", "")
-        if risk:
+        concept = runs[0].get("concept_name", "")
+        if concept:
             cards.append(
-                f'<div class="card"><div class="label">Risk</div>'
-                f'<div class="val sm">{html.escape(str(risk))}</div></div>'
+                f'<div class="card"><div class="label">Concept</div>'
+                f'<div class="val sm">{html.escape(str(concept))}</div></div>'
             )
         targets = sorted({str(r.get("target") or "") for r in runs} - {""})
         if targets:
@@ -939,7 +1157,7 @@ def write_html_export(
                 td_cls = ""
                 if header == "conversation_text":
                     td_cls = ' class="conv-cell"'
-                elif header in _LONG_TEXT_HEADERS or header.endswith("_justification"):
+                elif header in _LONG_TEXT_HEADERS or header.endswith("_justification") or header.endswith("_reasoning"):
                     td_cls = ' class="text-cell"'
                 lines.append(f"<td{td_cls}>{cell}</td>")
             lines.append("</tr>")

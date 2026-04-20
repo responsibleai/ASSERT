@@ -26,12 +26,7 @@ export interface CitationPartLike {
 export type CitationResolutionStatus = 'resolved' | 'unresolved' | 'ambiguous';
 
 export type CitationResolutionReason =
-	| 'raw_exact'
-	| 'normalized_exact'
-	| 'neighbor_raw_exact'
-	| 'neighbor_normalized_exact'
-	| 'transcript_raw_exact'
-	| 'transcript_normalized_exact'
+	| 'exact'
 	| 'invalid_position'
 	| 'missing_message_id'
 	| 'missing_message_text'
@@ -173,7 +168,7 @@ export function resolveCitationPart(
 	if (typeof messageText !== 'string' || !messageText) {
 		return buildResult('unresolved', 'missing_message_text', null, 'stored', 'Transcript message text was empty or unavailable.');
 	}
-	return buildResult('unresolved', 'missing_resolution', null, 'stored', 'Citation was produced before persisted resolution metadata was added. Re-run judge for canonical evidence.');
+	return buildResult('unresolved', 'missing_resolution', null, 'stored', 'Citation resolution metadata is missing. Re-run judge for canonical evidence.');
 }
 
 export function getResolvedCitationPartsForMessage<T extends CitationPartLike>(

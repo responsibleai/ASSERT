@@ -140,6 +140,7 @@ class TurnResult:
     tool_traces: list[ToolTrace] = field(default_factory=list)
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] | None = None
+    finish_reason: str | None = None
 
 
 class SimulatedResolver:
@@ -281,6 +282,7 @@ class HostedSession:
                 interaction_messages=interaction_messages,
                 llm_calls=llm_calls,
                 raw=_session_raw_payload(response, self.session_metadata),
+                finish_reason=response.finish_reason,
             )
 
         working_messages = list(messages)
@@ -339,6 +341,29 @@ class HostedSession:
                     Message(role="tool", content=resolution.output, tool_call_id=tool_call.id),
                 )
                 interaction_messages.append(tool_result_payload)
+            if tool_call_count >= self._max_tool_calls:
+                for remaining_call in response.tool_calls:
+                    if remaining_call.id and any(
+                        m.tool_call_id == remaining_call.id for m in working_messages if m.role == "tool"
+                    ):
+                        continue
+                    tool_args = remaining_call.arguments if isinstance(remaining_call.arguments, dict) else {}
+                    working_messages.append(
+                        Message(role="tool", content="Tool call limit reached.", tool_call_id=remaining_call.id),
+                    )
+                    interaction_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": remaining_call.id,
+                            "function": remaining_call.name,
+                            "arguments": tool_args,
+                            "content": "Tool call limit reached.",
+                            "raw": {
+                                "call": "tool_limit",
+                                "max_tool_calls": self._max_tool_calls,
+                            },
+                        }
+                    )
             response = await self._invoke_model(working_messages)
 
         if response.tool_calls and tool_call_count >= self._max_tool_calls:
@@ -388,6 +413,7 @@ class HostedSession:
             tool_traces=tool_traces,
             llm_calls=llm_calls,
             raw=raw,
+            finish_reason=response.finish_reason,
         )
 
 
@@ -451,7 +477,6 @@ class ExternalSession:
             interaction_messages=interaction_messages,
             raw=response.raw,
         )
-
 
 
 def _serialize_message(message: Message) -> dict[str, Any]:

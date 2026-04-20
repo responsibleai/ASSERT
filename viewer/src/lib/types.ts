@@ -4,7 +4,7 @@ export interface Suite {
 	created_at: string;
 }
 
-export interface SubRisk {
+export interface Behavior {
 	name: string;
 	definition: string;
 	examples: string[];
@@ -12,7 +12,7 @@ export interface SubRisk {
 }
 
 export interface Policy {
-	risk: {
+	concept: {
 		name: string;
 		definition: string;
 	};
@@ -21,7 +21,7 @@ export interface Policy {
 		definition: string;
 		examples: string[];
 	}>;
-	sub_risks: SubRisk[];
+	behaviors: Behavior[];
 }
 
 export interface SeedPayload {
@@ -43,24 +43,24 @@ export interface SeedTool {
 	parameters?: SeedToolParameter[];
 }
 
+export type SeedFactors = Record<string, string>;
+
 export interface PromptSeed {
 	seed_id: string;
-	permissible: boolean;
-	risk: string;
-	sub_risk: string;
+	concept: string;
+	behavior: string;
 	definition: string;
 	seed: SeedPayload;
+	factors?: SeedFactors;
 }
 
 export interface ScenarioSeed {
 	seed_id: string;
-	parent_seed_id?: string | null;
-	elicitation_strategy?: string | null;
-	risk: string;
-	sub_risk: string;
+	concept: string;
+	behavior: string;
 	definition: string;
-	permissible: boolean;
 	seed: SeedPayload;
+	factors?: SeedFactors;
 }
 
 export interface ViewerSeedItem {
@@ -68,18 +68,17 @@ export interface ViewerSeedItem {
 	kind: 'prompt' | 'scenario';
 	title: string;
 	description: string;
-	sub_risk: string;
+	behavior: string;
 	definition: string;
-	permissible: boolean;
 	system_prompt?: string | null;
 	tools?: SeedPayload['tools'];
-	elicitation_strategy?: string | null;
+	factors?: SeedFactors;
 }
 
 export interface ViewerSeedGroup {
 	name: string;
-	permissible: boolean;
-	definition: string;
+	permissible?: boolean;
+	definition?: string;
 	items: ViewerSeedItem[];
 }
 
@@ -99,22 +98,18 @@ export interface NodeJudgment {
 	node_name?: string;
 	relevant: boolean;
 	violated: boolean | null;
-	confidence: 'high' | 'medium' | 'low';
+	confidence: 'high' | 'medium' | 'low' | null;
 	evidence_turns: number[];
 	reasoning: string;
-}
-
-export interface LegacyPromptCitation {
-	quote: string;
-	relevance?: string;
 }
 
 export interface Verdict {
 	dimensions: Record<string, boolean>;
 	justification: string;
+	narrative?: string;
 	dimension_justifications?: Record<string, string>;
 	node_judgments: NodeJudgment[];
-	citations?: AuditCitation[] | LegacyPromptCitation[];
+	citations?: AuditCitation[];
 	citation_warnings?: string[];
 	judgment_warnings?: string[];
 	[key: string]: unknown;
@@ -168,11 +163,11 @@ export interface LlmCallTrace {
 }
 
 export interface JudgedSample {
+	seed_id?: string;
 	prompt: string;
 	response: string;
-	risk?: string | null;
-	sub_risk: string;
-	permissible?: boolean | null;
+	concept?: string | null;
+	behavior: string;
 	run_id?: string;
 	judge_model?: string;
 	target?: string;
@@ -185,6 +180,7 @@ export interface JudgedSample {
 	llm_calls?: LlmCallTrace[];
 	target_runtime_mode?: string | null;
 	multi_judge?: MultiJudge;
+	factors?: SeedFactors;
 }
 
 export interface ViewerResultContext {
@@ -192,8 +188,6 @@ export interface ViewerResultContext {
 	tools?: SeedPayload['tools'];
 	turns_count?: number | null;
 	stop_reason?: string | null;
-	elicitation_strategy?: string | null;
-	parent_title?: string | null;
 }
 
 export interface ViewerResultItem {
@@ -201,8 +195,7 @@ export interface ViewerResultItem {
 	kind: 'prompt' | 'scenario';
 	row_title: string;
 	header_title: string;
-	sub_risk: string;
-	permissible: boolean;
+	behavior: string;
 	verdict?: Verdict | AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
@@ -211,6 +204,7 @@ export interface ViewerResultItem {
 	llm_calls: LlmCallTrace[];
 	target_runtime_mode?: string | null;
 	context: ViewerResultContext;
+	factors?: SeedFactors;
 }
 
 // Aggregated types for views
@@ -219,8 +213,8 @@ export type SuiteStatus = 'policy_only' | 'seeds_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
-	risk_name: string;
-	sub_risk_count: number;
+	concept_name: string;
+	behavior_count: number;
 	seed_count: number;
 	scenario_seed_count: number;
 	run_count: number;
@@ -233,8 +227,6 @@ export interface SuiteListItem {
 export interface DimensionDef {
 	description: string;
 	rubric: string;
-	kind: 'event';
-	polarity?: 'negative' | 'positive';
 	required_base?: boolean;
 }
 
@@ -259,8 +251,6 @@ export interface RunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
-	permissible_overrefusal_rate: number;
-	not_permissible_policy_violation_rate: number;
 	target: string;
 	judge_model: string;
 	dimensions: Record<string, DimensionMetrics>;
@@ -296,8 +286,7 @@ export interface AuditRunMetrics {
 }
 
 export interface ScoreDistribution {
-	sub_risk: string;
-	permissible: boolean;
+	behavior: string;
 	counts: BinaryCounts;
 	total: number;
 }
@@ -307,12 +296,7 @@ export interface ScoreDistribution {
 export type AuditCitationResolutionStatus = 'resolved' | 'unresolved' | 'ambiguous';
 
 export type AuditCitationResolutionMethod =
-	| 'raw_exact'
-	| 'normalized_exact'
-	| 'neighbor_raw_exact'
-	| 'neighbor_normalized_exact'
-	| 'transcript_raw_exact'
-	| 'transcript_normalized_exact'
+	| 'exact'
 	| 'invalid_position'
 	| 'quote_not_found'
 	| 'ambiguous_quote_match'
@@ -360,7 +344,7 @@ export interface AuditVerdict {
 	justification: string;
 	dimension_justifications?: Record<string, string>;
 	node_judgments: NodeJudgment[];
-	citations?: AuditCitation[] | LegacyPromptCitation[];
+	citations?: AuditCitation[];
 	citation_warnings?: string[];
 	judgment_warnings?: string[];
 	[key: string]: unknown;
@@ -395,21 +379,20 @@ export interface AuditTranscriptEvent {
 
 export interface AuditTranscript {
 	seed_id: string;
-	risk: string;
-	sub_risk: string;
-	permissible: boolean;
+	concept: string;
+	behavior: string;
 	events: AuditTranscriptEvent[];
 	llm_calls?: LlmCallTrace[];
 	stop_reason: string;
 	target: string;
 	auditor_model: string;
+	factors?: SeedFactors;
 }
 
 export interface AuditScore {
 	seed_id: string;
-	risk: string;
-	sub_risk: string;
-	permissible: boolean;
+	concept: string;
+	behavior: string;
 	judge_model: string;
 	target?: string;
 	auditor_model?: string;
@@ -422,6 +405,7 @@ export interface AuditScore {
 		stop_reason: string;
 	};
 	multi_judge?: MultiJudge;
+	factors?: SeedFactors;
 }
 
 // --- Grouping types ---
@@ -430,9 +414,8 @@ export interface ScenarioSeedInfo {
 	title: string;
 	description: string;
 	tools?: SeedTool[];
-	parent_seed_id?: string | null;
-	elicitation_strategy?: string | null;
 	target_runtime_mode?: string | null;
+	factors?: SeedFactors;
 }
 
 export interface GroupContext {
@@ -442,7 +425,7 @@ export interface GroupContext {
 export interface GroupAxis<T> {
 	key: string;
 	label: string;
-	accessor: (item: T, context?: GroupContext) => string;
+	accessor: (item: T, context?: GroupContext) => string | string[] | undefined;
 	sortGroups?: (a: GroupEntry<T>, b: GroupEntry<T>) => number;
 }
 

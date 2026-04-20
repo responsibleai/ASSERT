@@ -8,9 +8,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from p2m.core.io import get_permissible_flag, load_jsonl, write_jsonl
+from p2m.core.io import (
+    load_jsonl,
+    permissible_by_behavior,
+    policy_permissible,
+    write_jsonl,
+    row_behavior,
+    row_factors,
+)
 from p2m.core.judge import build_judge_contract, run_transcript_judge
-from p2m.core.transcript import AddMessageEdit, Transcript, TranscriptEvent, TranscriptMetadata
+from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from p2m.stages.judge import JUDGE_SYSTEM_PROMPT
 
 
@@ -19,11 +26,10 @@ def transcript_from_row(row: dict) -> Transcript:
         metadata=TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            risk=str(row.get("risk") or ""),
-            sub_risk=str(row.get("sub_risk") or ""),
-            permissible=bool(get_permissible_flag(row, default=True)),
+            concept=str(row.get("concept") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
+            factors=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -92,6 +98,7 @@ async def score_transcripts(
 ) -> list[dict]:
     semaphore = asyncio.Semaphore(concurrency)
     results: list[dict] = []
+    permissible_by_name = permissible_by_behavior(policy_raw)
 
     async def score_one(idx: int, row: dict) -> dict:
         async with semaphore:
@@ -114,9 +121,7 @@ async def score_transcripts(
             )
             score_row = {
                 "seed_id": row.get("seed_id", ""),
-                "risk": row.get("risk", ""),
-                "sub_risk": row.get("sub_risk", ""),
-                "permissible": row.get("permissible"),
+                "concept": row.get("concept", ""),
                 "target": row.get("target", ""),
                 "auditor_model": row.get("auditor_model", ""),
                 "judge_model": config.judge_model,
@@ -126,6 +131,9 @@ async def score_transcripts(
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
             }
+            behavior = row_behavior(row)
+            score_row["factors"] = {"behavior": behavior}
+            score_row["permissible"] = policy_permissible(permissible_by_name, behavior)
             if judge_result.get("multi_judge") is not None:
                 score_row["multi_judge"] = judge_result["multi_judge"]
             return score_row
@@ -166,7 +174,6 @@ async def run_experiment(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
         judge_dimensions=JUDGE_DIMENSIONS,
-        citation_style="xml",
         schema_name="transcript_judgment",
     )
 

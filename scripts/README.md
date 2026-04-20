@@ -2,22 +2,18 @@
 
 Run scripts in this directory with `uv run python ...` from the repo root so they see the project package and pinned dependencies.
 
-## `policy_scenario_sampling.py`
+## Seed sampling
 
-This script reads `artifacts/results/<suite>/policy.json` and writes reusable scenario-sampling artifacts under `artifacts/tmp/<suite>/scenario_sampling/`. `design` writes `scenario_design.json` and always runs with web search enabled plus `high` reasoning, so the design model must support that path. `generate` reads `policy.json` plus `scenario_design.json` and writes method-specific seed artifacts under `artifacts/tmp/<suite>/scenario_sampling/<method>/`, including `seeds.jsonl`, `observed_labels.jsonl`, `summary.json`, `supplementary_metrics.json`, and `report.md`. It also refreshes a root-level `scenario_sampling_report.md`. `tuple_sampled` also writes `sampled_tuples.json`.
+Design and seed generation run through `p2m run` now. Start from
+`examples/pipes/health_assistant.yaml`, keep `pipeline.design` and
+`pipeline.seeds`, then run:
 
 ```bash
-uv run python scripts/policy_scenario_sampling.py design \
-  --policy artifacts/results/<suite>/policy.json \
-  --model azure/gpt-5.4-mini
-
-uv run python scripts/policy_scenario_sampling.py generate \
-  --policy artifacts/results/<suite>/policy.json \
-  --design artifacts/tmp/<suite>/scenario_sampling/scenario_design.json \
-  --model azure/gpt-5.4-mini \
-  --method tuple_sampled \
-  --sample-size 24
+source .env
+uv run p2m run --config examples/pipes/health_assistant.yaml
 ```
+
+Use `uv run p2m --help` for CLI options.
 
 ## `turn_checkpoint_judge.py`
 
@@ -32,7 +28,7 @@ uv run python scripts/turn_checkpoint_judge.py \
 
 ## `export_suite_results.py`
 
-This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `transcripts.jsonl`, `scores.jsonl`, and `metrics.json`. `--format csv` writes `runs.csv`, `seeds.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export requires `uv sync --extra analysis`. Runs with `scores.jsonl` must already have current `metrics.json` with `by_relevant_node`.
+This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `transcripts.jsonl`, and `scores.jsonl`, then derives the relevant-node summary directly from `scores.jsonl` and the suite `policy.json`. `--format csv` writes `runs.csv`, `seeds.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export requires `uv sync --extra analysis`.
 
 ```bash
 uv run python scripts/export_suite_results.py \
@@ -55,7 +51,7 @@ uv run python scripts/auditor_pairwise_eval.py \
 
 ## `scenario_failure_prediction.py`
 
-This script predicts policy violations from scenario metadata before running conversations. It runs four stages: (0) per-seed failure-rate distribution, (1) baselines (global rate, sub-risk rate, embedding nearest neighbor, logistic regression on embeddings), (2) zero-shot LLM forecaster with field ablations, (3) retrieval-augmented LLM forecaster. It also runs two robustness checks: within-sub-risk discrimination and auditor transfer. The script auto-detects the primary auditor (most common across runs) and uses the remaining runs for the transfer check. Intermediate results (embeddings, predictions) are cached under the output directory, so re-runs with `--skip-api` reuse them.
+This script predicts policy violations from scenario metadata before running conversations. It runs four stages: (0) per-seed failure-rate distribution, (1) baselines (global rate, behavior rate, embedding nearest neighbor, logistic regression on embeddings), (2) zero-shot LLM forecaster with field ablations, (3) retrieval-augmented LLM forecaster. It also runs two robustness checks: within-behavior discrimination and auditor transfer. The script auto-detects the primary auditor (most common across runs) and uses the remaining runs for the transfer check. Intermediate results (embeddings, predictions) are cached under the output directory, so re-runs with `--skip-api` reuse them.
 
 ```bash
 uv run python scripts/scenario_failure_prediction.py \

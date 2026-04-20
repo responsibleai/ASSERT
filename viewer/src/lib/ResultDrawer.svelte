@@ -10,12 +10,12 @@
 		parseCitationReferences
 	} from '$lib/citation-resolution';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
+	import { formatFactorLabel } from '$lib/grouping.js';
 	import type {
 		AuditCitation,
 		AuditCitationPart,
 		AuditCitationSourceKind,
 		InteractionMessage,
-		LegacyPromptCitation,
 		LlmCallTrace,
 		NodeJudgment,
 		SeedTool,
@@ -60,6 +60,12 @@
 		payload: Record<string, unknown>;
 	}
 
+	interface RawPanelView {
+		request?: string;
+		response?: string;
+		payload?: string;
+	}
+
 	let highlightedTurn = $state<number | null>(null);
 	let highlightedMessageId = $state<string | null>(null);
 	let highlightedToolFocus = $state<ToolFocusState | null>(null);
@@ -67,6 +73,8 @@
 	let activeJudgeIndex = $state(0);
 	let displayedCitations = $state<AuditCitation[] | null>(null);
 	let contextExpanded = $state(false);
+	let expandedMessageBodies = $state<Record<string, boolean>>({});
+	let rawPanels = $state<Record<string, RawPanelView>>({});
 
 	let citationTooltipVisible = $state(false);
 	let citationTooltipX = $state(0);
@@ -82,6 +90,8 @@
 		activeJudgeIndex = 0;
 		displayedCitations = null;
 		contextExpanded = false;
+		expandedMessageBodies = {};
+		rawPanels = {};
 		citationTooltipVisible = false;
 		citationTooltipCitations = [];
 		if (highlightResetHandle) {
@@ -149,16 +159,8 @@
 		return Boolean(value) && typeof value === 'object' && Array.isArray((value as AuditCitation).parts);
 	}
 
-	function isLegacyPromptCitation(value: unknown): value is LegacyPromptCitation {
-		return Boolean(value) && typeof value === 'object' && typeof (value as LegacyPromptCitation).quote === 'string';
-	}
-
 	function getStructuredCitations(citations: unknown): AuditCitation[] {
 		return Array.isArray(citations) ? citations.filter(isStructuredCitation) : [];
-	}
-
-	function getLegacyPromptCitations(citations: unknown): LegacyPromptCitation[] {
-		return Array.isArray(citations) ? citations.filter(isLegacyPromptCitation) : [];
 	}
 
 	function getDimensionJustification(verdict: Verdict | null | undefined, metric: string): string | null {
@@ -168,8 +170,7 @@
 			const value = dimensionJustifications[metric];
 			if (typeof value === 'string' && value.trim()) return value;
 		}
-		const legacyValue = verdict[metric + '_justification'];
-		return typeof legacyValue === 'string' && legacyValue.trim() ? legacyValue : null;
+		return null;
 	}
 
 	function getActiveVerdictCitations(
@@ -191,6 +192,12 @@
 		if (!parts.length) return renderMarkdown(content);
 		const ranges = getCitationDisplayRanges(content, parts);
 		return renderMarkdownWithHighlights(content, ranges);
+	}
+
+	function renderMessageHtml(message: InteractionMessage, parts: AuditCitationPart[]): string {
+		return parts.length > 0
+			? renderAuditMessageHtml(message.content, parts)
+			: renderMarkdown(message.content);
 	}
 
 	function escapeInlineHtml(text: string): string {
@@ -275,6 +282,33 @@
 		return messageId ? `drawer-message-${messageId}` : undefined;
 	}
 
+	function messagePanelKey(
+		message: InteractionMessage,
+		messageIndex: number,
+		part: string
+	): string {
+		return `${message.id ?? `message-${messageIndex}`}:${part}`;
+	}
+
+	function hasExpandedBody(key: string): boolean {
+		return Boolean(expandedMessageBodies[key]);
+	}
+
+	function toggleMessageBody(key: string) {
+		expandedMessageBodies = {
+			...expandedMessageBodies,
+			[key]: !expandedMessageBodies[key]
+		};
+	}
+
+	function expandMessageBody(key: string | undefined) {
+		if (!key || expandedMessageBodies[key]) return;
+		expandedMessageBodies = {
+			...expandedMessageBodies,
+			[key]: true
+		};
+	}
+
 	function toolCallAnchorId(messageId: string | null | undefined, toolCallId: string | null | undefined): string | undefined {
 		return messageId && toolCallId ? `drawer-tool-call-${messageId}-${toolCallId}` : undefined;
 	}
@@ -284,14 +318,7 @@
 	}
 
 	function revealMessageCard(el: HTMLElement) {
-		const body = el.querySelector<HTMLElement>('[data-message-collapse-body]');
-		if (body?.classList.contains('hidden')) {
-			body.classList.remove('hidden');
-		}
-		const chevron = el.querySelector<HTMLElement>('[data-message-collapse-chevron]');
-		if (chevron && !chevron.classList.contains('rotate-90')) {
-			chevron.classList.add('rotate-90');
-		}
+		expandMessageBody(el.dataset.messageBodyKey);
 	}
 
 	function findToolCallAnchorElement(messageId?: string | null, toolCallId?: string | null): HTMLElement | null {
@@ -328,7 +355,40 @@
 			return null;
 		}
 		if (!message.id) return null;
-		return item.llm_calls.find((llmCall) => llmCall.message_ids.includes(message.id!)) ?? null;
+		return llmCallByMessageId.get(message.id) ?? null;
+	}
+
+	function isRawPanelOpen(key: string): boolean {
+		return key in rawPanels;
+	}
+
+	function toggleRawPanel(
+		key: string,
+		{
+			request,
+			response,
+			payload
+		}: {
+			request?: unknown;
+			response?: unknown;
+			payload?: Record<string, unknown>;
+		}
+	) {
+		if (rawPanels[key]) {
+			const nextPanels = { ...rawPanels };
+			delete nextPanels[key];
+			rawPanels = nextPanels;
+			return;
+		}
+
+		rawPanels = {
+			...rawPanels,
+			[key]: {
+				request: request === undefined ? undefined : JSON.stringify(request, null, 2),
+				response: response === undefined ? undefined : JSON.stringify(response, null, 2),
+				payload: payload === undefined ? undefined : JSON.stringify(payload, null, 2)
+			}
+		};
 	}
 
 	function getMessageDebugView(
@@ -540,11 +600,21 @@
 			(message: InteractionMessage) => message.role === 'tool' || (message.tool_calls?.length ?? 0) > 0
 		)
 	);
+	const llmCallByMessageId = $derived.by(() => {
+		const map = new Map<string, LlmCallTrace>();
+		for (const llmCall of item.llm_calls) {
+			for (const messageId of llmCall.message_ids) {
+				if (!map.has(messageId)) {
+					map.set(messageId, llmCall);
+				}
+			}
+		}
+		return map;
+	});
 	const runtimeLabel = $derived(
 		runtimeModeLabel(item.target_runtime_mode, hasAgenticTranscript)
 	);
 	const structuredCitations = $derived(getStructuredCitations(item.verdict?.citations));
-	const legacyCitations = $derived(getLegacyPromptCitations(item.verdict?.citations));
 	const activeVerdict = $derived(
 		(item.multi_judge?.verdicts?.[activeJudgeIndex] as Verdict | null | undefined) ??
 			(item.verdict as Verdict | null | undefined)
@@ -564,7 +634,6 @@
 	);
 	const activeJudgmentWarningLabels = $derived(activeJudgmentWarnings.map(judgmentWarningLabel));
 	const highlightedCitations = $derived(displayedCitations ?? []);
-	const hasLegacyOnlyCitations = $derived(legacyCitations.length > 0 && structuredCitations.length === 0);
 	const hasPerJudgeInspection = $derived((item.multi_judge?.verdicts?.length ?? 0) > 1);
 	const citedMessageIds = $derived(
 		new Set(
@@ -608,16 +677,7 @@
 		</div>
 		<div class="flex-1 min-w-0">
 			<h2 class="truncate text-sm font-medium text-text" title={item.header_title}>{item.header_title}</h2>
-			<div class="mt-0.5 flex items-center gap-2">
-				{#if item.kind === 'scenario' && item.context.elicitation_strategy}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-violet-500/10 text-violet-400">
-						{item.context.elicitation_strategy}
-					</span>
-					{#if item.context.parent_title}
-						<span class="text-[10px] text-text-muted">of {item.context.parent_title}</span>
-					{/if}
-					<span class="text-xs text-text-muted">·</span>
-				{/if}
+			<div class="mt-0.5 flex flex-wrap items-center gap-2">
 				{#if item.kind === 'scenario'}
 					<span class="text-xs text-text-muted">{conversationTurnCount(item.messages)} turns</span>
 					<span class="text-xs text-text-muted">·</span>
@@ -626,7 +686,7 @@
 					<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{item.context.stop_reason}</span>
 					<span class="text-xs text-text-muted">·</span>
 				{/if}
-				<span class="rounded px-1.5 py-0.5 text-[10px] font-medium {item.permissible ? 'bg-interactive/10 text-interactive' : 'bg-not-permissible/10 text-not-permissible'}">{item.permissible ? 'permissible' : 'not permissible'}</span>
+
 				{#if runtimeLabel}
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface text-text-muted">{runtimeLabel}</span>
 				{/if}
@@ -634,6 +694,15 @@
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">judge failed</span>
 				{:else if judgeStatus(item) === 'unjudged'}
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
+				{/if}
+				{#if item.factors}
+					<span class="flex flex-wrap items-center gap-1.5">
+						{#each Object.entries(item.factors) as [name, value]}
+							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
+								{formatFactorLabel(name)}: {value}
+							</span>
+						{/each}
+					</span>
 				{/if}
 			</div>
 		</div>
@@ -744,14 +813,6 @@
 						</p>
 					</div>
 				{/if}
-				{#if hasLegacyOnlyCitations}
-					<div class="rounded-lg border border-border/60 bg-surface/60 p-4">
-						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Legacy citations</div>
-						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This run predates structured inline citations. Re-judge it to get clickable evidence links and transcript highlights.
-						</p>
-					</div>
-				{/if}
 				{#if hasPerJudgeInspection}
 					<div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
 						<div class="flex flex-wrap gap-1 border-b border-zinc-800 p-1.5">
@@ -779,6 +840,12 @@
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
 							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
 						</p>
+					</div>
+				{/if}
+				{#if activeVerdict?.narrative}
+					<div class="rounded-lg border border-border bg-surface p-4">
+						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Conversation summary</div>
+						<p class="text-sm text-text-secondary leading-relaxed">{activeVerdict.narrative}</p>
 					</div>
 				{/if}
 				{#each metricNames as m}
@@ -825,7 +892,9 @@
 														<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {violated ? 'bg-score-fail/10 text-score-fail' : violated === null ? 'bg-surface-2 text-text-muted' : 'bg-score-pass/10 text-score-pass'}">
 															{violated === null ? 'not assessed' : violated ? 'violated' : 'clear'}
 														</span>
-														<span class="text-[10px] text-text-muted">{node.confidence} confidence</span>
+														{#if node.confidence}
+															<span class="text-[10px] text-text-muted">{node.confidence} confidence</span>
+														{/if}
 													</div>
 												</div>
 												{#if node.reasoning}
@@ -885,7 +954,6 @@
 				{#each item.messages as message, messageIndex}
 					{@const turnLabel = message.role === 'system' ? null : (message.judgeTurn ?? fallbackTurnLabel(item.messages, messageIndex))}
 					{@const messageCitations = citationPartsForMessage(highlightedCitations, message.id)}
-					{@const messageHtml = messageCitations.length > 0 ? renderAuditMessageHtml(message.content, messageCitations) : renderMarkdown(message.content)}
 					{@const isCited = Boolean(message.id && citedMessageIds.has(message.id))}
 					{@const isHighlighted = (turnLabel != null && highlightedTurn === turnLabel) || (message.id != null && highlightedMessageId === message.id)}
 					{@const isToolCall = message.type === 'tool_call' || message.role === 'tool'}
@@ -894,14 +962,23 @@
 					{@const isSystemPromptSet = message.type === 'set_system_message'}
 					{@const messageLlmCall = getMessageLlmCall(message)}
 					{@const messageDebug = getMessageDebugView(message)}
+					{@const bodyKey = messagePanelKey(message, messageIndex, 'body')}
+					{@const rawPanelKey = messagePanelKey(message, messageIndex, 'raw')}
 					{#if isSystem}
-						<div class="flex gap-3 flex-row-reverse" id={messageAnchorId(message.id)}>
+						<div
+							class="flex gap-3 flex-row-reverse"
+							id={messageAnchorId(message.id)}
+							data-message-body-key={bodyKey}
+						>
 							<div class="flex-shrink-0 mt-1">
 								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-yellow-500/15 text-yellow-400">S</div>
 							</div>
 							<div class="w-[85%] rounded-lg bg-yellow-500/8 border border-yellow-500/20 {isHighlighted ? 'ring-2 ring-interactive' : ''} overflow-hidden">
-								<button class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-yellow-500/5 transition-colors" onclick={(e) => { const el = (e.currentTarget as HTMLElement).nextElementSibling; if (el) el.classList.toggle('hidden'); const chevron = (e.currentTarget as HTMLElement).querySelector('.chevron'); if (chevron) chevron.classList.toggle('rotate-90'); }}>
-									<svg data-message-collapse-chevron class="chevron h-3 w-3 text-yellow-400/60 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+								<button
+									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-yellow-500/5 transition-colors"
+									onclick={() => toggleMessageBody(bodyKey)}
+								>
+									<svg class="chevron h-3 w-3 text-yellow-400/60 transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
 									<span class="text-xs font-semibold text-yellow-400">{isSystemPromptSet ? 'System Prompt Set' : 'System Prompt'}</span>
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
@@ -912,48 +989,55 @@
 										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-yellow-400/60">{messageDebug.label}</span>
 									{/if}
 								</button>
-								<div data-message-collapse-body class="hidden px-4 pb-3 border-t border-yellow-500/10">
-									<div class="text-sm text-text-secondary leading-relaxed prose max-w-none pt-2.5">{@html messageHtml}</div>
-									{#if messageLlmCall}
-										<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
-											<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">
-												<span>LLM Call</span>
-												<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
+								{#if hasExpandedBody(bodyKey)}
+									<div data-message-collapse-body class="px-4 pb-3 border-t border-yellow-500/10">
+										<div class="text-sm text-text-secondary leading-relaxed prose max-w-none pt-2.5">{@html renderMessageHtml(message, messageCitations)}</div>
+										{#if messageLlmCall}
+											<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
+												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">
+													<span>LLM Call</span>
+													<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
+												</div>
+												<div class="mt-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
+													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
+												</div>
+												<div class="mt-3 border-t border-yellow-500/10 pt-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
+													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
+												</div>
 											</div>
-											<div class="mt-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
-												<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
+										{:else if messageDebug}
+											<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
+												<div class="text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">{messageDebug.panelTitle}</div>
+												<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
+												<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
 											</div>
-											<div class="mt-3 border-t border-yellow-500/10 pt-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
-												<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
-											</div>
-										</div>
-									{:else if messageDebug}
-										<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
-											<div class="text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">{messageDebug.panelTitle}</div>
-											<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
-											<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
-										</div>
-									{/if}
-								</div>
+										{/if}
+									</div>
+								{/if}
 							</div>
 						</div>
 					{:else if message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0}
 						{#each message.tool_calls as toolCall, toolCallIndex}
 							{@const toolCallLlmCall = getMessageLlmCall(message, { toolCallIndex })}
 							{@const toolCallDebug = getMessageDebugView(message, { toolCallIndex })}
+							{@const toolCallBodyKey = messagePanelKey(message, messageIndex, `tool-call-${toolCallIndex}`)}
 							<div
 								class="flex gap-3 flex-row-reverse"
 								id={toolCallIndex === 0 && turnLabel != null ? `drawer-turn-${turnLabel}` : undefined}
 								data-tool-call-anchor={toolCallAnchorId(message.id, toolCall.id)}
+								data-message-body-key={toolCallBodyKey}
 							>
 								<div class="flex-shrink-0 mt-1">
 									<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-purple-500/15 text-purple-400">⚡</div>
 								</div>
 								<div class="w-[85%] rounded-lg bg-purple-500/8 border border-purple-500/20 overflow-hidden">
-									<button class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors" onclick={(e) => { const el = (e.currentTarget as HTMLElement).nextElementSibling; if (el) el.classList.toggle('hidden'); const chevron = (e.currentTarget as HTMLElement).querySelector('.chevron'); if (chevron) chevron.classList.toggle('rotate-90'); }}>
-										<svg data-message-collapse-chevron class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+									<button
+										class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors"
+										onclick={() => toggleMessageBody(toolCallBodyKey)}
+									>
+										<svg class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150 {hasExpandedBody(toolCallBodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
 										<span class="text-xs font-semibold text-purple-400">Tool Call</span>
 										<span class="text-xs font-mono text-text-muted">{toolCall.function}</span>
 										{#if toolCallLlmCall}
@@ -962,42 +1046,51 @@
 											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">{toolCallDebug.label}</span>
 										{/if}
 									</button>
-									<div data-message-collapse-body class="hidden px-4 pb-3 border-t border-purple-500/10">
-										<pre class="pt-2.5 text-xs text-text-secondary bg-bg/50 rounded p-2 overflow-x-auto {highlightedToolFocus?.messageId === message.id && highlightedToolFocus?.sourceKind === 'tool_arg' && (!highlightedToolFocus.toolCallId || highlightedToolFocus.toolCallId === toolCall.id) ? 'citation-tool-arg-focus citation-focused-block' : ''}">{JSON.stringify(toolCall.arguments, null, 2)}</pre>
-										{#if toolCallLlmCall}
-											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
-													<span>LLM Call</span>
-													<span class="text-text-muted">{llmSourceLabel(toolCallLlmCall.source)} · {llmApiModeLabel(toolCallLlmCall.api_mode)}</span>
+									{#if hasExpandedBody(toolCallBodyKey)}
+										<div data-message-collapse-body class="px-4 pb-3 border-t border-purple-500/10">
+											<pre class="pt-2.5 text-xs text-text-secondary bg-bg/50 rounded p-2 overflow-x-auto {highlightedToolFocus?.messageId === message.id && highlightedToolFocus?.sourceKind === 'tool_arg' && (!highlightedToolFocus.toolCallId || highlightedToolFocus.toolCallId === toolCall.id) ? 'citation-tool-arg-focus citation-focused-block' : ''}">{JSON.stringify(toolCall.arguments, null, 2)}</pre>
+											{#if toolCallLlmCall}
+												<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
+													<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
+														<span>LLM Call</span>
+														<span class="text-text-muted">{llmSourceLabel(toolCallLlmCall.source)} · {llmApiModeLabel(toolCallLlmCall.api_mode)}</span>
+													</div>
+													<div class="mt-3">
+														<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
+														<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.request, null, 2)}</pre>
+													</div>
+													<div class="mt-3 border-t border-purple-500/10 pt-3">
+														<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
+														<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.response, null, 2)}</pre>
+													</div>
 												</div>
-												<div class="mt-3">
-													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
-													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.request, null, 2)}</pre>
+											{:else if toolCallDebug}
+												<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{toolCallDebug.panelTitle}</div>
+													<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{toolCallDebug.description}</p>
+													<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallDebug.payload, null, 2)}</pre>
 												</div>
-												<div class="mt-3 border-t border-purple-500/10 pt-3">
-													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
-													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.response, null, 2)}</pre>
-												</div>
-											</div>
-										{:else if toolCallDebug}
-											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{toolCallDebug.panelTitle}</div>
-												<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{toolCallDebug.description}</p>
-												<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallDebug.payload, null, 2)}</pre>
-											</div>
-										{/if}
-									</div>
+											{/if}
+										</div>
+									{/if}
 								</div>
 							</div>
 						{/each}
 					{:else if isToolCall}
-						<div class="flex gap-3 flex-row-reverse" id={turnLabel != null ? `drawer-turn-${turnLabel}` : undefined}>
+						<div
+							class="flex gap-3 flex-row-reverse"
+							id={turnLabel != null ? `drawer-turn-${turnLabel}` : undefined}
+							data-message-body-key={bodyKey}
+						>
 							<div class="flex-shrink-0 mt-1">
 								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-purple-500/15 text-purple-400">⚙</div>
 							</div>
 							<div class="w-[85%] rounded-lg bg-purple-500/5 border border-purple-500/15 {isHighlighted ? 'ring-2 ring-interactive' : ''} {highlightedToolFocus?.messageId === message.id ? (highlightedToolFocus?.sourceKind === 'tool_arg' ? 'citation-tool-arg-focus' : highlightedToolFocus?.sourceKind === 'tool_result' ? 'citation-tool-result-focus' : 'citation-tool-message-focus') : ''} overflow-hidden">
-								<button class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors" onclick={(e) => { const el = (e.currentTarget as HTMLElement).nextElementSibling; if (el) el.classList.toggle('hidden'); const chevron = (e.currentTarget as HTMLElement).querySelector('.chevron'); if (chevron) chevron.classList.toggle('rotate-90'); }}>
-									<svg data-message-collapse-chevron class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+								<button
+									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors"
+									onclick={() => toggleMessageBody(bodyKey)}
+								>
+									<svg class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
 									<span class="text-xs font-semibold text-purple-400">Tool Result{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
@@ -1011,31 +1104,33 @@
 										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">{messageDebug.label}</span>
 									{/if}
 								</button>
-								<div data-message-collapse-body class="hidden px-4 pb-3 border-t border-purple-500/10">
-									<div class="text-sm text-text leading-relaxed prose max-w-none pt-2.5 {highlightedToolFocus?.messageId === message.id ? 'citation-focused-block' : ''}">{@html messageHtml}</div>
-									{#if messageLlmCall}
-										<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-											<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
-												<span>LLM Call</span>
-												<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
+								{#if hasExpandedBody(bodyKey)}
+									<div data-message-collapse-body class="px-4 pb-3 border-t border-purple-500/10">
+										<div class="text-sm text-text leading-relaxed prose max-w-none pt-2.5 {highlightedToolFocus?.messageId === message.id ? 'citation-focused-block' : ''}">{@html renderMessageHtml(message, messageCitations)}</div>
+										{#if messageLlmCall}
+											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
+												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
+													<span>LLM Call</span>
+													<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
+												</div>
+												<div class="mt-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
+													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
+												</div>
+												<div class="mt-3 border-t border-purple-500/10 pt-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
+													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
+												</div>
 											</div>
-											<div class="mt-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
-												<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
+										{:else if messageDebug}
+											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
+												<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{messageDebug.panelTitle}</div>
+												<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
+												<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
 											</div>
-											<div class="mt-3 border-t border-purple-500/10 pt-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
-												<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
-											</div>
-										</div>
-									{:else if messageDebug}
-										<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-											<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{messageDebug.panelTitle}</div>
-											<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
-											<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
-										</div>
-									{/if}
-								</div>
+										{/if}
+									</div>
+								{/if}
 							</div>
 						</div>
 					{:else}
@@ -1052,38 +1147,55 @@
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
 									{/if}
 									{#if messageLlmCall}
-										<button class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors" title="View owned LLM request and response" onclick={(e) => { const el = (e.currentTarget as HTMLElement).closest('.rounded-lg')?.querySelector('.raw-panel'); if (el) el.classList.toggle('hidden'); }}>
+										<button
+											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors"
+											title="View owned LLM request and response"
+											onclick={() =>
+												toggleRawPanel(rawPanelKey, {
+													request: messageLlmCall.request,
+													response: messageLlmCall.response
+												})}
+										>
 											llm
 										</button>
 									{:else if messageDebug}
-										<button class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors" title={messageDebug.buttonTitle} onclick={(e) => { const el = (e.currentTarget as HTMLElement).closest('.rounded-lg')?.querySelector('.raw-panel'); if (el) el.classList.toggle('hidden'); }}>
+										<button
+											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors"
+											title={messageDebug.buttonTitle}
+											onclick={() =>
+												toggleRawPanel(rawPanelKey, {
+													payload: messageDebug.payload
+												})}
+										>
 											{messageDebug.label}
 										</button>
 									{/if}
 								</div>
 								<div class="px-4 pb-3">
-									<div class="text-sm text-text leading-relaxed prose max-w-none">{@html messageHtml}</div>
+									<div class="text-sm text-text leading-relaxed prose max-w-none">{@html renderMessageHtml(message, messageCitations)}</div>
 								</div>
-								{#if messageLlmCall}
-									<div class="raw-panel hidden border-t border-border px-4 py-3 bg-black/20">
+								{#if messageLlmCall && isRawPanelOpen(rawPanelKey)}
+									{@const rawPanel = rawPanels[rawPanelKey]}
+									<div class="border-t border-border px-4 py-3 bg-black/20">
 										<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
 											<span>LLM Call</span>
 											<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
 										</div>
 										<div class="mt-3">
 											<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
-											<pre class="mt-2 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
+											<pre class="mt-2 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{rawPanel?.request}</pre>
 										</div>
 										<div class="mt-3 border-t border-border pt-3">
 											<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
-											<pre class="mt-2 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
+											<pre class="mt-2 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{rawPanel?.response}</pre>
 										</div>
 									</div>
-								{:else if messageDebug}
-									<div class="raw-panel hidden border-t border-border px-4 py-3 bg-black/20">
+								{:else if messageDebug && isRawPanelOpen(rawPanelKey)}
+									{@const rawPanel = rawPanels[rawPanelKey]}
+									<div class="border-t border-border px-4 py-3 bg-black/20">
 										<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">{messageDebug.panelTitle}</div>
 										<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
-										<pre class="mt-3 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
+										<pre class="mt-3 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{rawPanel?.payload}</pre>
 									</div>
 								{/if}
 							</div>

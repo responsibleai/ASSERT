@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any
 
+import re
 import yaml
 
 from p2m.core.config_model import (
@@ -27,22 +29,51 @@ from p2m.core.config_model import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
-RISKS_DIR = ROOT / "examples" / "risks"
 OUTPUT_PATH_KEYS = {"save_dir", "save_path"}
 PIPELINE_STAGE_ORDER = (
     "policy",
+    "design",
     "seeds",
     "rollout",
     "judge",
-    "systematization",
-    "systematization_convert",
 )
-STANDARD_PIPELINE_STAGES = {"policy", "seeds", "rollout", "judge"}
-SYSTEMATIZATION_PIPELINE_STAGES = {"systematization", "systematization_convert"}
+CONCEPT_REQUIRED_PIPELINE_STAGES = {"policy"}
 
 
 class ConfigError(Exception):
     pass
+
+
+# Must match the viewer's SAFE_ID_RE in artifacts.ts: /^[a-z0-9][a-z0-9._-]*$/i
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def _validate_identifier(value: str, field_name: str) -> str:
+    """Reject identifiers that don't match the safe slug format.
+
+    Uses the same allowlist as the viewer's isSafeArtifactId to ensure
+    IDs created by the pipeline are always readable by the viewer.
+    """
+    if not value:
+        raise ConfigError(f"{field_name} must not be empty")
+    if len(value) > 255:
+        raise ConfigError(f"{field_name} exceeds maximum length of 255 characters")
+    if ".." in value:
+        raise ConfigError(f"{field_name} must not contain '..'")
+    if not _SAFE_ID_RE.match(value):
+        raise ConfigError(
+            f"{field_name} must start with an alphanumeric character and contain only "
+            f"alphanumerics, dots, hyphens, or underscores; got: {value!r}"
+        )
+    return value
+
+
+def _require_within(child: Path, parent: Path, label: str) -> None:
+    """Verify that a resolved path is inside the expected parent directory."""
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        raise ConfigError(f"{label} escapes its expected root directory")
 
 
 def require(condition: bool, message: str) -> None:
@@ -76,9 +107,8 @@ def _resolve_path(
     artifacts_root: Path,
     cfg_dir: Path | None = None,
     use_artifacts_root: bool = False,
-    fallback_root: Path | None = None,
 ) -> str:
-    """Resolve one path against artifacts, config, and optional fallback roots."""
+    """Resolve one path against artifacts and config roots."""
     candidate = Path(path).expanduser()
     if candidate.is_absolute():
         return str(candidate.resolve())
@@ -86,11 +116,7 @@ def _resolve_path(
     if artifact_relative is not None:
         return str((artifacts_root / artifact_relative).resolve())
     primary_root = artifacts_root if use_artifacts_root or cfg_dir is None else cfg_dir
-    resolved = (primary_root / candidate).resolve()
-    if fallback_root is None or resolved.exists():
-        return str(resolved)
-    fallback = (fallback_root / candidate).resolve()
-    return str(fallback if fallback.exists() else resolved)
+    return str((primary_root / candidate).resolve())
 
 
 def _validate_pipeline_stages(
@@ -111,48 +137,7 @@ def _validate_pipeline_stages(
         stages.append((stage_name, stage_cfg))
 
     require(stages, "'pipeline' must define at least one stage")
-    enabled_stage_names = {stage_name for stage_name, stage_cfg in stages if stage_cfg.get("enabled", True)}
-    has_standard_stage = any(stage in enabled_stage_names for stage in STANDARD_PIPELINE_STAGES)
-    has_systematization_stage = any(stage in enabled_stage_names for stage in SYSTEMATIZATION_PIPELINE_STAGES)
-    require(
-        not (has_standard_stage and has_systematization_stage),
-        "pipeline must use either standard stages or systematization stages, not both",
-    )
     return stages
-
-
-def _load_risk_text(
-    raw: dict[str, Any],
-    *,
-    has_enabled_suite_stage: bool,
-    cfg_path: Path,
-    artifacts_root: Path,
-) -> tuple[str | None, str]:
-    """Load the configured risk text when any suite stage requires it."""
-    risk_name = raw.get("risk")
-    if risk_name is None:
-        require(not has_enabled_suite_stage, "risk is required when suite stages are enabled")
-        return None, ""
-
-    risks_dir = None
-    risks_dir_raw = raw.get("risks_dir")
-    if risks_dir_raw:
-        risks_dir = Path(
-            _resolve_path(
-                risks_dir_raw,
-                artifacts_root=artifacts_root,
-                cfg_dir=cfg_path.parent,
-                fallback_root=ROOT,
-            )
-        )
-    search_dir = risks_dir or RISKS_DIR
-    candidate = search_dir / f"{risk_name}.md"
-    if not candidate.exists():
-        available = ", ".join(path.stem for path in sorted(search_dir.glob("*.md")) if path.stem != "README")
-        raise ConfigError(f"Unknown risk '{risk_name}'. Available: {available}")
-    risk_text = candidate.read_text(encoding="utf-8").strip()
-    require(bool(risk_text), f"Risk file '{risk_name}' is empty")
-    return str(risk_name), risk_text
 
 
 def load_runtime_context(
@@ -162,7 +147,28 @@ def load_runtime_context(
     stage_modules: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the shared runtime context used by every stage."""
-    pipeline = parse_pipeline_config(raw, cfg_path)
+    reject_unknown_keys(
+        raw,
+        field_name="config",
+        allowed={
+            "suite",
+            "run",
+            "concept",
+            "context",
+            "factors",
+            "default_model",
+            "artifacts_root",
+            "results_dir",
+            "pipeline",
+        },
+    )
+    default_model_raw = _get_default_model_mapping(raw)
+    factors = _parse_top_level_factors(raw.get("factors"))
+    if factors and any("levels" not in factor for factor in factors) and default_model_raw is None:
+        raise ValueError(
+            "default_model is required when factors use generated mode (description without levels)"
+        )
+    pipeline = parse_pipeline_config(raw)
     target = pipeline.target if pipeline else None
 
     artifacts_root = Path(raw.get("artifacts_root") or "artifacts").expanduser()
@@ -183,10 +189,15 @@ def load_runtime_context(
     else:
         results_dir = (artifacts_root / "results").resolve()
 
-    suite_id = str(raw.get("suite") or raw.get("suite_id") or datetime.now(timezone.utc).strftime("eval-%Y%m%dT%H%M%S"))
+    suite_id = str(raw.get("suite") or datetime.now(timezone.utc).strftime("eval-%Y%m%dT%H%M%S"))
+    _validate_identifier(suite_id, "suite")
     pipeline_raw = raw.get("pipeline")
     require(isinstance(pipeline_raw, dict), "'pipeline' must be a mapping")
     stages = _validate_pipeline_stages(pipeline_raw, stage_modules=stage_modules)
+    if default_model_raw is not None:
+        for stage_name, stage_cfg in stages:
+            if stage_name in {"policy", "design", "seeds"} and "model" not in stage_cfg:
+                stage_cfg["model"] = dict(default_model_raw)
     enabled_stage_names = [
         stage_name
         for stage_name, stage_cfg in stages
@@ -194,29 +205,69 @@ def load_runtime_context(
     ]
 
     has_enabled_run_stage = any(stage_modules[name].SCOPE == "run" for name in enabled_stage_names)
-    has_enabled_suite_stage = any(stage_modules[name].SCOPE == "suite" for name in enabled_stage_names)
+    requires_concept = any(stage in CONCEPT_REQUIRED_PIPELINE_STAGES for stage in enabled_stage_names)
 
-    run_id = raw.get("run") or raw.get("run_id")
+    run_id = raw.get("run")
     if has_enabled_run_stage and not run_id:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     run_id = str(run_id) if run_id else None
+    if run_id is not None:
+        _validate_identifier(run_id, "run")
 
-    risk_name, risk_text = _load_risk_text(
-        raw,
-        has_enabled_suite_stage=has_enabled_suite_stage,
-        cfg_path=cfg_path,
-        artifacts_root=artifacts_root,
-    )
+    concept_name = None
+    concept_text = ""
+    concept_raw = raw.get("concept")
+    if concept_raw is None:
+        require(not requires_concept, "concept is required when a concept-backed stage is enabled")
+    else:
+        if not isinstance(concept_raw, dict):
+            raise ValueError("concept must be a mapping")
+        reject_unknown_keys(
+            concept_raw,
+            field_name="concept",
+            allowed={"name"},
+        )
+        concept_name = _optional_str(concept_raw.get("name"), field_name="concept.name")
+        if not concept_name:
+            raise ValueError("concept.name is required")
+        _validate_identifier(concept_name, "concept.name")
+
+        concept_path = next(
+            (
+                candidate
+                for candidate in (cfg_path.parent / "concept.md", cfg_path.parent / f"{concept_name}.md")
+                if candidate.exists()
+            ),
+            None,
+        )
+        if concept_path is None:
+            require(
+                not requires_concept,
+                "concept markdown is required when a concept-backed stage is enabled; "
+                f"expected concept.md or {concept_name}.md next to {cfg_path}",
+            )
+        else:
+            concept_text = concept_path.read_text(encoding="utf-8").strip()
+            require(bool(concept_text) or not requires_concept, f"Concept file '{concept_path.name}' is empty")
+
+    context = raw.get("context")
+    if context is not None and not isinstance(context, str):
+        raise ValueError("context must be a string")
 
     suite_root = (results_dir / suite_id).resolve()
+    _require_within(suite_root, results_dir, "suite_root")
     run_root = (suite_root / run_id).resolve() if run_id else None
+    if run_root is not None:
+        _require_within(run_root, suite_root, "run_root")
 
     return {
         "config_path": cfg_path,
         "suite_id": suite_id,
         "run_id": run_id,
-        "risk_name": risk_name,
-        "risk": risk_text,
+        "concept_name": concept_name,
+        "concept": concept_text,
+        "context": context,
+        "factors": factors,
         "artifacts_root": artifacts_root,
         "results_dir": results_dir,
         "suite_root": suite_root,
@@ -285,7 +336,15 @@ def _optional_int(value: Any, *, field_name: str) -> int | None:
     raise ValueError(f"{field_name} must be an integer")
 
 
-def _reject_unknown_keys(raw: dict[str, Any], *, field_name: str, allowed: set[str]) -> None:
+def _coalesce(value: Any, default: Any) -> Any:
+    """Return *value* unless it is ``None``, in which case return *default*.
+
+    Unlike ``value or default``, this preserves falsy values like ``0``.
+    """
+    return value if value is not None else default
+
+
+def reject_unknown_keys(raw: dict[str, Any], *, field_name: str, allowed: set[str]) -> None:
     unknown = sorted(set(raw).difference(allowed))
     if unknown:
         raise ValueError(f"{field_name} has unsupported field(s): {', '.join(unknown)}")
@@ -300,10 +359,10 @@ def parse_model_config(
 ) -> ModelConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a mapping")
-    _reject_unknown_keys(
+    reject_unknown_keys(
         raw,
         field_name=field_name,
-        allowed={"name", "temperature", "max_tokens"},
+        allowed={"name", "temperature", "max_tokens", "reasoning_effort"},
     )
     name = _optional_str(raw.get("name"), field_name=f"{field_name}.name")
     if not name:
@@ -316,17 +375,25 @@ def parse_model_config(
         raw.get("max_tokens"),
         field_name=f"{field_name}.max_tokens",
     )
+    reasoning_effort_raw = raw.get("reasoning_effort")
+    reasoning_effort = _optional_str(
+        reasoning_effort_raw,
+        field_name=f"{field_name}.reasoning_effort",
+    )
+    if "reasoning_effort" in raw and reasoning_effort_raw is not None and reasoning_effort is None:
+        raise ValueError(f"{field_name}.reasoning_effort must be a non-empty string")
     return ModelConfig(
         name=name,
         temperature=temperature if temperature is not None else default_temperature,
         max_tokens=max_tokens if max_tokens is not None else default_max_tokens,
+        reasoning_effort=reasoning_effort,
     )
 
 
 def parse_tools_config(raw: dict[str, Any], *, field_name: str) -> ToolsConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a mapping")
-    _reject_unknown_keys(raw, field_name=field_name, allowed={"module", "toolset", "simulator"})
+    reject_unknown_keys(raw, field_name=field_name, allowed={"module", "toolset", "simulator"})
     return ToolsConfig(
         module=_optional_str(raw.get("module"), field_name=f"{field_name}.module"),
         toolset=_optional_str(raw.get("toolset"), field_name=f"{field_name}.toolset"),
@@ -337,7 +404,7 @@ def parse_tools_config(raw: dict[str, Any], *, field_name: str) -> ToolsConfig:
 def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a mapping")
-    _reject_unknown_keys(raw, field_name=field_name, allowed={"model", "system_prompt", "tools", "connector"})
+    reject_unknown_keys(raw, field_name=field_name, allowed={"model", "system_prompt", "tools", "connector"})
     tools_raw = raw.get("tools")
     tools = None
     if tools_raw is not None:
@@ -359,13 +426,165 @@ def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig
     )
 
 
-def parse_pipeline_config(raw: dict[str, Any], cfg_path: Path) -> PipelineConfig | None:
+def _get_default_model_mapping(raw: dict[str, Any]) -> dict[str, Any] | None:
+    default_model_raw = raw.get("default_model")
+    if default_model_raw is None:
+        return None
+    if not isinstance(default_model_raw, dict):
+        raise ValueError("default_model must be a mapping")
+    parse_model_config(default_model_raw, field_name="default_model")
+    return dict(default_model_raw)
+
+
+def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("factors must be a list")
+    if len(raw) > 10:
+        print("warning: factors defines more than 10 factors", file=sys.stderr)
+
+    factors: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    saw_explicit_levels = False
+    saw_generated_levels = False
+    for index, factor_raw in enumerate(raw, start=1):
+        field_name = f"factors[{index}]"
+        if not isinstance(factor_raw, dict):
+            raise ValueError(f"{field_name} must be a mapping")
+        reject_unknown_keys(
+            factor_raw,
+            field_name=field_name,
+            allowed={"name", "description", "levels"},
+        )
+        name = _optional_str(factor_raw.get("name"), field_name=f"{field_name}.name")
+        if not name:
+            raise ValueError(f"{field_name}.name is required")
+        if name == "behavior":
+            raise ValueError("factor name 'behavior' is reserved")
+        if name in seen_names:
+            raise ValueError(f"duplicate factor name: {name}")
+        seen_names.add(name)
+
+        description = _optional_str(
+            factor_raw.get("description"),
+            field_name=f"{field_name}.description",
+        )
+        levels_raw = factor_raw.get("levels")
+        levels = None
+        if levels_raw is not None:
+            if not isinstance(levels_raw, list) or not levels_raw:
+                raise ValueError(f"{field_name}.levels must be a non-empty list")
+            if len(levels_raw) == 1:
+                raise ValueError("single-level factor adds no variation")
+            if len(levels_raw) > 20:
+                print(f"warning: factor '{name}' defines more than 20 levels", file=sys.stderr)
+            levels = []
+            seen_level_names: set[str] = set()
+            for level_index, level_raw in enumerate(levels_raw, start=1):
+                level_field_name = f"{field_name}.levels[{level_index}]"
+                if not isinstance(level_raw, dict):
+                    raise ValueError(f"{level_field_name} must be a mapping")
+                reject_unknown_keys(
+                    level_raw,
+                    field_name=level_field_name,
+                    allowed={"name", "definition"},
+                )
+                level_name = _optional_str(
+                    level_raw.get("name"),
+                    field_name=f"{level_field_name}.name",
+                )
+                definition = _optional_str(
+                    level_raw.get("definition"),
+                    field_name=f"{level_field_name}.definition",
+                )
+                if not level_name:
+                    raise ValueError(f"{level_field_name}.name is required")
+                if not definition:
+                    raise ValueError(f"{level_field_name}.definition is required")
+                if level_name in seen_level_names:
+                    raise ValueError(f"duplicate level name in {name}: {level_name}")
+                seen_level_names.add(level_name)
+                levels.append({"name": level_name, "definition": definition})
+            saw_explicit_levels = True
+        else:
+            saw_generated_levels = True
+
+        if levels is None and description is None:
+            raise ValueError(f"{field_name} must define either levels or description")
+
+        factor: dict[str, Any] = {"name": name}
+        if description is not None:
+            factor["description"] = description
+        if levels is not None:
+            factor["levels"] = levels
+        factors.append(factor)
+
+    if saw_explicit_levels and saw_generated_levels:
+        raise ValueError(
+            "all factors must use the same mode: either all with explicit levels or all with descriptions for generation"
+        )
+    return factors
+
+
+def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]:
+    if raw in (None, {}):
+        return []
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+
+    dimensions: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for raw_name, dimension_raw in raw.items():
+        name = _optional_str(raw_name, field_name=f"{field_name}.<name>")
+        if not name:
+            raise ValueError(f"{field_name} keys must be non-empty strings")
+        if name in seen_names:
+            raise ValueError(f"duplicate judge dimension name: {name}")
+        seen_names.add(name)
+        dimension_field_name = f"{field_name}.{name}"
+        if not isinstance(dimension_raw, dict):
+            raise ValueError(f"{dimension_field_name} must be a mapping")
+        reject_unknown_keys(
+            dimension_raw,
+            field_name=dimension_field_name,
+            allowed={"description", "rubric", "required_base"},
+        )
+        description = _optional_str(
+            dimension_raw.get("description"),
+            field_name=f"{dimension_field_name}.description",
+        )
+        rubric = _optional_str(
+            dimension_raw.get("rubric"),
+            field_name=f"{dimension_field_name}.rubric",
+        )
+        if not description:
+            raise ValueError(f"{dimension_field_name}.description is required")
+        if not rubric:
+            raise ValueError(f"{dimension_field_name}.rubric is required")
+        required_base = dimension_raw.get("required_base")
+        if required_base is not None and not isinstance(required_base, bool):
+            raise ValueError(f"{dimension_field_name}.required_base must be a boolean")
+
+        dimension = {
+            "name": name,
+            "description": description,
+            "rubric": rubric,
+        }
+        if required_base is not None:
+            dimension["required_base"] = required_base
+        dimensions.append(dimension)
+    return dimensions
+
+
+def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
     pipeline_raw = raw.get("pipeline")
     if pipeline_raw is None:
         return None
     if not isinstance(pipeline_raw, dict):
         raise ValueError("pipeline must be a mapping")
 
+    default_model_raw = _get_default_model_mapping(raw)
     rollout_stage = pipeline_raw.get("rollout")
     scorer_stage = pipeline_raw.get("judge")
 
@@ -378,79 +597,97 @@ def parse_pipeline_config(raw: dict[str, Any], cfg_path: Path) -> PipelineConfig
     rollout_cfg = RolloutConfig()
     auditor = None
     judge = None
+    rollout_enabled = rollout_stage is not None and bool(rollout_stage.get("enabled", True))
+    judge_enabled = scorer_stage is not None and bool(scorer_stage.get("enabled", True))
 
     if rollout_stage is not None:
-        if "environment" in rollout_stage:
-            raise ValueError("pipeline.rollout.environment is no longer supported; use pipeline.rollout.target.tools")
-        if "temperature" in rollout_stage:
-            raise ValueError("pipeline.rollout.temperature is no longer supported; move it under target.model or auditor.model")
-        if "max_tokens" in rollout_stage:
-            raise ValueError("pipeline.rollout.max_tokens is no longer supported; move it under target.model or auditor.model")
-        target_raw = rollout_stage.get("target")
-        require(target_raw is not None, "pipeline.rollout.target is required when rollout stage is enabled")
-        if not isinstance(target_raw, dict):
-            raise ValueError("pipeline.rollout.target must be a mapping")
-        target = parse_target_config(target_raw, field_name="pipeline.rollout.target")
-
-        auditor_raw = rollout_stage.get("auditor")
-        if auditor_raw is not None:
-            if not isinstance(auditor_raw, dict):
-                raise ValueError("pipeline.rollout.auditor must be a mapping")
-            if "max_turns" in auditor_raw:
-                raise ValueError("pipeline.rollout.auditor.max_turns is no longer supported; use pipeline.rollout.max_turns")
-            auditor = AuditorConfig(
-                model=parse_model_config(
-                    auditor_raw.get("model"),
-                    field_name="pipeline.rollout.auditor.model",
-                    default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
-                    default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
-                ),
-            )
-
-        rollout_cfg = RolloutConfig(
-            max_tool_calls=_optional_int(
-                rollout_stage.get("max_tool_calls"),
-                field_name="pipeline.rollout.max_tool_calls",
-            )
-            or DEFAULT_ROLLOUT_MAX_TOOL_CALLS,
-            max_turns=_optional_int(
-                rollout_stage.get("max_turns"),
-                field_name="pipeline.rollout.max_turns",
-            )
-            or DEFAULT_AUDITOR_MAX_TURNS,
-            tool_timeout_s=_optional_float(
-                rollout_stage.get("tool_timeout_s"),
-                field_name="pipeline.rollout.tool_timeout_s",
-            ),
-            startup_timeout_s=_optional_float(
-                rollout_stage.get("startup_timeout_s"),
-                field_name="pipeline.rollout.startup_timeout_s",
-            ),
-            concurrency=_optional_int(
-                rollout_stage.get("concurrency"),
-                field_name="pipeline.rollout.concurrency",
-            )
-            or DEFAULT_ROLLOUT_CONCURRENCY,
+        reject_unknown_keys(
+            rollout_stage,
+            field_name="pipeline.rollout",
+            allowed={"target", "auditor", "max_turns", "max_tool_calls",
+                      "tool_timeout_s", "startup_timeout_s", "concurrency",
+                      "seed_path", "save_dir", "strict", "enabled", "file_path"},
         )
+        if rollout_enabled:
+            target_raw = rollout_stage.get("target")
+            require(target_raw is not None, "pipeline.rollout.target is required when rollout stage is enabled")
+            if not isinstance(target_raw, dict):
+                raise ValueError("pipeline.rollout.target must be a mapping")
+            target_raw = dict(target_raw)
+            if "model" not in target_raw and "connector" not in target_raw and default_model_raw is not None:
+                target_raw["model"] = dict(default_model_raw)
+            target = parse_target_config(target_raw, field_name="pipeline.rollout.target")
+
+            auditor_raw = rollout_stage.get("auditor")
+            if auditor_raw is not None:
+                if not isinstance(auditor_raw, dict):
+                    raise ValueError("pipeline.rollout.auditor must be a mapping")
+                if "max_turns" in auditor_raw:
+                    raise ValueError("pipeline.rollout.auditor.max_turns is no longer supported; use pipeline.rollout.max_turns")
+                auditor_model_raw = auditor_raw.get("model", default_model_raw)
+                require(
+                    auditor_model_raw is not None,
+                    "pipeline.rollout.auditor.model or default_model is required when rollout.auditor is configured",
+                )
+                auditor = AuditorConfig(
+                    model=parse_model_config(
+                        auditor_model_raw,
+                        field_name="pipeline.rollout.auditor.model",
+                        default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
+                        default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
+                    ),
+                )
+
+            rollout_cfg = RolloutConfig(
+                max_tool_calls=_coalesce(_optional_int(
+                    rollout_stage.get("max_tool_calls"),
+                    field_name="pipeline.rollout.max_tool_calls",
+                ), DEFAULT_ROLLOUT_MAX_TOOL_CALLS),
+                max_turns=_coalesce(_optional_int(
+                    rollout_stage.get("max_turns"),
+                    field_name="pipeline.rollout.max_turns",
+                ), DEFAULT_AUDITOR_MAX_TURNS),
+                tool_timeout_s=_optional_float(
+                    rollout_stage.get("tool_timeout_s"),
+                    field_name="pipeline.rollout.tool_timeout_s",
+                ),
+                startup_timeout_s=_optional_float(
+                    rollout_stage.get("startup_timeout_s"),
+                    field_name="pipeline.rollout.startup_timeout_s",
+                ),
+                concurrency=_coalesce(_optional_int(
+                    rollout_stage.get("concurrency"),
+                    field_name="pipeline.rollout.concurrency",
+                ), DEFAULT_ROLLOUT_CONCURRENCY),
+            )
 
     if scorer_stage is not None:
-        judge_raw = scorer_stage.get("judge")
-        require(judge_raw is not None, "pipeline.judge.judge is required when judge is configured")
-        if not isinstance(judge_raw, dict):
-            raise ValueError("pipeline.judge.judge must be a mapping")
-        judge = JudgeConfig(
-            model=parse_model_config(
-                judge_raw.get("model"),
-                field_name="pipeline.judge.judge.model",
-                default_temperature=DEFAULT_JUDGE_TEMPERATURE,
-                default_max_tokens=DEFAULT_JUDGE_MAX_TOKENS,
-            ),
-            n=_optional_int(judge_raw.get("n"), field_name="pipeline.judge.judge.n") or 1,
-            dimensions=list(judge_raw.get("dimensions") or []),
+        reject_unknown_keys(
+            scorer_stage,
+            field_name="pipeline.judge",
+            allowed={"model", "n", "dimensions", "transcripts_path", "policy_path", "save_dir",
+                       "enabled", "file_path"},
         )
+        if judge_enabled:
+            model_raw = scorer_stage.get("model", default_model_raw)
+            require(model_raw is not None, "pipeline.judge.model or default_model is required when judge is configured")
+            dimensions = parse_judge_dimensions(
+                scorer_stage.get("dimensions"),
+                field_name="pipeline.judge.dimensions",
+            )
+            judge = JudgeConfig(
+                model=parse_model_config(
+                    model_raw,
+                    field_name="pipeline.judge.model",
+                    default_temperature=DEFAULT_JUDGE_TEMPERATURE,
+                    default_max_tokens=DEFAULT_JUDGE_MAX_TOKENS,
+                ),
+                n=_coalesce(_optional_int(scorer_stage.get("n"), field_name="pipeline.judge.n"), 1),
+                dimensions=dimensions,
+            )
 
     evaluation = None
-    if judge is not None or rollout_stage is not None:
+    if judge is not None or rollout_enabled:
         evaluation = EvaluationConfig(judge=judge, auditor=auditor, rollout=rollout_cfg)
 
     return PipelineConfig(target=target, evaluation=evaluation)
