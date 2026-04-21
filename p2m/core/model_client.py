@@ -384,6 +384,8 @@ def _get_litellm_module() -> Any:
                 "litellm is not installed. Run `uv sync` in omni/measurements "
                 "before using p2m.core.model_client."
             ) from exc
+        # Silence noisy litellm warnings that pollute stderr
+        _LITELLM_MODULE.suppress_debug_info = True
     return _LITELLM_MODULE
 
 
