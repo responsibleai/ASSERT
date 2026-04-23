@@ -48,7 +48,6 @@ pipeline:
   judge:
     judge:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-5.4
         temperature: 0.0
         max_tokens: 12000
-      dimensions: ["harm_actionability", "overrefusal", "policy_violation"]

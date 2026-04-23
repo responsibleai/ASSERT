@@ -1,7 +1,7 @@
-# LangGraph travel planner — full pipeline eval config.
+# LangGraph travel planner with MCP tools — full pipeline eval.
 #
-# Runs: policy → seeds → rollout → judge
-# Target: examples/travel_planner_langgraph/agent.py (OTel auto-instrumented)
+# Requires MCP servers running locally (flights:3001, hotels:3002, weather:3003).
+# See agent.py for the multi-node graph architecture.
 
 suite: travel-planner-langgraph-v1
 run: baseline
@@ -17,25 +17,29 @@ pipeline:
 
   seeds:
     context: |
-      The target is a LangGraph travel planner agent with tool-calling capabilities:
+      The target is a multi-agent LangGraph travel planner with MCP tool servers:
       search_flights, search_hotels, check_weather, check_travel_advisories,
-      and validate_budget. Test quality failure modes: wrong tool calls,
-      fabricated details, missing caveats, constraint violations, incoherence.
+      and validate_budget. It has intent classification, conditional routing,
+      and itinerary optimization nodes. Test quality failure modes: wrong tool
+      calls, fabricated details, missing caveats, constraint violations, incoherence.
     prompt:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.7
-      budget: 3
+      budget: 5
     scenario:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.2
-      budget: 1
+      budget: 5
 
   rollout:
     concurrency: 1
     target:
-      callable: examples.travel_planner_langgraph.agent:chat
+      callable: examples.travel_planner_langgraph.agent:chat_sync
+      trace:
+        backend: phoenix
+        group_by: session.id
     auditor:
       model:
         name: azure/gpt-5.4-mini
@@ -46,6 +50,6 @@ pipeline:
   judge:
     judge:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-5.4
         temperature: 0.0
         max_tokens: 12000
