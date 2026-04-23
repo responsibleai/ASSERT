@@ -412,11 +412,14 @@ class InMemoryTraceExporter:
 
 
 class LiveOTelExporter:
-    """Bridges the OTel SDK in-process exporter to p2m's TraceExporter protocol.
+    """In-process span collector that piggybacks on the global TracerProvider.
 
-    Process-level singleton: setup() only runs once. All OTelTracedSession
-    instances share the same collector so concurrent rollouts work correctly.
-    Each session calls clear() before its turn and export_session() after.
+    Works with any TracerProvider — whether set by Phoenix's ``register()``,
+    manual OTel setup, or created by us as a fallback. Captures all spans
+    emitted during each turn via a custom SpanProcessor.
+
+    Process-level singleton: setup() only runs once. Each OTelTracedSession
+    calls clear() before its turn and export_session() after.
     """
 
     _instance: "LiveOTelExporter | None" = None
@@ -429,15 +432,25 @@ class LiveOTelExporter:
         return cls._instance
 
     def setup(self) -> None:
-        """Initialize OTel SDK once per process."""
+        """Attach our collector to the global TracerProvider.
+
+        If Phoenix (or anything else) already set a TracerProvider, we add
+        our SpanProcessor to it — no conflict. If no provider exists, we
+        create a minimal one as fallback.
+        """
         if LiveOTelExporter._setup_done:
             return
 
         from opentelemetry import trace as otel_trace
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+        from opentelemetry.sdk.trace.export import (
+            SimpleSpanProcessor,
+            SpanExporter,
+            SpanExportResult,
+        )
 
         class _Collector(SpanExporter):
+            """In-process span sink — accumulates spans for per-turn retrieval."""
             def __init__(self):
                 self.spans: list = []
             def export(self, spans):
@@ -447,12 +460,23 @@ class LiveOTelExporter:
                 pass
 
         LiveOTelExporter._sdk_exporter = _Collector()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(LiveOTelExporter._sdk_exporter))
-        otel_trace.set_tracer_provider(provider)
+        processor = SimpleSpanProcessor(LiveOTelExporter._sdk_exporter)
 
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-        LangChainInstrumentor().instrument()
+        # Piggyback on existing provider if one is set (e.g., by Phoenix register())
+        existing = otel_trace.get_tracer_provider()
+        if isinstance(existing, TracerProvider):
+            existing.add_span_processor(processor)
+        else:
+            # Unwrap ProxyTracerProvider if needed
+            real = getattr(existing, "_real_provider", None)
+            if isinstance(real, TracerProvider):
+                real.add_span_processor(processor)
+            else:
+                # No SDK provider exists — create one as fallback
+                provider = TracerProvider()
+                provider.add_span_processor(processor)
+                otel_trace.set_tracer_provider(provider)
+
         LiveOTelExporter._setup_done = True
 
     def clear(self) -> None:
@@ -461,12 +485,19 @@ class LiveOTelExporter:
             LiveOTelExporter._sdk_exporter.spans.clear()
 
     def export_session(self, session_id: str) -> list[OTelSpan]:
-        """Convert all captured OTel SDK spans to p2m OTelSpan format."""
+        """Convert all captured OTel SDK spans to p2m OTelSpan format.
+
+        Since clear() is called between turns, all spans belong to the
+        current turn. The session_id parameter is kept for interface compat
+        but filtering is not needed.
+        """
         if LiveOTelExporter._sdk_exporter is None:
             return []
         result: list[OTelSpan] = []
         for sdk_span in list(LiveOTelExporter._sdk_exporter.spans):
-            attrs = dict(sdk_span.attributes or {})
+            attrs = {}
+            for k, v in (sdk_span.attributes or {}).items():
+                attrs[k] = v
             result.append(OTelSpan(
                 trace_id=f"{sdk_span.context.trace_id:032x}" if sdk_span.context else "",
                 span_id=f"{sdk_span.context.span_id:016x}" if sdk_span.context else "",

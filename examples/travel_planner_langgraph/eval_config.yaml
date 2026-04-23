@@ -36,7 +36,7 @@ pipeline:
   rollout:
     concurrency: 1
     target:
-      callable: examples.travel_planner_langgraph.agent:chat_sync
+      callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:
         backend: phoenix
         group_by: session.id

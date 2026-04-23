@@ -222,6 +222,10 @@ class OTelTracedSession:
         interaction_messages.append({
             "role": "assistant",
             "content": response_text,
+            "raw": {
+                "trace_events": events,
+                "trace_metadata": aggregate,
+            },
         })
 
         return TurnResult(
@@ -232,7 +236,8 @@ class OTelTracedSession:
                 "session_id": self._session_id,
                 "turn_id": turn_id,
                 "runtime_mode": "otel_traced",
-                **aggregate,
+                "trace_events": events,
+                "trace_metadata": aggregate,
                 "span_validation": turn_trace["validation"],
                 "accumulated_turns": len(self._turn_traces),
             },

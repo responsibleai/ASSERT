@@ -26,24 +26,20 @@ load_dotenv()
 import litellm
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT
 
-# ── OTel setup (manual, no Phoenix auto-instrumentor) ─────────
-# Use BatchSpanProcessor to avoid blocking on export failures.
+# ── OTel setup (manual spans, no auto-instrumentor) ───────────
+# Create a TracerProvider if none exists. LiveOTelExporter will attach
+# its collector to this provider when the eval pipeline runs.
 
-_provider = TracerProvider()
-try:
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    _provider.add_span_processor(BatchSpanProcessor(
-        OTLPSpanExporter(),
-        max_export_batch_size=32,
-        schedule_delay_millis=1000,
-    ))
-except Exception:
-    pass  # No collector available — spans are still created but not exported
-trace.set_tracer_provider(_provider)
+_existing = trace.get_tracer_provider()
+if not isinstance(_existing, TracerProvider):
+    _real = getattr(_existing, "_real_provider", None)
+    if not isinstance(_real, TracerProvider):
+        _provider = TracerProvider()
+        trace.set_tracer_provider(_provider)
+
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
 _MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")

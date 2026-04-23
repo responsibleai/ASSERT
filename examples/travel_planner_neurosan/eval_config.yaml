@@ -38,6 +38,9 @@ pipeline:
     concurrency: 1
     target:
       callable: examples.travel_planner_neurosan.agent:chat
+      trace:
+        backend: otel
+        group_by: session.id
     auditor:
       model:
         name: azure/gpt-5.4-mini
