@@ -35,3 +35,7 @@ node_modules/
 .viewer_configs/
 
 p2m-experiments/
+
+# Internal docs and copilot context (not shipped)
+docs/
+copilot-context.md
