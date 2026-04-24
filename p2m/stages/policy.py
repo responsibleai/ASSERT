@@ -155,7 +155,14 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         max_tokens=cfg["max_tokens"],
         save_dir=cfg["save_dir"],
     )
+    policy = result.get("policy") or {}
+    sub_risks = policy.get("sub_risks") or []
     return {
         "policy_dir": cfg["save_dir"],
         "policy_path": result["policy_path"],
+        "_summary": {
+            "risk": (policy.get("risk") or {}).get("name", ctx.get("risk", "")),
+            "sub_risk_count": len(sub_risks),
+            "sub_risk_names": [str(sr.get("name", "")) for sr in sub_risks[:5]],
+        },
     }
