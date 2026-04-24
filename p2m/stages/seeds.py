@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import click
+
 from p2m.config import resolve_stage_paths
 from p2m.core.async_utils import gather_limited
 from p2m.core.config_model import (
@@ -409,7 +411,11 @@ async def _generate_records(
             jobs.append(_SubRiskJob(order=position, sub_risk=sr, count=count, start_index=next_index))
             next_index += count
 
+    _seeds_done = 0
+    _seeds_total = len(jobs)
+
     async def _process(job: _SubRiskJob) -> dict[str, Any]:
+        nonlocal _seeds_done
         replacements = _template_replacements(risk_name, job.sub_risk, job.count, **(extra_replacements or {}))
         prompt = _fill_template(template, replacements)
         slug = slugify(str(job.sub_risk.get("name") or ""))
@@ -446,11 +452,14 @@ async def _generate_records(
             for idx, raw_seed in enumerate(payload["seeds"][:job.count])
             if isinstance(raw_seed, dict)
         ]
-        return {
+        result = {
             "order": job.order,
             "records": records,
             "summary": {"kind": kind, "sub_risk": sub_risk_name, "requested": job.count, "saved": len(records)},
         }
+        _seeds_done += 1
+        click.echo(f"  seeds/{kind} [{_seeds_done}/{_seeds_total}] ✓ {sub_risk_name}", err=True)
+        return result
 
     results = await gather_limited(jobs, limit=8, worker=_process)
     ordered = sorted(results, key=lambda r: r["order"])
@@ -737,4 +746,15 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target=ctx.get("target"),
         tool_source=tool_source,
     )
-    return {"seeds_path": result["seeds_path"]}
+    summaries = result.get("summaries") or []
+    prompt_count = sum(1 for s in summaries if s.get("kind") == "prompt")
+    scenario_count = sum(1 for s in summaries if s.get("kind") == "scenario")
+    total_saved = sum(s.get("saved", 0) for s in summaries)
+    return {
+        "seeds_path": result["seeds_path"],
+        "_summary": {
+            "total": total_saved,
+            "prompts": prompt_count,
+            "scenarios": scenario_count,
+        },
+    }

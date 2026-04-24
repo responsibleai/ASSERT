@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import click
+
 from p2m.config import resolve_stage_paths
 from p2m.core.config_model import (
     DEFAULT_POLICY_MAX_TOKENS,
@@ -868,6 +870,7 @@ async def run_rollout(
             return await _worker(seed)
 
     tasks = [asyncio.create_task(_guard(seed)) for seed in indexed_seeds]
+    total = len(tasks)
     results = []
     for completed_task in asyncio.as_completed(tasks):
         result = await completed_task
@@ -875,6 +878,15 @@ async def run_rollout(
         transcript_row = result.get("transcript_row")
         if transcript_row is not None:
             append_jsonl_row(transcripts_path, transcript_row)
+        done = len(results)
+        error = result.get("error")
+        idx = result["output_index"]
+        seed_row = indexed_seeds[idx][1]
+        kind = seed_row.get("kind", "")
+        label = seed_row.get("sub_risk") or seed_row.get("risk") or seed_row.get("seed_id", "")
+        kind_tag = f"[{kind}] " if kind else ""
+        status = "✓" if error is None else f"✗ {type(error).__name__}"
+        click.echo(f"  rollout [{done}/{total}] {status} {kind_tag}{label}", err=True)
 
     ordered_results = sorted(results, key=lambda result: result["output_index"])
     successful_results = [result for result in ordered_results if result.get("error") is None]
@@ -916,4 +928,14 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         config_path=ctx["config_path"],
         strict=cfg.get("strict", False),
     )
-    return {"transcripts_path": result["transcripts_path"]}
+    target_obj = ctx["target"]
+    target_model = ""
+    if target_obj and target_obj.model:
+        target_model = target_obj.model.name or ""
+    return {
+        "transcripts_path": result["transcripts_path"],
+        "_summary": {
+            "count": result.get("count", 0),
+            "target_model": target_model,
+        },
+    }
