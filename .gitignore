@@ -5,6 +5,10 @@
 # Python artifacts
 __pycache__/
 *.pyc
+*.egg-info/
+*.egg
+dist/
+build/
 
 # Inspect / run outputs
 logs/

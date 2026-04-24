@@ -5,26 +5,13 @@ description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "autogen-agentchat>=0.7.5",
-  "autogen-ext>=0.7.5",
   "click>=8.0",
-  "crewai[azure-ai-inference]>=1.6.1",
-  "dspy>=2.6.13",
-  "haystack-ai>=2.28.0",
-  "instructor>=1.15.1",
-  "langchain-mcp-adapters>=0.2.2",
   "litellm>=1.79.1",
-  "llama-index>=0.14.21",
-  "llama-index-core>=0.14.21",
-  "llama-index-llms-openai>=0.7.5",
-  "openai-agents>=0.14.5",
   "pydantic>=2.0",
-  "pydantic-ai>=0.8.1",
   "python-dotenv>=1.2.1",
   "PyYAML>=6.0",
   "rapidfuzz>=3.9.0",
   "rich>=13.7.0",
-  "smolagents>=1.22.0",
 ]
 
 [project.optional-dependencies]
@@ -52,8 +39,23 @@ regression = [
   "scipy>=1.11.0",
   "numpy>=2.0.0",
 ]
+examples = [
+  "autogen-agentchat>=0.7.5",
+  "autogen-ext>=0.7.5",
+  "crewai[azure-ai-inference]>=1.6.1",
+  "dspy>=2.6.13",
+  "haystack-ai>=2.28.0",
+  "instructor>=1.15.1",
+  "langchain-mcp-adapters>=0.2.2",
+  "llama-index>=0.14.21",
+  "llama-index-core>=0.14.21",
+  "llama-index-llms-openai>=0.7.5",
+  "openai-agents>=0.14.5",
+  "pydantic-ai>=0.8.1",
+  "smolagents>=1.22.0",
+]
 all = [
-  "p2m-policy[otel,langgraph,analysis,regression]",
+  "p2m-policy[otel,langgraph,analysis,examples,regression]",
 ]
 
 [tool.uv]
@@ -69,7 +71,7 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
-    "p2m-policy[otel,langgraph]",
+    "p2m-policy[otel,langgraph,examples]",
 ]
 
 [tool.setuptools.packages.find]
