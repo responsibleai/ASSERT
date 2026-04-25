@@ -36,6 +36,9 @@ node_modules/
 
 p2m-experiments/
 
-# Internal docs and copilot context (not shipped)
-docs/
+# Build artifacts
+*.egg-info/
+p2m_policy.*
+
+# Internal copilot context (not shipped)
 copilot-context.md
