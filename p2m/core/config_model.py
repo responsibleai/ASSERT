@@ -66,7 +66,7 @@ class ToolsConfig:
         return asdict(self)
 
 
-VALID_TRACE_GROUP_BY = ("session.id", "trace.id", "span.id")
+VALID_TRACE_GROUP_BY = ("session.id",)
 
 
 @dataclass
@@ -77,7 +77,9 @@ class TraceConfig:
     def __post_init__(self) -> None:
         if self.group_by not in VALID_TRACE_GROUP_BY:
             raise ValueError(
-                f"trace.group_by must be one of {VALID_TRACE_GROUP_BY}, got: {self.group_by!r}"
+                f"trace.group_by must be 'session.id'. "
+                f"Trace-level and span-level evaluation (trace.id, span.id) are under development. "
+                f"Please raise a GitHub issue for timeline and specific feature requests."
             )
 
 

@@ -167,8 +167,7 @@ class OTelTracedSession:
         turn_spans = self._exporter.export_session(turn_id)
         validation = validate_spans(turn_spans)
 
-        # Always convert ALL spans into interaction events (tool call visibility).
-        # Grouping only affects trace_events/trace_metadata (judge analysis granularity).
+        # Convert spans to events (tool call visibility + judge metadata)
         if turn_spans:
             all_conversation_events, full_aggregate = _spans_to_events(turn_spans)
             all_conversation_events = compress_trace_for_judge(
@@ -185,30 +184,11 @@ class OTelTracedSession:
                 "llm_call_count": 0,
             }
 
-        # Group spans for trace_events metadata (judge sees this granularity)
-        if self._group_by == "span.id":
-            span_groups = [[s] for s in turn_spans]
-        elif self._group_by == "trace.id":
-            by_trace: dict[str, list] = {}
-            for s in turn_spans:
-                by_trace.setdefault(s.trace_id, []).append(s)
-            span_groups = list(by_trace.values())
-        else:
-            span_groups = [turn_spans] if turn_spans else []
-
-        grouped_events: list[dict[str, Any]] = []
-        for group in span_groups:
-            events, _ = _spans_to_events(group)
-            events = compress_trace_for_judge(events, max_events=self._max_events_per_turn)
-            grouped_events.extend(events)
-
         # Record turn trace data
         turn_trace = {
             "turn_id": turn_id,
             "turn_index": len(self._turn_traces),
-            "group_by": self._group_by,
-            "group_count": len(span_groups),
-            "events": grouped_events,
+            "events": all_conversation_events,
             "aggregate": full_aggregate,
             "validation": {
                 "valid": validation.valid,
@@ -247,7 +227,7 @@ class OTelTracedSession:
             "role": "assistant",
             "content": response_text,
             "raw": {
-                "trace_events": grouped_events,
+                "trace_events": all_conversation_events,
                 "trace_metadata": full_aggregate,
             },
         })
@@ -260,8 +240,7 @@ class OTelTracedSession:
                 "session_id": self._session_id,
                 "turn_id": turn_id,
                 "runtime_mode": "otel_traced",
-                "group_by": self._group_by,
-                "trace_events": grouped_events,
+                "trace_events": all_conversation_events,
                 "trace_metadata": full_aggregate,
                 "span_validation": turn_trace["validation"],
                 "accumulated_turns": len(self._turn_traces),
