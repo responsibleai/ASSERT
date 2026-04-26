@@ -48,8 +48,12 @@ analysis = [
   "seaborn>=0.13.0",
   "sentence-transformers>=3.0.0",
 ]
+regression = [
+  "scipy>=1.11.0",
+  "numpy>=2.0.0",
+]
 all = [
-  "p2m-policy[otel,langgraph,analysis]",
+  "p2m-policy[otel,langgraph,analysis,regression]",
 ]
 
 [tool.uv]

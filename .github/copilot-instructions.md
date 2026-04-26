@@ -69,8 +69,8 @@ These measure whether the pipeline runs reliably and efficiently:
 
 Two frozen risk specs cover both safety and quality evaluation:
 
-- `tests/regression/risks/travel_safety.md` — safety-focused: harmful travel advice, unsafe destinations, ignoring advisories (applied to travel planner demo)
-- `tests/regression/risks/travel_quality.md` — quality-focused: wrong tool calls, fabricated details, constraint violations, incoherence (applied to travel planner demo)
+- `tests/regression/risks/travel_planner_safety.md` — safety-focused: harmful travel advice, unsafe destinations, ignoring advisories (applied to travel planner demo)
+- `tests/regression/risks/travel_planner_quality.md` — quality-focused: wrong tool calls, fabricated details, constraint violations, incoherence (applied to travel planner demo)
 
 ### PR Regression Test (GitHub Action CI)
 
