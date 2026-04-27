@@ -1,5 +1,17 @@
 # Copilot Instructions — Adaptive Eval (P2M)
 
+## Git Safety (MANDATORY)
+
+1. **Always sync before starting work.** At the start of every session, before any code changes:
+   ```bash
+   git fetch origin && git rebase origin/changliu2
+   ```
+   If rebase has conflicts, stop and ask the user. Never force-push over unsynced remote state.
+
+2. **Never force-push.** Use `git push` only (no `--force`, no `--force-with-lease`). If push is rejected, fetch + rebase first, then retry.
+
+3. **Never push directly to `main`.** All changes to `main` must go through a pull request.
+
 ## Testing
 
 Four test tiers. When asked to "test", run Tier 2. When asked for "small test", run Tier 3.
