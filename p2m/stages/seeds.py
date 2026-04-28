@@ -762,7 +762,18 @@ async def run_seeds(
     all_records = [rec for records in results for rec in records]
     all_records = normalize_seed_rows(all_records)
     write_jsonl(out_path, all_records)
-    return {"seeds_path": str(out_path), "saved_count": len(all_records)}
+    prompt_count = sum(
+        1 for record in all_records if record.get("kind") == "prompt"
+    )
+    scenario_count = sum(
+        1 for record in all_records if record.get("kind") == "scenario"
+    )
+    return {
+        "seeds_path": str(out_path),
+        "saved_count": len(all_records),
+        "prompt_count": prompt_count,
+        "scenario_count": scenario_count,
+    }
 
 
 def _parse_kind_config(
@@ -878,4 +889,11 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         tool_source=tool_source,
         design=raw_design,
     )
-    return {"seeds_path": result["seeds_path"]}
+    return {
+        "seeds_path": result["seeds_path"],
+        "_summary": {
+            "total": result.get("saved_count", 0),
+            "prompts": result.get("prompt_count", 0),
+            "scenarios": result.get("scenario_count", 0),
+        },
+    }

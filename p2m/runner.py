@@ -173,7 +173,15 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             print(f"  Running test cases against target...", file=sys.stderr, flush=True)
     elif stage_name == "judge":
         eval_cfg = ctx.get("evaluation")
-        judge_model = eval_cfg.judge.model if eval_cfg else ""
+        judge_model_obj = eval_cfg.judge.model if eval_cfg else None
+        # judge.model is a ModelConfig dataclass post-init; reach for .name
+        # rather than letting the dataclass repr leak into the header.
+        if judge_model_obj is not None and hasattr(judge_model_obj, "name"):
+            judge_model = judge_model_obj.name or ""
+        elif isinstance(judge_model_obj, str):
+            judge_model = judge_model_obj
+        else:
+            judge_model = ""
         if judge_model:
             print(f"  Scoring transcripts with judge ({judge_model})...", file=sys.stderr, flush=True)
         else:

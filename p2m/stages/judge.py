@@ -268,4 +268,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     )
     return {
         "scores_path": result["scores_path"],
+        "_summary": {
+            "count": result.get("count", 0),
+            "failures": result.get("judge_failures", 0),
+        },
     }
