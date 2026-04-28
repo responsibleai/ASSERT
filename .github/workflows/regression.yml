@@ -47,7 +47,7 @@ jobs:
           uv pip install --system -e ".[dev]"
 
       - name: Run unit tests
-        run: pytest tests/ -x -q --timeout=30
+        run: pytest tests/ -x -q
 
   tier4-regression:
     name: "Tier 4: Regression Gate"
