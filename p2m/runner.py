@@ -230,17 +230,32 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         print(f"  \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
     elif stage_name == "rollout":
         count = s.get("count", 0)
-        print(f"  \u2713 Completed {count} rollouts ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        cached = s.get("cached_count", 0)
+        new = s.get("new_count", count)
+        if cached and new:
+            extra = f" ({new} new, {cached} cached)"
+        elif cached and not new:
+            extra = f" ({cached} cached)"
+        else:
+            extra = ""
+        print(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
         errors = s.get("errors", 0)
+        cached = s.get("cached_count", 0)
+        new = s.get("new_count", count)
+        cache_extra = ""
+        if cached and new:
+            cache_extra = f" ({new} new, {cached} cached)"
+        elif cached and not new:
+            cache_extra = f" ({cached} cached)"
         extra = ""
         if failures:
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        print(f"  \u2713 Scored {count} transcripts{extra} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        print(f"  \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
     else:
         print(f"  {stage_name} done ({elapsed:.1f}s)", file=sys.stderr, flush=True)
 

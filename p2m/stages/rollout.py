@@ -967,6 +967,8 @@ async def run_rollout(
         "transcripts_path": str(transcripts_path),
         "run_id": resolved_run_id,
         "count": len(completed_seed_ids) + len(results),
+        "new_count": len(results),
+        "cached_count": len(completed_seed_ids),
     }
 
 
@@ -1003,6 +1005,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         "transcripts_path": result["transcripts_path"],
         "_summary": {
             "count": result.get("count", 0),
+            "new_count": result.get("new_count", 0),
+            "cached_count": result.get("cached_count", 0),
             "target_model": target_model,
         },
     }
