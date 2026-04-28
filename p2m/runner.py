@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sys
 import time
@@ -18,6 +19,12 @@ from dotenv import load_dotenv
 from p2m.config import ConfigError, load_config, load_runtime_context
 from p2m.core.config_model import RunManifest, SuiteMetadata
 from p2m.core.io import write_json
+from p2m.core.model_client import (
+    LLMAuthError,
+    LLMInputError,
+    LLMProviderError,
+    LLMRateLimitError,
+)
 from p2m.stages import STAGES
 
 load_dotenv()
@@ -65,7 +72,7 @@ def _write_manifest(manifest: RunManifest, run_root: Path) -> None:
 
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
     """Print a human-readable stage header."""
-    risk = ctx.get("risk") or ""
+    risk = ctx.get("risk") or ctx.get("concept") or ""
     if stage_name == "policy":
         label = risk.replace("\n", " ").strip()
         if len(label) > 80:
@@ -77,20 +84,57 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         print(f'  Generating behavior taxonomy for "{label}"{model_suffix}', file=sys.stderr, flush=True)
     elif stage_name == "systematization":
         print(f"  Refining policy structure...", file=sys.stderr, flush=True)
+    elif stage_name == "design":
+        level_count = raw_cfg.get("level_count")
+        factor_count = 0
+        factors = ctx.get("factors") or []
+        if isinstance(factors, list):
+            factor_count = len(factors)
+        # Always-present "behavior" factor is generated automatically.
+        # Surface it in the count for accuracy.
+        synthetic_behavior_factor = 1
+        total_factors = factor_count + synthetic_behavior_factor
+        design_model = ""
+        if isinstance(raw_cfg.get("model"), dict):
+            design_model = raw_cfg["model"].get("name", "")
+        model_suffix = f" ({design_model})" if design_model else ""
+        if level_count and factor_count:
+            print(
+                f"  Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif factor_count:
+            print(
+                f"  Designing seed-coverage grid: {total_factors} factors{model_suffix}...",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                f"  Designing seed-coverage grid (behavior factor only){model_suffix}...",
+                file=sys.stderr,
+                flush=True,
+            )
     elif stage_name == "seeds":
         prompt_budget = 0
         scenario_budget = 0
         if isinstance(raw_cfg.get("prompt"), dict):
-            prompt_budget = raw_cfg["prompt"].get("budget", 0)
+            prompt_budget = raw_cfg["prompt"].get("budget", 0) or raw_cfg["prompt"].get("sample_size", 0)
         if isinstance(raw_cfg.get("scenario"), dict):
-            scenario_budget = raw_cfg["scenario"].get("budget", 0)
-        # Read sub-risk count from the policy output
-        sub_risk_count = 0
+            scenario_budget = raw_cfg["scenario"].get("budget", 0) or raw_cfg["scenario"].get("sample_size", 0)
+        # Read behavior count from the policy output. Fall back to the
+        # legacy `sub_risks` key for any pre-merge artifacts on disk.
+        behavior_count = 0
         policy_path = Path(ctx["suite_root"]) / "policy.json"
         if policy_path.exists():
             try:
                 policy_data = json.loads(policy_path.read_text(encoding="utf-8"))
-                sub_risk_count = len(policy_data.get("sub_risks") or [])
+                behavior_count = len(
+                    policy_data.get("behaviors")
+                    or policy_data.get("sub_risks")
+                    or []
+                )
             except Exception:
                 pass
         parts = []
@@ -99,8 +143,8 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if scenario_budget:
             parts.append(f"{scenario_budget} scenario{'s' if scenario_budget != 1 else ''}")
         detail = f" ({' + '.join(parts)}" if parts else ""
-        if detail and sub_risk_count:
-            detail += f" from {sub_risk_count} sub-risks)"
+        if detail and behavior_count:
+            detail += f" from {behavior_count} behaviors)"
         elif detail:
             detail += ")"
         seed_models = set()
@@ -142,15 +186,29 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
     """Print a human-readable stage completion summary."""
     s = summary or {}
     if stage_name == "policy":
-        count = s.get("sub_risk_count", 0)
-        names = s.get("sub_risk_names") or []
+        # Prefer the new-science key; fall back to legacy for pre-merge artifacts.
+        count = s.get("behavior_count") or s.get("sub_risk_count", 0)
+        names = s.get("behavior_names") or s.get("sub_risk_names") or []
         preview = ", ".join(names[:3])
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            print(f"  \u2713 Generated {count} sub-risks: {preview} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+            print(f"  \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
         else:
             print(f"  \u2713 Generated policy ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+    elif stage_name == "design":
+        factor_sizes = s.get("factor_sizes") or {}
+        if factor_sizes:
+            sizes_text = ", ".join(
+                f"{name}={size}" for name, size in factor_sizes.items()
+            )
+            print(
+                f"  \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(f"  \u2713 Designed coverage grid ({elapsed:.1f}s)", file=sys.stderr, flush=True)
     elif stage_name == "seeds":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
@@ -277,6 +335,20 @@ def run_pipeline(
         try:
             stage_result = asyncio.run(module.run(ctx, raw_cfg)) or {}
             ok = True
+        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
+            # Classified LLM errors already carry a clean, actionable message.
+            # Print just that message; suppress the multi-screen litellm/httpx
+            # traceback unless the user opts into verbose output.
+            ok = False
+            print(f"  [error] {exc}", file=sys.stderr, flush=True)
+            if os.environ.get("P2M_VERBOSE_ERRORS") == "1":
+                traceback.print_exc(file=sys.stderr)
+            else:
+                print(
+                    "  (set P2M_VERBOSE_ERRORS=1 to see the full traceback)",
+                    file=sys.stderr,
+                    flush=True,
+                )
         except Exception:  # noqa: BLE001
             ok = False
             traceback.print_exc(file=sys.stderr)
