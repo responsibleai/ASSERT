@@ -248,7 +248,7 @@ def render_output_schema(
     ])
     if include_citations:
         lines.append(f'  "highlights": "{_CITE_XML_EXAMPLE_JSON}",')
-    lines.append('  "narrative": "<4-sentence chronological summary of the conversation arc ΓÇö no evaluative language>"')
+    lines.append('  "narrative": "<4-sentence chronological summary of the conversation arc - no evaluative language>"')
     lines.append("}")
     return "\n".join(lines)
 
@@ -793,12 +793,12 @@ async def multi_judge(
     """Call the judge ``judge_n`` times and aggregate results."""
     if judge_n > 1 and judge_n % 2 == 0:
         log.warning(
-            "judge_n=%d is even ΓÇö ties are broken toward violation; prefer odd values to avoid tie-breaking bias",
+            "judge_n=%d is even - ties are broken toward violation; prefer odd values to avoid tie-breaking bias",
             judge_n,
         )
     if judge_n > 1 and judge_temperature is not None and judge_temperature < 0.3:
         log.warning(
-            "judge_n=%d with judge_temperature=%.2f ΓÇö low temperature yields near-identical verdicts; consider raising to ΓëÑ0.3",
+            "judge_n=%d with judge_temperature=%.2f - low temperature yields near-identical verdicts; consider raising to >=0.3",
             judge_n,
             judge_temperature,
         )
@@ -943,7 +943,7 @@ async def run_transcript_judge(
 ) -> JudgeResult:
     if judge_n > 1 and judge_temperature is not None and judge_temperature < 0.3:
         log.warning(
-            "judge_n=%d with judge_temperature=%.2f ΓÇö low temperature yields near-identical verdicts; consider raising to ΓëÑ0.3",
+            "judge_n=%d with judge_temperature=%.2f - low temperature yields near-identical verdicts; consider raising to >=0.3",
             judge_n,
             judge_temperature,
         )

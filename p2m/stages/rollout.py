@@ -7,6 +7,7 @@ from dataclasses import asdict
 import hashlib
 import json as json_module
 import logging
+import sys
 import traceback
 import uuid
 from pathlib import Path
@@ -70,9 +71,19 @@ def _rollout_config_fingerprint(
     target: TargetConfig,
     evaluation: EvaluationConfig | None,
     max_tokens: int,
+    seeds_path: Path | None = None,
 ) -> str:
-    """Deterministic hash of config values that affect rollout output."""
+    """Deterministic hash of config values that affect rollout output.
+
+    Includes the seed input file's content hash when provided so that
+    regenerated seeds invalidate the cached transcripts. Without this,
+    seed ids are deterministic enough that the resume path silently
+    reuses transcripts from a prior seeds.jsonl content.
+    """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
+    seeds_sha = ""
+    if seeds_path is not None and seeds_path.exists():
+        seeds_sha = hashlib.sha256(seeds_path.read_bytes()).hexdigest()
     key = json_module.dumps(
         {
             "target": target_name,
@@ -80,6 +91,7 @@ def _rollout_config_fingerprint(
             "max_turns": evaluation.rollout.max_turns if evaluation else None,
             "concurrency": evaluation.rollout.concurrency if evaluation else None,
             "auditor": evaluation.auditor.model.name if evaluation and evaluation.auditor else None,
+            "seeds_sha": seeds_sha,
         },
         sort_keys=True,
     )
@@ -833,6 +845,7 @@ async def run_rollout(
     evaluation: EvaluationConfig | None = None,
     config_path: Path | None = None,
     strict: bool = False,
+    forced: bool = False,
 ) -> dict[str, Any]:
     """Run all seed rollouts and write the transcript artifact."""
     if not target.model and not target.connector and not target.callable and not target.endpoint:
@@ -875,22 +888,35 @@ async def run_rollout(
 
     # Resume: load already-completed seed_ids and skip them.
     completed_seed_ids: set[str] = set()
-    config_hash = _rollout_config_fingerprint(target, evaluation, resolved_max_tokens)
+    config_hash = _rollout_config_fingerprint(
+        target,
+        evaluation,
+        resolved_max_tokens,
+        seeds_path=resolved_seed_path,
+    )
     config_hash_path = out_dir / _ROLLOUT_CONFIG_HASH_FILE
     if transcripts_path.exists():
-        # Check that existing transcripts were produced with the same config.
-        stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
-        if stored_hash is not None and stored_hash != config_hash:
-            logging.warning(
-                "Rollout config changed since last run ΓÇö discarding %s and starting fresh",
-                transcripts_path,
-            )
+        if forced:
+            # User explicitly forced this stage (directly or via the runner's
+            # --force-stage cascade). Discard the cached output unconditionally;
+            # don't trust the hash because regenerated upstream artifacts may
+            # be byte-identical (deterministic seed generation, no design
+            # factors, etc.) which would otherwise leave the cache intact.
             transcripts_path.unlink()
         else:
-            for row in load_jsonl(transcripts_path):
-                sid = row.get("seed_id")
-                if sid:
-                    completed_seed_ids.add(str(sid))
+            # Check that existing transcripts were produced with the same config.
+            stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
+            if stored_hash is not None and stored_hash != config_hash:
+                logging.warning(
+                    "Rollout config changed since last run - discarding %s and starting fresh",
+                    transcripts_path,
+                )
+                transcripts_path.unlink()
+            else:
+                for row in load_jsonl(transcripts_path):
+                    sid = row.get("seed_id")
+                    if sid:
+                        completed_seed_ids.add(str(sid))
     if completed_seed_ids:
         logging.info(
             "Resuming rollout: %d seeds already completed, skipping",
@@ -948,25 +974,61 @@ async def run_rollout(
         if transcript_row is not None:
             append_jsonl_row(transcripts_path, transcript_row)
         error = result.get("error")
+        # Scenario rollouts catch target exceptions mid-conversation and
+        # record a transcript with stop_reason="target_error" instead of
+        # propagating. This is correct for transient mid-turn failures,
+        # but when every turn fails (e.g. deployment doesn't exist) the
+        # transcript is garbage and should surface as a rollout error.
+        if error is None and transcript_row is not None:
+            if transcript_row.get("stop_reason") == "target_error":
+                error = RuntimeError(
+                    f"scenario {transcript_row.get('seed_id', '?')} ended with target_error"
+                )
         if error is not None:
             errors.append(error)
         done = len(results)
         idx = result["output_index"]
         seed_row = seeds_list[idx]
         kind = seed_row.get("kind", "")
-        label = seed_row.get("concept") or seed_row.get("seed_id", "")
+        # Prefer the most specific identifier so each line in the progress
+        # output reads differently. Pre-merge this came directly from
+        # `seed_row['sub_risk']`; post-merge the equivalent now lives at
+        # `seed_row['factors']['behavior']`. Fall back to the broad
+        # concept and finally the seed_id (the deterministic slug like
+        # `prompt-fabricated-dosage-001`).
+        factors = seed_row.get("factors") or {}
+        label = (
+            factors.get("behavior")
+            or seed_row.get("concept")
+            or seed_row.get("seed_id", "")
+        )
         kind_tag = f"[{kind}] " if kind else ""
         status = "\u2714" if error is None else f"\u2716 {type(error).__name__}"
-        click.echo(f"  rollout [{done}/{total}] {status} {kind_tag}{label}", err=True)
+        # Write to sys.__stderr__ rather than sys.stderr. Reproducible
+        # behavior: when the target is an OTel-instrumented LangChain /
+        # LangGraph callable (Phoenix auto_instrument), `sys.stderr` is
+        # silently replaced with a buffering wrapper after the second
+        # rollout. Subsequent writes only emit a trailing "\n"; the
+        # message body is swallowed. Both `sys.__stderr__` (the original
+        # saved by the interpreter at startup) and raw `os.write(2, ...)`
+        # remain unaffected. Bypassing the wrapper here keeps the
+        # per-seed progress visible without disturbing whatever the
+        # instrumentation is doing with sys.stderr.
+        sys.__stderr__.write(
+            f"  rollout [{done}/{total}] {status} {kind_tag}{label}\n"
+        )
+        sys.__stderr__.flush()
 
-    build_run_viewer_artifacts(out_dir)
     if errors:
         raise errors[0]
+    build_run_viewer_artifacts(out_dir)
 
     return {
         "transcripts_path": str(transcripts_path),
         "run_id": resolved_run_id,
         "count": len(completed_seed_ids) + len(results),
+        "new_count": len(results),
+        "cached_count": len(completed_seed_ids),
     }
 
 
@@ -994,6 +1056,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         evaluation=ctx.get("evaluation"),
         config_path=ctx["config_path"],
         strict=cfg.get("strict", False),
+        forced=bool(ctx.get("_stage_forced", False)),
     )
     target_obj = ctx["target"]
     target_model = ""
@@ -1003,6 +1066,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         "transcripts_path": result["transcripts_path"],
         "_summary": {
             "count": result.get("count", 0),
+            "new_count": result.get("new_count", 0),
+            "cached_count": result.get("cached_count", 0),
             "target_model": target_model,
         },
     }

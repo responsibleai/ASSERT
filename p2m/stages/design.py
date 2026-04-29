@@ -351,14 +351,6 @@ async def run_design(
     write_json(design_path, design)
 
     factor_sizes = {name: len(design[name]) for name in design_factors(design)}
-    if factor_sizes:
-        print(f"Design written to {design_path}")
-        print(
-            "Factor sizes: "
-            + ", ".join(f"{name}={size}" for name, size in factor_sizes.items())
-        )
-    else:
-        print(f"Design written to {design_path} (behavior only)")
 
     return {
         "design_path": str(design_path),
@@ -410,4 +402,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=model_cfg.reasoning_effort if model_cfg is not None else None,
         temperature=model_cfg.temperature if model_cfg is not None else None,
     )
-    return {"design_path": result["design_path"]}
+    return {
+        "design_path": result["design_path"],
+        "_summary": {
+            "factor_sizes": result.get("factor_sizes", {}),
+        },
+    }
