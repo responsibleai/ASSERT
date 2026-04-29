@@ -66,6 +66,7 @@ async def run_judge(
     save_dir: str | None = None,
     evaluation: Any,
     judge_dimensions: list[dict[str, Any]] | None = None,
+    forced: bool = False,
 ) -> dict[str, Any]:
     """Score transcript rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
@@ -185,18 +186,26 @@ async def run_judge(
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
     if scores_path.exists():
-        stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
-        if stored_hash is not None and stored_hash != config_hash:
-            logging.warning(
-                "Judge config or transcripts changed since last run — discarding %s and starting fresh",
-                scores_path,
-            )
+        if forced:
+            # User explicitly forced this stage (directly or via the runner's
+            # --force-stage cascade). Discard the cached output unconditionally
+            # rather than relying on a hash mismatch; regenerated upstream
+            # transcripts may produce byte-identical scores under stable
+            # judge config, which would otherwise leave the cache intact.
             scores_path.unlink()
         else:
-            for prior in load_jsonl(scores_path):
-                sid = prior.get("seed_id")
-                if sid:
-                    completed_keys.add((str(prior.get("kind") or ""), str(sid)))
+            stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
+            if stored_hash is not None and stored_hash != config_hash:
+                logging.warning(
+                    "Judge config or transcripts changed since last run - discarding %s and starting fresh",
+                    scores_path,
+                )
+                scores_path.unlink()
+            else:
+                for prior in load_jsonl(scores_path):
+                    sid = prior.get("seed_id")
+                    if sid:
+                        completed_keys.add((str(prior.get("kind") or ""), str(sid)))
     if completed_keys:
         logging.info(
             "Resuming judge: %d transcripts already scored, skipping",
@@ -267,6 +276,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],
         judge_dimensions=judge_dimensions,
+        forced=bool(ctx.get("_stage_forced", False)),
     )
     return {
         "scores_path": result["scores_path"],

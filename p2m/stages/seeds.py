@@ -289,7 +289,7 @@ def render_tuple_spec(
     for ax in axes:
         title = ax.replace("_", " ").capitalize()
         lines.append(
-            f"- {title}: {tuple_spec[ax]['name']} — {tuple_spec[ax]['definition']}"
+            f"- {title}: {tuple_spec[ax]['name']} - {tuple_spec[ax]['definition']}"
         )
     if include_behavior and "behavior" in tuple_spec:
         lines.append(

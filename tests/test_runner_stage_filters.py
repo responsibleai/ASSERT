@@ -81,6 +81,111 @@ class RunnerStageFilterTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("--stage stage(s) not present in config: report", fake_err.getvalue())
 
+    # ─────────────────────────────────────────────────────────────
+    # --force-stage cascade tests (added Apr 28 2026 alongside the
+    # downstream cascade fix in p2m/runner.py).
+    #
+    # Without cascade, `--force-stage seeds` regenerates seeds.jsonl
+    # but rollout silently keeps the prior transcripts (its resume
+    # cache keys on seed_id, and seed ids are deterministic enough
+    # to collide). Same hazard for judge against scores.jsonl. The
+    # cascade extends the explicit forced set to every stage at or
+    # downstream of the lowest forced index in PIPELINE_STAGE_ORDER.
+    # ─────────────────────────────────────────────────────────────
+
+    def _async_recorder(self, name: str, seen: list[str]):
+        async def run(ctx: dict[str, object], raw_cfg: dict[str, object]) -> None:
+            seen.append(name)
+        return run
+
+    def test_force_stage_cascade_only_includes_downstream(self) -> None:
+        seen: list[str] = []
+        suite_modules = {
+            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
+            "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=self._async_recorder("design", seen)),
+            "seeds": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="seeds.jsonl", run=self._async_recorder("seeds", seen)),
+            "rollout": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("rollout", seen)),
+            "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            suite_root = Path(tmp_dir) / "suite"
+            suite_root.mkdir(parents=True)
+            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "design.json").write_text("{}", encoding="utf-8")
+            (suite_root / "seeds.jsonl").write_text("", encoding="utf-8")
+            ctx = {
+                "stages": [
+                    ("policy", {}),
+                    ("design", {}),
+                    ("seeds", {}),
+                    ("rollout", {}),
+                    ("judge", {}),
+                ],
+                "suite_root": str(suite_root),
+                "run_root": str(Path(tmp_dir) / "run"),
+            }
+            stub_manifest = SimpleNamespace(
+                started_at="",
+                status="running",
+                ended_at=None,
+                stages={},
+                to_dict=lambda: {},
+            )
+
+            with (
+                patch("p2m.runner._load_context", return_value=ctx),
+                patch("p2m.runner._write_suite_metadata"),
+                patch("p2m.runner._build_manifest", return_value=stub_manifest),
+                patch("p2m.runner._write_manifest"),
+                patch("p2m.runner.STAGES", suite_modules),
+                patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+            ):
+                rc = run_pipeline(config="config.yaml", force_stages=["seeds"])
+
+        self.assertEqual(rc, 0)
+        # policy + design are upstream of seeds in PIPELINE_STAGE_ORDER
+        # and have cached outputs, so they stay skipped. seeds is the
+        # explicit force; rollout + judge get cascaded in.
+        self.assertEqual(seen, ["seeds", "rollout", "judge"])
+
+    def test_force_stage_no_cascade_when_only_terminal_stage_forced(self) -> None:
+        seen: list[str] = []
+        suite_modules = {
+            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
+            "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            suite_root = Path(tmp_dir) / "suite"
+            suite_root.mkdir(parents=True)
+            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            ctx = {
+                "stages": [("policy", {}), ("judge", {})],
+                "suite_root": str(suite_root),
+                "run_root": str(Path(tmp_dir) / "run"),
+            }
+            stub_manifest = SimpleNamespace(
+                started_at="",
+                status="running",
+                ended_at=None,
+                stages={},
+                to_dict=lambda: {},
+            )
+
+            with (
+                patch("p2m.runner._load_context", return_value=ctx),
+                patch("p2m.runner._write_suite_metadata"),
+                patch("p2m.runner._build_manifest", return_value=stub_manifest),
+                patch("p2m.runner._write_manifest"),
+                patch("p2m.runner.STAGES", suite_modules),
+                patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+            ):
+                rc = run_pipeline(config="config.yaml", force_stages=["judge"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, ["judge"])
+
 
 if __name__ == "__main__":
     unittest.main()
