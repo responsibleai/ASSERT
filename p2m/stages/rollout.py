@@ -7,6 +7,7 @@ from dataclasses import asdict
 import hashlib
 import json as json_module
 import logging
+import sys
 import traceback
 import uuid
 from pathlib import Path
@@ -993,7 +994,20 @@ async def run_rollout(
         )
         kind_tag = f"[{kind}] " if kind else ""
         status = "\u2714" if error is None else f"\u2716 {type(error).__name__}"
-        click.echo(f"  rollout [{done}/{total}] {status} {kind_tag}{label}", err=True)
+        # Write to sys.__stderr__ rather than sys.stderr. Reproducible
+        # behavior: when the target is an OTel-instrumented LangChain /
+        # LangGraph callable (Phoenix auto_instrument), `sys.stderr` is
+        # silently replaced with a buffering wrapper after the second
+        # rollout. Subsequent writes only emit a trailing "\n"; the
+        # message body is swallowed. Both `sys.__stderr__` (the original
+        # saved by the interpreter at startup) and raw `os.write(2, ...)`
+        # remain unaffected. Bypassing the wrapper here keeps the
+        # per-seed progress visible without disturbing whatever the
+        # instrumentation is doing with sys.stderr.
+        sys.__stderr__.write(
+            f"  rollout [{done}/{total}] {status} {kind_tag}{label}\n"
+        )
+        sys.__stderr__.flush()
 
     build_run_viewer_artifacts(out_dir)
     if errors:
