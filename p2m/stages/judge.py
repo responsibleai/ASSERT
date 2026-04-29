@@ -186,21 +186,26 @@ async def run_judge(
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
     if scores_path.exists():
-        stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
-        if stored_hash is not None and stored_hash != config_hash:
-            if not forced:
-                # Suppress this warning when the stage was explicitly forced;
-                # the user already opted into discarding via --force-stage.
+        if forced:
+            # User explicitly forced this stage (directly or via the runner's
+            # --force-stage cascade). Discard the cached output unconditionally
+            # rather than relying on a hash mismatch; regenerated upstream
+            # transcripts may produce byte-identical scores under stable
+            # judge config, which would otherwise leave the cache intact.
+            scores_path.unlink()
+        else:
+            stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
+            if stored_hash is not None and stored_hash != config_hash:
                 logging.warning(
                     "Judge config or transcripts changed since last run - discarding %s and starting fresh",
                     scores_path,
                 )
-            scores_path.unlink()
-        else:
-            for prior in load_jsonl(scores_path):
-                sid = prior.get("seed_id")
-                if sid:
-                    completed_keys.add((str(prior.get("kind") or ""), str(sid)))
+                scores_path.unlink()
+            else:
+                for prior in load_jsonl(scores_path):
+                    sid = prior.get("seed_id")
+                    if sid:
+                        completed_keys.add((str(prior.get("kind") or ""), str(sid)))
     if completed_keys:
         logging.info(
             "Resuming judge: %d transcripts already scored, skipping",

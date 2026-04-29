@@ -895,20 +895,27 @@ async def run_rollout(
     )
     config_hash_path = out_dir / _ROLLOUT_CONFIG_HASH_FILE
     if transcripts_path.exists():
-        # Check that existing transcripts were produced with the same config.
-        stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
-        if stored_hash is not None and stored_hash != config_hash:
-            if not forced:
+        if forced:
+            # User explicitly forced this stage (directly or via the runner's
+            # --force-stage cascade). Discard the cached output unconditionally;
+            # don't trust the hash because regenerated upstream artifacts may
+            # be byte-identical (deterministic seed generation, no design
+            # factors, etc.) which would otherwise leave the cache intact.
+            transcripts_path.unlink()
+        else:
+            # Check that existing transcripts were produced with the same config.
+            stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
+            if stored_hash is not None and stored_hash != config_hash:
                 logging.warning(
                     "Rollout config changed since last run - discarding %s and starting fresh",
                     transcripts_path,
                 )
-            transcripts_path.unlink()
-        else:
-            for row in load_jsonl(transcripts_path):
-                sid = row.get("seed_id")
-                if sid:
-                    completed_seed_ids.add(str(sid))
+                transcripts_path.unlink()
+            else:
+                for row in load_jsonl(transcripts_path):
+                    sid = row.get("seed_id")
+                    if sid:
+                        completed_seed_ids.add(str(sid))
     if completed_seed_ids:
         logging.info(
             "Resuming rollout: %d seeds already completed, skipping",
