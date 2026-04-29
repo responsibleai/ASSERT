@@ -972,7 +972,18 @@ async def run_rollout(
         idx = result["output_index"]
         seed_row = seeds_list[idx]
         kind = seed_row.get("kind", "")
-        label = seed_row.get("concept") or seed_row.get("seed_id", "")
+        # Prefer the most specific identifier so each line in the progress
+        # output reads differently. Pre-merge this came directly from
+        # `seed_row['sub_risk']`; post-merge the equivalent now lives at
+        # `seed_row['factors']['behavior']`. Fall back to the broad
+        # concept and finally the seed_id (the deterministic slug like
+        # `prompt-fabricated-dosage-001`).
+        factors = seed_row.get("factors") or {}
+        label = (
+            factors.get("behavior")
+            or seed_row.get("concept")
+            or seed_row.get("seed_id", "")
+        )
         kind_tag = f"[{kind}] " if kind else ""
         status = "\u2714" if error is None else f"\u2716 {type(error).__name__}"
         click.echo(f"  rollout [{done}/{total}] {status} {kind_tag}{label}", err=True)
