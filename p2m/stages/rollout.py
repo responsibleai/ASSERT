@@ -974,6 +974,16 @@ async def run_rollout(
         if transcript_row is not None:
             append_jsonl_row(transcripts_path, transcript_row)
         error = result.get("error")
+        # Scenario rollouts catch target exceptions mid-conversation and
+        # record a transcript with stop_reason="target_error" instead of
+        # propagating. This is correct for transient mid-turn failures,
+        # but when every turn fails (e.g. deployment doesn't exist) the
+        # transcript is garbage and should surface as a rollout error.
+        if error is None and transcript_row is not None:
+            if transcript_row.get("stop_reason") == "target_error":
+                error = RuntimeError(
+                    f"scenario {transcript_row.get('seed_id', '?')} ended with target_error"
+                )
         if error is not None:
             errors.append(error)
         done = len(results)
