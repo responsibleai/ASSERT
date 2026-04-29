@@ -70,9 +70,19 @@ def _rollout_config_fingerprint(
     target: TargetConfig,
     evaluation: EvaluationConfig | None,
     max_tokens: int,
+    seeds_path: Path | None = None,
 ) -> str:
-    """Deterministic hash of config values that affect rollout output."""
+    """Deterministic hash of config values that affect rollout output.
+
+    Includes the seed input file's content hash when provided so that
+    regenerated seeds invalidate the cached transcripts. Without this,
+    seed ids are deterministic enough that the resume path silently
+    reuses transcripts from a prior seeds.jsonl content.
+    """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
+    seeds_sha = ""
+    if seeds_path is not None and seeds_path.exists():
+        seeds_sha = hashlib.sha256(seeds_path.read_bytes()).hexdigest()
     key = json_module.dumps(
         {
             "target": target_name,
@@ -80,6 +90,7 @@ def _rollout_config_fingerprint(
             "max_turns": evaluation.rollout.max_turns if evaluation else None,
             "concurrency": evaluation.rollout.concurrency if evaluation else None,
             "auditor": evaluation.auditor.model.name if evaluation and evaluation.auditor else None,
+            "seeds_sha": seeds_sha,
         },
         sort_keys=True,
     )
@@ -875,7 +886,12 @@ async def run_rollout(
 
     # Resume: load already-completed seed_ids and skip them.
     completed_seed_ids: set[str] = set()
-    config_hash = _rollout_config_fingerprint(target, evaluation, resolved_max_tokens)
+    config_hash = _rollout_config_fingerprint(
+        target,
+        evaluation,
+        resolved_max_tokens,
+        seeds_path=resolved_seed_path,
+    )
     config_hash_path = out_dir / _ROLLOUT_CONFIG_HASH_FILE
     if transcripts_path.exists():
         # Check that existing transcripts were produced with the same config.

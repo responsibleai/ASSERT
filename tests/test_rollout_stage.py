@@ -9,11 +9,46 @@ from p2m.core.config_model import AuditorConfig, EvaluationConfig, JudgeConfig, 
 from p2m.core.io import load_seeds
 from p2m.core.model_client import Message, ModelResponse
 from p2m.core.session import TurnResult
-from p2m.stages.rollout import _prepare_seeds, run_rollout
+from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, run_rollout
 from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
 class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
+    def test_rollout_config_fingerprint_changes_with_seeds_content(self) -> None:
+        """Fingerprint must include seed content so regenerating seeds invalidates cached transcripts.
+
+        Without this, the resume path keys on seed_id alone, and seed ids
+        are deterministic enough that fresh seeds collide with cached
+        transcripts. Regression test for the Apr 28 cache-invalidation fix.
+        """
+        target = TargetConfig(model="azure/gpt-5.4")
+        evaluation = EvaluationConfig(
+            rollout=RolloutConfig(max_turns=4, concurrency=1),
+            judge=JudgeConfig(model="azure/gpt-5.4"),
+            auditor=AuditorConfig(model="azure/gpt-5.4"),
+        )
+        with TemporaryDirectory() as tmp_dir:
+            seeds_a = Path(tmp_dir) / "seeds_a.jsonl"
+            seeds_b = Path(tmp_dir) / "seeds_b.jsonl"
+            seeds_a.write_text(
+                '{"kind":"prompt","seed_id":"prompt-x-001","content":"first"}\n',
+                encoding="utf-8",
+            )
+            seeds_b.write_text(
+                '{"kind":"prompt","seed_id":"prompt-x-001","content":"second"}\n',
+                encoding="utf-8",
+            )
+
+            hash_no_seeds = _rollout_config_fingerprint(target, evaluation, 1024)
+            hash_a = _rollout_config_fingerprint(target, evaluation, 1024, seeds_path=seeds_a)
+            hash_b = _rollout_config_fingerprint(target, evaluation, 1024, seeds_path=seeds_b)
+
+        # Including seeds_path must materially change the fingerprint
+        # versus the legacy no-seeds form, and two different seed files
+        # with the same seed_id but different content must hash apart.
+        self.assertNotEqual(hash_a, hash_no_seeds)
+        self.assertNotEqual(hash_a, hash_b)
+
     def test_prepare_seeds_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
         rows = [
             {

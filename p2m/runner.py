@@ -16,7 +16,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from p2m.config import ConfigError, load_config, load_runtime_context
+from p2m.config import (
+    ConfigError,
+    PIPELINE_STAGE_ORDER,
+    load_config,
+    load_runtime_context,
+)
 from p2m.core.config_model import RunManifest, SuiteMetadata
 from p2m.core.io import write_json
 from p2m.core.model_client import (
@@ -317,6 +322,36 @@ def run_pipeline(
         joined = ", ".join(invalid_forced)
         print(f"[config error] --force-stage stage(s) not present in config: {joined}", file=sys.stderr)
         return 1
+
+    # Cascade: forcing an upstream stage logically invalidates every stage
+    # downstream of it. Without this, `--force-stage seeds` regenerates seeds
+    # but rollout silently keeps the old transcripts (its resume cache keys on
+    # seed_id, and seed ids are deterministic so they collide with the prior
+    # run's content). Same hazard for judge against scores.jsonl. Computing
+    # the closure here keeps the workflow `--force-stage <upstream>` honest
+    # without forcing users to remember the full downstream chain.
+    if requested_force_stages:
+        forced_indices = [
+            PIPELINE_STAGE_ORDER.index(name)
+            for name in requested_force_stages
+            if name in PIPELINE_STAGE_ORDER
+        ]
+        if forced_indices:
+            min_forced_index = min(forced_indices)
+            cascade = {
+                name
+                for name in PIPELINE_STAGE_ORDER[min_forced_index:]
+                if name in configured_stage_names
+            }
+            implied = sorted(cascade.difference(requested_force_stages))
+            if implied:
+                joined = ", ".join(implied)
+                print(
+                    f"  Cascading --force-stage to downstream stages: {joined}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            requested_force_stages = requested_force_stages.union(cascade)
 
     stages_to_run: list[tuple[str, Any, dict[str, Any]]] = []
     for stage_name, raw_cfg in ctx["stages"]:
