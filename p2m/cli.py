@@ -110,12 +110,12 @@ def _format_timestamp(value: Any) -> str:
         return datetime.fromtimestamp(value, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     if isinstance(value, str) and value:
         return value
-    return "ΓÇö"
+    return "-"
 
 
 def _fmt_percent(value: Optional[float]) -> str:
     if value is None:
-        return "ΓÇö"
+        return "-"
     return f"{value * 100:.1f}%"
 
 
@@ -191,9 +191,9 @@ def _current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
                 for stage_name, stage_status in stages.items():
                     if stage_status == "running":
                         return manifest_status, str(stage_name)
-            return manifest_status, "ΓÇö"
+            return manifest_status, "-"
 
-    return "unknown", "ΓÇö"
+    return "unknown", "-"
 
 
 def _detect_dimensions(rows: Iterable[dict[str, Any]]) -> list[str]:
@@ -260,14 +260,14 @@ def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None
             for row in rows
             if isinstance(row.get("target"), str) and row.get("target")
         ),
-    ) or "ΓÇö"
+    ) or "-"
     judge_model = next(
         (
             row.get("judge_model")
             for row in rows
             if isinstance(row.get("judge_model"), str) and row.get("judge_model")
         ),
-    ) or "ΓÇö"
+    ) or "-"
     permissible_rows = [row for row in scored_rows if get_permissible_flag(row, default=False)]
     not_permissible_rows = [row for row in scored_rows if not get_permissible_flag(row, default=False)]
 
@@ -308,7 +308,7 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
             if isinstance(row.get("target"), str) and row.get("target")
         ),
         None,
-    ) or "ΓÇö"
+    ) or "-"
     auditor_model = next(
         (
             row.get("auditor_model")
@@ -316,14 +316,14 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
             if isinstance(row.get("auditor_model"), str) and row.get("auditor_model")
         ),
         None,
-    ) or "ΓÇö"
+    ) or "-"
     judge_model = next(
         (
             row.get("judge_model")
             for row in rows
             if isinstance(row.get("judge_model"), str) and row.get("judge_model")
         ),
-    ) or "ΓÇö"
+    ) or "-"
 
     return {
         "total": len(rows),
@@ -506,7 +506,11 @@ def cli():
     "--force-stage",
     type=click.Choice(STAGE_NAMES, case_sensitive=False),
     multiple=True,
-    help="Force a stage to rerun even if cached. Repeat to force multiple stages.",
+    help=(
+        "Force a stage to rerun even if cached. Repeat to force multiple stages. "
+        "Forcing an upstream stage implicitly forces every configured downstream stage, "
+        "so cached transcripts and scores can't silently survive a regenerated input."
+    ),
     show_envvar=True,
 )
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
@@ -571,7 +575,7 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
         for run_summary in suite_summary["runs"]:
             prompt_metrics = run_summary.get("prompt_metrics") or {}
             scenario_metrics = run_summary.get("scenario_metrics") or {}
-            target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "ΓÇö"
+            target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "-"
             table.add_row(
                 run_summary["run_id"],
                 run_summary["status"],
@@ -725,8 +729,8 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table = Table(title="Prompt Metrics", box=None, show_header=False, show_edge=False, pad_edge=False)
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
-        table.add_row("Target", str(prompt_metrics.get("target") or "ΓÇö"))
-        table.add_row("Judge Model", str(prompt_metrics.get("judge_model") or "ΓÇö"))
+        table.add_row("Target", str(prompt_metrics.get("target") or "-"))
+        table.add_row("Judge Model", str(prompt_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(prompt_metrics["total"]))
         table.add_row("Scored", str(prompt_metrics["scored_total"]))
         table.add_row("Judge Failures", _fmt_percent(prompt_metrics.get("judge_failure_rate")))
@@ -751,9 +755,9 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table = Table(title="Scenario Metrics", box=None, show_header=False, show_edge=False, pad_edge=False)
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
-        table.add_row("Target", str(scenario_metrics.get("target") or "ΓÇö"))
-        table.add_row("Auditor Model", str(scenario_metrics.get("auditor_model") or "ΓÇö"))
-        table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "ΓÇö"))
+        table.add_row("Target", str(scenario_metrics.get("target") or "-"))
+        table.add_row("Auditor Model", str(scenario_metrics.get("auditor_model") or "-"))
+        table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
         table.add_row("Judge Failures", _fmt_percent(scenario_metrics.get("judge_failure_rate")))
@@ -949,7 +953,7 @@ def _run_within_suite_compare(
     for row in payload["runs"]:
         prompt_metrics = row["prompt"] or {}
         scenario_metrics = row["scenario"] or {}
-        target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "ΓÇö"
+        target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "-"
         fail_rate = (
             prompt_metrics.get("judge_failure_rate")
             if prompt_metrics
