@@ -75,6 +75,21 @@ def _write_manifest(manifest: RunManifest, run_root: Path) -> None:
     write_json(manifest_path, manifest.to_dict())
 
 
+def _progress(line: str) -> None:
+    """Write a runner progress line to the original stderr.
+
+    Phoenix/OTel auto-instrumentation can replace sys.stderr with a
+    wrapper that drops message bodies (passing only trailing newlines)
+    after the second target invocation; the wrapper persists across
+    stage boundaries until the next runtime is closed. The runner's
+    progress lines all share this hazard, so we route them through
+    sys.__stderr__ which the interpreter keeps as the unwrapped
+    original. No effect on processes that don't touch sys.stderr.
+    """
+    sys.__stderr__.write(line + "\n")
+    sys.__stderr__.flush()
+
+
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
     """Print a human-readable stage header."""
     risk = ctx.get("risk") or ctx.get("concept") or ""
@@ -86,9 +101,9 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if isinstance(raw_cfg.get("model"), dict):
             policy_model = raw_cfg["model"].get("name", "")
         model_suffix = f" ({policy_model})" if policy_model else ""
-        print(f'  Generating behavior taxonomy for "{label}"{model_suffix}', file=sys.stderr, flush=True)
+        _progress(f'  Generating behavior taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
-        print(f"  Refining policy structure...", file=sys.stderr, flush=True)
+        _progress(f"  Refining policy structure...")
     elif stage_name == "design":
         level_count = raw_cfg.get("level_count")
         factor_count = 0
@@ -104,23 +119,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             design_model = raw_cfg["model"].get("name", "")
         model_suffix = f" ({design_model})" if design_model else ""
         if level_count and factor_count:
-            print(
-                f"  Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...",
-                file=sys.stderr,
-                flush=True,
-            )
+            _progress(f"  Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...")
         elif factor_count:
-            print(
-                f"  Designing seed-coverage grid: {total_factors} factors{model_suffix}...",
-                file=sys.stderr,
-                flush=True,
-            )
+            _progress(f"  Designing seed-coverage grid: {total_factors} factors{model_suffix}...")
         else:
-            print(
-                f"  Designing seed-coverage grid (behavior factor only){model_suffix}...",
-                file=sys.stderr,
-                flush=True,
-            )
+            _progress(f"  Designing seed-coverage grid (behavior factor only){model_suffix}...")
     elif stage_name == "seeds":
         prompt_budget = 0
         scenario_budget = 0
@@ -159,7 +162,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
                 seed_models.add(kind_cfg["model"].get("name", ""))
         seed_models.discard("")
         model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
-        print(f"  Generating test cases{detail}{model_suffix}...", file=sys.stderr, flush=True)
+        _progress(f"  Generating test cases{detail}{model_suffix}...")
     elif stage_name == "rollout":
         target = ctx.get("target")
         target_name = ""
@@ -171,11 +174,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if isinstance(raw_cfg.get("auditor"), dict) and isinstance(raw_cfg["auditor"].get("model"), dict):
             auditor_name = raw_cfg["auditor"]["model"].get("name", "")
         if auditor_name and target_name:
-            print(f"  Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...", file=sys.stderr, flush=True)
+            _progress(f"  Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
         elif target_name:
-            print(f"  Running test cases against target ({target_name})...", file=sys.stderr, flush=True)
+            _progress(f"  Running test cases against target ({target_name})...")
         else:
-            print(f"  Running test cases against target...", file=sys.stderr, flush=True)
+            _progress(f"  Running test cases against target...")
     elif stage_name == "judge":
         eval_cfg = ctx.get("evaluation")
         judge_model_obj = eval_cfg.judge.model if eval_cfg else None
@@ -188,11 +191,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         else:
             judge_model = ""
         if judge_model:
-            print(f"  Scoring transcripts with judge ({judge_model})...", file=sys.stderr, flush=True)
+            _progress(f"  Scoring transcripts with judge ({judge_model})...")
         else:
-            print(f"  Scoring transcripts...", file=sys.stderr, flush=True)
+            _progress(f"  Scoring transcripts...")
     else:
-        print(f"  {stage_name}...", file=sys.stderr, flush=True)
+        _progress(f"  {stage_name}...")
 
 
 def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] | None) -> None:
@@ -206,22 +209,18 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            print(f"  \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+            _progress(f"  \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)")
         else:
-            print(f"  \u2713 Generated policy ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+            _progress(f"  \u2713 Generated policy ({elapsed:.1f}s)")
     elif stage_name == "design":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
             sizes_text = ", ".join(
                 f"{name}={size}" for name, size in factor_sizes.items()
             )
-            print(
-                f"  \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)",
-                file=sys.stderr,
-                flush=True,
-            )
+            _progress(f"  \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)")
         else:
-            print(f"  \u2713 Designed coverage grid ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+            _progress(f"  \u2713 Designed coverage grid ({elapsed:.1f}s)")
     elif stage_name == "seeds":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
@@ -232,7 +231,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if scenarios:
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
-        print(f"  \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)")
     elif stage_name == "rollout":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
@@ -243,7 +242,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        print(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -260,9 +259,9 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        print(f"  \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)")
     else:
-        print(f"  {stage_name} done ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  {stage_name} done ({elapsed:.1f}s)")
 
 
 def run_pipeline(
@@ -355,7 +354,7 @@ def run_pipeline(
         if module.SCOPE == "suite" and module.SUITE_OUTPUT and stage_name not in requested_force_stages:
             output_path = Path(ctx["suite_root"]) / module.SUITE_OUTPUT
             if output_path.exists():
-                print(f"  Skipping {stage_name} (output already exists, use --force-stage {stage_name} to regenerate)", file=sys.stderr, flush=True)
+                _progress(f"  Skipping {stage_name} (output already exists, use --force-stage {stage_name} to regenerate)")
                 continue
 
         stages_to_run.append((stage_name, module, raw_cfg))
@@ -396,15 +395,11 @@ def run_pipeline(
             # Print just that message; suppress the multi-screen litellm/httpx
             # traceback unless the user opts into verbose output.
             ok = False
-            print(f"  [error] {exc}", file=sys.stderr, flush=True)
+            _progress(f"  [error] {exc}")
             if os.environ.get("P2M_VERBOSE_ERRORS") == "1":
                 traceback.print_exc(file=sys.stderr)
             else:
-                print(
-                    "  (set P2M_VERBOSE_ERRORS=1 to see the full traceback)",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                _progress("  (set P2M_VERBOSE_ERRORS=1 to see the full traceback)")
         except Exception:  # noqa: BLE001
             ok = False
             traceback.print_exc(file=sys.stderr)
@@ -413,7 +408,7 @@ def run_pipeline(
         if ok:
             _print_stage_done(stage_name, elapsed, stage_result.get("_summary"))
         else:
-            print(f"  {stage_name} failed ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+            _progress(f"  {stage_name} failed ({elapsed:.1f}s)")
 
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "completed" if ok else "failed"
@@ -429,23 +424,23 @@ def run_pipeline(
 
     total_elapsed = time.monotonic() - pipeline_start
     if failed_stage is None:
-        print(f"  pipeline completed ({total_elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
-            print(f"\n  Results:", file=sys.stderr, flush=True)
+            _progress(f"\n  Results:")
             scores_path = run_root / "scores.jsonl"
             metrics_path = run_root / "metrics.json"
             if scores_path.exists():
-                print(f"    Scores:  {scores_path}", file=sys.stderr, flush=True)
+                _progress(f"    Scores:  {scores_path}")
             if metrics_path.exists():
-                print(f"    Metrics: {metrics_path}", file=sys.stderr, flush=True)
-            print(f"    Run dir: {run_root}", file=sys.stderr, flush=True)
+                _progress(f"    Metrics: {metrics_path}")
+            _progress(f"    Run dir: {run_root}")
             suite_id = ctx.get('suite_id', '')
             run_id = ctx.get('run_id', '')
             if suite_id and run_id:
-                print(f"\n  Inspect results:", file=sys.stderr, flush=True)
-                print(f"    uv run p2m results status {suite_id} {run_id}", file=sys.stderr, flush=True)
+                _progress(f"\n  Inspect results:")
+                _progress(f"    uv run p2m results status {suite_id} {run_id}")
     else:
-        print(f"  pipeline failed at {failed_stage} ({total_elapsed:.1f}s)", file=sys.stderr, flush=True)
+        _progress(f"  pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
     if manifest is None:
         return 0 if failed_stage is None else 1
