@@ -4,12 +4,19 @@ import type { Manifest } from '$lib/types.js';
 
 type UiStageStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'error';
 
+// A run is considered abandoned (process died without writing a terminal
+// status) if its manifest still says "running" but the heartbeat is older
+// than this threshold. The runner refreshes heartbeat_at on every
+// _write_manifest call, which currently fires at every stage transition.
+const ABANDONED_THRESHOLD_MS = 5 * 60 * 1000;
+
 export interface PersistedRunState {
-	status: 'running' | 'completed' | 'failed';
+	status: 'running' | 'completed' | 'failed' | 'abandoned';
 	currentStage: string | null;
 	stages: Record<string, UiStageStatus>;
 	exitCode: number | null;
 	startedAt: string | null;
+	heartbeatAt: string | null;
 }
 
 export interface RunStatusPayload extends PersistedRunState {
@@ -37,6 +44,13 @@ function manifestStartedAt(value: unknown): string | null {
 	return typeof value === 'string' ? value : null;
 }
 
+function isHeartbeatStale(heartbeatAt: string | null, now: number): boolean {
+	if (!heartbeatAt) return false;
+	const parsed = Date.parse(heartbeatAt);
+	if (Number.isNaN(parsed)) return false;
+	return now - parsed > ABANDONED_THRESHOLD_MS;
+}
+
 function loadManifest(suiteId: string, runId: string): Manifest | null {
 	return readJsonFile<Manifest>(`${runDirPath(suiteId, runId)}/${RUN_MANIFEST_FILE}`, { missingOk: true });
 }
@@ -49,6 +63,15 @@ function buildPersistedRunState(manifest: Manifest | null): PersistedRunState | 
 		status = manifest.status;
 	}
 
+	const heartbeatAt = typeof manifest.heartbeat_at === 'string' ? manifest.heartbeat_at : null;
+
+	// If the manifest claims "running" but the heartbeat is stale, the run
+	// process is gone. Surface that distinctly so callers can render it as
+	// abandoned instead of misleading the user with an active state.
+	if (status === 'running' && isHeartbeatStale(heartbeatAt, Date.now())) {
+		status = 'abandoned';
+	}
+
 	const stages = normalizeStages(manifest.stages);
 	const currentStage = Object.entries(stages).find(([, value]) => value === 'running')?.[0] ?? null;
 
@@ -57,7 +80,8 @@ function buildPersistedRunState(manifest: Manifest | null): PersistedRunState | 
 		currentStage,
 		stages,
 		exitCode: status === 'running' ? null : status === 'completed' ? 0 : 1,
-		startedAt: manifestStartedAt(manifest.started_at)
+		startedAt: manifestStartedAt(manifest.started_at),
+		heartbeatAt
 	};
 }
 

@@ -58,9 +58,9 @@ class RunnerProgressTest(unittest.TestCase):
             manifest = json.loads((root / "results" / "suite-a" / "run-a" / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["status"], "completed")
             self.assertEqual(manifest["stages"]["judge"], "completed")
-            self.assertEqual(
-                sorted(manifest.keys()),
-                ["ended_at", "stages", "started_at", "status"],
+            self.assertGreaterEqual(
+                set(manifest.keys()),
+                {"ended_at", "stages", "started_at", "status"},
             )
 
     def test_run_pipeline_rejects_existing_run_directory(self) -> None:

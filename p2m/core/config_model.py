@@ -224,6 +224,9 @@ class RunManifest:
     status: str = "running"
     ended_at: str | None = None
     stages: dict[str, str] = field(default_factory=dict)
+    pid: int | None = None
+    host: str | None = None
+    heartbeat_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}
