@@ -71,6 +71,29 @@
 	let highlightedToolFocus = $state<ToolFocusState | null>(null);
 	let highlightResetHandle: ReturnType<typeof setTimeout> | null = null;
 	let activeJudgeIndex = $state(0);
+
+	$effect(() => {
+		const handler = (event: KeyboardEvent) => {
+			if (event.defaultPrevented) return;
+			const target = event.target as HTMLElement | null;
+			if (target) {
+				const tag = target.tagName;
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+			}
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				onClose();
+			} else if (event.key === 'ArrowLeft') {
+				event.preventDefault();
+				onPrev();
+			} else if (event.key === 'ArrowRight') {
+				event.preventDefault();
+				onNext();
+			}
+		};
+		window.addEventListener('keydown', handler);
+		return () => window.removeEventListener('keydown', handler);
+	});
 	let displayedCitations = $state<AuditCitation[] | null>(null);
 	let contextExpanded = $state(false);
 	let expandedMessageBodies = $state<Record<string, boolean>>({});
@@ -740,7 +763,7 @@
 			{#if item.kind === 'scenario' && item.context.description}
 				<div class="mb-4 rounded-lg border border-border/50 bg-surface/50">
 					<button class="flex w-full items-center gap-2 px-4 py-3 text-left" onclick={() => contextExpanded = !contextExpanded}>
-						<h3 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Scenario</h3>
+						<h3 class="text-[24px] font-semibold text-text">Scenario</h3>
 						<span class="flex-1 truncate text-sm font-medium text-text">{item.header_title}</span>
 						<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform {contextExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
 					</button>
@@ -779,7 +802,7 @@
 					{/if}
 				</div>
 			{/if}
-			<h3 class="mb-3 text-xs font-semibold uppercase tracking-widest text-text-muted">Judgment</h3>
+			<h3 class="mb-3 text-[24px] font-semibold text-text">Judgment</h3>
 			<div class="space-y-3">
 				{#if judgeStatus(item) === 'unjudged'}
 					<div class="rounded-lg border border-border bg-surface p-4">
@@ -947,7 +970,7 @@
 		{/if}
 
 		<div class="w-3/5 overflow-y-auto p-5">
-			<h3 class="mb-4 text-xs font-semibold uppercase tracking-widest text-text-muted">
+			<h3 class="mb-4 text-[24px] font-semibold text-text">
 				Conversation · {conversationTurnCount(item.messages)} turns
 			</h3>
 			<div class="space-y-3">

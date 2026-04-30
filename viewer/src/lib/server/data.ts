@@ -159,6 +159,11 @@ function readBehavior(value: unknown): string {
 	return typeof factors?.behavior === 'string' ? factors.behavior : '';
 }
 
+function readRowBehavior(row: { behavior?: unknown; factors?: unknown } | undefined): string {
+	if (typeof row?.behavior === 'string' && row.behavior.trim()) return row.behavior;
+	return readBehavior(row?.factors);
+}
+
 function behaviorDefinition(policy: Policy | null, behavior: string): string {
 	const entry = policy?.behaviors?.find((item) => item.name === behavior);
 	if (!entry) throw new Error(`behavior '${behavior}' is missing from policy.behaviors`);
@@ -170,16 +175,26 @@ function normalizeBehavior(b: Behavior): Behavior {
 	return { ...b, permissible: b.permissible ?? false };
 }
 
+function normalizePolicy(policy: Policy | null | undefined): Policy | null {
+	if (!policy) return null;
+	const concept = policy.concept ?? policy.risk;
+	return {
+		...policy,
+		concept: concept ?? { name: '', definition: '' },
+		behaviors: (policy.behaviors ?? []).map(normalizeBehavior)
+	};
+}
+
 function normalizePromptSeed(item: PromptSeed, policy: Policy | null): PromptSeed {
 	const factors = readFactors(item.factors);
-	const behavior = readBehavior(item.factors);
+	const behavior = readRowBehavior(item);
 	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
 	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
 }
 
 function normalizeScenarioSeed(item: ScenarioSeed, policy: Policy | null): ScenarioSeed {
 	const factors = readFactors(item.factors);
-	const behavior = readBehavior(item.factors);
+	const behavior = readRowBehavior(item);
 	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
 	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
 }
@@ -195,7 +210,7 @@ function normalizeAuditScore(score: AuditScore): AuditScore {
 function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript {
 	return {
 		...transcript,
-		behavior: readBehavior(transcript.factors),
+		behavior: readRowBehavior(transcript),
 		factors: readFactors(transcript.factors)
 	};
 }
@@ -413,7 +428,7 @@ function buildJudgedSampleRow(
 		prompt,
 		response,
 		concept: typeof scoreRow.concept === 'string' ? scoreRow.concept : null,
-		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		run_id: runId,
 		judge_model: typeof scoreRow.judge_model === 'string' ? scoreRow.judge_model : undefined,
 		target:
@@ -480,7 +495,7 @@ function buildAuditScoreRow(
 
 	return normalizeAuditScore({
 		...(scoreRow as AuditScore & UnifiedScoreRow),
-		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		target_runtime_mode: runtimeMode,
 		factors,
 		metadata: {
@@ -543,7 +558,7 @@ function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPrev
 			const messages = materializeTargetMessages(row);
 			return [{
 				seed_id: seedId,
-				behavior: readBehavior(row.factors),
+				behavior: readRowBehavior(row),
 				turns_count: countConversationMessages(messages),
 				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
 			}];
@@ -567,7 +582,7 @@ function buildScenarioDrawerItem(
 		: {
 				seed_id: seedId,
 				concept: typeof transcriptRow.concept === 'string' ? transcriptRow.concept : '',
-				behavior: readBehavior(transcriptRow.factors),
+				behavior: readRowBehavior(transcriptRow),
 				judge_model: '',
 				target: typeof transcriptRow.target === 'string' ? transcriptRow.target : undefined,
 				auditor_model:
@@ -908,7 +923,7 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 
 	return {
 		suite_id: suiteId,
-		concept_name: snapshot.policy?.concept?.name ?? suiteId,
+		concept_name: normalizePolicy(snapshot.policy)?.concept?.name || suiteId,
 		behavior_count: snapshot.policy?.behaviors?.length ?? 0,
 		seed_count: itemCounts.prompt,
 		scenario_seed_count: itemCounts.scenario,
@@ -946,11 +961,7 @@ function buildScenarioSeeds(snapshot: SuiteSnapshot | null): ScenarioSeed[] {
 
 export function loadPolicy(suiteId: string): Policy | null {
 	const snapshot = loadSuiteSnapshot(suiteId);
-	if (!snapshot?.policy) return null;
-	return {
-		...snapshot.policy,
-		behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior)
-	};
+	return normalizePolicy(snapshot?.policy);
 }
 
 export function loadPromptSeeds(suiteId: string): PromptSeed[] {
@@ -1008,9 +1019,7 @@ export function loadSuitePageData(suiteId: string) {
 	return {
 		suite_id: suiteId,
 		suite: snapshot.suite,
-		policy: snapshot.policy
-			? { ...snapshot.policy, behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior) }
-			: null,
+		policy: normalizePolicy(snapshot.policy),
 		promptSeeds,
 		scenarioSeeds,
 		runs,
@@ -1068,9 +1077,7 @@ function loadCompletedRunPageData(
 		auditCount,
 		hasAuditContent,
 		manifest,
-		policy: suiteSnapshot?.policy
-			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
-			: null,
+		policy: normalizePolicy(suiteSnapshot?.policy),
 		samples,
 		auditScores,
 		rolloutPreviewRows: [],
@@ -1137,9 +1144,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		auditCount,
 		hasAuditContent,
 		manifest: runSnapshot.manifest,
-		policy: suiteSnapshot?.policy
-			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
-			: null,
+		policy: normalizePolicy(suiteSnapshot?.policy),
 		samples,
 		auditScores,
 		rolloutPreviewRows,
@@ -1266,9 +1271,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 
 export function loadComparePageData(suiteId: string, runIds: string[]) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const policy = suiteSnapshot?.policy
-		? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
-		: null;
+	const policy = normalizePolicy(suiteSnapshot?.policy);
 
 	const runSummaries: CompareRunSummary[] = [];
 	const metricNames = new Set<string>();

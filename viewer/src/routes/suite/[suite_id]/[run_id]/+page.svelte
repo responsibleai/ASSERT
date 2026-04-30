@@ -64,6 +64,7 @@
 	let drawerSample = $state<JudgedSample | null>(null);
 	let promptGroupBy = $state('none');
 	let promptSortMetric = $state('policy_violation');
+	let promptSearchQuery = $state('');
 
 	// --- Audit eval state ---
 	let expandedAuditBehavior = $state<string | null>(null);
@@ -71,6 +72,7 @@
 	let drawerPreviewSeedId = $state<string | null>(null);
 	let auditGroupBy = $state('none');
 	let auditSortMetric = $state('policy_violation');
+	let auditSearchQuery = $state('');
 	let runMetaOpen = $state(false);
 
 	// --- Multi-judge state ---
@@ -92,7 +94,7 @@
 
 	function metricOutcomeText(flag: boolean | null): string {
 		if (flag === null) return 'n/a';
-		return flag ? 'flagged' : 'clear';
+		return flag ? 'flagged' : 'Pass';
 	}
 
 	function metricOutcomeClass(flag: boolean | null): string {
@@ -169,16 +171,29 @@
 	}
 
 	let promptGroups = $derived.by(() => {
-		if (mjFilter === 'all') return promptGroupsRaw;
-		return promptGroupsRaw
-			.map(g => ({ ...g, items: g.items.filter(s => mjFilterFn(s.multi_judge)), total: 0 }))
-			.map(g => ({ ...g, total: g.items.length }))
-			.filter(g => g.items.length > 0);
+		let groups = promptGroupsRaw;
+		if (mjFilter !== 'all') {
+			groups = groups
+				.map(g => ({ ...g, items: g.items.filter(s => mjFilterFn(s.multi_judge)), total: 0 }))
+				.map(g => ({ ...g, total: g.items.length }))
+				.filter(g => g.items.length > 0);
+		}
+		const query = promptSearchQuery.trim().toLowerCase();
+		if (!query) return groups;
+		return groups
+			.map((group) => {
+				if (group.label.toLowerCase().includes(query)) return group;
+				const items = group.items.filter((sample) => promptSampleMatchesSearch(sample, query));
+				return { ...group, items, total: items.length };
+			})
+			.filter((group) => group.items.length > 0);
 	});
 
 	let flatPromptSamples = $derived.by(() => {
 		let items = [...data.samples];
 		if (mjFilter !== 'all') items = items.filter(s => mjFilterFn(s.multi_judge));
+		const query = promptSearchQuery.trim().toLowerCase();
+		if (query) items = items.filter((sample) => promptSampleMatchesSearch(sample, query));
 		const m = promptSortMetric;
 		return items.sort((a, b) => scoreSortValue(a, m) - scoreSortValue(b, m));
 	});
@@ -216,11 +231,22 @@
 	}
 
 	let auditGroups = $derived.by(() => {
-		if (auditMjFilter === 'all') return auditGroupsRaw;
-		return auditGroupsRaw
-			.map(g => ({ ...g, items: g.items.filter(s => auditMjFilterFn(s.multi_judge)), total: 0 }))
-			.map(g => ({ ...g, total: g.items.length }))
-			.filter(g => g.items.length > 0);
+		let groups = auditGroupsRaw;
+		if (auditMjFilter !== 'all') {
+			groups = groups
+				.map(g => ({ ...g, items: g.items.filter(s => auditMjFilterFn(s.multi_judge)), total: 0 }))
+				.map(g => ({ ...g, total: g.items.length }))
+				.filter(g => g.items.length > 0);
+		}
+		const query = auditSearchQuery.trim().toLowerCase();
+		if (!query) return groups;
+		return groups
+			.map((group) => {
+				if (group.label.toLowerCase().includes(query)) return group;
+				const items = group.items.filter((score) => auditScoreMatchesSearch(score, query));
+				return { ...group, items, total: items.length };
+			})
+			.filter((group) => group.items.length > 0);
 	});
 
 	let hasAuditMultiJudge = $derived(data.auditScores.some(s => s.multi_judge));
@@ -233,9 +259,35 @@
 	let flatAuditScores = $derived.by(() => {
 		let items = [...data.auditScores];
 		if (auditMjFilter !== 'all') items = items.filter(s => auditMjFilterFn(s.multi_judge));
+		const query = auditSearchQuery.trim().toLowerCase();
+		if (query) items = items.filter((score) => auditScoreMatchesSearch(score, query));
 		const m = auditSortMetric;
 		return items.sort((a, b) => scoreSortValue(a, m) - scoreSortValue(b, m));
 	});
+
+	function textIncludesQuery(value: unknown, query: string): boolean {
+		return typeof value === 'string' && value.toLowerCase().includes(query);
+	}
+
+	function promptSampleMatchesSearch(sample: JudgedSample, query: string): boolean {
+		return (
+			textIncludesQuery(sample.prompt, query) ||
+			textIncludesQuery(sample.response, query) ||
+			textIncludesQuery(sample.behavior, query) ||
+			textIncludesQuery(sample.seed_id, query) ||
+			textIncludesQuery(sample.seed_id ? data.promptSeedTitleMap?.[sample.seed_id] : undefined, query)
+		);
+	}
+
+	function auditScoreMatchesSearch(score: AuditScore, query: string): boolean {
+		const seedInfo = data.scenarioSeedMap?.[score.seed_id];
+		return (
+			textIncludesQuery(score.behavior, query) ||
+			textIncludesQuery(score.seed_id, query) ||
+			textIncludesQuery(seedInfo?.title, query) ||
+			textIncludesQuery(seedInfo?.description, query)
+		);
+	}
 
 	function toggleBehavior(name: string) {
 		expandedBehavior = expandedBehavior === name ? null : name;
@@ -494,6 +546,8 @@
 		auditGroupBy = 'none';
 		promptSortMetric = 'policy_violation';
 		auditSortMetric = 'policy_violation';
+		promptSearchQuery = '';
+		auditSearchQuery = '';
 		runMetaOpen = false;
 		mjFilter = 'all';
 		auditMjFilter = 'all';
@@ -762,7 +816,7 @@
 						{/if}
 					</div>
 					<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-						<span>{m.summary?.clear_count ?? 0} clear</span>
+						<span>{m.summary?.clear_count ?? 0} pass</span>
 						<span>{m.summary?.flagged_count ?? 0} flagged</span>
 						<span>{m.summary?.count ?? 0} total</span>
 					</div>
@@ -800,6 +854,17 @@
 						>Disagreements <span class="ml-1 text-zinc-600">{mjDisagreementCount}</span></button>
 					</div>
 				{/if}
+				<div class="relative min-w-[220px] flex-1 max-w-sm">
+					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+						<path d="M21 21l-4.35-4.35m1.1-5.4a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+					</svg>
+					<input
+						type="search"
+						class="w-full rounded border border-border bg-surface py-1.5 pl-8 pr-2 text-xs text-text outline-none placeholder:text-text-muted focus:border-interactive"
+						placeholder="Search prompts or behaviors"
+						bind:value={promptSearchQuery}
+					/>
+				</div>
 				<div class="ml-auto flex items-center gap-2">
 					{#if promptGroupBy === 'none'}
 						<span class="text-[10px] text-text-muted">Sort by</span>
@@ -987,7 +1052,7 @@
 						{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
 					</div>
 					<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-						<span>{m.summary?.clear_count ?? 0} clear</span>
+						<span>{m.summary?.clear_count ?? 0} pass</span>
 						<span>{m.summary?.flagged_count ?? 0} flagged</span>
 						<span>{m.summary?.count ?? 0} total</span>
 					</div>
@@ -1025,6 +1090,17 @@
 						>Disagreements <span class="ml-1 text-zinc-600">{auditMjDisagreementCount}</span></button>
 					</div>
 				{/if}
+				<div class="relative min-w-[220px] flex-1 max-w-sm">
+					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+						<path d="M21 21l-4.35-4.35m1.1-5.4a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+					</svg>
+					<input
+						type="search"
+						class="w-full rounded border border-border bg-surface py-1.5 pl-8 pr-2 text-xs text-text outline-none placeholder:text-text-muted focus:border-interactive"
+						placeholder="Search scenarios or behaviors"
+						bind:value={auditSearchQuery}
+					/>
+				</div>
 				<div class="ml-auto flex items-center gap-2">
 					{#if auditGroupBy === 'none'}
 						<span class="text-[10px] text-text-muted">Sort by</span>

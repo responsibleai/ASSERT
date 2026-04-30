@@ -27,7 +27,7 @@ function isErrorVerdict(verdict: Record<string, unknown>): boolean {
 	return typeof verdict.error === 'string' && !!verdict.error;
 }
 
-function getRelevantNodeLabels(verdict: Record<string, unknown> | null | undefined): string[] {
+function getRelevantNodeLabels(verdict: Record<string, unknown> | null | undefined, fallbackBehavior?: string): string[] {
 	if (!verdict || typeof verdict !== 'object') return [];
 	const nodeJudgments = verdict.node_judgments;
 	if (!Array.isArray(nodeJudgments)) return [];
@@ -36,7 +36,7 @@ function getRelevantNodeLabels(verdict: Record<string, unknown> | null | undefin
 	for (const node of nodeJudgments as NodeJudgment[]) {
 		if (!node.relevant) continue;
 		const name = (node.node_name ?? '').trim();
-		const label = name || `(node ${node.node_index ?? '?'})`;
+		const label = name || fallbackBehavior || 'Unmapped behavior category';
 		if (seen.has(label)) continue;
 		seen.add(label);
 		labels.push(label);
@@ -69,7 +69,7 @@ function observedNodeAccessor(s: ScoredRecord): string | string[] {
 	if (!s.verdict) return NOT_JUDGED;
 	if (isErrorVerdict(s.verdict)) return JUDGE_FAILED;
 	if (!hasNodeJudgments(s.verdict)) return JUDGE_FAILED;
-	const labels = getRelevantNodeLabels(s.verdict);
+	const labels = getRelevantNodeLabels(s.verdict, s.behavior);
 	if (labels.length === 0) return NO_MATCHING_BEHAVIOR;
 	return labels;
 }
@@ -162,7 +162,7 @@ export function groupByAxis<T extends { verdict?: Record<string, unknown> | null
 		if (Array.isArray(nodeJudgments)) {
 			for (const node of nodeJudgments as NodeJudgment[]) {
 				const name = (node.node_name ?? '').trim();
-				const label = name || `(node ${node.node_index ?? '?'})`;
+				const label = name || (item as unknown as ScoredRecord).behavior || 'Unmapped behavior category';
 				if (label === key && node.relevant) {
 					bucket.sums['behavior_violation'] = (bucket.sums['behavior_violation'] ?? 0) + (node.violated ? 1 : 0);
 					bucket.counts['behavior_violation'] = (bucket.counts['behavior_violation'] ?? 0) + 1;

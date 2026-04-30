@@ -1,60 +1,30 @@
+@import '@primer/primitives/dist/css/functional/themes/dark.css';
+@import '@primer/primitives/dist/css/functional/themes/light.css';
+@import '@primer/css/dist/primer.css';
+@import './primer-react-button.css';
 @import 'tailwindcss';
 
 @theme {
-	--color-bg: var(--theme-bg);
-	--color-surface: var(--theme-surface);
-	--color-surface-2: var(--theme-surface-2);
-	--color-border: var(--theme-border);
-	--color-text: var(--theme-text);
-	--color-text-secondary: var(--theme-text-secondary);
-	--color-text-muted: var(--theme-text-muted);
+	--color-bg: var(--bgColor-default);
+	--color-surface: var(--bgColor-muted);
+	--color-surface-2: var(--bgColor-neutral-muted);
+	--color-border: var(--borderColor-default);
+	--color-text: var(--fgColor-default);
+	--color-text-secondary: var(--fgColor-muted);
+	--color-text-muted: var(--fgColor-muted);
 
-	--color-score-fail: var(--theme-score-fail);
-	--color-score-border: var(--theme-score-border);
-	--color-score-pass: var(--theme-score-pass);
+	--color-score-fail: var(--fgColor-danger);
+	--color-score-border: var(--fgColor-attention);
+	--color-score-pass: var(--fgColor-success);
 
-	--color-permissible: var(--theme-interactive);
-	--color-not-permissible: var(--theme-not-permissible);
+	--color-permissible: var(--fgColor-accent);
+	--color-not-permissible: var(--fgColor-danger);
 
-	--color-interactive: var(--theme-interactive);
-	--color-interactive-hover: var(--theme-interactive-hover);
+	--color-interactive: var(--fgColor-accent);
+	--color-interactive-hover: var(--fgColor-accent);
 
-	--font-mono: 'JetBrains Mono', ui-monospace, monospace;
-	--font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-}
-
-/* Dark theme (default) */
-:root {
-	--theme-bg: #09090b;
-	--theme-surface: #18181b;
-	--theme-surface-2: #27272a;
-	--theme-border: #3f3f46;
-	--theme-text: #fafafa;
-	--theme-text-secondary: #a1a1aa;
-	--theme-text-muted: #8b8b96;
-	--theme-interactive: #60a5fa;
-	--theme-interactive-hover: #93c5fd;
-	--theme-score-fail: #f87171;
-	--theme-score-border: #f59e0b;
-	--theme-score-pass: #22c55e;
-	--theme-not-permissible: #e879a0;
-}
-
-/* Light theme */
-:root.light {
-	--theme-bg: #ffffff;
-	--theme-surface: #f4f4f5;
-	--theme-surface-2: #e4e4e7;
-	--theme-border: #d4d4d8;
-	--theme-text: #09090b;
-	--theme-text-secondary: #52525b;
-	--theme-text-muted: #636370;
-	--theme-interactive: #2563eb;
-	--theme-interactive-hover: #1d4ed8;
-	--theme-score-fail: #b91c1c;
-	--theme-score-border: #b45309;
-	--theme-score-pass: #15803d;
-	--theme-not-permissible: #be185d;
+	--font-mono: var(--fontStack-monospace);
+	--font-sans: var(--fontStack-sansSerif);
 }
 
 body {
@@ -66,36 +36,17 @@ body {
 }
 
 /* Scrollbar styling */
-::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
-}
-::-webkit-scrollbar-track {
-	background: transparent;
-}
-::-webkit-scrollbar-thumb {
-	background: var(--color-border);
-	border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-	background: var(--color-text-muted);
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
 
-/* Selection */
-::selection {
-	background: color-mix(in srgb, var(--color-interactive) 30%, transparent);
-}
+::selection { background: color-mix(in srgb, var(--color-interactive) 30%, transparent); }
 
-/* Focus ring */
-:focus-visible {
-	outline: 1px solid var(--color-interactive);
-	outline-offset: 2px;
-}
+:focus-visible { outline: 1px solid var(--color-interactive); outline-offset: 2px; }
 
-/* Prose overrides for markdown content in dark mode */
-.prose {
-	color: var(--color-text-secondary);
-}
+/* Prose overrides for markdown content */
+.prose { color: var(--color-text-secondary); }
 .prose p { margin-top: 0.5em; margin-bottom: 0.5em; }
 .prose p:first-child { margin-top: 0; }
 .prose p:last-child { margin-bottom: 0; }
@@ -119,159 +70,79 @@ body {
 	overflow-x: auto;
 	margin: 0.5em 0;
 }
-.prose pre code {
-	background: none;
-	padding: 0;
-	font-size: 0.85em;
-	color: var(--color-text-secondary);
-}
-.prose blockquote {
-	border-left: 3px solid var(--color-border);
-	padding-left: 1em;
-	color: var(--color-text-muted);
-	margin: 0.5em 0;
-}
+.prose pre code { background: none; padding: 0; font-size: 0.85em; color: var(--color-text-secondary); }
+.prose blockquote { border-left: 3px solid var(--color-border); padding-left: 1em; color: var(--color-text-muted); margin: 0.5em 0; }
 .prose strong { color: var(--color-text); font-weight: 600; }
 .prose a { color: var(--color-interactive); text-decoration: underline; }
-.prose h1, .prose h2, .prose h3, .prose h4 {
-	color: var(--color-text);
-	font-weight: 600;
-	margin-top: 0.75em;
-	margin-bottom: 0.25em;
-}
+.prose h1, .prose h2, .prose h3, .prose h4 { color: var(--color-text); font-weight: 600; margin-top: 0.75em; margin-bottom: 0.25em; }
 .prose h1 { font-size: 1.25em; }
 .prose h2 { font-size: 1.1em; }
 .prose h3 { font-size: 1em; }
 
-/* Inline citation chips inside judgment prose */
+/* Citation chips */
 .citation-ref {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0.08em 0.32em;
-	margin: 0 0.04em;
-	border-radius: 0.22rem;
-	font-size: 0.78em;
-	font-weight: 650;
-	font-variant-numeric: tabular-nums;
-	background: color-mix(in srgb, var(--color-interactive) 17%, transparent);
-	color: var(--color-interactive);
-	cursor: pointer;
-	transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
-	border: 1px solid color-mix(in srgb, var(--color-interactive) 52%, transparent);
-	line-height: 1.28;
-	vertical-align: baseline;
-	text-decoration: none;
-	user-select: none;
+	display: inline; padding: 0; margin: 0; border: none; border-radius: 0;
+	font-size: 0.82em; font-weight: 650; font-variant-numeric: tabular-nums;
+	background: none; color: var(--color-interactive); cursor: pointer;
+	transition: color 0.15s;
+	line-height: inherit; vertical-align: baseline; text-decoration: none; user-select: none;
 }
 .citation-ref:hover {
-	background: color-mix(in srgb, var(--color-interactive) 24%, transparent);
-	box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-interactive) 66%, transparent);
-}
-.citation-ref:focus-visible {
-	outline: 2px solid color-mix(in srgb, var(--color-interactive) 62%, white 5%);
-	outline-offset: 1px;
-}
-.citation-ref:active {
-	transform: translateY(0.5px);
+	color: var(--color-interactive-hover, var(--color-interactive));
+	text-decoration: underline;
 }
 
-/* Inline citation highlights in conversation messages */
 .citation-hl {
 	background: color-mix(in srgb, var(--color-score-border) 7%, transparent);
-	color: inherit;
-	border-radius: 2px;
-	padding: 0.015em 0.06em;
+	color: inherit; border-radius: 2px; padding: 0.015em 0.06em;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-score-border) 45%, transparent);
 	cursor: help;
 }
 
-.citation-tooltip {
-	position: fixed;
-	z-index: 70;
-	width: min(26rem, calc(100vw - 1.5rem));
-	transform: translate(-50%, -100%);
-	padding-bottom: 0.45rem;
-	pointer-events: auto;
-}
+.citation-tooltip { position: fixed; z-index: 70; width: min(26rem, calc(100vw - 1.5rem)); transform: translate(-50%, -100%); padding-bottom: 0.45rem; pointer-events: auto; }
 .citation-tooltip-list {
 	border: 1px solid color-mix(in srgb, var(--color-border) 80%, black 10%);
-	border-radius: 0.55rem;
-	background: color-mix(in srgb, var(--color-bg) 94%, black 6%);
-	backdrop-filter: blur(5px);
-	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
-	padding: 0.35rem;
-	display: flex;
-	flex-direction: column;
-	gap: 0.28rem;
-	max-height: min(21rem, 60vh);
-	overflow-y: auto;
+	border-radius: 0.55rem; background: color-mix(in srgb, var(--color-bg) 94%, black 6%);
+	backdrop-filter: blur(5px); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+	padding: 0.35rem; display: flex; flex-direction: column; gap: 0.28rem;
+	max-height: min(21rem, 60vh); overflow-y: auto;
 }
 .citation-tooltip-item {
-	display: block;
-	width: 100%;
-	border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	display: block; width: 100%; border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background: color-mix(in srgb, var(--color-surface-2) 58%, transparent);
-	border-radius: 0.44rem;
-	padding: 0.45rem 0.52rem;
-	text-align: left;
-	cursor: pointer;
-	transition: border-color 0.15s, background 0.15s;
+	border-radius: 0.44rem; padding: 0.45rem 0.52rem; text-align: left;
+	cursor: pointer; transition: border-color 0.15s, background 0.15s;
 }
 .citation-tooltip-item:hover {
 	border-color: color-mix(in srgb, var(--color-interactive) 45%, transparent);
 	background: color-mix(in srgb, var(--color-interactive) 9%, var(--color-surface-2) 91%);
 }
-.citation-tooltip-head {
-	display: flex;
-	align-items: center;
-	gap: 0.42rem;
-	margin-bottom: 0.2rem;
-}
-.citation-tooltip-index {
-	font-weight: 700;
-	color: var(--color-text);
-	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-.citation-tooltip-source {
-	font-size: 0.7rem;
-	padding: 0.05rem 0.34rem;
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--color-interactive) 16%, transparent);
-	color: var(--color-interactive);
-	text-transform: lowercase;
-}
-.citation-tooltip-status {
-	margin-left: auto;
-	font-size: 0.66rem;
-	padding: 0.03rem 0.3rem;
-	border-radius: 999px;
-	background: color-mix(in srgb, #f59e0b 18%, transparent);
-	color: #fbbf24;
-	text-transform: lowercase;
-}
-.citation-tooltip-preview {
-	font-size: 0.78rem;
-	line-height: 1.28;
-	color: var(--color-text);
-	margin-bottom: 0.22rem;
-}
-.citation-tooltip-description {
-	font-size: 0.72rem;
-	line-height: 1.2;
-	color: var(--color-text-secondary);
-}
+.citation-tooltip-head { display: flex; align-items: center; gap: 0.42rem; margin-bottom: 0.2rem; }
+.citation-tooltip-index { font-weight: 700; color: var(--color-text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.citation-tooltip-source { font-size: 0.7rem; padding: 0.05rem 0.34rem; border-radius: 999px; background: color-mix(in srgb, var(--color-interactive) 16%, transparent); color: var(--color-interactive); text-transform: lowercase; }
+.citation-tooltip-status { margin-left: auto; font-size: 0.66rem; padding: 0.03rem 0.3rem; border-radius: 999px; background: color-mix(in srgb, #f59e0b 18%, transparent); color: #fbbf24; text-transform: lowercase; }
+.citation-tooltip-preview { font-size: 0.78rem; line-height: 1.28; color: var(--color-text); margin-bottom: 0.22rem; }
+.citation-tooltip-description { font-size: 0.72rem; line-height: 1.2; color: var(--color-text-secondary); }
+.citation-focused-block { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-interactive) 45%, transparent); border-radius: 0.36rem; }
+.citation-tool-message-focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-interactive) 48%, transparent); }
+.citation-tool-arg-focus { box-shadow: 0 0 0 2px color-mix(in srgb, #22d3ee 52%, transparent); }
+.citation-tool-result-focus { box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 50%, transparent); }
 
-.citation-focused-block {
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-interactive) 45%, transparent);
-	border-radius: 0.36rem;
-}
-.citation-tool-message-focus {
-	box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-interactive) 48%, transparent);
-}
-.citation-tool-arg-focus {
-	box-shadow: 0 0 0 2px color-mix(in srgb, #22d3ee 52%, transparent);
-}
-.citation-tool-result-focus {
-	box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 50%, transparent);
-}
+/* Card hover */
+.card-hover:hover { border-color: var(--fgColor-accent) !important; }
+.card-heading { color: var(--fgColor-default) !important; }
+.card-hover:hover .card-heading { text-decoration: underline; color: var(--fgColor-accent) !important; }
+
+/* Segmented control */
+.segmented-control { display: inline-flex; padding: 2px; border-radius: 6px; background: var(--controlTrack-bgColor-rest, rgba(175, 184, 193, 0.2)); gap: 1px; }
+.segmented-control-btn { flex: 0 0 auto; padding: 3px 12px; font-size: 12px; font-weight: 500; line-height: 20px; text-align: center; white-space: nowrap; color: var(--fgColor-muted); background: transparent; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.12s, color 0.12s, box-shadow 0.12s; }
+.segmented-control-btn:hover:not(.selected) { background: rgba(175, 184, 193, 0.12); color: var(--fgColor-default); }
+.segmented-control-btn.selected { background: var(--controlKnob-bgColor-rest, var(--bgColor-default)); color: var(--fgColor-default); box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.04), 0 1px 1px rgba(31, 35, 40, 0.06), 0 1px 3px rgba(31, 35, 40, 0.04); }
+
+/* Primer Breadcrumbs */
+.Breadcrumb { display: flex; align-items: center; list-style: none; padding: 0; margin: 0; }
+.Breadcrumb-item { display: inline-block; font-size: var(--text-body-size-medium, 0.875rem); list-style: none; }
+.Breadcrumb-item + .Breadcrumb-item::before { display: inline-block; height: 0.8em; margin: 0 0.5em; font-size: var(--text-body-size-medium, 0.875rem); content: ''; border-right: 0.1em solid var(--fgColor-muted, var(--color-fg-muted)); transform: rotate(15deg) translateY(0.0625em); }
+.Breadcrumb-item a { color: var(--fgColor-link, var(--color-accent-fg)); text-decoration: none; }
+.Breadcrumb-item a:hover { text-decoration: underline; }
+.Breadcrumb-item[aria-current="page"] { color: var(--fgColor-default, var(--color-fg-default)); }

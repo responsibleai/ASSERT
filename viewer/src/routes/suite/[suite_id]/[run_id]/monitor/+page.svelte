@@ -132,7 +132,7 @@ Read-only monitor
 href="/suite/{data.suite_id}/{data.run_id}"
 class="inline-flex items-center gap-1.5 rounded-md bg-interactive px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-interactive-hover"
 >
-View Results
+View evaluation results
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
 </a>
 {:else if status === 'failed'}
@@ -147,7 +147,7 @@ Exit code: {exitCode}
 {#if currentStageLabel || startedAt}
 <div class="mb-6 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
 <div class="rounded-[1.25rem] border border-interactive/15 bg-[radial-gradient(circle_at_top_left,rgba(58,130,246,0.16),transparent_52%),linear-gradient(135deg,rgba(15,23,42,0.9),rgba(15,23,42,0.72))] p-5 text-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
-<div class="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/55">Current Focus</div>
+<div class="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/55">Current focus</div>
 <div class="mt-3 flex flex-wrap items-center gap-3">
 <div class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-lg">{status === 'failed' ? '✗' : status === 'completed' ? '✓' : '→'}</div>
 <div class="min-w-0">

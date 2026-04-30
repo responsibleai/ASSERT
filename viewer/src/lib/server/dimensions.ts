@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { readYamlFile } from './artifacts.js';
+import { MEASUREMENTS_ROOT } from './config.js';
 import type { DimensionDef } from '$lib/types.js';
 
 /**
@@ -18,6 +21,18 @@ const BUILT_IN_DIMENSIONS: Record<string, DimensionDef> = {
 	}
 };
 
+const DIMENSIONS_PATH = path.join(
+	MEASUREMENTS_ROOT,
+	'examples',
+	'eval-definitions',
+	'judge_dimensions.yaml'
+);
+
+function loadCustomDimensions(): Record<string, DimensionDef> {
+	const data = readYamlFile<Record<string, DimensionDef>>(DIMENSIONS_PATH, { missingOk: true });
+	return data && typeof data === 'object' ? data : {};
+}
+
 export function loadDimensions(): Record<string, DimensionDef> {
-	return { ...BUILT_IN_DIMENSIONS };
+return { ...BUILT_IN_DIMENSIONS, ...loadCustomDimensions() };
 }

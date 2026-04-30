@@ -16,6 +16,10 @@ export interface Policy {
 		name: string;
 		definition: string;
 	};
+	risk?: {
+		name: string;
+		definition: string;
+	};
 	definition_of_terms?: Array<{
 		term: string;
 		definition: string;
@@ -228,6 +232,8 @@ export interface DimensionDef {
 	description: string;
 	rubric: string;
 	required_base?: boolean;
+	kind?: string;
+	polarity?: string;
 }
 
 export interface BinaryCounts {
