@@ -654,6 +654,7 @@ async def _generate_records(
             options=GenerateOptions(
                 temperature=temperature, max_tokens=max_tokens,
                 reasoning_effort=reasoning_effort, timeout_s=timeout_s,
+                call_label=f"seeds:{kind}:{slug}",
             ),
         )
         payload = response.parsed
