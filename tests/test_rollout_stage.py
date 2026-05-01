@@ -1001,8 +1001,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["seed_id"] for row in interim_rows], ["seed_000001"])
 
                 release_failure.set()
-                with self.assertRaisesRegex(RuntimeError, "boom"):
-                    await rollout_task
+                result = await rollout_task
 
             final_rows = [
                 json.loads(line)
@@ -1010,6 +1009,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             ]
 
         self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
+        self.assertEqual(result["errors"], 1)
 
     async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated transcripts.jsonl causes completed seeds to be skipped."""

@@ -462,9 +462,10 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         kind, seed_id = _kind_and_seed_id(row, path=scores_path)
         transcript_row = transcript_by_seed.get((kind, seed_id))
         if transcript_row is None:
-            raise ViewerReadModelBuildError(
-                f"Missing transcript row for {kind}:{seed_id} while building {run_dir}"
-            )
+            # Transcript missing — the seed may have failed during rollout
+            # or scores may be stale from a prior run.  Skip gracefully so
+            # partial results are still viewable.
+            continue
         seed_row = seeds_by_seed.get((kind, seed_id))
         factors = (
             _read_factors(seed_row.get("factors") if seed_row is not None else None)

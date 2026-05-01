@@ -241,7 +241,14 @@ async def run_judge(
     # current scores.jsonl, even when a row failed and we are about to raise.
     build_run_viewer_artifacts(out_dir)
     if errors:
-        raise errors[0]
+        error_summary = ", ".join(
+            f"{type(e).__name__}: {e}" for e in errors[:3]
+        )
+        suffix = f" (and {len(errors) - 3} more)" if len(errors) > 3 else ""
+        logging.warning(
+            "Judge completed with %d/%d scoring errors: %s%s",
+            len(errors), len(pending), error_summary, suffix,
+        )
 
     judge_failures = sum(
         1 for row in load_jsonl(scores_path) if infer_judge_status(row) != "ok"
@@ -252,6 +259,7 @@ async def run_judge(
         "new_count": written_rows,
         "cached_count": len(completed_keys),
         "judge_failures": judge_failures,
+        "errors": len(errors),
     }
 
 
@@ -285,5 +293,6 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
             "failures": result.get("judge_failures", 0),
+            "errors": result.get("errors", 0),
         },
     }

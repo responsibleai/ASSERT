@@ -253,6 +253,9 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra = f" ({cached} cached)"
         else:
             extra = ""
+        rollout_errors = s.get("errors", 0)
+        if rollout_errors:
+            extra += f", {rollout_errors} errors"
         _progress(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
     elif stage_name == "judge":
         count = s.get("count", 0)

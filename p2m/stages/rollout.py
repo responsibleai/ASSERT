@@ -1020,7 +1020,14 @@ async def run_rollout(
         sys.__stderr__.flush()
 
     if errors:
-        raise errors[0]
+        error_summary = ", ".join(
+            f"{type(e).__name__}: {e}" for e in errors[:3]
+        )
+        suffix = f" (and {len(errors) - 3} more)" if len(errors) > 3 else ""
+        logging.warning(
+            "Rollout completed with %d/%d seed errors: %s%s",
+            len(errors), total, error_summary, suffix,
+        )
     build_run_viewer_artifacts(out_dir)
 
     return {
@@ -1029,6 +1036,7 @@ async def run_rollout(
         "count": len(completed_seed_ids) + len(results),
         "new_count": len(results),
         "cached_count": len(completed_seed_ids),
+        "errors": len(errors),
     }
 
 
@@ -1068,6 +1076,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "count": result.get("count", 0),
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
+            "errors": result.get("errors", 0),
             "target_model": target_model,
         },
     }
