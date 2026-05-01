@@ -15,7 +15,7 @@ In the AI development lifecycle, engineers need constant iterations in the pre-d
 Responsible AI development lifecycle share the same loop with GenAI Ops: identify -> map -> measurements -> mitigate in an iterative loop. Requirement-driven evaluation automates **identification, mapping, and measurements of behaviors specific to the requirements of the AI applications with human in the loop**, compared to generic "static evals". To this end, we developed adaptive eval as an open-source evaluation tool to address these gaps that allows engineers to:
 
 
-<img width="1600" height="900" alt="image" src="https://github.com/user-attachments/assets/8f85c0ef-e18b-4c53-a0d6-f66eca750ced" />
+<img width="1600" height="900" alt="What Adaptive Evaluation Does: a five-stage pipeline from Behavior Spec to Behavior Categories to EvalSet to InferenceSet to Evaluation" src="assets/adaptive-eval-pipeline.png" />
 
 - Define requirement-specific **behavior definitions** for their use case
 - Generate representative **eval set** including multi-turn **conversations** to elicit failure modes
