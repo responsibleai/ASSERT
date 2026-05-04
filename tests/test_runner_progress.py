@@ -194,9 +194,11 @@ class RunnerProgressTest(unittest.TestCase):
             async def boom(**_: object) -> None:
                 raise RuntimeError("boom")
 
+            fake_err = io.StringIO()
             with (
                 patch("p2m.stages.judge.run_judge", new=boom),
-                patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+                patch("sys.stderr", fake_err),
+                patch("sys.__stderr__", fake_err),
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
@@ -210,9 +212,11 @@ class RunnerProgressTest(unittest.TestCase):
             root = Path(tmp_dir)
             cfg_path = self._make_judge_config(root)
 
+            fake_err = io.StringIO()
             with (
                 patch("p2m.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
-                patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+                patch("sys.stderr", fake_err),
+                patch("sys.__stderr__", fake_err),
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
