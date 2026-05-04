@@ -455,10 +455,21 @@ function buildJudgedSampleRow(
 	});
 }
 
-function buildJudgedSamplesFromSnapshot(snapshot: RunSnapshot): JudgedSample[] {
-	const scoreRows = snapshot.scoreRows.filter((row) => hasKind(row, 'prompt'));
-	const seedRows = promptSeedRows(snapshot.seedRows);
-	const transcriptRows = snapshot.transcriptRows.filter((row) => hasKind(row, 'prompt'));
+function buildJudgedPromptsFromSnapshot(snapshot: RunSnapshot): JudgedSample[] {
+	return buildJudgedSamplesByKind(snapshot, 'prompt');
+}
+
+function buildJudgedScenariosFromSnapshot(snapshot: RunSnapshot): JudgedSample[] {
+	return buildJudgedSamplesByKind(snapshot, 'scenario');
+}
+
+function buildJudgedSamplesByKind(
+	snapshot: RunSnapshot,
+	kind: 'prompt' | 'scenario'
+): JudgedSample[] {
+	const scoreRows = snapshot.scoreRows.filter((row) => hasKind(row, kind));
+	const seedRows = snapshot.seedRows.filter((row) => hasKind(row, kind));
+	const transcriptRows = snapshot.transcriptRows.filter((row) => hasKind(row, kind));
 
 	const seedById = new Map<string, UnifiedSeedRow>();
 	for (const seedRow of seedRows) {
@@ -992,8 +1003,12 @@ export function listAuditRuns(suiteId: string): AuditRunListItem[] {
 	return buildRunListEntries(snapshot).auditRuns;
 }
 
-export function loadJudgedSamples(suiteId: string, runId: string): JudgedSample[] {
-	return buildJudgedSamplesFromSnapshot(loadRunSnapshot(suiteId, runId));
+export function loadJudgedPrompts(suiteId: string, runId: string): JudgedSample[] {
+	return buildJudgedPromptsFromSnapshot(loadRunSnapshot(suiteId, runId));
+}
+
+export function loadJudgedScenarios(suiteId: string, runId: string): JudgedSample[] {
+	return buildJudgedScenariosFromSnapshot(loadRunSnapshot(suiteId, runId));
 }
 
 export function loadAuditScores(suiteId: string, runId: string): AuditScore[] {
@@ -1016,18 +1031,23 @@ export function loadSuitePageData(suiteId: string) {
 	const scenarioSeeds = buildScenarioSeeds(snapshot);
 	const { runs, auditRuns } = buildRunListEntries(snapshot);
 
-	const samplesByRunBehavior: Record<string, Record<string, JudgedSample[]>> = {};
+	const promptsByRunBehavior: Record<string, Record<string, JudgedSample[]>> = {};
+	const scenariosByRunBehavior: Record<string, Record<string, JudgedSample[]>> = {};
 	for (const run of runs) {
-		if (!run.has_judged) continue;
-		const samples = buildJudgedSamplesFromSnapshot(
-			loadRunSnapshot(suiteId, run.run_id, snapshot.seedRows, { includeTranscripts: false })
-		);
-		const grouped: Record<string, JudgedSample[]> = {};
-		for (const sample of samples) {
-			const key = sample.behavior ?? '';
-			(grouped[key] ??= []).push(sample);
+		if (!run.has_judged && !run.has_scenario_scores) continue;
+		const runSnapshot = loadRunSnapshot(suiteId, run.run_id, snapshot.seedRows, {
+			includeTranscripts: false
+		});
+		if (run.has_judged) {
+			promptsByRunBehavior[run.run_id] = groupSamplesByBehavior(
+				buildJudgedPromptsFromSnapshot(runSnapshot)
+			);
 		}
-		samplesByRunBehavior[run.run_id] = grouped;
+		if (run.has_scenario_scores) {
+			scenariosByRunBehavior[run.run_id] = groupSamplesByBehavior(
+				buildJudgedScenariosFromSnapshot(runSnapshot)
+			);
+		}
 	}
 
 	return {
@@ -1038,10 +1058,20 @@ export function loadSuitePageData(suiteId: string) {
 		scenarioSeeds,
 		runs,
 		auditRuns,
-		samplesByRunBehavior,
+		promptsByRunBehavior,
+		scenariosByRunBehavior,
 		dimensionDefs: loadDimensions(),
 		systematization: snapshot.systematization
 	};
+}
+
+function groupSamplesByBehavior(samples: JudgedSample[]): Record<string, JudgedSample[]> {
+	const grouped: Record<string, JudgedSample[]> = {};
+	for (const sample of samples) {
+		const key = sample.behavior ?? '';
+		(grouped[key] ??= []).push(sample);
+	}
+	return grouped;
 }
 
 function loadRunManifestRecord(suiteId: string, runId: string): Manifest | null {
@@ -1134,7 +1164,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		});
 	}
 
-	const samples = resolvedTab === 'prompts' ? buildJudgedSamplesFromSnapshot(runSnapshot) : [];
+	const samples = resolvedTab === 'prompts' ? buildJudgedPromptsFromSnapshot(runSnapshot) : [];
 	const auditScores = resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [];
 	const rolloutPreviewRows =
 		resolvedTab === 'audit' && auditScores.length === 0
@@ -1293,7 +1323,7 @@ export function loadComparePageData(suiteId: string, runIds: string[]) {
 
 	for (const runId of runIds) {
 		const runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows);
-		const samples = buildJudgedSamplesFromSnapshot(runSnapshot);
+		const samples = buildJudgedPromptsFromSnapshot(runSnapshot);
 		if (samples.length === 0) return null;
 
 		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples);

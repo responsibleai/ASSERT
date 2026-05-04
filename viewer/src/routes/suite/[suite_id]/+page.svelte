@@ -5,6 +5,8 @@
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
 
+	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
+
 	let { data } = $props();
 
 	let descExpanded = $state(false);
@@ -13,7 +15,7 @@
 	let panelTab = $state<'definition' | 'seeds' | 'evaluations'>('definition');
 	let selectedCompareRuns = $state<Set<string>>(new Set());
 	let expandedRunIds = $state<Set<string>>(new Set());
-	let behaviorEvalSamples = $state<JudgedSample[]>([]);
+	let behaviorEvalSamples = $state<BehaviorEvalEntry[]>([]);
 	let behaviorEvalError = $state<string | null>(null);
 	let behaviorEvalRunId = $state<string | null>(null);
 	let drawerItem = $state<ViewerResultItem | null>(null);
@@ -126,15 +128,19 @@
 	function loadBehaviorEvalResults(behavior: string) {
 		behaviorEvalError = null;
 		behaviorEvalSamples = [];
-		const promptRun = allRuns.find((run) => run.prompt !== null);
-		if (!promptRun) {
-			behaviorEvalError = 'No prompt evaluation runs available.';
+		const evalRun = allRuns.find((run) => run.prompt !== null || run.audit !== null);
+		if (!evalRun) {
+			behaviorEvalError = 'No evaluation runs available.';
 			return;
 		}
-		const runId = promptRun.prompt_run_id ?? promptRun.run_id;
+		const runId = evalRun.prompt_run_id ?? evalRun.audit_run_id ?? evalRun.run_id;
 		behaviorEvalRunId = runId;
-		const grouped = data.samplesByRunBehavior?.[runId];
-		behaviorEvalSamples = grouped?.[behavior] ?? [];
+		const prompts = data.promptsByRunBehavior?.[runId]?.[behavior] ?? [];
+		const scenarios = data.scenariosByRunBehavior?.[runId]?.[behavior] ?? [];
+		behaviorEvalSamples = [
+			...prompts.map((sample): BehaviorEvalEntry => ({ kind: 'prompt', sample })),
+			...scenarios.map((sample): BehaviorEvalEntry => ({ kind: 'scenario', sample }))
+		];
 	}
 
 	function selectBehavior(name: string) {
@@ -166,17 +172,18 @@
 		return getRecordFlag(sample, 'policy_violation') === true ? 'flagged' : 'compliant';
 	}
 
-	async function openEvalDrawer(sample: JudgedSample, idx: number) {
+	async function openEvalDrawer(entry: BehaviorEvalEntry, idx: number) {
+		const { kind, sample } = entry;
 		if (!behaviorEvalRunId || !sample.seed_id) return;
 		drawerNavIdx = idx;
-		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${sample.seed_id}`;
+		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${kind}:${sample.seed_id}`;
 		if (drawerCache[cacheKey]) {
 			drawerItem = drawerCache[cacheKey];
 			return;
 		}
 		drawerLoading = true;
 		try {
-			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/prompt/${encodeURIComponent(sample.seed_id)}`);
+			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/${kind}/${encodeURIComponent(sample.seed_id)}`);
 			if (!res.ok) throw new Error('Failed to load result');
 			const item = await res.json();
 			drawerCache = { ...drawerCache, [cacheKey]: item };
@@ -492,10 +499,12 @@
 						{:else if behaviorEvalSamples.length === 0}
 							<div class="py-8 text-center"><p class="text-sm text-text-secondary">No evaluation results for this category.</p></div>
 						{:else}
-							{#each behaviorEvalSamples as sample, idx}
+							{#each behaviorEvalSamples as entry, idx}
+								{@const sample = entry.sample}
 								{@const status = sampleComplianceStatus(sample)}
-								<button class="w-full cursor-pointer rounded-lg border border-border bg-bg p-3 text-left transition-colors hover:border-interactive/40 hover:bg-surface" onclick={() => openEvalDrawer(sample, idx)}>
+								<button class="w-full cursor-pointer rounded-lg border border-border bg-bg p-3 text-left transition-colors hover:border-interactive/40 hover:bg-surface" onclick={() => openEvalDrawer(entry, idx)}>
 									<div class="min-w-0 flex-1 space-y-2">
+										<span class="inline-block rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">{entry.kind}</span>
 										<div><span class="text-[10px] font-medium text-text-muted">User prompt</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.prompt}</p></div>
 										{#if sample.response}<div><span class="text-[10px] font-medium text-text-muted">Target response</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.response}</p></div>{/if}
 										<span class="text-xs font-medium {status === 'flagged' ? 'text-score-fail' : status === 'compliant' ? 'text-score-pass' : status === 'error' ? 'text-yellow-500' : 'text-text-muted'}">
