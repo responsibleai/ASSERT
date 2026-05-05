@@ -41,10 +41,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install Python dependencies
         run: |
           pip install uv
           uv pip install --system -e ".[dev]"
+
+      - name: Install viewer npm dependencies
+        # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
+        # sources that import npm packages (e.g. `yaml` in artifacts.ts).
+        # Without `viewer/node_modules` populated the viewer harness fails
+        # with ERR_MODULE_NOT_FOUND.
+        run: npm ci --prefix viewer
 
       - name: Run unit tests
         run: pytest tests/ -x -q
