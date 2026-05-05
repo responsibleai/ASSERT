@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from tests.node_runner import node_ts_args
+
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_ROUTE_SRC = ROOT / "viewer" / "src" / "routes" / "api" / "policy" / "+server.ts"
@@ -16,7 +18,7 @@ class ViewerPolicyApiTest(unittest.TestCase):
         self, *, harness_dir: Path, script: str, env: dict[str, str]
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["node", "--experimental-strip-types", "--input-type=module"],
+            ["node", *node_ts_args(), "--input-type=module"],
             input=script,
             text=True,
             capture_output=True,
