@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from p2m.viewer_read_model import ViewerReadModelBuildError, build_run_viewer_artifacts
-from tests.node_runner import node_ts_args
+from tests.node_runner import node_supports_ts, node_ts_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +22,7 @@ RESULT_VIEW_SRC = ROOT / "viewer" / "src" / "lib" / "result-view.ts"
 TYPES_SRC = ROOT / "viewer" / "src" / "lib" / "types.ts"
 
 
+@unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
 class ViewerServerArtifactsTest(unittest.TestCase):
     def _copy_data_harness(self, harness_dir: Path) -> Path:
         data_path = harness_dir / "data.ts"

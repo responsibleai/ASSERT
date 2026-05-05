@@ -6,13 +6,14 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tests.node_runner import node_ts_args
+from tests.node_runner import node_supports_ts, node_ts_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_ROUTE_SRC = ROOT / "viewer" / "src" / "routes" / "api" / "policy" / "+server.ts"
 
 
+@unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
 class ViewerPolicyApiTest(unittest.TestCase):
     def _run_node(
         self, *, harness_dir: Path, script: str, env: dict[str, str]

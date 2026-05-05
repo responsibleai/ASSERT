@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tests.node_runner import node_ts_args
+from tests.node_runner import node_supports_ts, node_ts_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,7 @@ COMPARE_VIEW_SRC = ROOT / "viewer" / "src" / "lib" / "compare-view.ts"
 JUDGMENT_SRC = ROOT / "viewer" / "src" / "lib" / "judgment.ts"
 
 
+@unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
 class ViewerCompareViewTest(unittest.TestCase):
     def _copy_harness(self, harness_dir: Path) -> Path:
         compare_view_path = harness_dir / "compare-view.ts"

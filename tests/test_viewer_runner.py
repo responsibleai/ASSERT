@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tests.node_runner import node_ts_args
+from tests.node_runner import node_supports_ts, node_ts_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,7 @@ ARTIFACTS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "artifacts.ts"
 CONFIG_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "config.ts"
 
 
+@unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
 class ViewerRunnerTest(unittest.TestCase):
     def _copy_runner_harness(self, harness_dir: Path) -> Path:
         runner_path = harness_dir / "runner.ts"

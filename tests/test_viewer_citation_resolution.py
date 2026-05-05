@@ -4,7 +4,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from tests.node_runner import node_ts_args
+from tests.node_runner import node_supports_ts, node_ts_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +12,7 @@ MODULE_SRC = ROOT / "viewer" / "src" / "lib" / "citation-resolution.ts"
 MARKDOWN_SRC = ROOT / "viewer" / "src" / "lib" / "markdown.ts"
 
 
+@unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
 class ViewerCitationResolutionTest(unittest.TestCase):
     def _run_node(self, script: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
