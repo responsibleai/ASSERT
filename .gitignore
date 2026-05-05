@@ -1,6 +1,11 @@
 # Environments and local config
 .venv/
 .env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+.direnv/
 
 # Python artifacts
 __pycache__/
