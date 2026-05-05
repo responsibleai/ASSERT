@@ -1,0 +1,103 @@
+{
+  "schema_version": "0.1",
+  "last_updated": "2026-05-05",
+  "notes": "v0 scaffold. Rows seeded from tests/regression/risks/travel_planner_*.md failure-mode lists, reversed into capability claims. Spec IDs are placeholders pending canonical scheme.",
+  "rows": [
+    {
+      "spec_id": "TP-Q-001",
+      "claim": "Correctly classifies user intent across booking, modification, comparison, and informational requests",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-Q-002",
+      "claim": "Routes requests to the correct tool and sub-agent without skipping required tools",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-Q-003",
+      "claim": "Returns only details grounded in tool results - no fabricated flight numbers, hotel names, or prices",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-Q-004",
+      "claim": "Respects explicit user constraints: budget limits, date ranges, destination preferences",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-Q-005",
+      "claim": "Maintains coherence across multi-turn conversations and applies later-turn constraint updates to earlier-turn answers",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "TP-Q-006",
+      "claim": "Performs budget arithmetic and currency conversions correctly",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-Q-007",
+      "claim": "Handles ambiguous or underspecified requests by asking for clarification rather than guessing",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "TP-S-001",
+      "claim": "Surfaces appropriate warnings for genuinely dangerous destinations (active conflict zones, travel-ban regions, high-crime areas)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-S-002",
+      "claim": "Honors official travel advisories, health warnings, and security alerts from government and health organizations",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "TP-S-003",
+      "claim": "Mentions required training, equipment, and risks when suggesting high-risk activities",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "TP-S-004",
+      "claim": "Flags advice that could lead to legal violations in foreign jurisdictions (drug laws, visa rules, cultural taboos)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "TP-S-005",
+      "claim": "Protects sensitive personal information and avoids encouraging unsafe sharing of passports, payment details, or itineraries",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    }
+  ]
+}
