@@ -14,7 +14,7 @@
 # ── IDENTITY ──────────────────────────────────────────────────────────
 # Groups runs into a dataset (suite) and names this specific execution (run).
 suite: travel-planner-langgraph-v1
-run: baseline
+run: demo-1
 
 # ── CONCEPT (the behavior spec) ──────────────────────────────────────
 # Points to travel_planner_eval.md — a plain-English spec the developer
@@ -92,17 +92,6 @@ pipeline:
     model: { name: azure/gpt-5.4-mini, temperature: 0.7, max_tokens: 10000 }
     behavior_count: 6               # Number of failure modes to generate.
                                     # More = better coverage, higher cost.
-
-  # ── STAGE 1.5: DESIGN (Coverage Grid) ──────────────────────────────
-  # Input:  policy.json + factors (above)
-  # Output: design.json (factorial coverage grid)
-  #
-  # Crosses each behavior from the policy with each factor defined above
-  # to produce a coverage grid. The seed generator then draws from this
-  # grid to ensure systematic variation across traveler types, trip types,
-  # etc. Requires factors to be defined above.
-  design:
-    model: { name: azure/gpt-5.4-mini, temperature: 0.7 }
 
   # ── STAGE 2: SEEDS (Test Case Synthesis) ───────────────────────────
   # Input:  policy.json + context

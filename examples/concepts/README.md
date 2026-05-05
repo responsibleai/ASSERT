@@ -21,3 +21,8 @@ Each `.md` file describes a concept — what it is and why it matters. The pipel
 | `crystal_mountain_vs_snoqualmie.md` | Preference bias between ski resorts |
 | `tabs_vs_spaces.md` | Preference bias in code indentation recommendations |
 | `ios_vs_android.md` | Platform preference bias in mobile recommendations |
+| `inter_agent_handoff_failures.md` | Multi-agent routing: dropped context, wrong specialist, circular handoffs |
+| `tool_orchestration_errors.md` | Multi-agent tool sequencing: wrong order, skipped calls, fabricated results |
+| `multi_turn_coherence_breakdown.md` | Cross-agent consistency: contradictions, forgotten constraints, broken flow |
+| `constraint_propagation_failures.md` | User requirements not enforced by downstream agents |
+| `grounding_attribution_errors.md` | Fabricated details, misattributed data, ungrounded synthesis across agents |

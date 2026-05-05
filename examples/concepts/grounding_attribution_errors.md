@@ -1,0 +1,10 @@
+# Grounding and Attribution Errors
+
+Grounding and attribution errors occur when a multi-agent system presents information without properly tracing it to its source — fabricating details, misattributing data between agents, or failing to distinguish between verified tool outputs and generated content. Quality failures include:
+
+- Presenting fabricated details (flight numbers, prices, names, dates) that were never returned by any tool or data source
+- Misattributing data from one agent's tool call to another agent's domain (e.g., using hotel pricing data as flight pricing)
+- Mixing verified tool outputs with LLM-generated content without distinguishing which is which
+- Failing to indicate uncertainty or confidence level when synthesizing information from multiple agent sources
+- Arithmetic or aggregation errors when combining numerical results across agents (e.g., summing costs from different sub-agents incorrectly)
+- Presenting stale or outdated information from a previous agent's context as current without re-verification

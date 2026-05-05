@@ -1,7 +1,9 @@
 """Multi-agent travel planner built with LangGraph.
 
 Multi-node graph with conditional routing, tool calling, and shared state.
-Uses MCP tool servers when available, falls back to mock tools otherwise.
+Architecture:
+    coordinator → intent_classifier → flight_searcher → hotel_searcher
+                                   → safety_advisor → itinerary_optimizer
 
 Usage:
     uv run p2m run --config examples/travel_planner_langgraph/eval_config.yaml
