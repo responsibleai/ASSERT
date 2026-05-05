@@ -9,7 +9,7 @@ dependencies = [
   "litellm>=1.79.1",
   "matplotlib>=3.10.8",
   "pydantic>=2.0",
-  "python-dotenv>=1.2.1",
+  "python-dotenv>=1.2.2",
   "PyYAML>=6.0",
   "rapidfuzz>=3.9.0",
   "rich>=13.7.0",
@@ -61,7 +61,7 @@ all = [
   "p2m-policy[otel,langgraph,analysis,examples,regression]",
 ]
 dev = [
-  "pytest>=7.0.0",
+  "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
 ]
 
@@ -77,7 +77,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "p2m-policy[otel,langgraph,examples]",
 ]
 
