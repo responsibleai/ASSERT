@@ -61,7 +61,7 @@ all = [
   "p2m-policy[otel,langgraph,analysis,examples,regression]",
 ]
 dev = [
-  "pytest>=7.0.0",
+  "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
 ]
 
@@ -77,7 +77,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "p2m-policy[otel,langgraph,examples]",
 ]
 
