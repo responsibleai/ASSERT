@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 import sys
 import time
 import traceback
@@ -64,13 +65,23 @@ def _write_suite_metadata(ctx: dict[str, Any]) -> None:
 
 def _build_manifest(ctx: dict[str, Any]) -> RunManifest:
     """Build the initial run manifest."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = None
     return RunManifest(
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=now,
+        pid=os.getpid(),
+        host=host,
+        heartbeat_at=now,
     )
 
 
 def _write_manifest(manifest: RunManifest, run_root: Path) -> None:
-    """Persist manifest to disk."""
+    """Persist manifest to disk, refreshing heartbeat_at on every write."""
+    if manifest.status == "running":
+        manifest.heartbeat_at = datetime.now(timezone.utc).isoformat()
     manifest_path = run_root / "manifest.json"
     write_json(manifest_path, manifest.to_dict())
 

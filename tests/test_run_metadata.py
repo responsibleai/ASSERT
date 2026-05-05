@@ -228,9 +228,10 @@ class RunnerManifestTest(unittest.TestCase):
             suite_meta = json.loads(
                 (root / "results" / "suite-a" / "suite.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(
-                sorted(manifest.keys()),
-                ["ended_at", "stages", "started_at", "status"],
+            manifest_keys = set(manifest.keys())
+            self.assertGreaterEqual(
+                manifest_keys,
+                {"ended_at", "stages", "started_at", "status"},
             )
             self.assertEqual(manifest["stages"]["judge"], "completed")
             self.assertEqual(manifest["status"], "completed")
@@ -243,6 +244,61 @@ class RunnerManifestTest(unittest.TestCase):
             saved_config = root / "results" / "suite-a" / "run-a" / "config.yaml"
             self.assertTrue(saved_config.exists())
             self.assertEqual(saved_config.read_text(encoding="utf-8"), cfg_path.read_text(encoding="utf-8"))
+
+    def test_run_pipeline_records_pid_host_and_heartbeat(self) -> None:
+        """Manifest carries pid/host/heartbeat_at so the viewer can detect abandoned runs."""
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            cfg_path = root / "config.yaml"
+            suite_root = root / "results" / "suite-a"
+            suite_root.mkdir(parents=True)
+            transcripts_path = suite_root / "transcripts.jsonl"
+            transcripts_path.write_text(
+                '{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8"
+            )
+            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        "suite: suite-a",
+                        "run: run-a",
+                        f"results_dir: {root / 'results'}",
+                        "concept:",
+                        "  name: harmful_medical_advice",
+                        "pipeline:",
+                        "  judge:",
+                        "    model:",
+                        "      name: azure/gpt-5.4",
+                        f"    transcripts_path: {transcripts_path}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+
+            async def fake_run_judge(**_: object) -> dict[str, str]:
+                run_root = root / "results" / "suite-a" / "run-a"
+                run_root.mkdir(parents=True, exist_ok=True)
+                scores = run_root / "scores.jsonl"
+                scores.write_text("", encoding="utf-8")
+                return {"scores_path": str(scores)}
+
+            with patch("p2m.stages.judge.run_judge", new=fake_run_judge):
+                rc = run_pipeline(config=str(cfg_path))
+
+            self.assertEqual(rc, 0)
+            manifest = json.loads(
+                (root / "results" / "suite-a" / "run-a" / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("pid", manifest)
+            self.assertIsInstance(manifest["pid"], int)
+            self.assertGreater(manifest["pid"], 0)
+            self.assertIn("host", manifest)
+            self.assertIsInstance(manifest["host"], str)
+            self.assertGreater(len(manifest["host"]), 0)
+            self.assertIn("heartbeat_at", manifest)
+            self.assertIsInstance(manifest["heartbeat_at"], str)
+            self.assertIn("T", manifest["heartbeat_at"])
 
 
 if __name__ == "__main__":

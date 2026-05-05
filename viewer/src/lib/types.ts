@@ -91,6 +91,9 @@ export interface Manifest {
 	started_at?: string;
 	ended_at?: string;
 	stages?: Record<string, StageStatus>;
+	pid?: number;
+	host?: string;
+	heartbeat_at?: string;
 }
 
 export interface NodeJudgment {
