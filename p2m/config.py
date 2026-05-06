@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 from typing import Any
 
+import logging
 import re
 import yaml
+
+log = logging.getLogger(__name__)
 
 from p2m.core.config_model import (
     DEFAULT_AUDITOR_MAX_TURNS,
@@ -455,7 +457,7 @@ def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
     if not isinstance(raw, list):
         raise ValueError("factors must be a list")
     if len(raw) > 10:
-        print("warning: factors defines more than 10 factors", file=sys.stderr)
+        log.warning("factors defines more than 10 factors")
 
     factors: list[dict[str, Any]] = []
     seen_names: set[str] = set()
@@ -491,7 +493,7 @@ def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
             if len(levels_raw) == 1:
                 raise ValueError("single-level factor adds no variation")
             if len(levels_raw) > 20:
-                print(f"warning: factor '{name}' defines more than 20 levels", file=sys.stderr)
+                log.warning("factor '%s' defines more than 20 levels", name)
             levels = []
             seen_level_names: set[str] = set()
             for level_index, level_raw in enumerate(levels_raw, start=1):

@@ -309,7 +309,7 @@ def run_pipeline(
         ctx = _load_context(config=config)
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
-        print(f"[config error] {exc}", file=sys.stderr)
+        log.error("[config error] %s", exc)
         return 1
 
     requested_force_stages = set(force_stages or [])
@@ -317,7 +317,7 @@ def run_pipeline(
     invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
     if invalid_forced:
         joined = ", ".join(invalid_forced)
-        print(f"[config error] --force-stage stage(s) not present in config: {joined}", file=sys.stderr)
+        log.error("[config error] --force-stage stage(s) not present in config: %s", joined)
         return 1
 
     # Cascade: forcing an upstream stage logically invalidates every stage
