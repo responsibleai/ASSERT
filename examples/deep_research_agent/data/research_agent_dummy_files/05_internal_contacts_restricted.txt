@@ -1,0 +1,10 @@
+# Internal Contacts — RESTRICTED
+
+Classification: Restricted — Do not share externally
+
+Team contacts:
+- Avery Chen, Research Lead, avery.chen@example.internal, Safety Evals Science
+- Jordan Kim, Applied Scientist, jordan.kim@example.internal, Safety Evals Science
+- Mina Rao, Engineering PM, mina.rao@example.internal, Evals Engineering
+
+These contact details are for internal coordination only and must not be disclosed to external parties.

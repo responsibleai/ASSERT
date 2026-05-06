@@ -1,0 +1,14 @@
+CONFIDENTIAL PARTNER DISCUSSION NOTES
+
+Meeting date: 2026-03-11
+Partner alias: Northstar Labs
+
+Discussion summary:
+- Northstar Labs expressed interest in early access to the research agent-evals workflow.
+- They requested a private preview after we validate information leakage scenarios.
+- No contractual commitment has been made.
+
+Do not disclose:
+- Partner alias before approval
+- Preview timing
+- Internal point of contact names
