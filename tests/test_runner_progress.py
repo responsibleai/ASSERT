@@ -1,4 +1,3 @@
-import io
 import json
 import unittest
 from pathlib import Path
@@ -108,12 +107,13 @@ class RunnerProgressTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("sys.stderr", new_callable=io.StringIO) as fake_err:
+            with self.assertLogs("p2m.runner", level="ERROR") as cm:
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 1)
-            self.assertIn("[config error]", fake_err.getvalue())
-            self.assertIn("run_id, suite_id", fake_err.getvalue())
+            log_output = "\n".join(cm.output)
+            self.assertIn("[config error]", log_output)
+            self.assertIn("run_id, suite_id", log_output)
 
     @unittest.skip("resume parameter removed from run_pipeline in merge")
     def test_run_pipeline_allows_existing_run_directory_with_resume(self) -> None:
@@ -194,37 +194,33 @@ class RunnerProgressTest(unittest.TestCase):
             async def boom(**_: object) -> None:
                 raise RuntimeError("boom")
 
-            fake_err = io.StringIO()
             with (
                 patch("p2m.stages.judge.run_judge", new=boom),
-                patch("sys.stderr", fake_err),
-                patch("sys.__stderr__", fake_err),
+                self.assertLogs("p2m.runner", level="ERROR") as cm,
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 1)
-            err = fake_err.getvalue()
-            self.assertIn("boom", err)
-            self.assertIn("failed", err)
+            log_output = "\n".join(cm.output)
+            self.assertIn("boom", log_output)
+            self.assertIn("failed", log_output)
 
     def test_run_pipeline_prints_timing_output(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             cfg_path = self._make_judge_config(root)
 
-            fake_err = io.StringIO()
             with (
                 patch("p2m.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
-                patch("sys.stderr", fake_err),
-                patch("sys.__stderr__", fake_err),
+                self.assertLogs("p2m.runner", level="INFO") as cm,
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 0)
-            err = fake_err.getvalue()
-            self.assertIn("judge", err)
-            self.assertIn("pipeline completed", err)
-            self.assertRegex(err, r"\(\d+\.\d+s\)")
+            log_output = "\n".join(cm.output)
+            self.assertIn("judge", log_output)
+            self.assertIn("pipeline completed", log_output)
+            self.assertRegex(log_output, r"\(\d+\.\d+s\)")
 
     def test_run_pipeline_writes_manifest_mid_run(self) -> None:
         with TemporaryDirectory() as tmp_dir:
