@@ -167,6 +167,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     concept_text = ctx.get("concept") or ""
     context = ctx.get("context")
 
+    from p2m.core.async_utils import log_heartbeat
     from p2m.core.config_model import ModelConfig as SysModelConfig
     from p2m.stages.systematization import run_systematization
     from p2m.stages.systematization_convert import run_systematization_to_policy
@@ -179,16 +180,17 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
     log.debug(f"policy: model={model_cfg.name}, behavior_count={behavior_count}, web_search={web_search}")
-    log.info("  [1/2] Researching risk taxonomy...")
-    await run_systematization(
-        concept=concept_name,
-        concept_text=concept_text,
-        save_path=sys_path,
-        model_cfg=sys_model_cfg,
-        web_search=web_search,
-        context=context,
-    )
-    log.info("  [1/2] Risk taxonomy complete")
+    log.info("[1/2] Researching risk taxonomy...")
+    async with log_heartbeat("[1/2] Researching risk taxonomy"):
+        await run_systematization(
+            concept=concept_name,
+            concept_text=concept_text,
+            save_path=sys_path,
+            model_cfg=sys_model_cfg,
+            web_search=web_search,
+            context=context,
+        )
+    log.info("[1/2] Risk taxonomy complete")
 
     policy_path_str = str(Path(cfg["save_dir"]) / "policy.json")
     convert_model_cfg = SysModelConfig(
@@ -197,13 +199,14 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         max_tokens=model_cfg.max_tokens or DEFAULT_POLICY_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
     )
-    log.info("  [2/2] Converting to structured policy...")
-    await run_systematization_to_policy(
-        systematization_path=sys_path,
-        save_path=policy_path_str,
-        model_cfg=convert_model_cfg,
-        behavior_count_hint=behavior_count,
-    )
+    log.info("[2/2] Converting to structured policy...")
+    async with log_heartbeat("[2/2] Converting to structured policy"):
+        await run_systematization_to_policy(
+            systematization_path=sys_path,
+            save_path=policy_path_str,
+            model_cfg=convert_model_cfg,
+            behavior_count_hint=behavior_count,
+        )
 
     return {
         "policy_dir": cfg["save_dir"],

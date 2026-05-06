@@ -101,7 +101,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         model_suffix = f" ({policy_model})" if policy_model else ""
         log.info(f'  Generating behavior taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
-        log.info(f"  Refining policy structure...")
+        log.info(f"Refining policy structure...")
     elif stage_name == "design":
         level_count = raw_cfg.get("level_count")
         factor_count = 0
@@ -117,11 +117,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             design_model = raw_cfg["model"].get("name", "")
         model_suffix = f" ({design_model})" if design_model else ""
         if level_count and factor_count:
-            log.info(f"  Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...")
+            log.info(f"Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...")
         elif factor_count:
-            log.info(f"  Designing seed-coverage grid: {total_factors} factors{model_suffix}...")
+            log.info(f"Designing seed-coverage grid: {total_factors} factors{model_suffix}...")
         else:
-            log.info(f"  Designing seed-coverage grid (behavior factor only){model_suffix}...")
+            log.info(f"Designing seed-coverage grid (behavior factor only){model_suffix}...")
     elif stage_name == "seeds":
         prompt_budget = 0
         scenario_budget = 0
@@ -160,7 +160,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
                 seed_models.add(kind_cfg["model"].get("name", ""))
         seed_models.discard("")
         model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
-        log.info(f"  Generating test cases{detail}{model_suffix}...")
+        log.info(f"Generating test cases{detail}{model_suffix}...")
     elif stage_name == "rollout":
         target = ctx.get("target")
         target_name = ""
@@ -172,11 +172,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if isinstance(raw_cfg.get("auditor"), dict) and isinstance(raw_cfg["auditor"].get("model"), dict):
             auditor_name = raw_cfg["auditor"]["model"].get("name", "")
         if auditor_name and target_name:
-            log.info(f"  Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
+            log.info(f"Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
         elif target_name:
-            log.info(f"  Running test cases against target ({target_name})...")
+            log.info(f"Running test cases against target ({target_name})...")
         else:
-            log.info(f"  Running test cases against target...")
+            log.info(f"Running test cases against target...")
     elif stage_name == "judge":
         eval_cfg = ctx.get("evaluation")
         judge_model_obj = eval_cfg.judge.model if eval_cfg else None
@@ -189,11 +189,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         else:
             judge_model = ""
         if judge_model:
-            log.info(f"  Scoring transcripts with judge ({judge_model})...")
+            log.info(f"Scoring transcripts with judge ({judge_model})...")
         else:
-            log.info(f"  Scoring transcripts...")
+            log.info(f"Scoring transcripts...")
     else:
-        log.info(f"  {stage_name}...")
+        log.info(f"{stage_name}...")
 
 
 def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] | None) -> None:
@@ -207,18 +207,18 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            log.info(f"  \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)")
+            log.info(f"\u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)")
         else:
-            log.info(f"  \u2713 Generated policy ({elapsed:.1f}s)")
+            log.info(f"\u2713 Generated policy ({elapsed:.1f}s)")
     elif stage_name == "design":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
             sizes_text = ", ".join(
                 f"{name}={size}" for name, size in factor_sizes.items()
             )
-            log.info(f"  \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)")
+            log.info(f"\u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)")
         else:
-            log.info(f"  \u2713 Designed coverage grid ({elapsed:.1f}s)")
+            log.info(f"\u2713 Designed coverage grid ({elapsed:.1f}s)")
     elif stage_name == "seeds":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
@@ -229,7 +229,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if scenarios:
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
-        log.info(f"  \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)")
+        log.info(f"\u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)")
     elif stage_name == "rollout":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
@@ -240,7 +240,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        log.info(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
+        log.info(f"\u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -257,9 +257,9 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        log.info(f"  \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)")
+        log.info(f"\u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)")
     else:
-        log.info(f"  {stage_name} done ({elapsed:.1f}s)")
+        log.info(f"{stage_name} done ({elapsed:.1f}s)")
 
 
 def run_pipeline(
@@ -352,7 +352,7 @@ def run_pipeline(
         if module.SCOPE == "suite" and module.SUITE_OUTPUT and stage_name not in requested_force_stages:
             output_path = Path(ctx["suite_root"]) / module.SUITE_OUTPUT
             if output_path.exists():
-                log.info(f"  Skipping {stage_name} (output already exists, use --force-stage {stage_name} to regenerate)")
+                log.info(f"Skipping {stage_name} (output already exists, use --force-stage {stage_name} to regenerate)")
                 continue
 
         stages_to_run.append((stage_name, module, raw_cfg))
@@ -422,21 +422,21 @@ def run_pipeline(
 
     total_elapsed = time.monotonic() - pipeline_start
     if failed_stage is None:
-        log.info(f"  pipeline completed ({total_elapsed:.1f}s)")
+        log.info(f"pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
-            log.info(f"\n  Results:")
+            log.info("Results:")
             scores_path = run_root / "scores.jsonl"
             metrics_path = run_root / "metrics.json"
             if scores_path.exists():
-                log.info(f"    Scores:  {scores_path}")
+                log.info(f"  Scores:  {scores_path}")
             if metrics_path.exists():
-                log.info(f"    Metrics: {metrics_path}")
-            log.info(f"    Run dir: {run_root}")
+                log.info(f"  Metrics: {metrics_path}")
+            log.info(f"  Run dir: {run_root}")
             suite_id = ctx.get('suite_id', '')
             run_id = ctx.get('run_id', '')
             if suite_id and run_id:
-                log.info(f"\n  Inspect results:")
-                log.info(f"    uv run p2m results status {suite_id} {run_id}")
+                log.info("Inspect results:")
+                log.info(f"  uv run p2m results status {suite_id} {run_id}")
     else:
         log.error(f"pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
