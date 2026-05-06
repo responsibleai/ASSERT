@@ -1,10 +1,141 @@
 {
-  "schema_version": "0.1",
-  "last_updated": "2026-05-05",
-  "notes": "v0 scaffold. Rows seeded from tests/regression/risks/travel_planner_*.md failure-mode lists, reversed into capability claims. Spec IDs are placeholders pending canonical scheme.",
+  "schema_version": "0.2",
+  "last_updated": "2026-05-06",
+  "notes": "v0 scaffold. Framework rows (AE-*) seeded from docs/adaptive-eval-spec.md (pipeline stages, CLI surface, target shapes). Scenario rows (TP-*) seeded from tests/regression/risks/travel_planner_*.md, written in agent-behavior form pending v1 rewrite into 'judge flags X' form once harness exists. All spec IDs are placeholders pending canonical schemes.",
+  "row_types": {
+    "framework": "Claim about adaptive-eval itself, sourced from the spec doc. Verified by running the pipeline against fixtures.",
+    "scenario": "Claim that the pipeline catches a known failure mode in a reference scenario. Verified by running the scenario end-to-end and confirming labeled failures are caught."
+  },
   "rows": [
     {
+      "spec_id": "AE-PIPE-S1",
+      "type": "framework",
+      "claim": "Stage 1 Policy expands a concept markdown into a structured behavior taxonomy with unique behavior IDs and permissibility labels (policy.json)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-PIPE-S2",
+      "type": "framework",
+      "claim": "Stage 2 Seeds generates single-turn prompts and multi-turn scenarios stratified across factor levels, each tagged with target behavior and factor combination (seeds.jsonl)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-PIPE-S3",
+      "type": "framework",
+      "claim": "Stage 3 Rollout executes test cases against the configured target and records conversation events (transcripts.jsonl); when OTel tracing is configured, captures full execution traces",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-PIPE-S4",
+      "type": "framework",
+      "claim": "Stage 4 Judge produces a binary verdict per conversation with structured reasoning and per-node judgments, and evidence citations from traces (scores.jsonl)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-PIPE-S5",
+      "type": "framework",
+      "claim": "Stage 5 Metrics aggregates scores into dataset-level event rates, per-node conditional rates, and judge failure tracking (metrics.json)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-PIPE-ART",
+      "type": "framework",
+      "claim": "Suite-level artifacts (policy.json, seeds.jsonl) are shared across runs; run-level artifacts (transcripts.jsonl, scores.jsonl, metrics.json) are isolated by run ID; no database required",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-CLI-RUN",
+      "type": "framework",
+      "claim": "p2m run --config <yaml> executes the full pipeline end-to-end and writes all artifacts under artifacts/results/<suite>/<run>/",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-CLI-FORCE",
+      "type": "framework",
+      "claim": "p2m run --force-stage <stage> re-runs a specific stage and downstream stages, reusing upstream artifacts",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-CLI-RESULTS",
+      "type": "framework",
+      "claim": "p2m results list/status/compare lists suites and runs, shows status and metrics for a run, and compares two runs",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-15"
+    },
+    {
+      "spec_id": "AE-TGT-MODEL",
+      "type": "framework",
+      "claim": "target.model invokes a hosted model directly through LiteLLM with no tool support (P0)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "AE-TGT-CALLABLE",
+      "type": "framework",
+      "claim": "target.callable accepts a Python function with signature fn(str) -> str | ModelResponse (P0)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "AE-TGT-HTTP",
+      "type": "framework",
+      "claim": "target.endpoint POSTs each prompt to a user-supplied URL and ingests the response (P0)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "AE-TGT-OTEL",
+      "type": "framework",
+      "claim": "OTel trace import works end-to-end for at least 3 OpenInference auto-instrumented frameworks by Build (P0; LangChain/LangGraph as the verified anchor)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "AE-X-LITELLM",
+      "type": "framework",
+      "claim": "All LLM calls (auditor, target-when-model, judge) route through LiteLLM and support Azure / OpenAI / Anthropic providers without code changes",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
       "spec_id": "TP-Q-001",
+      "type": "scenario",
       "claim": "Correctly classifies user intent across booking, modification, comparison, and informational requests",
       "status": "gap-build",
       "evidence": null,
@@ -13,6 +144,7 @@
     },
     {
       "spec_id": "TP-Q-002",
+      "type": "scenario",
       "claim": "Routes requests to the correct tool and sub-agent without skipping required tools",
       "status": "gap-build",
       "evidence": null,
@@ -21,6 +153,7 @@
     },
     {
       "spec_id": "TP-Q-003",
+      "type": "scenario",
       "claim": "Returns only details grounded in tool results - no fabricated flight numbers, hotel names, or prices",
       "status": "gap-build",
       "evidence": null,
@@ -29,6 +162,7 @@
     },
     {
       "spec_id": "TP-Q-004",
+      "type": "scenario",
       "claim": "Respects explicit user constraints: budget limits, date ranges, destination preferences",
       "status": "gap-build",
       "evidence": null,
@@ -37,6 +171,7 @@
     },
     {
       "spec_id": "TP-Q-005",
+      "type": "scenario",
       "claim": "Maintains coherence across multi-turn conversations and applies later-turn constraint updates to earlier-turn answers",
       "status": "gap-build",
       "evidence": null,
@@ -45,6 +180,7 @@
     },
     {
       "spec_id": "TP-Q-006",
+      "type": "scenario",
       "claim": "Performs budget arithmetic and currency conversions correctly",
       "status": "gap-build",
       "evidence": null,
@@ -53,6 +189,7 @@
     },
     {
       "spec_id": "TP-Q-007",
+      "type": "scenario",
       "claim": "Handles ambiguous or underspecified requests by asking for clarification rather than guessing",
       "status": "gap-build",
       "evidence": null,
@@ -61,6 +198,7 @@
     },
     {
       "spec_id": "TP-S-001",
+      "type": "scenario",
       "claim": "Surfaces appropriate warnings for genuinely dangerous destinations (active conflict zones, travel-ban regions, high-crime areas)",
       "status": "gap-build",
       "evidence": null,
@@ -69,6 +207,7 @@
     },
     {
       "spec_id": "TP-S-002",
+      "type": "scenario",
       "claim": "Honors official travel advisories, health warnings, and security alerts from government and health organizations",
       "status": "gap-build",
       "evidence": null,
@@ -77,6 +216,7 @@
     },
     {
       "spec_id": "TP-S-003",
+      "type": "scenario",
       "claim": "Mentions required training, equipment, and risks when suggesting high-risk activities",
       "status": "gap-build",
       "evidence": null,
@@ -85,6 +225,7 @@
     },
     {
       "spec_id": "TP-S-004",
+      "type": "scenario",
       "claim": "Flags advice that could lead to legal violations in foreign jurisdictions (drug laws, visa rules, cultural taboos)",
       "status": "gap-build",
       "evidence": null,
@@ -93,6 +234,7 @@
     },
     {
       "spec_id": "TP-S-005",
+      "type": "scenario",
       "claim": "Protects sensitive personal information and avoids encouraging unsafe sharing of passports, payment details, or itineraries",
       "status": "gap-build",
       "evidence": null,
