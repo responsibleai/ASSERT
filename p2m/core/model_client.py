@@ -6,6 +6,8 @@ import asyncio
 import importlib
 import json
 import logging
+import random
+import time
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Mapping, Sequence
 
@@ -108,6 +110,7 @@ class GenerateOptions:
     reasoning_effort: str | None = None
     tool_choice: str | dict[str, Any] | None = None
     timeout_s: float | None = None
+    call_label: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -389,6 +392,10 @@ def _get_litellm_module() -> Any:
             ) from exc
         # Silence noisy litellm warnings that pollute stderr
         _LITELLM_MODULE.suppress_debug_info = True
+        # Disable LiteLLM's internal retry so _with_retries is the
+        # sole retry layer — avoids double-retry and lets the
+        # coordinated per-model cooldown work correctly.
+        _LITELLM_MODULE.num_retries = 0
     return _LITELLM_MODULE
 
 
@@ -420,24 +427,76 @@ class LLMProviderError(Exception):
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
-    """Wrap litellm exceptions into categorized errors."""
+    """Wrap litellm exceptions into categorized errors.
+
+    LiteLLM maps provider HTTP errors to OpenAI-compatible exception types.
+    We re-classify them into four categories that drive retry behaviour in
+    ``_with_retries``.  The mapping below is based on the LiteLLM exception
+    table (https://docs.litellm.ai/docs/exception_mapping).
+
+    HTTP   LiteLLM exception                       → p2m class (retried?)
+    ─────  ──────────────────────────────────────── ─────────────────────────
+    400    BadRequestError                          → LLMInputError  (no)
+           ├─ ContextWindowExceededError            → LLMInputError  (no)
+           ├─ ContentPolicyViolationError           → LLMInputError  (no)
+           ├─ UnsupportedParamsError                → LLMInputError  (no)
+           └─ ImageFetchError                       → LLMInputError  (no)
+    401    AuthenticationError                      → LLMAuthError   (no)
+    403    PermissionDeniedError                    → LLMAuthError   (no)
+    404    NotFoundError                            → LLMInputError  (no)
+    408    Timeout  (inherits APIConnectionError)   → LLMProviderError (yes)
+    422    UnprocessableEntityError                 → LLMInputError  (no)
+    429    RateLimitError                           → LLMRateLimitError (yes, coordinated)
+    500    APIError / APIConnectionError            → LLMProviderError (yes)
+    503    ServiceUnavailableError (inherits APIError) → LLMProviderError (yes)
+    ≥500   InternalServerError (inherits APIError)  → LLMProviderError (yes)
+    N/A    APIResponseValidationError               → LLMInputError  (no)
+    N/A    BudgetExceededError                      → (falls through as-is)
+
+    Check order matters: specific subclasses must be tested before their
+    bases (e.g. NotFoundError before APIError, since NotFoundError inherits
+    from APIStatusError → APIError on some providers).
+    """
     litellm = _get_litellm_module()
+    # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         err = LLMAuthError(f"Authentication failed: {exc}")
         err.__cause__ = exc
         return err
+    # 403 — insufficient permissions
+    if isinstance(exc, getattr(litellm, "PermissionDeniedError", ())):
+        err = LLMAuthError(f"Permission denied: {exc}")
+        err.__cause__ = exc
+        return err
+    # 429 — rate limited (retryable with coordinated backoff)
     if isinstance(exc, litellm.RateLimitError):
         err = LLMRateLimitError(f"Rate limited: {exc}")
         err.__cause__ = exc
         return err
+    # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
     if isinstance(exc, litellm.BadRequestError):
         err = LLMInputError(f"Bad request: {exc}")
         err.__cause__ = exc
         return err
+    # 404 — model/deployment not found
     if isinstance(exc, litellm.NotFoundError):
         err = LLMInputError(f"Model/deployment not found: {exc}")
         err.__cause__ = exc
         return err
+    # 422 — unprocessable entity
+    if isinstance(exc, getattr(litellm, "UnprocessableEntityError", ())):
+        err = LLMInputError(f"Unprocessable entity: {exc}")
+        err.__cause__ = exc
+        return err
+    # N/A — response schema validation failure
+    if isinstance(exc, getattr(litellm, "APIResponseValidationError", ())):
+        err = LLMInputError(f"Response validation failed: {exc}")
+        err.__cause__ = exc
+        return err
+    # 500/503/≥500/timeout/connection — retryable provider errors
+    # This is the catch-all for APIError, APIConnectionError,
+    # InternalServerError, ServiceUnavailableError, and Timeout
+    # (all inherit from APIError or APIConnectionError).
     if isinstance(exc, (litellm.APIError, litellm.APIConnectionError)):
         err = LLMProviderError(f"Provider error: {exc}")
         err.__cause__ = exc
@@ -549,6 +608,180 @@ __all__ = [
 ]
 
 
+# ── Per-model adaptive rate limiter ────────────────────────────
+
+_MAX_RETRIES = 5
+_INITIAL_BACKOFF_S = 1.0
+_MAX_BACKOFF_S = 120.0
+_DEFAULT_COOLDOWN_S = 2.0
+
+
+def _extract_retry_after(exc: Exception) -> float | None:
+    """Try to extract Retry-After seconds from a rate limit error."""
+    for source in (exc, getattr(exc, "__cause__", None)):
+        if source is None:
+            continue
+        for attr in ("headers", "response_headers"):
+            headers = getattr(source, attr, None)
+            if not headers:
+                continue
+            value = headers.get("Retry-After") or headers.get("retry-after")
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    pass
+    return None
+
+
+class _ModelRateLimiter:
+    """Coordinated per-model cooldown.
+
+    When *any* task receives a 429 for a model, a cooldown timestamp is
+    set.  All tasks calling that model wait until the cooldown expires
+    before issuing the next request, preventing the thundering-herd
+    pattern where N concurrent tasks all retry into the same wall.
+
+    To avoid a *stampede at cooldown expiry* (all waiters resuming at
+    the same instant), ``wait_if_cooled`` adds per-task jitter that
+    spreads wake-ups over the cooldown window.
+
+    Escalation logic: only escalate the base cooldown when a 429 arrives
+    **after** the previous cooldown has fully expired — meaning the
+    cooldown was too short.  Concurrent 429s that arrive while a cooldown
+    is already active are from in-flight requests sent before the cooldown
+    was set, so they just extend the existing cooldown without escalating.
+    On any successful call, the escalation level resets.
+    """
+
+    def __init__(self) -> None:
+        self._cooldown_until: dict[str, float] = {}
+        self._base_cooldown: dict[str, float] = {}
+        self._lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def wait_if_cooled(self, model: str) -> None:
+        """Block until the cooldown for *model* has expired, with jitter."""
+        until = self._cooldown_until.get(model, 0.0)
+        delay = until - time.monotonic()
+        if delay > 0:
+            # Spread wake-ups: each task adds random jitter so they
+            # don't all resume at the exact cooldown expiry.
+            jitter = random.uniform(0, max(delay * 0.5, 0.5))
+            total = delay + jitter
+            log.info("Rate limiter: waiting %.1fs (%.1fs + %.1fs jitter) for model %s cooldown", total, delay, jitter, model)
+            await asyncio.sleep(total)
+
+    async def report_rate_limit(
+        self, model: str, retry_after: float | None = None,
+    ) -> bool:
+        """Record a 429 and set or extend a cooldown for *model*.
+
+        Returns ``True`` if this call initiated or escalated the cooldown
+        (the caller should log at WARNING level).  Returns ``False`` for
+        concurrent in-flight 429s during an active cooldown — these are
+        absorbed silently to avoid log spam.
+
+        Escalation only happens when the previous cooldown already
+        expired — this means we retried and *still* got 429, so the
+        base cooldown was too short.  Concurrent in-flight 429s during
+        an active cooldown are absorbed without escalating.
+        """
+        now = time.monotonic()
+        async with self._get_lock():
+            current_until = self._cooldown_until.get(model, 0.0)
+            base = self._base_cooldown.get(model, _DEFAULT_COOLDOWN_S)
+
+            if retry_after is not None:
+                # Server told us how long — trust it and adopt as base.
+                wait_s = min(retry_after, _MAX_BACKOFF_S)
+                self._base_cooldown[model] = wait_s
+                is_new = True
+            elif current_until <= now:
+                # Cooldown expired and we still got 429 → escalate base.
+                wait_s = min(base * 2, _MAX_BACKOFF_S)
+                self._base_cooldown[model] = wait_s
+                is_new = True
+            else:
+                # Active cooldown — concurrent in-flight request, don't
+                # escalate.  Just extend if needed using current base.
+                wait_s = base
+                is_new = False
+
+            new_until = now + wait_s
+            if new_until > current_until:
+                self._cooldown_until[model] = new_until
+                if is_new:
+                    log.warning(
+                        "Rate limiter: model %s cooled down for %.1fs", model, wait_s,
+                    )
+            return is_new
+
+    def report_success(self, model: str) -> None:
+        """Reset escalation state after a successful call."""
+        self._base_cooldown.pop(model, None)
+
+
+_rate_limiter = _ModelRateLimiter()
+
+
+async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -> Any:
+    """Retry an async LLM call with coordinated backoff on retryable errors.
+
+    On ``LLMRateLimitError`` the global per-model cooldown is set and
+    all concurrent tasks for that model pause via ``wait_if_cooled``.
+    The individual per-attempt exponential backoff is only applied for
+    non-rate-limit retryable errors (e.g. 5xx); for 429s the
+    coordinated cooldown (with jitter) is the sole wait mechanism,
+    preventing the stampede-at-expiry pattern.
+    """
+    tag = f" [{label}]" if label else ""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        await _rate_limiter.wait_if_cooled(model)
+        try:
+            result = await call_fn()
+            _rate_limiter.report_success(model)
+            return result
+        except Exception as exc:
+            classified = _classify_llm_error(exc)
+            if attempt < _MAX_RETRIES and isinstance(classified, (LLMRateLimitError, LLMProviderError)):
+                last_exc = classified
+                if isinstance(classified, LLMRateLimitError):
+                    retry_after = _extract_retry_after(exc)
+                    is_new = await _rate_limiter.report_rate_limit(model, retry_after)
+                    if is_new:
+                        log.warning(
+                            "%s%s (attempt %d/%d), waiting for coordinated cooldown: %s",
+                            model, tag, attempt + 1, _MAX_RETRIES + 1, classified,
+                        )
+                    else:
+                        log.debug(
+                            "%s%s (attempt %d/%d), in-flight 429 during active cooldown",
+                            model, tag, attempt + 1, _MAX_RETRIES + 1,
+                        )
+                    # Skip individual backoff — the coordinated cooldown
+                    # (checked at loop top) handles the wait with jitter.
+                    continue
+                # Non-rate-limit retryable error (5xx): individual backoff.
+                backoff = min(_INITIAL_BACKOFF_S * (2 ** attempt), _MAX_BACKOFF_S)
+                jitter = random.uniform(0, backoff * 0.5)
+                wait_s = backoff + jitter
+                log.warning(
+                    "%s%s (attempt %d/%d), retrying in %.1fs: %s",
+                    model, tag, attempt + 1, _MAX_RETRIES + 1, wait_s, classified,
+                )
+                await asyncio.sleep(wait_s)
+                continue
+            raise classified from exc
+    assert last_exc is not None
+    raise last_exc
+
+
 async def generate(
     model: str,
     messages: str | Sequence[MessageLike],
@@ -559,30 +792,33 @@ async def generate(
     litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     log.debug(f"generate: model={model}, api_mode={api_mode}")
-    try:
-        if resolved_options.web_search:
-            payload = _build_responses_payload(model, messages, resolved_options)
-            payload["tools"] = [{"type": "web_search_preview"}]
-            responses_client, is_async = _responses_client(litellm)
+
+    if resolved_options.web_search:
+        payload = _build_responses_payload(model, messages, resolved_options)
+        payload["tools"] = [{"type": "web_search_preview"}]
+        responses_client, is_async = _responses_client(litellm)
+
+        async def _call() -> Any:
             if is_async:
-                raw_response = await _await_with_timeout(
+                return await _await_with_timeout(
                     responses_client(**payload),
                     timeout_s=resolved_options.timeout_s,
                 )
-            else:
-                raw_response = await _run_sync_with_timeout(
-                    responses_client,
-                    timeout_s=resolved_options.timeout_s,
-                    **payload,
-                )
-        else:
-            payload = _build_chat_payload(model, messages, resolved_options)
-            raw_response = await _await_with_timeout(
+            return await _run_sync_with_timeout(
+                responses_client,
+                timeout_s=resolved_options.timeout_s,
+                **payload,
+            )
+    else:
+        payload = _build_chat_payload(model, messages, resolved_options)
+
+        async def _call() -> Any:
+            return await _await_with_timeout(
                 litellm.acompletion(**payload),
                 timeout_s=resolved_options.timeout_s,
             )
-    except Exception as exc:
-        raise _classify_llm_error(exc) from exc
+
+    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
     return normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
@@ -603,40 +839,43 @@ async def generate_structured(
     litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     log.debug(f"generate_structured: model={model}, schema={schema_name}, api_mode={api_mode}")
-    try:
-        if resolved_options.web_search:
-            payload = _build_responses_payload(model, messages, resolved_options)
-            payload["tools"] = [{"type": "web_search_preview"}]
-            payload["text"] = {
-                "format": build_json_schema_text_format(
-                    schema_name,
-                    json_schema,
-                )
-            }
-            responses_client, is_async = _responses_client(litellm)
-            if is_async:
-                raw_response = await _await_with_timeout(
-                    responses_client(**payload),
-                    timeout_s=resolved_options.timeout_s,
-                )
-            else:
-                raw_response = await _run_sync_with_timeout(
-                    responses_client,
-                    timeout_s=resolved_options.timeout_s,
-                    **payload,
-                )
-        else:
-            payload = _build_chat_payload(model, messages, resolved_options)
-            payload["response_format"] = build_json_schema_response_format(
+
+    if resolved_options.web_search:
+        payload = _build_responses_payload(model, messages, resolved_options)
+        payload["tools"] = [{"type": "web_search_preview"}]
+        payload["text"] = {
+            "format": build_json_schema_text_format(
                 schema_name,
                 json_schema,
             )
-            raw_response = await _await_with_timeout(
+        }
+        responses_client, is_async = _responses_client(litellm)
+
+        async def _call() -> Any:
+            if is_async:
+                return await _await_with_timeout(
+                    responses_client(**payload),
+                    timeout_s=resolved_options.timeout_s,
+                )
+            return await _run_sync_with_timeout(
+                responses_client,
+                timeout_s=resolved_options.timeout_s,
+                **payload,
+            )
+    else:
+        payload = _build_chat_payload(model, messages, resolved_options)
+        payload["response_format"] = build_json_schema_response_format(
+            schema_name,
+            json_schema,
+        )
+
+        async def _call() -> Any:
+            return await _await_with_timeout(
                 litellm.acompletion(**payload),
                 timeout_s=resolved_options.timeout_s,
             )
-    except Exception as exc:
-        raise _classify_llm_error(exc) from exc
+
+    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
     return normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
@@ -660,13 +899,14 @@ async def generate_with_tools(
         payload["tool_choice"] = resolved_options.tool_choice
 
     litellm = _get_litellm_module()
-    try:
-        raw_response = await _await_with_timeout(
+
+    async def _call() -> Any:
+        return await _await_with_timeout(
             litellm.acompletion(**payload),
             timeout_s=resolved_options.timeout_s,
         )
-    except Exception as exc:
-        raise _classify_llm_error(exc) from exc
+
+    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
     return normalize_response(
         raw_response,
         api_mode="chat_completion",

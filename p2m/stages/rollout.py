@@ -451,6 +451,7 @@ def _build_target_session(
     rollout: RolloutConfig,
     max_tokens: int,
     config_path: Path | None,
+    call_label: str | None = None,
 ) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession:
     """Create the runtime session for one seed rollout."""
     if target.is_endpoint:
@@ -510,6 +511,7 @@ def _build_target_session(
             temperature=target_temperature,
             reasoning_effort=target.model.reasoning_effort,
             timeout_s=DEFAULT_MODEL_TIMEOUT_S,
+            call_label=call_label,
         ),
         max_tool_calls=rollout.max_tool_calls,
         synthetic_prompt_template=TOOL_SIM_PROMPT,
@@ -530,18 +532,20 @@ async def _run_prompt_seed(
     seed_payload = seed.get("seed")
     if not isinstance(seed_payload, dict):
         raise ValueError("rollout requires each seed row to include a seed object")
+    seed_id = str(seed["seed_id"])
     runtime = _build_target_session(
         target=target,
         seed_payload=seed_payload,
         rollout=rollout,
         max_tokens=max_tokens,
         config_path=config_path,
+        call_label=f"target:{seed_id}",
     )
     target_id = str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or "")
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="prompt",
-            seed_id=str(seed["seed_id"]),
+            seed_id=seed_id,
             concept=str(seed.get("concept") or ""),
             target=target_id,
             auditor_model="",
@@ -613,6 +617,7 @@ async def _run_auditor_target_loop(
 ) -> tuple[str | None, list[Message], list[Message]]:
     """Run the alternating auditor and target loop for one scenario seed."""
     stop_reason = None
+    seed_id = transcript.metadata.seed_id
 
     for turn_index in range(max_turns):
         if stop_reason:
@@ -632,6 +637,7 @@ async def _run_auditor_target_loop(
                         max_tokens=auditor_max_tokens,
                         reasoning_effort=auditor_reasoning_effort,
                         timeout_s=DEFAULT_MODEL_TIMEOUT_S,
+                        call_label=f"auditor:{seed_id}:turn{turn_index}",
                         extra_kwargs={"extra_body": {"store": True}},
                     ),
                 )
@@ -761,17 +767,19 @@ async def _run_scenario_seed(
         raise ValueError("scenario rollout requires evaluation.auditor")
 
     seed_data = seed["seed"]
+    seed_id = str(seed["seed_id"])
     runtime = _build_target_session(
         target=target,
         seed_payload=seed_data,
         rollout=evaluation.rollout,
         max_tokens=max_tokens,
         config_path=config_path,
+        call_label=f"target:{seed_id}",
     )
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="scenario",
-            seed_id=str(seed["seed_id"]),
+            seed_id=seed_id,
             concept=str(seed.get("concept") or ""),
             target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
             auditor_model=str(auditor.model.name),

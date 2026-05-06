@@ -670,11 +670,12 @@ def _build_judge_request(
     judge_temperature: Optional[float],
     judge_max_tokens: int,
     reasoning_effort: Optional[str] = None,
+    call_label: Optional[str] = None,
 ) -> tuple[GenerateOptions, Message, Message]:
     # Reasoning models don't support temperature
     if reasoning_effort is not None:
         judge_temperature = None
-    options = GenerateOptions(max_tokens=judge_max_tokens, timeout_s=DEFAULT_MODEL_TIMEOUT_S, reasoning_effort=reasoning_effort)
+    options = GenerateOptions(max_tokens=judge_max_tokens, timeout_s=DEFAULT_MODEL_TIMEOUT_S, reasoning_effort=reasoning_effort, call_label=call_label)
     if judge_temperature is not None:
         options.temperature = judge_temperature
     return (
@@ -954,6 +955,7 @@ async def run_transcript_judge(
         judge_temperature=judge_temperature,
         judge_max_tokens=judge_max_tokens,
         reasoning_effort=reasoning_effort,
+        call_label=f"judge:{transcript.metadata.seed_id}" if transcript.metadata else None,
     )
     parseable_verdicts, parseable_raws, transport_failures = await _run_judge_attempts(
         judge_model,
