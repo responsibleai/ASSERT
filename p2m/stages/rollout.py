@@ -1006,8 +1006,8 @@ async def run_rollout(
             or seed_row.get("seed_id", "")
         )
         kind_tag = f"[{kind}] " if kind else ""
-        status = "\u2714" if error is None else f"\u2716 {type(error).__name__}"
-        msg = f"rollout [{done}/{total}] {status} {kind_tag}{label}"
+        status = "\u2713" if error is None else f"\u2717 {type(error).__name__}"
+        msg = f"[rollout] [{done}/{total}] {status} {kind_tag}{label}"
         if error is None:
             log.info(msg)
         else:
