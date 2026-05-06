@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import logging
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Mapping, Sequence
+
+log = logging.getLogger(__name__)
 
 # ── Types ──────────────────────────────────────────────────────
 
@@ -554,6 +557,8 @@ async def generate(
     """Run a standard async text generation call."""
     resolved_options = options or GenerateOptions()
     litellm = _get_litellm_module()
+    api_mode = "responses" if resolved_options.web_search else "chat_completion"
+    log.debug(f"generate: model={model}, api_mode={api_mode}")
     try:
         if resolved_options.web_search:
             payload = _build_responses_payload(model, messages, resolved_options)
@@ -596,6 +601,8 @@ async def generate_structured(
     """Run a structured generation call constrained by a JSON schema."""
     resolved_options = options or GenerateOptions()
     litellm = _get_litellm_module()
+    api_mode = "responses" if resolved_options.web_search else "chat_completion"
+    log.debug(f"generate_structured: model={model}, schema={schema_name}, api_mode={api_mode}")
     try:
         if resolved_options.web_search:
             payload = _build_responses_payload(model, messages, resolved_options)
@@ -646,6 +653,7 @@ async def generate_with_tools(
 ) -> ModelResponse:
     """Run a tool-capable chat completion."""
     resolved_options = options or GenerateOptions()
+    log.debug(f"generate_with_tools: model={model}, tools={len(tools)}")
     payload = _build_chat_payload(model, messages, resolved_options)
     payload["tools"] = tools
     if resolved_options.tool_choice is not None:

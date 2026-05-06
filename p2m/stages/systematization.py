@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict
 
@@ -111,6 +114,7 @@ async def run_systematization(
         raise ValueError("systematization requires non-empty concept text")
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
+    log.debug(f"systematization: concept={concept}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
 
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature

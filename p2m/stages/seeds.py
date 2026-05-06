@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from p2m.config import parse_model_config, reject_unknown_keys, resolve_stage_paths
 from p2m.core.async_utils import gather_limited
@@ -878,6 +881,13 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             f"seed generation requires a design at {design_path}. "
             f"Run the design stage first."
         )
+
+    kinds = []
+    if prompt_cfg is not None:
+        kinds.append(f"prompt(n={prompt_cfg['sample_size']})")
+    if scenario_cfg is not None:
+        kinds.append(f"scenario(n={scenario_cfg['sample_size']})")
+    log.debug(f"seeds: kinds=[{', '.join(kinds)}], tool_source={tool_source}")
 
     result = await run_seeds(
         policy_path=policy_path,

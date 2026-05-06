@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from p2m.core.config_model import (
     DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
@@ -108,6 +111,7 @@ async def run_systematization_to_policy(
             temperature=DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE,
             max_tokens=DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
         )
+    log.debug(f"systematization_convert: model={model_cfg.name}, behavior_count_hint={behavior_count_hint}")
     data_path = Path(systematization_path).expanduser()
     if not data_path.is_absolute():
         data_path = BASE_DIR / data_path

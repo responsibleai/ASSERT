@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict
+
+log = logging.getLogger(__name__)
 
 from p2m.config import parse_model_config, resolve_stage_paths
 from p2m.core.config_model import (
@@ -175,6 +178,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=model_cfg.reasoning_effort,
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
+    log.debug(f"policy: model={model_cfg.name}, behavior_count={behavior_count}, web_search={web_search}")
     await run_systematization(
         concept=concept_name,
         concept_text=concept_text,

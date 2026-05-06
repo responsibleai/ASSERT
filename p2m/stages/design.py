@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from p2m.config import parse_model_config, resolve_stage_paths
 from p2m.core.io import (
@@ -402,6 +405,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=model_cfg.reasoning_effort if model_cfg is not None else None,
         temperature=model_cfg.temperature if model_cfg is not None else None,
     )
+    log.debug(f"design: factor_sizes={result.get('factor_sizes', {})}")
     return {
         "design_path": result["design_path"],
         "_summary": {
