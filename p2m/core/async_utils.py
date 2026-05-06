@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
+import logging
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar
+
+log = logging.getLogger(__name__)
 
 ItemT = TypeVar("ItemT")
 ResultT = TypeVar("ResultT")
@@ -46,3 +51,32 @@ async def gather_limited(
             return await worker(item)
 
     return await asyncio.gather(*(_guard(item) for item in items))
+
+
+@contextlib.asynccontextmanager
+async def log_heartbeat(message: str, *, interval: float = 15.0):
+    """Async context manager that logs a heartbeat while a long operation runs.
+
+    Usage::
+
+        async with log_heartbeat("Converting policy"):
+            result = await slow_llm_call(...)
+
+    Logs "{message} (still working, {elapsed}s elapsed)" every *interval*
+    seconds until the block exits.
+    """
+    start = time.monotonic()
+
+    async def _beat():
+        while True:
+            await asyncio.sleep(interval)
+            elapsed = time.monotonic() - start
+            log.info(f"{message} (still working, {elapsed:.0f}s elapsed)")
+
+    task = asyncio.create_task(_beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

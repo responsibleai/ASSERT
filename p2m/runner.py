@@ -99,7 +99,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if isinstance(raw_cfg.get("model"), dict):
             policy_model = raw_cfg["model"].get("name", "")
         model_suffix = f" ({policy_model})" if policy_model else ""
-        log.info(f'  Generating behavior taxonomy for "{label}"{model_suffix}')
+        log.info(f'Generating behavior taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
         log.info(f"Refining policy structure...")
     elif stage_name == "design":
