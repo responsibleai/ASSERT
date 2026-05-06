@@ -392,6 +392,10 @@ def _get_litellm_module() -> Any:
             ) from exc
         # Silence noisy litellm warnings that pollute stderr
         _LITELLM_MODULE.suppress_debug_info = True
+        # Disable LiteLLM's internal retry so _with_retries is the
+        # sole retry layer — avoids double-retry and lets the
+        # coordinated per-model cooldown work correctly.
+        _LITELLM_MODULE.num_retries = 0
     return _LITELLM_MODULE
 
 
@@ -423,24 +427,76 @@ class LLMProviderError(Exception):
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
-    """Wrap litellm exceptions into categorized errors."""
+    """Wrap litellm exceptions into categorized errors.
+
+    LiteLLM maps provider HTTP errors to OpenAI-compatible exception types.
+    We re-classify them into four categories that drive retry behaviour in
+    ``_with_retries``.  The mapping below is based on the LiteLLM exception
+    table (https://docs.litellm.ai/docs/exception_mapping).
+
+    HTTP   LiteLLM exception                       → p2m class (retried?)
+    ─────  ──────────────────────────────────────── ─────────────────────────
+    400    BadRequestError                          → LLMInputError  (no)
+           ├─ ContextWindowExceededError            → LLMInputError  (no)
+           ├─ ContentPolicyViolationError           → LLMInputError  (no)
+           ├─ UnsupportedParamsError                → LLMInputError  (no)
+           └─ ImageFetchError                       → LLMInputError  (no)
+    401    AuthenticationError                      → LLMAuthError   (no)
+    403    PermissionDeniedError                    → LLMAuthError   (no)
+    404    NotFoundError                            → LLMInputError  (no)
+    408    Timeout  (inherits APIConnectionError)   → LLMProviderError (yes)
+    422    UnprocessableEntityError                 → LLMInputError  (no)
+    429    RateLimitError                           → LLMRateLimitError (yes, coordinated)
+    500    APIError / APIConnectionError            → LLMProviderError (yes)
+    503    ServiceUnavailableError (inherits APIError) → LLMProviderError (yes)
+    ≥500   InternalServerError (inherits APIError)  → LLMProviderError (yes)
+    N/A    APIResponseValidationError               → LLMInputError  (no)
+    N/A    BudgetExceededError                      → (falls through as-is)
+
+    Check order matters: specific subclasses must be tested before their
+    bases (e.g. NotFoundError before APIError, since NotFoundError inherits
+    from APIStatusError → APIError on some providers).
+    """
     litellm = _get_litellm_module()
+    # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         err = LLMAuthError(f"Authentication failed: {exc}")
         err.__cause__ = exc
         return err
+    # 403 — insufficient permissions
+    if isinstance(exc, getattr(litellm, "PermissionDeniedError", ())):
+        err = LLMAuthError(f"Permission denied: {exc}")
+        err.__cause__ = exc
+        return err
+    # 429 — rate limited (retryable with coordinated backoff)
     if isinstance(exc, litellm.RateLimitError):
         err = LLMRateLimitError(f"Rate limited: {exc}")
         err.__cause__ = exc
         return err
+    # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
     if isinstance(exc, litellm.BadRequestError):
         err = LLMInputError(f"Bad request: {exc}")
         err.__cause__ = exc
         return err
+    # 404 — model/deployment not found
     if isinstance(exc, litellm.NotFoundError):
         err = LLMInputError(f"Model/deployment not found: {exc}")
         err.__cause__ = exc
         return err
+    # 422 — unprocessable entity
+    if isinstance(exc, getattr(litellm, "UnprocessableEntityError", ())):
+        err = LLMInputError(f"Unprocessable entity: {exc}")
+        err.__cause__ = exc
+        return err
+    # N/A — response schema validation failure
+    if isinstance(exc, getattr(litellm, "APIResponseValidationError", ())):
+        err = LLMInputError(f"Response validation failed: {exc}")
+        err.__cause__ = exc
+        return err
+    # 500/503/≥500/timeout/connection — retryable provider errors
+    # This is the catch-all for APIError, APIConnectionError,
+    # InternalServerError, ServiceUnavailableError, and Timeout
+    # (all inherit from APIError or APIConnectionError).
     if isinstance(exc, (litellm.APIError, litellm.APIConnectionError)):
         err = LLMProviderError(f"Provider error: {exc}")
         err.__cause__ = exc
@@ -556,7 +612,7 @@ __all__ = [
 
 _MAX_RETRIES = 5
 _INITIAL_BACKOFF_S = 1.0
-_MAX_BACKOFF_S = 60.0
+_MAX_BACKOFF_S = 120.0
 _DEFAULT_COOLDOWN_S = 2.0
 
 
