@@ -63,11 +63,14 @@ def configure_logging(
 
     # Keep LiteLLM debug noise suppressed regardless of verbosity.
     # Errors from LiteLLM are caught and wrapped by p2m's own modules.
+    # The OpenAI SDK logs every retry at INFO; suppress to avoid flooding.
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
     logging.getLogger("litellm").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _make_stderr_console():
