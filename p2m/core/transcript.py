@@ -526,7 +526,7 @@ class Transcript(BaseModel):
                 try:
                     transcripts.append(_transcript_from_dict(json.loads(line)))
                 except Exception:
-                    log.warning("Skipping malformed JSONL line in %s", path)
+                    log.warning(f"Skipping malformed JSONL line in {path}")
         return transcripts
 
 

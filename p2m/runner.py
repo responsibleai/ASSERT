@@ -309,7 +309,7 @@ def run_pipeline(
         ctx = _load_context(config=config)
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
-        log.error("[config error] %s", exc)
+        log.error(f"[config error] {exc}")
         return 1
 
     requested_force_stages = set(force_stages or [])
@@ -317,7 +317,7 @@ def run_pipeline(
     invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
     if invalid_forced:
         joined = ", ".join(invalid_forced)
-        log.error("[config error] --force-stage stage(s) not present in config: %s", joined)
+        log.error(f"[config error] --force-stage stage(s) not present in config: {joined}")
         return 1
 
     # Cascade: forcing an upstream stage logically invalidates every stage
@@ -393,7 +393,7 @@ def run_pipeline(
             # Print just that message; suppress the multi-screen litellm/httpx
             # traceback unless the user opts into verbose output.
             ok = False
-            log.error("[error] %s", exc)
+            log.error(f"[error] {exc}")
             if os.environ.get("P2M_VERBOSE_ERRORS") == "1":
                 log.debug("Full traceback:", exc_info=True)
             else:
@@ -406,7 +406,7 @@ def run_pipeline(
         if ok:
             _print_stage_done(stage_name, elapsed, stage_result.get("_summary"))
         else:
-            log.error("%s failed (%.1fs)", stage_name, elapsed)
+            log.error(f"{stage_name} failed ({elapsed:.1f}s)")
 
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "completed" if ok else "failed"
@@ -438,7 +438,7 @@ def run_pipeline(
                 log.info(f"\n  Inspect results:")
                 log.info(f"    uv run p2m results status {suite_id} {run_id}")
     else:
-        log.error("pipeline failed at %s (%.1fs)", failed_stage, total_elapsed)
+        log.error(f"pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
     if manifest is None:
         return 0 if failed_stage is None else 1

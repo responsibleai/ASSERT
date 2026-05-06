@@ -493,7 +493,7 @@ def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
             if len(levels_raw) == 1:
                 raise ValueError("single-level factor adds no variation")
             if len(levels_raw) > 20:
-                log.warning("factor '%s' defines more than 20 levels", name)
+                log.warning(f"factor '{name}' defines more than 20 levels")
             levels = []
             seen_level_names: set[str] = set()
             for level_index, level_raw in enumerate(levels_raw, start=1):

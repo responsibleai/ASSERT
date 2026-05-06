@@ -645,9 +645,7 @@ async def _run_auditor_target_loop(
                     raise ValueError("auditor returned hidden setup instead of a visible user turn")
                 if auditor_response.finish_reason == "length":
                     log.warning(
-                        "Auditor response truncated (finish_reason=length) at turn %d/%d",
-                        turn_index + 1,
-                        max_turns,
+                        f"Auditor response truncated (finish_reason=length) at turn {turn_index + 1}/{max_turns}"
                     )
                 # Remove any retry guidance messages before continuing.
                 auditor_messages = [m for m in auditor_messages if m.content != _AUDITOR_RETRY_GUIDANCE]
@@ -733,9 +731,7 @@ async def _run_auditor_target_loop(
             )
             if runtime_result.finish_reason == "length":
                 log.warning(
-                    "Target response truncated (finish_reason=length) at turn %d/%d",
-                    turn_index + 1,
-                    max_turns,
+                    f"Target response truncated (finish_reason=length) at turn {turn_index + 1}/{max_turns}"
                 )
         except Exception as exc:
             tb = traceback.format_exc()
@@ -909,8 +905,7 @@ async def run_rollout(
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    "Rollout config changed since last run - discarding %s and starting fresh",
-                    transcripts_path,
+                    f"Rollout config changed since last run - discarding {transcripts_path} and starting fresh"
                 )
                 transcripts_path.unlink()
             else:
@@ -920,8 +915,7 @@ async def run_rollout(
                         completed_seed_ids.add(str(sid))
     if completed_seed_ids:
         log.info(
-            "Resuming rollout: %d seeds already completed, skipping",
-            len(completed_seed_ids),
+            f"Resuming rollout: {len(completed_seed_ids)} seeds already completed, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
     pending_seeds = [
@@ -1005,11 +999,11 @@ async def run_rollout(
         )
         kind_tag = f"[{kind}] " if kind else ""
         status = "\u2714" if error is None else f"\u2716 {type(error).__name__}"
-        progress_msg = "rollout [%d/%d] %s %s%s"
+        msg = f"rollout [{done}/{total}] {status} {kind_tag}{label}"
         if error is None:
-            log.info(progress_msg, done, total, status, kind_tag, label)
+            log.info(msg)
         else:
-            log.warning(progress_msg, done, total, status, kind_tag, label)
+            log.warning(msg)
 
     if errors:
         raise errors[0]

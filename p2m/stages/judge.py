@@ -199,8 +199,7 @@ async def run_judge(
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    "Judge config or transcripts changed since last run - discarding %s and starting fresh",
-                    scores_path,
+                    f"Judge config or transcripts changed since last run - discarding {scores_path} and starting fresh"
                 )
                 scores_path.unlink()
             else:
@@ -210,8 +209,7 @@ async def run_judge(
                         completed_keys.add((str(prior.get("kind") or ""), str(sid)))
     if completed_keys:
         log.info(
-            "Resuming judge: %d transcripts already scored, skipping",
-            len(completed_keys),
+            f"Resuming judge: {len(completed_keys)} transcripts already scored, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
 
