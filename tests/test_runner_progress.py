@@ -219,7 +219,7 @@ class RunnerProgressTest(unittest.TestCase):
             self.assertEqual(rc, 0)
             log_output = "\n".join(cm.output)
             self.assertIn("judge", log_output)
-            self.assertIn("pipeline completed", log_output)
+            self.assertIn("Pipeline completed", log_output)
             self.assertRegex(log_output, r"\(\d+\.\d+s\)")
 
     def test_run_pipeline_writes_manifest_mid_run(self) -> None:
