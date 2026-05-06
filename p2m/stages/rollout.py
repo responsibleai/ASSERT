@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 import click
 
 from p2m.config import resolve_stage_paths
@@ -643,7 +645,7 @@ async def _run_auditor_target_loop(
                 ):
                     raise ValueError("auditor returned hidden setup instead of a visible user turn")
                 if auditor_response.finish_reason == "length":
-                    logging.warning(
+                    log.warning(
                         "Auditor response truncated (finish_reason=length) at turn %d/%d",
                         turn_index + 1,
                         max_turns,
@@ -731,7 +733,7 @@ async def _run_auditor_target_loop(
                 )
             )
             if runtime_result.finish_reason == "length":
-                logging.warning(
+                log.warning(
                     "Target response truncated (finish_reason=length) at turn %d/%d",
                     turn_index + 1,
                     max_turns,
@@ -907,7 +909,7 @@ async def run_rollout(
             # Check that existing transcripts were produced with the same config.
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
-                logging.warning(
+                log.warning(
                     "Rollout config changed since last run - discarding %s and starting fresh",
                     transcripts_path,
                 )
@@ -918,7 +920,7 @@ async def run_rollout(
                     if sid:
                         completed_seed_ids.add(str(sid))
     if completed_seed_ids:
-        logging.info(
+        log.info(
             "Resuming rollout: %d seeds already completed, skipping",
             len(completed_seed_ids),
         )

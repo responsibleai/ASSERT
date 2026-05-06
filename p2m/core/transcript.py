@@ -7,6 +7,8 @@ Supports append-only event log with multiple views.
 import json
 import logging
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -288,7 +290,7 @@ def _transcript_from_dict(data: Dict[str, Any]) -> "Transcript":
         try:
             llm_calls.append(LLMCallTrace(**call_data))
         except Exception:
-            logging.warning("Skipping malformed LLM call trace in transcript")
+            log.warning("Skipping malformed LLM call trace in transcript")
             continue
     return Transcript(
         metadata=_metadata_from_dict(data),
@@ -524,7 +526,7 @@ class Transcript(BaseModel):
                 try:
                     transcripts.append(_transcript_from_dict(json.loads(line)))
                 except Exception:
-                    logging.warning("Skipping malformed JSONL line in %s", path)
+                    log.warning("Skipping malformed JSONL line in %s", path)
         return transcripts
 
 

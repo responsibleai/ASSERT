@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 from p2m.config import resolve_stage_paths
 from p2m.core.io import SCORES_FILE, TRANSCRIPTS_FILE, row_factors
 from p2m.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
@@ -196,7 +198,7 @@ async def run_judge(
         else:
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
-                logging.warning(
+                log.warning(
                     "Judge config or transcripts changed since last run - discarding %s and starting fresh",
                     scores_path,
                 )
@@ -207,7 +209,7 @@ async def run_judge(
                     if sid:
                         completed_keys.add((str(prior.get("kind") or ""), str(sid)))
     if completed_keys:
-        logging.info(
+        log.info(
             "Resuming judge: %d transcripts already scored, skipping",
             len(completed_keys),
         )
