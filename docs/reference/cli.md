@@ -43,10 +43,10 @@ uv run p2m results compare <suite> <run-a> <run-b>
 
 ```powershell
 # OpenAI backend (default)
-uv run p2m analysis seed-metrics --policy artifacts\results\<suite>\policy.json --seeds artifacts\results\<suite>\seeds.jsonl
+uv run p2m analysis seed-metrics --taxonomy artifacts\results\<suite>\taxonomy.json --seeds artifacts\results\<suite>\seeds.jsonl
 
 # Offline HuggingFace backend (no API key)
-uv run p2m analysis seed-metrics --policy artifacts\results\<suite>\policy.json --seeds artifacts\results\<suite>\seeds.jsonl --embed-backend hf --embed-model all-MiniLM-L6-v2
+uv run p2m analysis seed-metrics --taxonomy artifacts\results\<suite>\taxonomy.json --seeds artifacts\results\<suite>\seeds.jsonl --embed-backend hf --embed-model all-MiniLM-L6-v2
 ```
 
 ## Where outputs go

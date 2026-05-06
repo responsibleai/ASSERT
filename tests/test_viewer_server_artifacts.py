@@ -102,8 +102,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -111,11 +111,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -123,8 +123,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "target": "target-model",
                         "events": [],
@@ -139,8 +139,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "judge_model": "judge-model",
                         "target": "target-model",
@@ -191,8 +191,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -200,18 +200,18 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "target": "target-model",
                 "events": [],
@@ -220,8 +220,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             score_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "judge_model": "judge-model",
                 "target": "target-model",
@@ -253,8 +253,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -262,18 +262,18 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "target": "target-model",
                 "events": [],
@@ -282,8 +282,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             score_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "judge_model": "judge-model",
                 "target": "target-model",
@@ -320,8 +320,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "prompt"},
                     }
                 )
@@ -397,7 +397,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertIn("policy_violation", payload["keys"])
             self.assertIn("overrefusal", payload["keys"])
 
-    def test_load_run_page_data_reads_live_transcripts_during_rollout(self) -> None:
+    def test_load_run_page_data_reads_live_transcripts_during_inference(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
@@ -413,11 +413,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
-                            {"name": "behavior", "definition": "def", "permissible": False},
+                        "failure_modes": [
+                            {"name": "failure_mode", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
@@ -428,8 +428,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {
                             "title": "Scenario title",
                             "description": "Scenario description",
@@ -440,21 +440,21 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "running", "stages": {"rollout": "running"}}),
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
                 encoding="utf-8",
             )
             valid_row = {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "failure_mode"},
                 "stop_reason": "max_turns",
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "System prompt"},
@@ -462,7 +462,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     },
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "add_message",
                             "message": {"role": "user", "content": "Need advice"},
@@ -496,12 +496,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
                 const payload = loadRunPageData('suite-a', 'run-a');
                 console.log(JSON.stringify({{
-                  previewCount: payload.rolloutPreviewRows.length,
-                  previewSeed: payload.rolloutPreviewRows[0]?.seed_id ?? null,
-                  previewTurns: payload.rolloutPreviewRows[0]?.turns_count ?? null,
+                  previewCount: payload.inferencePreviewRows.length,
+                  previewSeed: payload.inferencePreviewRows[0]?.seed_id ?? null,
+                  previewTurns: payload.inferencePreviewRows[0]?.turns_count ?? null,
                   previewDrawerTitle: payload.scenarioSeedMap?.['seed-1']?.title ?? null,
                   previewDrawerMessages: payload.scenarioDrawerItems?.['seed-1']?.messages.length ?? 0,
-                  previewTotal: payload.rolloutPreviewTotal,
+                  previewTotal: payload.inferencePreviewTotal,
                   auditScores: payload.auditScores.length
                 }}));
                 """
@@ -534,11 +534,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
-                            {"name": "behavior", "definition": "def", "permissible": False},
+                        "failure_modes": [
+                            {"name": "failure_mode", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
@@ -549,8 +549,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -558,14 +558,14 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "running", "stages": {"rollout": "running"}}),
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
                 encoding="utf-8",
             )
             valid_row = {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "stop_reason": "max_turns",
                 "events": [],
@@ -607,7 +607,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertIn("transcripts.jsonl", payload["message"])
             self.assertIn("line 2", payload["message"])
 
-    def test_load_run_page_data_rejects_truncated_trailing_line_after_rollout(self) -> None:
+    def test_load_run_page_data_rejects_truncated_trailing_line_after_inference(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
@@ -628,8 +628,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -638,15 +638,15 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
             valid_row = {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "stop_reason": "max_turns",
                 "events": [],
@@ -703,11 +703,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
-                            {"name": "behavior", "definition": "def", "permissible": False},
+                        "failure_modes": [
+                            {"name": "failure_mode", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
@@ -718,8 +718,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -728,19 +728,19 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             valid_row = {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "failure_mode"},
                 "stop_reason": "max_turns",
                 "events": [],
                 "llm_calls": [],
@@ -748,8 +748,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             score_row = {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "failure_mode"},
                 "judge_model": "judge-model",
                 "judge_status": "ok",
                 "verdict": {
@@ -780,7 +780,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
                 const payload = loadRunPageData('suite-a', 'run-a');
                 console.log(JSON.stringify({{
-                  previewCount: payload.rolloutPreviewRows.length,
+                  previewCount: payload.inferencePreviewRows.length,
                   auditScoreCount: payload.auditScores.length,
                   turnsCount: payload.auditScores[0]?.metadata?.turns_count ?? null
                 }}));
@@ -815,8 +815,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -829,13 +829,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         "status": "completed",
                         "started_at": "2026-04-02T00:00:00Z",
                         "ended_at": "2026-04-02T00:10:00Z",
-                        "stages": {"rollout": "completed", "judge": "completed"},
+                        "stages": {"inference": "completed", "judge": "completed"},
                     }
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -843,8 +843,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "target": "target-model",
                         "events": [
@@ -865,8 +865,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "judge_model": "judge-model",
                         "target": "target-model",
@@ -898,7 +898,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                   status: payload.manifest?.status ?? null,
                   startedAt: payload.manifest?.started_at ?? null,
                   endedAt: payload.manifest?.ended_at ?? null,
-                  rolloutStage: payload.manifest?.stages?.rollout ?? null,
+                  inferenceStage: payload.manifest?.stages?.inference ?? null,
                   judgeStage: payload.manifest?.stages?.judge ?? null
                 }}));
                 """
@@ -910,7 +910,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["status"], "completed")
             self.assertEqual(payload["startedAt"], "2026-04-02T00:00:00Z")
             self.assertEqual(payload["endedAt"], "2026-04-02T00:10:00Z")
-            self.assertEqual(payload["rolloutStage"], "completed")
+            self.assertEqual(payload["inferenceStage"], "completed")
             self.assertEqual(payload["judgeStage"], "completed")
 
     def test_load_run_page_data_falls_back_to_raw_files_when_viewer_read_model_is_stale(self) -> None:
@@ -935,8 +935,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -945,19 +945,19 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "target": "target-model",
                 "events": [
@@ -977,8 +977,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             score_row = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "judge_model": "judge-model",
                 "target": "target-model",
@@ -1041,17 +1041,17 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "failure_modes": [
                             {
-                                "name": "prompt-behavior",
+                                "name": "prompt-failure_mode",
                                 "definition": "prompt definition",
                                 "permissible": False,
                             },
                             {
-                                "name": "scenario-behavior",
+                                "name": "scenario-failure_mode",
                                 "definition": "scenario definition",
                                 "permissible": False,
                             },
@@ -1067,8 +1067,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                             {
                                 "kind": "prompt",
                                 "seed_id": "seed-prompt",
-                                "concept": "concept",
-                                "factors": {"behavior": "prompt-behavior"},
+                                "spec": "spec",
+                                "factors": {"failure_mode": "prompt-failure_mode"},
                                 "seed": {"description": "Prompt seed"},
                             }
                         ),
@@ -1076,8 +1076,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                             {
                                 "kind": "scenario",
                                 "seed_id": "seed-scenario",
-                                "concept": "concept",
-                                "factors": {"behavior": "scenario-behavior"},
+                                "spec": "spec",
+                                "factors": {"failure_mode": "scenario-failure_mode"},
                                 "seed": {
                                     "title": "Scenario title",
                                     "description": "Scenario description",
@@ -1091,24 +1091,24 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             prompt_transcript = {
                 "kind": "prompt",
                 "seed_id": "seed-prompt",
-                "concept": "concept",
-                "factors": {"behavior": "prompt-behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "prompt-failure_mode"},
                 "target": "target-model",
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "System prompt"},
@@ -1139,15 +1139,15 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             scenario_transcript = {
                 "kind": "scenario",
                 "seed_id": "seed-scenario",
-                "concept": "concept",
-                "factors": {"behavior": "scenario-behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "scenario-failure_mode"},
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "stop_reason": "max_turns",
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "Scenario system"},
@@ -1155,7 +1155,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     },
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {"type": "add_message", "message": {"role": "user", "content": "Start"}},
                     },
                     {
@@ -1169,8 +1169,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             prompt_score = {
                 "kind": "prompt",
                 "seed_id": "seed-prompt",
-                "concept": "concept",
-                "factors": {"behavior": "prompt-behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "prompt-failure_mode"},
                 "judge_model": "judge-model",
                 "target": "target-model",
                 "judge_status": "ok",
@@ -1183,11 +1183,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             scenario_score = {
                 "kind": "scenario",
                 "seed_id": "seed-scenario",
-                "concept": "concept",
-                "factors": {"behavior": "scenario-behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "scenario-failure_mode"},
                 "judge_model": "judge-model",
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "judge_status": "ok",
                 "verdict": {
                     "dimensions": {"policy_violation": True, "overrefusal": False},
@@ -1264,8 +1264,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed", "system_prompt": "System prompt"},
                     }
                 )
@@ -1274,12 +1274,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -1287,14 +1287,14 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "target": "target-model",
                         "events": [
                             {
                                 "view": ["target"],
-                                "actor": "auditor",
+                                "actor": "tester",
                                 "edit": {
                                     "type": "set_system_message",
                                     "message": {"role": "system", "content": "System prompt"},
@@ -1322,8 +1322,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "judge_model": "judge-model",
                         "target": "target-model",
@@ -1389,8 +1389,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed"},
                     }
                         ),
@@ -1398,8 +1398,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-2",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"description": "Prompt seed 2"},
                     }
                         ),
@@ -1410,19 +1410,19 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             prompt_transcript = {
                 "kind": "prompt",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "behavior": "behavior",
+                "spec": "spec",
+                "failure_mode": "failure_mode",
                 "permissible": False,
                 "target": "target-model",
                 "events": [
@@ -1443,8 +1443,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "prompt",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "judge_model": "judge-model",
                         "target": "target-model",
@@ -1506,13 +1506,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
-                        "behaviors": [
+                        "spec": {"name": "Risk", "definition": "Definition"},
+                        "failure_modes": [
                             {
-                                "name": "behavior",
+                                "name": "failure_mode",
                                 "definition": "def",
                                 "examples": [],
                                 "permissible": False,
@@ -1527,8 +1527,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "spec": "spec",
+                        "factors": {"failure_mode": "failure_mode"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -1537,7 +1537,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
@@ -1546,8 +1546,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     {
                         "kind": "scenario",
                         "seed_id": "seed-1",
-                        "concept": "concept",
-                        "behavior": "behavior",
+                        "spec": "spec",
+                        "failure_mode": "failure_mode",
                         "permissible": False,
                         "judge_model": "judge-model",
                         "judge_status": "ok",

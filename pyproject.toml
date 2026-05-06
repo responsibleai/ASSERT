@@ -1,5 +1,5 @@
 [project]
-name = "p2m-policy"
+name = "p2m-taxonomy"
 version = "0.1.0"
 description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages"
 readme = "README.md"
@@ -59,7 +59,7 @@ examples = [
   "smolagents>=1.22.0",
 ]
 all = [
-  "p2m-policy[otel,langgraph,analysis,examples,regression]",
+  "p2m-taxonomy[otel,langgraph,analysis,examples,regression]",
 ]
 dev = [
   "pytest>=9.0.3",
@@ -79,7 +79,7 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "p2m-policy[otel,langgraph,examples]",
+    "p2m-taxonomy[otel,langgraph,examples]",
 ]
 
 [tool.setuptools.packages.find]

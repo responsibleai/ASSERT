@@ -3,7 +3,7 @@ import type {
 	PromptSeed,
 	RunListItem,
 	ScenarioSeed,
-	Behavior,
+	FailureMode,
 	ViewerSeedGroup,
 	ViewerSeedItem
 } from '$lib/types.js';
@@ -21,9 +21,9 @@ export function normalizePromptSeeds(items: PromptSeed[]): ViewerSeedItem[] {
 	return items.map((seed) => ({
 		id: seed.seed_id,
 		kind: 'prompt',
-		title: seed.seed.title || seed.behavior,
+		title: seed.seed.title || seed.failure_mode,
 		description: seed.seed.description,
-		behavior: seed.behavior,
+		failure_mode: seed.failure_mode,
 		definition: seed.definition,
 		system_prompt: seed.seed.system_prompt ?? null,
 		tools: seed.seed.tools,
@@ -37,7 +37,7 @@ export function normalizeScenarioSeeds(items: ScenarioSeed[]): ViewerSeedItem[] 
 		kind: 'scenario',
 		title: seed.seed.title,
 		description: seed.seed.description,
-		behavior: seed.behavior,
+		failure_mode: seed.failure_mode,
 		definition: seed.definition,
 		system_prompt: seed.seed.system_prompt ?? null,
 		tools: seed.seed.tools,
@@ -55,22 +55,22 @@ export function filterViewerSeeds(
 		(seed) =>
 			seed.title.toLowerCase().includes(normalizedQuery) ||
 			seed.description.toLowerCase().includes(normalizedQuery) ||
-			seed.behavior.toLowerCase().includes(normalizedQuery)
+			seed.failure_mode.toLowerCase().includes(normalizedQuery)
 	);
 }
 
 export function groupViewerSeedsByPolicy(
 	items: ViewerSeedItem[],
-	behaviors: Behavior[]
+	failure_modes: FailureMode[]
 ): ViewerSeedGroup[] {
 	const groupedSeeds = new Map<string, ViewerSeedItem[]>();
 	for (const seed of items) {
-		if (!groupedSeeds.has(seed.behavior)) groupedSeeds.set(seed.behavior, []);
-		groupedSeeds.get(seed.behavior)!.push(seed);
+		if (!groupedSeeds.has(seed.failure_mode)) groupedSeeds.set(seed.failure_mode, []);
+		groupedSeeds.get(seed.failure_mode)!.push(seed);
 	}
 
 	const orderedGroups: ViewerSeedGroup[] = [];
-	for (const beh of behaviors) {
+	for (const beh of failure_modes) {
 		const matchingSeeds = groupedSeeds.get(beh.name);
 		if (!matchingSeeds) continue;
 		orderedGroups.push({

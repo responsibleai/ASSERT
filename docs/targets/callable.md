@@ -15,7 +15,7 @@ Then configure:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: package.module:chat_sync
 ```
@@ -29,7 +29,7 @@ def chat_sync(message: str, history: list[dict[str, str]]) -> str:
     ...
 ```
 
-Use this shape for agents that need multi-turn state during scenario rollout.
+Use this shape for agents that need multi-turn state during scenario inference.
 
 ## Return values
 

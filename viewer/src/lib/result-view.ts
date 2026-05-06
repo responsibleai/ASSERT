@@ -98,11 +98,11 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 	);
 
 	return {
-		id: `prompt:${sample.run_id ?? 'run'}:${sample.behavior}:${sample.prompt.slice(0, 80)}`,
+		id: `prompt:${sample.run_id ?? 'run'}:${sample.failure_mode}:${sample.prompt.slice(0, 80)}`,
 		kind: 'prompt',
 		row_title: sample.prompt,
-		header_title: sample.behavior,
-		behavior: sample.behavior,
+		header_title: sample.failure_mode,
+		failure_mode: sample.failure_mode,
 		verdict: sample.verdict,
 		judge_status: sample.judge_status,
 		judge_error: sample.judge_error,
@@ -130,7 +130,7 @@ export function normalizeScenarioResult(
 		kind: 'scenario',
 		row_title: seedInfo?.title ?? score.seed_id,
 		header_title: seedInfo?.title ?? score.seed_id,
-		behavior: score.behavior,
+		failure_mode: score.failure_mode,
 		verdict: score.verdict,
 		judge_status: score.judge_status,
 		judge_error: score.judge_error,

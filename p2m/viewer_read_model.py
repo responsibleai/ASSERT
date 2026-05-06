@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from p2m.core.io import write_json, row_behavior
+from p2m.core.io import write_json, row_failure_mode
 
 VIEWER_READ_MODEL_SCHEMA_VERSION = 1
 VIEWER_READ_MODEL_GENERATOR_VERSION = "viewer-read-model-v1"
@@ -148,8 +148,8 @@ def _runtime_mode(config: dict[str, Any] | None) -> str | None:
     if not isinstance(config, dict):
         return None
     pipeline = config.get("pipeline")
-    rollout = pipeline.get("rollout") if isinstance(pipeline, dict) else None
-    target = rollout.get("target") if isinstance(rollout, dict) else None
+    inference = pipeline.get("inference") if isinstance(pipeline, dict) else None
+    target = inference.get("target") if isinstance(inference, dict) else None
     if not isinstance(target, dict):
         return None
 
@@ -477,8 +477,8 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
                 "seed_id": seed_id,
                 "prompt": _prompt_preview(transcript_row),
                 "response": "",
-                "concept": row.get("concept"),
-                "behavior": row_behavior(row),
+                "spec": row.get("spec"),
+                "failure_mode": row_failure_mode(row),
                 "run_id": run_dir.name,
                 "judge_model": row.get("judge_model"),
                 "target": row.get("target") or transcript_row.get("target"),
@@ -495,11 +495,11 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
 
         audit_row = {
             "seed_id": seed_id,
-            "concept": row.get("concept", ""),
-            "behavior": row_behavior(row),
+            "spec": row.get("spec", ""),
+            "failure_mode": row_failure_mode(row),
             "judge_model": row.get("judge_model", ""),
             "target": row.get("target") or transcript_row.get("target"),
-            "auditor_model": row.get("auditor_model") or transcript_row.get("auditor_model"),
+            "tester_model": row.get("tester_model") or transcript_row.get("tester_model"),
             "verdict": _summary_verdict(row.get("verdict")),
             "judge_status": row.get("judge_status"),
             "judge_error": row.get("judge_error"),

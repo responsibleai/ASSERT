@@ -795,15 +795,15 @@ class TestOTelTracedSession(unittest.TestCase):
             del sys.modules["_test_otel_meta"]
 
 
-# ── Rollout wiring tests ─────────────────────────────────────────
+# ── Inference wiring tests ─────────────────────────────────────────
 
 
 class TestRolloutOTelWiring(unittest.TestCase):
     """Validates that _build_target_session routes to OTelTracedSession."""
 
     def test_callable_with_trace_returns_otel_session(self):
-        from p2m.core.config_model import TargetConfig, TraceConfig, RolloutConfig
-        from p2m.stages.rollout import _build_target_session
+        from p2m.core.config_model import TargetConfig, TraceConfig, InferenceConfig
+        from p2m.stages.inference import _build_target_session
         from p2m.core.otel_session import OTelTracedSession
 
         target = TargetConfig(
@@ -813,22 +813,22 @@ class TestRolloutOTelWiring(unittest.TestCase):
         session = _build_target_session(
             target=target,
             seed_payload={},
-            rollout=RolloutConfig(),
+            inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,
         )
         self.assertIsInstance(session, OTelTracedSession)
 
     def test_callable_without_trace_returns_callable_session(self):
-        from p2m.core.config_model import TargetConfig, RolloutConfig
-        from p2m.stages.rollout import _build_target_session
+        from p2m.core.config_model import TargetConfig, InferenceConfig
+        from p2m.stages.inference import _build_target_session
         from p2m.core.session import CallableSession
 
         target = TargetConfig(callable="some.module:fn")
         session = _build_target_session(
             target=target,
             seed_payload={},
-            rollout=RolloutConfig(),
+            inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,
         )
@@ -1272,17 +1272,17 @@ class TestHTTPEndpointSession(unittest.TestCase):
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://localhost:8080/chat", connector="some.connector")
 
-    def test_endpoint_rollout_wiring(self):
+    def test_endpoint_inference_wiring(self):
         """_build_target_session should return HTTPEndpointSession for endpoint targets."""
-        from p2m.core.config_model import TargetConfig, RolloutConfig
-        from p2m.stages.rollout import _build_target_session
+        from p2m.core.config_model import TargetConfig, InferenceConfig
+        from p2m.stages.inference import _build_target_session
         from p2m.core.session import HTTPEndpointSession
 
         target = TargetConfig(endpoint="http://localhost:8080/chat")
         session = _build_target_session(
             target=target,
             seed_payload={},
-            rollout=RolloutConfig(),
+            inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,
         )

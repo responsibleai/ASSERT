@@ -14,12 +14,12 @@ from p2m.core.io import (
     get_permissible_flag,
     load_json,
     load_jsonl,
-    definitions_by_behavior,
-    permissible_by_behavior,
-    policy_definition,
-    policy_permissible,
+    definitions_by_failure_mode,
+    permissible_by_failure_mode,
+    taxonomy_definition,
+    taxonomy_permissible,
     resolve_path,
-    row_behavior,
+    row_failure_mode,
     row_factors,
 )
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
@@ -130,22 +130,22 @@ def _row_permissible(
     row: dict[str, Any],
     permissible_by_name: dict[str, bool],
 ) -> bool:
-    return policy_permissible(permissible_by_name, row_behavior(row))
+    return taxonomy_permissible(permissible_by_name, row_failure_mode(row))
 
 
 def _seed_definition(
     seed_row: dict[str, Any],
     definitions_by_name: dict[str, str],
 ) -> str:
-    return policy_definition(definitions_by_name, row_behavior(seed_row))
+    return taxonomy_definition(definitions_by_name, row_failure_mode(seed_row))
 
 
-def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str, Any]) -> dict[str, Any]:
-    behaviors = policy_raw.get("behaviors")
-    if not isinstance(behaviors, list):
-        raise ValueError("policy.json must contain a behaviors list")
+def _build_score_metrics(records: list[dict[str, Any]], *, taxonomy_raw: dict[str, Any]) -> dict[str, Any]:
+    failure_modes = taxonomy_raw.get("failure_modes")
+    if not isinstance(failure_modes, list):
+        raise ValueError("taxonomy.json must contain a failure_modes list")
 
-    permissible_by_name = permissible_by_behavior(policy_raw)
+    permissible_by_name = permissible_by_failure_mode(taxonomy_raw)
     permissible_records = [
         row for row in records if _row_permissible(row, permissible_by_name)
     ]
@@ -190,18 +190,18 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
             result[f"{dim}_rate"] = rate
         return result
 
-    by_behavior: dict[str, dict[str, Any]] = {}
+    by_failure_mode: dict[str, dict[str, Any]] = {}
     for row in records:
-        behavior = row_behavior(row)
-        payload = by_behavior.setdefault(
-            behavior,
+        failure_mode = row_failure_mode(row)
+        payload = by_failure_mode.setdefault(
+            failure_mode,
             {"permissible": _row_permissible(row, permissible_by_name), "items": []},
         )
         payload["items"].append(row)
 
     scored_records = [row for row in records if infer_judge_status(row) == "ok"]
     by_relevant_node = []
-    for node_index, node_payload in enumerate(behaviors):
+    for node_index, node_payload in enumerate(failure_modes):
         node_name = str(node_payload.get("name") or "") if isinstance(node_payload, dict) else ""
         relevant_rows: list[dict[str, Any]] = []
         node_violated_count = 0
@@ -255,13 +255,13 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
     return {
         "overall_permissible": compute_stats(permissible_records),
         "overall_not_permissible": compute_stats(not_permissible_records),
-        "by_behavior": [
+        "by_failure_mode": [
             {
-                "behavior": behavior,
+                "failure_mode": failure_mode,
                 "permissible": payload["permissible"],
                 **compute_stats(payload["items"]),
             }
-            for behavior, payload in sorted(by_behavior.items())
+            for failure_mode, payload in sorted(by_failure_mode.items())
         ],
         "by_relevant_node": by_relevant_node,
     }
@@ -278,9 +278,9 @@ def _transcript_from_row(row: dict[str, Any]) -> Transcript:
         metadata=TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            spec=str(row.get("spec") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             factors=row_factors(row),
         ),
         events=[
@@ -307,8 +307,8 @@ def _seed_row(
         "suite_id": suite_id,
         "seed_id": str(seed_row.get("seed_id") or ""),
         "kind": kind,
-        "concept": str(seed_row.get("concept") or ""),
-        "behavior": row_behavior(seed_row),
+        "spec": str(seed_row.get("spec") or ""),
+        "failure_mode": row_failure_mode(seed_row),
         "permissible": _row_permissible(seed_row, permissible_by_name),
         "definition": _seed_definition(seed_row, definitions_by_name),
         "title": title,
@@ -338,12 +338,12 @@ def _score_row(
         "run_id": run_id,
         "seed_id": str(score_row.get("seed_id") or ""),
         "kind": str(score_row.get("kind") or ""),
-        "behavior": row_behavior(score_row),
+        "failure_mode": row_failure_mode(score_row),
         "permissible": _row_permissible(score_row, permissible_by_name),
         "judge_status": str(score_row.get("judge_status") or ""),
         "judge_error": str(score_row.get("judge_error") or ""),
         "target": str(score_row.get("target") or ""),
-        "auditor_model": str(score_row.get("auditor_model") or ""),
+        "tester_model": str(score_row.get("tester_model") or ""),
         "judge_model": str(score_row.get("judge_model") or ""),
         "justification": str(verdict_payload.get("justification") or ""),
     }
@@ -535,9 +535,9 @@ def load_suite_tables(
     suite_dir: Path,
     suite_id: str,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
-    policy = load_json(suite_dir / "policy.json") or {}
-    definitions_by_name = definitions_by_behavior(policy)
-    permissible_by_name = permissible_by_behavior(policy)
+    taxonomy = load_json(suite_dir / "taxonomy.json") or {}
+    definitions_by_name = definitions_by_failure_mode(taxonomy)
+    permissible_by_name = permissible_by_failure_mode(taxonomy)
     seed_rows = load_jsonl(suite_dir / "seeds.jsonl")
     prompt_seed_count, scenario_seed_count = _prompt_seed_counts(seed_rows)
     run_rows: list[dict[str, Any]] = []
@@ -553,20 +553,20 @@ def load_suite_tables(
     score_node_names: list[str] = []
     seen_node_names: set[str] = set()
 
-    concept_payload = policy.get("concept") if isinstance(policy.get("concept"), dict) else {}
-    concept_name = str(concept_payload.get("name") or "")
-    if not concept_name:
-        concept_name = str(seed_rows[0].get("concept") or "") if seed_rows else ""
+    spec_payload = taxonomy.get("spec") if isinstance(taxonomy.get("spec"), dict) else {}
+    spec_name = str(spec_payload.get("name") or "")
+    if not spec_name:
+        spec_name = str(seed_rows[0].get("spec") or "") if seed_rows else ""
 
     for run_dir in _run_dirs(suite_dir):
         run_id = run_dir.name
         manifest = load_json(run_dir / "manifest.json") or {}
         transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
-        metrics = _build_score_metrics(score_rows, policy_raw=policy) if score_rows else None
+        metrics = _build_score_metrics(score_rows, taxonomy_raw=taxonomy) if score_rows else None
 
         target = _first_nonempty(score_rows, "target") or _first_nonempty(transcript_rows, "target")
-        auditor_model = _first_nonempty(score_rows, "auditor_model") or _first_nonempty(transcript_rows, "auditor_model")
+        tester_model = _first_nonempty(score_rows, "tester_model") or _first_nonempty(transcript_rows, "tester_model")
         judge_model = _first_nonempty(score_rows, "judge_model")
 
         for transcript_row in transcript_rows:
@@ -577,7 +577,7 @@ def load_suite_tables(
                     "run_id": run_id,
                     "seed_id": str(transcript_row.get("seed_id") or ""),
                     "kind": str(transcript_row.get("kind") or ""),
-                    "behavior": row_behavior(transcript_row),
+                    "failure_mode": row_failure_mode(transcript_row),
                     "permissible": _row_permissible(
                         transcript_row,
                         permissible_by_name,
@@ -585,7 +585,7 @@ def load_suite_tables(
                     "stop_reason": str(transcript_row.get("stop_reason") or ""),
                     "turn_count": transcript.count_turns("target", skip_system=True),
                     "target": str(transcript_row.get("target") or ""),
-                    "auditor_model": str(transcript_row.get("auditor_model") or ""),
+                    "tester_model": str(transcript_row.get("tester_model") or ""),
                     "conversation_text": transcript.format_transcript(
                         "target",
                         skip_system=False,
@@ -640,9 +640,9 @@ def load_suite_tables(
                 "status": str(manifest.get("status") or ""),
                 "started_at": str(manifest.get("started_at") or ""),
                 "ended_at": str(manifest.get("ended_at") or ""),
-                "concept_name": concept_name,
+                "spec_name": spec_name,
                 "target": target,
-                "auditor_model": auditor_model,
+                "tester_model": tester_model,
                 "judge_model": judge_model,
                 "prompt_seed_count": prompt_seed_count,
                 "scenario_seed_count": scenario_seed_count,
@@ -692,9 +692,9 @@ def load_suite_tables(
             "status",
             "started_at",
             "ended_at",
-            "concept_name",
+            "spec_name",
             "target",
-            "auditor_model",
+            "tester_model",
             "judge_model",
             "prompt_seed_count",
             "scenario_seed_count",
@@ -709,8 +709,8 @@ def load_suite_tables(
             "suite_id",
             "seed_id",
             "kind",
-            "concept",
-            "behavior",
+            "spec",
+            "failure_mode",
             "permissible",
             "definition",
             "title",
@@ -722,12 +722,12 @@ def load_suite_tables(
             "run_id",
             "seed_id",
             "kind",
-            "behavior",
+            "failure_mode",
             "permissible",
             "stop_reason",
             "turn_count",
             "target",
-            "auditor_model",
+            "tester_model",
             "conversation_text",
         ],
         SCORES_TABLE: [
@@ -735,12 +735,12 @@ def load_suite_tables(
             "run_id",
             "seed_id",
             "kind",
-            "behavior",
+            "failure_mode",
             "permissible",
             "judge_status",
             "judge_error",
             "target",
-            "auditor_model",
+            "tester_model",
             "judge_model",
             *score_dimension_names,
             "justification",
@@ -1048,11 +1048,11 @@ def write_html_export(
     # --- summary cards ---
     cards: list[str] = []
     if runs:
-        concept = runs[0].get("concept_name", "")
-        if concept:
+        spec = runs[0].get("spec_name", "")
+        if spec:
             cards.append(
-                f'<div class="card"><div class="label">Concept</div>'
-                f'<div class="val sm">{html.escape(str(concept))}</div></div>'
+                f'<div class="card"><div class="label">Spec</div>'
+                f'<div class="val sm">{html.escape(str(spec))}</div></div>'
             )
         targets = sorted({str(r.get("target") or "") for r in runs} - {""})
         if targets:

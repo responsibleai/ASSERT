@@ -7,7 +7,7 @@
 	let sortBy = $state<'newest' | 'oldest' | 'name' | 'runs'>('newest');
 
 	const statusConfig: Record<string, { icon: string; label: string; class: string }> = {
-		policy_only: { icon: '○', label: 'Policy only', class: 'text-text-muted' },
+		taxonomy_only: { icon: '○', label: 'Taxonomy only', class: 'text-text-muted' },
 		seeds_ready: { icon: '●', label: 'Seeds ready', class: 'text-score-border' },
 		has_results: { icon: '◉', label: 'Has results', class: 'text-score-pass' }
 	};
@@ -17,7 +17,7 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.spec_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') {
@@ -26,7 +26,7 @@
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
+			if (sortBy === 'name') return a.spec_name.localeCompare(b.spec_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -39,7 +39,7 @@
 	<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 		<div>
 			<h1 class="text-xl font-semibold tracking-tight">Measurement Suites</h1>
-			<p class="mt-1 text-sm text-text-muted">Browse concept policies, seeds, and measurement results.</p>
+			<p class="mt-1 text-sm text-text-muted">Browse spec policies, seeds, and measurement results.</p>
 		</div>
 	</div>
 </div>
@@ -111,7 +111,7 @@
 					class="mt-1.5 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none transition-colors focus:border-interactive"
 				>
 					<option value="all">All statuses</option>
-					<option value="policy_only">○ Policy only</option>
+					<option value="taxonomy_only">○ Taxonomy only</option>
 					<option value="seeds_ready">● Seeds ready</option>
 					<option value="has_results">◉ Has results</option>
 				</select>
@@ -153,7 +153,7 @@
 			<div class="flex items-start justify-between gap-3">
 				<div class="min-w-0">
 					<p class="truncate font-mono text-[10px] uppercase tracking-wider text-text-muted">{suite.suite_id}</p>
-					<h2 class="mt-1 text-sm font-semibold text-text group-hover:text-interactive">{suite.concept_name}</h2>
+					<h2 class="mt-1 text-sm font-semibold text-text group-hover:text-interactive">{suite.spec_name}</h2>
 				</div>
 				<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {statusConfig[suite.status].class}">
 					<span>{statusConfig[suite.status].icon}</span>
@@ -163,7 +163,7 @@
 			<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-bg/60 px-3 py-2">
 				<div>
 					<div class="text-[10px] uppercase tracking-wider text-text-muted">Categories</div>
-					<div class="mt-1 text-sm text-text-secondary">{suite.behavior_count}</div>
+					<div class="mt-1 text-sm text-text-secondary">{suite.failure_mode_count}</div>
 				</div>
 				<div>
 					<div class="text-[10px] uppercase tracking-wider text-text-muted">Seeds</div>

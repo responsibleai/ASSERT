@@ -19,7 +19,7 @@ from p2m.core.config_model import (
 from p2m.core.io import (
     design_factors,
     fill_template,
-    load_policy,
+    load_taxonomy,
     load_prompt_text,
     normalize_seed_context,
     normalize_seed_rows,
@@ -202,14 +202,14 @@ def seed_record(
     *,
     kind: str,
     seed_id: str,
-    concept: str,
+    spec: str,
     seed_payload: dict[str, Any],
     factors: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     record = {
         "kind": kind,
         "seed_id": seed_id,
-        "concept": concept,
+        "spec": spec,
         "seed": seed_payload,
     }
     if factors:
@@ -242,27 +242,27 @@ For each seed, define 1-5 realistic tools that the target model would have in th
 }
 
 
-def _render_policy_body(policy: dict[str, Any]) -> str:
-    return json.dumps(policy, indent=2, ensure_ascii=False)
+def _render_taxonomy_body(taxonomy: dict[str, Any]) -> str:
+    return json.dumps(taxonomy, indent=2, ensure_ascii=False)
 
 
 def _template_replacements(
     kind: str,
-    concept_name: str,
-    behavior_name: str,
-    behavior_description: str,
+    spec_name: str,
+    failure_mode_name: str,
+    failure_mode_description: str,
     examples: list[str],
     count: int,
     *,
     context: str | None,
     batch_guidance: str,
-    policy_body: str,
+    taxonomy_body: str,
     tool_source: str = TOOL_SOURCE_RUNTIME,
 ) -> dict[str, str]:
     return {
-        "concept": concept_name,
-        "behavior": behavior_name,
-        "definition": behavior_description,
+        "spec": spec_name,
+        "failure_mode": failure_mode_name,
+        "definition": failure_mode_description,
         "count": str(count),
         "context": context or "",
         "examples": (
@@ -270,7 +270,7 @@ def _template_replacements(
             if examples
             else "- (no examples provided)"
         ),
-        "policy_body": policy_body,
+        "taxonomy_body": taxonomy_body,
         "tool_instructions": _TOOL_INSTRUCTIONS.get(tool_source, ""),
         "output_schema": output_schema_example(kind, tool_source),
         "batch_guidance": batch_guidance,
@@ -280,20 +280,20 @@ def _template_replacements(
 def render_tuple_spec(
     tuple_spec: dict[str, dict[str, Any]],
     *,
-    include_behavior: bool = True,
+    include_failure_mode: bool = True,
 ) -> str:
     if not tuple_spec:
         return ""
-    axes = [ax for ax in tuple_spec if ax != "behavior"]
+    axes = [ax for ax in tuple_spec if ax != "failure_mode"]
     lines = []
     for ax in axes:
         title = ax.replace("_", " ").capitalize()
         lines.append(
             f"- {title}: {tuple_spec[ax]['name']} - {tuple_spec[ax]['definition']}"
         )
-    if include_behavior and "behavior" in tuple_spec:
+    if include_failure_mode and "failure_mode" in tuple_spec:
         lines.append(
-            f"- Policy behavior: {tuple_spec['behavior']['name']} — {tuple_spec['behavior']['description']}"
+            f"- Taxonomy failure_mode: {tuple_spec['failure_mode']['name']} — {tuple_spec['failure_mode']['description']}"
         )
     return "\n".join(lines)
 
@@ -301,8 +301,8 @@ def render_tuple_spec(
 def build_generation_prompt(
     *,
     kind: str,
-    policy: dict[str, Any],
-    behavior: dict[str, Any],
+    taxonomy: dict[str, Any],
+    failure_mode: dict[str, Any],
     count: int,
     context: str | None,
     design: dict[str, list[dict[str, Any]]],
@@ -313,51 +313,51 @@ def build_generation_prompt(
 
     *kind*: ``"prompt"`` or ``"scenario"``.
     """
-    concept_name = str(policy.get("concept", {}).get("name") or "concept")
-    behavior_name = str(behavior.get("name") or "").strip()
-    behavior_description = str(behavior.get("description") or "").strip()
-    policy_behavior = next(
+    spec_name = str(taxonomy.get("spec", {}).get("name") or "spec")
+    failure_mode_name = str(failure_mode.get("name") or "").strip()
+    failure_mode_description = str(failure_mode.get("description") or "").strip()
+    taxonomy_failure_mode = next(
         (
             entry
-            for entry in policy.get("behaviors", [])
-            if str(entry.get("name") or "").strip() == behavior_name
+            for entry in taxonomy.get("failure_modes", [])
+            if str(entry.get("name") or "").strip() == failure_mode_name
         ),
         None,
     )
-    behavior_examples = (
-        list(policy_behavior.get("examples") or [])
-        if isinstance(policy_behavior, dict)
+    failure_mode_examples = (
+        list(taxonomy_failure_mode.get("examples") or [])
+        if isinstance(taxonomy_failure_mode, dict)
         else []
     )
 
     if not tuple_spec:
         raise ValueError("generation requires tuple_spec")
     include_pn = (
-        "behavior" in tuple_spec
+        "failure_mode" in tuple_spec
         and (kind == "scenario" or not design_factors(design))
     )
     batch_guidance = fill_template(
         GENERATION_GUIDANCE_TEMPLATE,
         {
                 "count": str(count),
-                "behavior_name": behavior_name,
-                "behavior_definition": behavior_description,
+                "failure_mode_name": failure_mode_name,
+                "failure_mode_definition": failure_mode_description,
                 "tuple_block": render_tuple_spec(
-                    tuple_spec, include_behavior=include_pn
+                    tuple_spec, include_failure_mode=include_pn
                 ),
         },
     )
 
     replacements = _template_replacements(
         kind,
-        concept_name,
-        behavior_name,
-        behavior_description,
-        behavior_examples,
+        spec_name,
+        failure_mode_name,
+        failure_mode_description,
+        failure_mode_examples,
         count,
         context=context,
         batch_guidance=batch_guidance,
-        policy_body=_render_policy_body(policy),
+        taxonomy_body=_render_taxonomy_body(taxonomy),
         tool_source=tool_source,
     )
     return fill_template(
@@ -518,7 +518,7 @@ def sample_from_covering_array(
 class SeedJob:
     """One covering-array tuple's seed-generation work unit."""
     order: int
-    behavior: dict[str, Any]
+    failure_mode: dict[str, Any]
     count: int
     start_index: int
     tuple_spec: dict[str, dict[str, Any]] | None = None
@@ -526,7 +526,7 @@ class SeedJob:
 
 def build_generation_jobs(
     *,
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     design: dict[str, list[dict[str, Any]]],
     sample_size: int,
     rng: random.Random,
@@ -534,9 +534,9 @@ def build_generation_jobs(
     """Build generation jobs — one per covering-array tuple.
 
     Budget is spread evenly across tuples via divmod. Each job produces
-    its allocated number of seeds for a single (behavior, factor…) tuple.
+    its allocated number of seeds for a single (failure_mode, factor…) tuple.
     """
-    behavior_entries = design["behavior"]
+    failure_mode_entries = design["failure_mode"]
     factor_names = design_factors(design)
     level_lookup: dict[str, dict[str, dict[str, str]]] = {
         factor_name: {
@@ -544,12 +544,12 @@ def build_generation_jobs(
         }
         for factor_name in factor_names
     }
-    behavior_level_lookup = {
-        str(entry["name"]): entry for entry in behavior_entries
+    failure_mode_level_lookup = {
+        str(entry["name"]): entry for entry in failure_mode_entries
     }
     covering_design = dict(design)
-    covering_design["behavior"] = behavior_entries
-    all_axes = ("behavior",) + factor_names if factor_names else ("behavior",)
+    covering_design["failure_mode"] = failure_mode_entries
+    all_axes = ("failure_mode",) + factor_names if factor_names else ("failure_mode",)
     covering_array = design.get("_covering_array")
     if not covering_array:
         covering_array = build_covering_array(covering_design, rng, axes=all_axes)
@@ -568,13 +568,13 @@ def build_generation_jobs(
         if count == 0:
             continue
 
-        behavior_name = row["behavior"]
-        behavior_entry = behavior_level_lookup[behavior_name]
+        failure_mode_name = row["failure_mode"]
+        failure_mode_entry = failure_mode_level_lookup[failure_mode_name]
         spec: dict[str, dict[str, Any]] = {
             factor_name: level_lookup[factor_name][row[factor_name]]
             for factor_name in factor_names
         }
-        spec["behavior"] = behavior_entry
+        spec["failure_mode"] = failure_mode_entry
 
         for _ in range(count):
             all_assignments.append(dict(row))
@@ -582,7 +582,7 @@ def build_generation_jobs(
         jobs.append(
             SeedJob(
                 order=len(jobs),
-                behavior=behavior_entry,
+                failure_mode=failure_mode_entry,
                 count=count,
                 start_index=next_index,
                 tuple_spec=spec,
@@ -599,7 +599,7 @@ def build_generation_jobs(
 async def _generate_records(
     *,
     kind: str,
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     model: str,
     sample_size: int,
     temperature: float | None,
@@ -622,10 +622,10 @@ async def _generate_records(
     design_data = design or {}
     schema = seeds_response_schema(tool_source)
     seed_id_prefix = SEED_ID_PREFIX[kind]
-    concept_name = policy.get("concept", {}).get("name", "concept")
+    spec_name = taxonomy.get("spec", {}).get("name", "spec")
 
     jobs, _ = build_generation_jobs(
-        policy=policy,
+        taxonomy=taxonomy,
         design=design_data,
         sample_size=sample_size,
         rng=random.Random(seed),
@@ -635,16 +635,16 @@ async def _generate_records(
     async def _process(job: SeedJob) -> dict[str, Any]:
         prompt = build_generation_prompt(
             kind=kind,
-            policy=policy,
-            behavior=job.behavior,
+            taxonomy=taxonomy,
+            failure_mode=job.failure_mode,
             count=job.count,
             context=context,
             design=design_data,
             tuple_spec=job.tuple_spec,
             tool_source=tool_source,
         )
-        slug = slugify(str(job.behavior.get("name") or ""))
-        behavior_name = str(job.behavior.get("name") or "")
+        slug = slugify(str(job.failure_mode.get("name") or ""))
+        failure_mode_name = str(job.failure_mode.get("name") or "")
 
         response = await generate_structured(
             model,
@@ -672,7 +672,7 @@ async def _generate_records(
         for idx, raw_seed in enumerate(returned_seeds):
             if not isinstance(raw_seed, dict):
                 raise ValueError(f"{kind} generation returned non-dict seed at index {idx}")
-            factors: dict[str, str] = {"behavior": behavior_name}
+            factors: dict[str, str] = {"failure_mode": failure_mode_name}
             if job.tuple_spec:
                 factors.update({
                     factor_name: job.tuple_spec[factor_name]["name"]
@@ -681,7 +681,7 @@ async def _generate_records(
             records.append(
                 seed_record(
                     kind=kind, seed_id=f"{seed_id_prefix}-{slug}-{job.start_index + idx:03d}",
-                    concept=concept_name,
+                    spec=spec_name,
                     seed_payload=normalize_generated_seed(
                         raw_seed,
                         tool_source=tool_source,
@@ -704,7 +704,7 @@ async def _generate_records(
 
 async def run_seeds(
     *,
-    policy_path: str,
+    taxonomy_path: str,
     save_path: str,
     context: str | None,
     prompt: dict[str, Any] | None,
@@ -720,13 +720,13 @@ async def run_seeds(
         raise ValueError("seeds stage requires prompt and/or scenario configuration")
     _validate_tool_source(tool_source, target)
 
-    policy = load_policy(policy_path)
+    taxonomy = load_taxonomy(taxonomy_path)
     out_path = resolve_path(save_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     normalized_context = normalize_seed_context(context)
     fixed_system_prompt = (str(target.system_prompt or "").strip() or None) if target is not None else None
 
-    design = normalize_design(design or {}, policy, inject_behavior=True)
+    design = normalize_design(design or {}, taxonomy, inject_failure_mode=True)
 
     kinds_cfgs: list[tuple[str, dict[str, Any]]] = []
     if prompt is not None:
@@ -736,7 +736,7 @@ async def run_seeds(
 
     results = await asyncio.gather(*[
         _generate_records(
-            kind=kind, policy=policy, model=str(cfg["model"]),
+            kind=kind, taxonomy=taxonomy, model=str(cfg["model"]),
             sample_size=int(cfg["sample_size"]),
             temperature=(
                 float(cfg["temperature"])
@@ -818,7 +818,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         raw_cfg,
         field_name="seeds",
         allowed={
-            "policy_path",
+            "taxonomy_path",
             "save_path",
             "design_path",
             "tool_source",
@@ -857,7 +857,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("seeds requires prompt and/or scenario configuration")
 
     path_cfg = {
-        "policy_path": raw_cfg.get("policy_path") or str(Path(ctx["suite_root"]) / "policy.json"),
+        "taxonomy_path": raw_cfg.get("taxonomy_path") or str(Path(ctx["suite_root"]) / "taxonomy.json"),
         "save_path": raw_cfg.get("save_path") or str(Path(ctx["suite_root"]) / SEEDS_FILE),
         "design_path": raw_cfg.get("design_path") or str(Path(ctx["suite_root"]) / "design.json"),
     }
@@ -867,7 +867,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
-    policy_path = cfg["policy_path"]
+    taxonomy_path = cfg["taxonomy_path"]
     design_path = Path(cfg["design_path"])
     if design_path.exists():
         raw_design = json.loads(design_path.read_text(encoding="utf-8"))
@@ -880,7 +880,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         )
 
     result = await run_seeds(
-        policy_path=policy_path,
+        taxonomy_path=taxonomy_path,
         save_path=cfg["save_path"],
         context=context,
         prompt=prompt_cfg,

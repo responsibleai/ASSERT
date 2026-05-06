@@ -139,10 +139,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level policy violation is flagged, but no policy node is marked violated';
+			return 'top-level taxonomy violation is flagged, but no taxonomy node is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a policy node is marked violated, but the top-level policy verdict is clear';
+			return 'a taxonomy node is marked violated, but the top-level taxonomy verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -338,7 +338,7 @@
 			document.getElementById(`drawer-turn-${turn}`);
 		if (!el) return;
 		revealMessageCard(el as HTMLElement);
-		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		el.scrollIntoView({ failure_mode: 'smooth', block: 'center' });
 	}
 
 	function readDebugObject(value: unknown): Record<string, unknown> | null {
@@ -403,14 +403,14 @@
 			buttonTitle: 'View stored event debug payload',
 			panelTitle: 'Stored event debug payload',
 			description:
-				'This is transcript event debug data captured during rollout. For external connectors it may be the only payload available.',
+				'This is transcript event debug data captured during inference. For external connectors it may be the only payload available.',
 			payload: raw
 		};
 	}
 
 	function llmSourceLabel(source: string): string {
 		if (source === 'target') return 'Target model';
-		if (source === 'auditor') return 'Auditor model';
+		if (source === 'tester') return 'Tester model';
 		if (source === 'tool_simulator') return 'Tool simulator';
 		return source || 'LLM';
 	}
@@ -435,7 +435,7 @@
 		if (!el) return;
 		applyMessageHighlight(null, message.id, toolFocus ?? null);
 		revealMessageCard(el as HTMLElement);
-		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		el.scrollIntoView({ failure_mode: 'smooth', block: 'center' });
 	}
 
 	function findCitationByIndex(citations: AuditCitation[], index: number): AuditCitation | null {
@@ -590,7 +590,7 @@
 		return relevantNodes.length > 0 ? relevantNodes : nodeJudgments;
 	}
 
-	function policyNodeName(node: NodeJudgment): string | null {
+	function taxonomyNodeName(node: NodeJudgment): string | null {
 		const embeddedName = typeof node.node_name === 'string' ? node.node_name.trim() : '';
 		return embeddedName || null;
 	}
@@ -785,7 +785,7 @@
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Unjudged preview</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This conversation finished rollout and is available for inspection, but the judge has not scored it yet.
+							This conversation finished inference and is available for inspection, but the judge has not scored it yet.
 						</p>
 					</div>
 				{/if}
@@ -801,7 +801,7 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Node-level taxonomy findings and the top-level taxonomy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
 						</p>
 					</div>
 				{/if}
@@ -838,7 +838,7 @@
 							{/each}
 						</div>
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
-							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
+							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, taxonomy reasoning, and transcript highlights follow this verdict.
 						</p>
 					</div>
 				{/if}
@@ -877,15 +877,15 @@
 									<div class="mt-3 space-y-1.5 border-t border-border/50 pt-3">
 										{#each nodeJudgments as node}
 											{@const violated = node.violated}
-											{@const nodeName = policyNodeName(node)}
+											{@const nodeName = taxonomyNodeName(node)}
 											<div class="rounded-md px-3 py-2 {violated ? 'bg-score-fail/5' : violated === null ? 'bg-surface-2/50' : 'bg-score-pass/5'}">
 												<div class="flex items-start justify-between gap-2">
 													<div class="min-w-0 flex-1">
 														<div
 															class="truncate text-xs font-semibold text-text"
-															title={nodeName ?? 'Unnamed policy node'}
+															title={nodeName ?? 'Unnamed taxonomy node'}
 														>
-															{nodeName ?? 'Unnamed policy node'}
+															{nodeName ?? 'Unnamed taxonomy node'}
 														</div>
 													</div>
 													<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -1142,7 +1142,7 @@
 							</div>
 							<div class="{isUser ? 'max-w-[85%]' : 'w-[85%]'} rounded-lg {isUser ? 'bg-interactive/8' : 'bg-surface-2'} {isHighlighted ? 'ring-2 ring-interactive bg-interactive/12' : ''} overflow-hidden">
 								<div class="flex items-center gap-2 px-4 pt-3 pb-1.5">
-									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Auditor') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Tester') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
 									{/if}

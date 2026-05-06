@@ -431,7 +431,7 @@ class CallableSession:
 
     When the callable returns a ModelResponse (or a raw litellm/OpenAI-style
     response object), CallableSession extracts tool call traces, token usage,
-    and model metadata — giving eval visibility into lightweight agent behavior
+    and model metadata — giving eval visibility into lightweight agent failure_mode
     (tool-calling, RAG-with-retrieval-tools) without requiring a full connector.
     """
 

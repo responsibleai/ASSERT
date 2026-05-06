@@ -14,7 +14,7 @@ examples/travel_planner_langgraph/
 └── auto_trace.py             Phoenix auto-instrumentation wrapper
 ```
 
-The config points rollout at:
+The config points inference at:
 
 ```yaml
 target:
@@ -52,16 +52,16 @@ If you skip Phoenix, the pipeline can still run the target, but you will not get
 
 The developer-authored pieces are:
 
-1. **Eval spec**: `concept.name: travel_planner_eval` loads `travel_planner_eval.md`.
+1. **Eval spec**: `spec.name: travel_planner_eval` loads `travel_planner_eval.md`.
 2. **About the target**: `context` tells the generator this is a multi-agent travel planner with flight, hotel, weather, advisory, and budget tools.
 3. **Variations**: `factors` ask the generator to vary traveler type and trip type.
 4. **Judge dimensions**: `judge.dimensions` defines what the judge should score, with descriptions and rubrics.
 
 The pipeline fills in the rest:
 
-1. `policy` creates a behavior taxonomy.
+1. `taxonomy` creates a failure_mode taxonomy.
 2. `seeds` generates single-turn prompts and multi-turn scenarios.
-3. `rollout` executes those tests against the agent.
+3. `inference` executes those tests against the agent.
 4. `judge` scores each transcript and writes metrics.
 
 ## Inspect results

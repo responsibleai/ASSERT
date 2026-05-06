@@ -19,7 +19,7 @@ const RUN_COLORS = ['#a78bfa', '#60a5fa', '#2dd4bf', '#fbbf24'];
 // Baseline is always the first run
 let baselineIdx = $state(0);
 
-// Expanded behavior rows
+// Expanded failure_mode rows
 let expandedRows = $state<Set<string>>(new Set());
 
 // "Disagreements only" filter
@@ -39,14 +39,14 @@ let sortedComparisons = $derived.by(() => {
 	);
 });
 
-function toggleRow(behavior: string) {
+function toggleRow(failure_mode: string) {
 	const next = new Set(expandedRows);
-	if (next.has(behavior)) next.delete(behavior);
-	else next.add(behavior);
+	if (next.has(failure_mode)) next.delete(failure_mode);
+	else next.add(failure_mode);
 	expandedRows = next;
 }
 
-// Show-all tracker per behavior
+// Show-all tracker per failure_mode
 let showAllMap = $state<Record<string, boolean>>({});
 
 function rateColor(rate: number): string {
@@ -81,9 +81,9 @@ function deltaArrow(d: number): string {
 
 let runIds = $derived(data.runs.map((run) => run.run_id));
 
-function getMatchedSamples(behavior: string) {
+function getMatchedSamples(failure_mode: string) {
 	return buildMatchedSampleRows(
-		data.samplesByBehavior[behavior] ?? {},
+		data.samplesByBehavior[failure_mode] ?? {},
 		runIds,
 		activeMetric,
 		disagreementsOnly
@@ -139,7 +139,7 @@ function sampleGridMinWidth(runCount: number): string {
 		<h1 class="text-lg font-semibold text-text">
 			Comparing {data.runs.length} runs
 			<span class="text-text-muted font-normal">on</span>
-			<span class="text-interactive">{data.policy?.concept?.name ?? data.suite_id}</span>
+			<span class="text-interactive">{data.taxonomy?.spec?.name ?? data.suite_id}</span>
 		</h1>
 
 		<div class="flex flex-wrap gap-3">
@@ -264,10 +264,10 @@ function sampleGridMinWidth(runCount: number): string {
 		</div>
 	</section>
 
-	<!-- ═══ SECTION 3: Behavior Heatmap ═══ -->
+	<!-- ═══ SECTION 3: FailureMode Heatmap ═══ -->
 	<section class="space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">By Behavior</h2>
+			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">By FailureMode</h2>
 
 			<!-- Disagreements toggle -->
 			<label class="flex items-center gap-2 cursor-pointer select-none">
@@ -289,7 +289,7 @@ function sampleGridMinWidth(runCount: number): string {
 			<div class="min-w-max" style="min-width: {comparisonTableMinWidth(data.runs.length)};">
 				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-[10px] font-semibold uppercase tracking-wider text-text-muted border-b border-border"
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
-					<span>Behavior</span>
+					<span>FailureMode</span>
 					{#each data.runs as run, i}
 						<span class="text-center" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
 					{/each}
@@ -297,26 +297,26 @@ function sampleGridMinWidth(runCount: number): string {
 				</div>
 
 				<!-- Rows -->
-				{#each sortedComparisons as row (row.behavior)}
-					{@const isExpanded = expandedRows.has(row.behavior)}
-					{@const matched = isExpanded ? getMatchedSamples(row.behavior) : []}
-					{@const showAll = showAllMap[row.behavior] ?? false}
+				{#each sortedComparisons as row (row.failure_mode)}
+					{@const isExpanded = expandedRows.has(row.failure_mode)}
+					{@const matched = isExpanded ? getMatchedSamples(row.failure_mode) : []}
+					{@const showAll = showAllMap[row.failure_mode] ?? false}
 					{@const displaySamples = showAll ? matched : matched.slice(0, 3)}
 					{@const rowDelta = row.deltas[activeMetric] ?? 0}
 
 					<div class="border-b border-border/50 last:border-b-0">
 						<!-- Row -->
 						<button
-							onclick={() => toggleRow(row.behavior)}
+							onclick={() => toggleRow(row.failure_mode)}
 							class="w-full grid items-center gap-2 px-4 py-3 text-left transition-colors duration-150 hover:bg-white/[0.02] cursor-pointer"
 							style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};"
 						>
-						<!-- Behavior name -->
+						<!-- FailureMode name -->
 						<div class="flex items-center gap-2 min-w-0">
 							<svg class="h-3 w-3 flex-shrink-0 text-text-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
 							</svg>
-							<span class="text-xs text-text-secondary truncate">{row.behavior}</span>
+							<span class="text-xs text-text-secondary truncate">{row.failure_mode}</span>
 						</div>
 
 						<!-- Score cells -->
@@ -348,7 +348,7 @@ function sampleGridMinWidth(runCount: number): string {
 								<div class="border-t border-border/30 bg-white/[0.01] px-4 py-4 space-y-3">
 									{#if matched.length === 0}
 										<div class="text-xs text-text-muted text-center py-4">
-											{disagreementsOnly ? 'No disagreements for this behavior' : 'No samples'}
+											{disagreementsOnly ? 'No disagreements for this failure_mode' : 'No samples'}
 										</div>
 									{:else}
 										{#each displaySamples as pair, pairIdx (pair.prompt)}
@@ -415,7 +415,7 @@ function sampleGridMinWidth(runCount: number): string {
 										<!-- Show all toggle -->
 										{#if matched.length > 3 && !showAll}
 											<button
-												onclick={() => { showAllMap[row.behavior] = true; }}
+												onclick={() => { showAllMap[row.failure_mode] = true; }}
 												class="w-full rounded-lg border border-border/30 py-2 text-[11px] text-text-muted hover:text-interactive hover:border-interactive/30 transition-colors"
 											>
 												Show all {matched.length} samples
@@ -430,7 +430,7 @@ function sampleGridMinWidth(runCount: number): string {
 
 				{#if data.comparisons.length === 0}
 					<div class="px-4 py-10 text-center text-xs text-text-muted">
-						No behavior data to compare
+						No failure_mode data to compare
 					</div>
 				{/if}
 			</div>

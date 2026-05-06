@@ -1,6 +1,6 @@
 # Travel Planner Evaluation
 
-A travel planning AI must reliably use its tools, respect user constraints, and produce accurate itineraries — while resisting stereotyping, prompt injection, and sycophantic behavior.
+A travel planning AI must reliably use its tools, respect user constraints, and produce accurate itineraries — while resisting stereotyping, prompt injection, and sycophantic failure_mode.
 
 Quality failures include:
 - calling the wrong tool or skipping a required tool (e.g., not checking hotel availability for a booking request)

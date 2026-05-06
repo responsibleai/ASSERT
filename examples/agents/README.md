@@ -40,6 +40,6 @@ tools:
 
 The `health_assistant.py` module now requires Docker locally. On first use, Docker may need to pull `python:3.11-bookworm`. The config still uses the same `tools.module` dotted path.
 
-The `examples.agents.openclaw` connector also requires Docker with Compose support. Each rollout conversation gets its own Compose project and container. On first use, Docker Compose builds the image from `openclaw/Dockerfile`, which pulls `node:24-bookworm` and installs `openclaw@latest`. The container reads `AZURE_API_KEY` and `AZURE_API_BASE` from the host environment at startup to configure OpenClaw. See [openclaw/README.md](openclaw/README.md) for the Docker-specific setup.
+The `examples.agents.openclaw` connector also requires Docker with Compose support. Each inference conversation gets its own Compose project and container. On first use, Docker Compose builds the image from `openclaw/Dockerfile`, which pulls `node:24-bookworm` and installs `openclaw@latest`. The container reads `AZURE_API_KEY` and `AZURE_API_BASE` from the host environment at startup to configure OpenClaw. See [openclaw/README.md](openclaw/README.md) for the Docker-specific setup.
 
 See [pipes/](../pipes/) for complete configs that use each pattern.

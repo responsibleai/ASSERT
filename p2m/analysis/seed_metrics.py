@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from p2m.core.io import load_jsonl, row_behavior
+from p2m.core.io import load_jsonl, row_failure_mode
 
 try:
     import numpy as np
@@ -30,7 +30,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 @dataclass
 class Config:
-    policy_path: str
+    taxonomy_path: str
     seeds_path: str
     embed_model: str
     embed_backend: str  # "openai" or "hf"
@@ -62,20 +62,20 @@ def _require_openai() -> Any:
     return OpenAI
 
 
-def load_policy(path: Path) -> Dict[str, Any]:
+def load_taxonomy(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    behaviors = data.get("behaviors") or []
+    failure_modes = data.get("failure_modes") or []
     flattened = []
-    for idx, sr in enumerate(behaviors):
+    for idx, sr in enumerate(failure_modes):
         flattened.append(
             {
                 "id": idx,
-                "name": sr.get("name", f"behavior_{idx}"),
+                "name": sr.get("name", f"failure_mode_{idx}"),
                 "definition": sr.get("definition", ""),
                 "examples": sr.get("examples", []) or [],
             }
         )
-    return {"raw": data, "behaviors": flattened}
+    return {"raw": data, "failure_modes": flattened}
 
 
 def _prompt_seed_text(row: Dict[str, Any]) -> str | None:
@@ -175,11 +175,11 @@ def embed_texts(
     return embed_texts_openai(client, model, texts)
 
 
-def coverage_at_k(behavior_counts: Dict[str, int], k: int, total_behaviors: int) -> float:
-    if total_behaviors == 0:
+def coverage_at_k(failure_mode_counts: Dict[str, int], k: int, total_failure_modes: int) -> float:
+    if total_failure_modes == 0:
         return 0.0
-    hits = sum(1 for c in behavior_counts.values() if c >= k)
-    return hits / total_behaviors
+    hits = sum(1 for c in failure_mode_counts.values() if c >= k)
+    return hits / total_failure_modes
 
 
 # ---------------------- Main logic ----------------------
@@ -187,17 +187,17 @@ def coverage_at_k(behavior_counts: Dict[str, int], k: int, total_behaviors: int)
 
 def compute_metrics(cfg: Config):
     np_mod = _require_numpy()
-    tax = load_policy(Path(cfg.policy_path))
-    behaviors = tax["behaviors"]
-    behavior_names = [sr["name"] for sr in behaviors]
+    tax = load_taxonomy(Path(cfg.taxonomy_path))
+    failure_modes = tax["failure_modes"]
+    failure_mode_names = [sr["name"] for sr in failure_modes]
 
     seeds = load_jsonl(Path(cfg.seeds_path))
 
     client = _require_openai()() if cfg.embed_backend == "openai" else None
 
-    # Embed policy examples for coverage calc
+    # Embed taxonomy examples for coverage calc
     example_texts = []
-    for sr in behaviors:
+    for sr in failure_modes:
         for ex in sr.get("examples", []):
             example_texts.append(ex)
     example_vecs = embed_texts(
@@ -205,9 +205,9 @@ def compute_metrics(cfg: Config):
     )
 
     # Collect seed info
-    per_behavior_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
-    per_behavior_valid: Dict[str, List[bool]] = defaultdict(list)
-    per_behavior_len: Dict[str, List[int]] = defaultdict(list)
+    per_failure_mode_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
+    per_failure_mode_valid: Dict[str, List[bool]] = defaultdict(list)
+    per_failure_mode_len: Dict[str, List[int]] = defaultdict(list)
 
     prompt_seeds = [entry for entry in seeds if _prompt_seed_text(entry) is not None]
     seed_prompts = [_prompt_seed_text(entry) or "" for entry in prompt_seeds]
@@ -220,31 +220,31 @@ def compute_metrics(cfg: Config):
             return example_vecs.shape[1]
         return 1
 
-    unknown_behavior_counts: Dict[str, int] = defaultdict(int)
+    unknown_failure_mode_counts: Dict[str, int] = defaultdict(int)
     for entry, vec in zip(prompt_seeds, seed_vecs):
-        sr = row_behavior(entry)
-        if sr not in behavior_names:
-            unknown_behavior_counts[sr] += 1
+        sr = row_failure_mode(entry)
+        if sr not in failure_mode_names:
+            unknown_failure_mode_counts[sr] += 1
             continue
-        per_behavior_vecs[sr].append(vec)
-        per_behavior_valid[sr].append(True)
-        per_behavior_len[sr].append(len(_prompt_seed_text(entry) or ""))
+        per_failure_mode_vecs[sr].append(vec)
+        per_failure_mode_valid[sr].append(True)
+        per_failure_mode_len[sr].append(len(_prompt_seed_text(entry) or ""))
 
-    if unknown_behavior_counts:
+    if unknown_failure_mode_counts:
         summary = ", ".join(
-            f"{name} ({count})" for name, count in sorted(unknown_behavior_counts.items())
+            f"{name} ({count})" for name, count in sorted(unknown_failure_mode_counts.items())
         )
         print(
-            f"[seed_metrics] Skipping {sum(unknown_behavior_counts.values())} seeds "
-            f"with behaviors not in policy.json: {summary}"
+            f"[seed_metrics] Skipping {sum(unknown_failure_mode_counts.values())} seeds "
+            f"with failure_modes not in taxonomy.json: {summary}"
         )
 
-    # Metrics per behavior
+    # Metrics per failure_mode
     per_stats = {}
-    for sr in behavior_names:
-        vecs = per_behavior_vecs.get(sr, [])
-        valids = per_behavior_valid.get(sr, [])
-        lens = per_behavior_len.get(sr, [])
+    for sr in failure_mode_names:
+        vecs = per_failure_mode_vecs.get(sr, [])
+        valids = per_failure_mode_valid.get(sr, [])
+        lens = per_failure_mode_len.get(sr, [])
         valid_vecs = [v for v, ok in zip(vecs, valids) if ok]
         valid_mat = np_mod.vstack(valid_vecs) if valid_vecs else np_mod.zeros((0, embed_dim()))
 
@@ -277,12 +277,12 @@ def compute_metrics(cfg: Config):
         }
 
     # Overall coverage
-    counts = {sr: per_stats[sr]["valid_count"] for sr in behavior_names}
+    counts = {sr: per_stats[sr]["valid_count"] for sr in failure_mode_names}
     if cfg.presence_coverage:
         covered = sum(1 for c in counts.values() if c > 0)
-        coverage = {"presence": covered / len(behavior_names) if behavior_names else 0.0}
+        coverage = {"presence": covered / len(failure_mode_names) if failure_mode_names else 0.0}
     else:
-        coverage = {k: coverage_at_k(counts, k, len(behavior_names)) for k in cfg.k_list}
+        coverage = {k: coverage_at_k(counts, k, len(failure_mode_names)) for k in cfg.k_list}
 
     # Skew
     count_vals = list(counts.values())
@@ -294,9 +294,9 @@ def compute_metrics(cfg: Config):
     if example_vecs.shape[0] > 0:
         valid_all_list = [
             vec
-            for sr in behavior_names
+            for sr in failure_mode_names
             for vec, ok in zip(
-                per_behavior_vecs.get(sr, []), per_behavior_valid.get(sr, [])
+                per_failure_mode_vecs.get(sr, []), per_failure_mode_valid.get(sr, [])
             )
             if ok
         ]
@@ -327,7 +327,7 @@ def compute_metrics(cfg: Config):
     report = {
         "config": asdict(cfg),
         "overall": overall,
-        "per_behavior": per_stats,
+        "per_failure_mode": per_stats,
     }
 
     Path(cfg.out_json).parent.mkdir(parents=True, exist_ok=True)
@@ -353,13 +353,13 @@ def compute_metrics(cfg: Config):
         else:
             lines.append("Example coverage: n/a")
         lines.append("")
-        lines.append("## Per behavior")
+        lines.append("## Per failure_mode")
         lines.append("")
         lines.append(
-            "| behavior | valid | total | valid_rate | vendi | vendi/n | near_dup | mean_len | var_len |"
+            "| failure_mode | valid | total | valid_rate | vendi | vendi/n | near_dup | mean_len | var_len |"
         )
         lines.append("|---|---|---|---|---|---|---|---|---|")
-        for sr in behavior_names:
+        for sr in failure_mode_names:
             ps = per_stats[sr]
             lines.append(
                 f"| {sr} | {ps['valid_count']} | {ps['total_count']} | {ps['valid_rate']:.3f} | "

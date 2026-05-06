@@ -92,7 +92,7 @@ phoenix serve  # http://localhost:6006
 All of these can be evaluated by P2M with the same config:
 
 ```yaml
-rollout:
+inference:
   target:
     callable: examples.phoenix_auto_trace.travel_openai:chat
     trace:

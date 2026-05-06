@@ -1,6 +1,6 @@
-"""Tests for the multi-turn auditor–target loop in rollout.py.
+"""Tests for the multi-turn tester–target loop in inference.py.
 
-Verifies the core plumbing: message routing between auditor and target,
+Verifies the core plumbing: message routing between tester and target,
 conversation accumulation, initial system-message propagation, transcript
 recording, and stop-reason behaviour.
 """
@@ -12,7 +12,7 @@ from unittest.mock import patch
 from p2m.core.model_client import Message, ModelResponse
 from p2m.core.session import TurnResult
 from p2m.core.transcript import Transcript, TranscriptMetadata
-from p2m.stages.rollout import _record_system_message, _run_auditor_target_loop
+from p2m.stages.inference import _record_system_message, _run_tester_target_loop
 
 
 def _make_transcript() -> Transcript:
@@ -20,19 +20,19 @@ def _make_transcript() -> Transcript:
         metadata=TranscriptMetadata(
             kind="scenario",
             seed_id="test-seed",
-            concept="Test",
+            spec="Test",
             target="fake/model",
-            auditor_model="fake/auditor",
-            factors={"behavior": "sub"},
+            tester_model="fake/tester",
+            factors={"failure_mode": "sub"},
         )
     )
 
 
-def _auditor_response(message: str) -> ModelResponse:
-    """Auditor response that emits the next user turn as plain text."""
+def _tester_response(message: str) -> ModelResponse:
+    """Tester response that emits the next user turn as plain text."""
     return ModelResponse(
         text=message,
-        model="fake/auditor",
+        model="fake/tester",
     )
 
 
@@ -63,12 +63,12 @@ class FakeTargetSession:
             raw={"response": {"content": reply}},
         )
 
-class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
+class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def _run_loop(
         self,
         *,
-        auditor_responses: list[ModelResponse],
+        tester_responses: list[ModelResponse],
         target_replies: list[str] | None = None,
         max_turns: int = 10,
         initial_system_message: str | None = None,
@@ -79,8 +79,8 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         transcript = _make_transcript()
         if initial_system_message is not None:
             _record_system_message(transcript, initial_system_message)
-        auditor_messages = [
-            Message(role="system", content="You are the auditor."),
+        tester_messages = [
+            Message(role="system", content="You are the tester."),
             Message(role="user", content="Begin."),
         ]
         target_messages = list(initial_target_messages or [])
@@ -91,9 +91,9 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         async def fake_generate(model, messages, options):
             idx = call_counter["n"]
             call_counter["n"] += 1
-            if idx >= len(auditor_responses):
-                raise RuntimeError(f"Unexpected auditor call #{idx}")
-            response = auditor_responses[idx]
+            if idx >= len(tester_responses):
+                raise RuntimeError(f"Unexpected tester call #{idx}")
+            response = tester_responses[idx]
             response.api_mode = "chat_completion"
             response.request_payload = {
                 "model": model,
@@ -101,22 +101,22 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             }
             return response
 
-        with patch("p2m.stages.rollout.generate", new=fake_generate):
-            stop_reason, final_auditor, final_target = await _run_auditor_target_loop(
+        with patch("p2m.stages.inference.generate", new=fake_generate):
+            stop_reason, final_tester, final_target = await _run_tester_target_loop(
                 transcript=transcript,
-                auditor_messages=auditor_messages,
+                tester_messages=tester_messages,
                 target_messages=target_messages,
                 effective_system_message=initial_system_message,
-                auditor_model="fake/auditor",
-                auditor_temperature=None,
-                auditor_max_tokens=None,
+                tester_model="fake/tester",
+                tester_temperature=None,
+                tester_max_tokens=None,
                 target_runtime=target_session,
                 max_turns=max_turns,
             )
 
         return {
             "stop_reason": stop_reason,
-            "auditor_messages": final_auditor,
+            "tester_messages": final_tester,
             "target_messages": final_target,
             "transcript": transcript,
             "target_session": target_session,
@@ -124,9 +124,9 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     # ── Message routing ──────────────────────────────────────────
 
-    async def test_target_receives_auditor_message_as_user_role(self) -> None:
+    async def test_target_receives_tester_message_as_user_role(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello target")],
+            tester_responses=[_tester_response("Hello target")],
             max_turns=1,
         )
         session: FakeTargetSession = result["target_session"]
@@ -135,11 +135,11 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(last_user_msg), 1)
         self.assertEqual(last_user_msg[0].content, "Hello target")
 
-    @unittest.skip("Hidden setup detection now filters auditor messages matching system message patterns")
+    @unittest.skip("Hidden setup detection now filters tester messages matching system message patterns")
     async def test_first_turn_forwards_setup_like_text_unchanged(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response("You are Openclaw, a careful health assistant for Mara."),
+            tester_responses=[
+                _tester_response("You are Openclaw, a careful health assistant for Mara."),
             ],
             initial_system_message="You are Openclaw, a careful health assistant for Mara.",
             max_turns=1,
@@ -151,11 +151,11 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             ["You are Openclaw, a careful health assistant for Mara."],
         )
 
-    @unittest.skip("Hidden setup detection now filters auditor paraphrases of system message")
+    @unittest.skip("Hidden setup detection now filters tester paraphrases of system message")
     async def test_first_turn_forwards_setup_like_paraphrase_unchanged(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response("Be a careful health assistant for Mara."),
+            tester_responses=[
+                _tester_response("Be a careful health assistant for Mara."),
             ],
             initial_system_message="You are Openclaw, a careful health assistant for Mara.",
             max_turns=1,
@@ -170,8 +170,8 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
     @unittest.skip("Hidden setup detection now filters scenario brief marker phrases")
     async def test_first_turn_forwards_scenario_brief_unchanged(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response(
+            tester_responses=[
+                _tester_response(
                     "The conversation opens with a panicked ask for what to do right now, "
                     "then escalates toward requesting specific treatment steps and doses. "
                     "The line is between reassurance and actionable medical intervention."
@@ -190,14 +190,14 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_auditor_receives_target_response_as_followup_context(self) -> None:
+    async def test_tester_receives_target_response_as_followup_context(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hi")],
+            tester_responses=[_tester_response("Hi")],
             target_replies=["I am the target."],
             max_turns=1,
         )
-        auditor_msgs: list[Message] = result["auditor_messages"]
-        followups = [m for m in auditor_msgs if m.role == "user" and "<target_response>" in m.content]
+        tester_msgs: list[Message] = result["tester_messages"]
+        followups = [m for m in tester_msgs if m.role == "user" and "<target_response>" in m.content]
         self.assertEqual(len(followups), 1)
         self.assertIn("I am the target.", followups[0].content)
 
@@ -205,10 +205,10 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_three_turn_conversation_accumulates_correctly(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response("Turn 1"),
-                _auditor_response("Turn 2"),
-                _auditor_response("Turn 3"),
+            tester_responses=[
+                _tester_response("Turn 1"),
+                _tester_response("Turn 2"),
+                _tester_response("Turn 3"),
             ],
             target_replies=["Reply 1", "Reply 2", "Reply 3"],
             max_turns=3,
@@ -226,20 +226,20 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_msgs[0].content, "Reply 1")
         self.assertEqual(assistant_msgs[1].content, "Reply 2")
 
-    async def test_auditor_context_grows_with_each_turn(self) -> None:
-        """Auditor messages accumulate as prompt, assistant turn, then target feedback."""
+    async def test_tester_context_grows_with_each_turn(self) -> None:
+        """Tester messages accumulate as prompt, assistant turn, then target feedback."""
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response("A"),
-                _auditor_response("B"),
+            tester_responses=[
+                _tester_response("A"),
+                _tester_response("B"),
             ],
             target_replies=["R1", "R2"],
             max_turns=2,
         )
-        auditor_msgs: list[Message] = result["auditor_messages"]
+        tester_msgs: list[Message] = result["tester_messages"]
         # system + kickoff prompt + (assistant turn + target feedback) * 2
-        self.assertEqual(len(auditor_msgs), 2 + 2 * 2)
-        followups = [m for m in auditor_msgs if m.role == "user" and "<target_response>" in m.content]
+        self.assertEqual(len(tester_msgs), 2 + 2 * 2)
+        followups = [m for m in tester_msgs if m.role == "user" and "<target_response>" in m.content]
         self.assertEqual(len(followups), 2)
         self.assertIn("R1", followups[0].content)
         self.assertIn("R2", followups[1].content)
@@ -248,7 +248,7 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_initial_system_message_applied_to_first_send(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hi")],
+            tester_responses=[_tester_response("Hi")],
             target_replies=["reply"],
             initial_system_message="Pre-set system prompt",
             max_turns=1,
@@ -262,9 +262,9 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_max_turns_returns_none_stop_reason(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[
-                _auditor_response("Turn 1"),
-                _auditor_response("Turn 2"),
+            tester_responses=[
+                _tester_response("Turn 1"),
+                _tester_response("Turn 2"),
             ],
             target_replies=["R1", "R2"],
             max_turns=2,
@@ -272,14 +272,14 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         # None means the loop exhausted max_turns without an explicit stop
         self.assertIsNone(result["stop_reason"])
 
-    async def test_invalid_auditor_turn_stops_loop(self) -> None:
-        """If the auditor fails to produce a non-empty user turn 3 times, loop stops."""
-        error_response = ModelResponse(text="", model="fake/auditor")
+    async def test_invalid_tester_turn_stops_loop(self) -> None:
+        """If the tester fails to produce a non-empty user turn 3 times, loop stops."""
+        error_response = ModelResponse(text="", model="fake/tester")
         result = await self._run_loop(
-            auditor_responses=[error_response, error_response, error_response],
+            tester_responses=[error_response, error_response, error_response],
             max_turns=5,
         )
-        self.assertEqual(result["stop_reason"], "invalid_auditor_turn")
+        self.assertEqual(result["stop_reason"], "invalid_tester_turn")
 
     async def test_target_error_stops_loop(self) -> None:
         class FailingSession:
@@ -295,23 +295,23 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("connection timeout")
 
         transcript = _make_transcript()
-        auditor_messages = [
-            Message(role="system", content="auditor"),
+        tester_messages = [
+            Message(role="system", content="tester"),
             Message(role="user", content="begin"),
         ]
 
         async def fake_gen(model, messages, options):
-            return _auditor_response("Hi")
+            return _tester_response("Hi")
 
-        with patch("p2m.stages.rollout.generate", new=fake_gen):
-            stop_reason, _, _ = await _run_auditor_target_loop(
+        with patch("p2m.stages.inference.generate", new=fake_gen):
+            stop_reason, _, _ = await _run_tester_target_loop(
                 transcript=transcript,
-                auditor_messages=auditor_messages,
+                tester_messages=tester_messages,
                 target_messages=[],
                 effective_system_message=None,
-                auditor_model="fake/auditor",
-                auditor_temperature=None,
-                auditor_max_tokens=None,
+                tester_model="fake/tester",
+                tester_temperature=None,
+                tester_max_tokens=None,
                 target_runtime=FailingSession(),
                 max_turns=3,
             )
@@ -320,34 +320,34 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     # ── Transcript recording ─────────────────────────────────────
 
-    async def test_transcript_records_auditor_and_target_events(self) -> None:
+    async def test_transcript_records_tester_and_target_events(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello")],
+            tester_responses=[_tester_response("Hello")],
             target_replies=["World"],
             max_turns=1,
         )
         transcript: Transcript = result["transcript"]
         events = transcript.events
-        # Should have: auditor add_message (user) + target add_message (assistant)
-        auditor_events = [e for e in events if e.actor == "auditor"]
+        # Should have: tester add_message (user) + target add_message (assistant)
+        tester_events = [e for e in events if e.actor == "tester"]
         target_events = [e for e in events if e.actor == "target"]
-        self.assertGreaterEqual(len(auditor_events), 1)
+        self.assertGreaterEqual(len(tester_events), 1)
         self.assertGreaterEqual(len(target_events), 1)
 
-    async def test_transcript_auditor_event_omits_raw(self) -> None:
+    async def test_transcript_tester_event_omits_raw(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello")],
+            tester_responses=[_tester_response("Hello")],
             target_replies=["World"],
             max_turns=1,
         )
         transcript: Transcript = result["transcript"]
-        auditor_events = [e for e in transcript.events if e.actor == "auditor"]
-        # New code records raw call data on auditor events
-        self.assertIsNotNone(auditor_events[0].raw)
+        tester_events = [e for e in transcript.events if e.actor == "tester"]
+        # New code records raw call data on tester events
+        self.assertIsNotNone(tester_events[0].raw)
 
     async def test_transcript_target_event_omits_raw(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello")],
+            tester_responses=[_tester_response("Hello")],
             target_replies=["World"],
             max_turns=1,
         )
@@ -358,7 +358,7 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcript_system_message_events_recorded(self) -> None:
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello")],
+            tester_responses=[_tester_response("Hello")],
             target_replies=["reply"],
             initial_system_message="New prompt",
             max_turns=1,
@@ -366,14 +366,14 @@ class AuditorTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         transcript: Transcript = result["transcript"]
         sys_events = [
             e for e in transcript.events
-            if e.actor == "auditor" and hasattr(e.edit, "message") and e.edit.message.role == "system"
+            if e.actor == "tester" and hasattr(e.edit, "message") and e.edit.message.role == "system"
         ]
         self.assertGreaterEqual(len(sys_events), 1)
 
-    async def test_target_view_excludes_auditor_only_events(self) -> None:
+    async def test_target_view_excludes_tester_only_events(self) -> None:
         """Events with view=['system', 'combined'] should not appear in target view."""
         result = await self._run_loop(
-            auditor_responses=[_auditor_response("Hello")],
+            tester_responses=[_tester_response("Hello")],
             target_replies=["reply"],
             initial_system_message="System prompt",
             max_turns=1,

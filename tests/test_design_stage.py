@@ -23,12 +23,12 @@ class DesignStageRegistrationTest(unittest.TestCase):
 
 
 class DesignStageOrderingTest(unittest.TestCase):
-    def test_design_is_between_policy_and_seeds(self):
+    def test_design_is_between_taxonomy_and_seeds(self):
         from p2m.config import PIPELINE_STAGE_ORDER
 
         order = list(PIPELINE_STAGE_ORDER)
         self.assertIn("design", order)
-        self.assertLess(order.index("policy"), order.index("design"))
+        self.assertLess(order.index("taxonomy"), order.index("design"))
         self.assertLess(order.index("design"), order.index("seeds"))
 
     def test_design_in_standard_pipeline_stages(self):
@@ -139,8 +139,8 @@ class DesignStageConfigValidationTest(unittest.TestCase):
                 ],
             }
 
-            async def fake_run_design(*, policy_path, out_dir, factors=None, context=None, model=None, level_count, reasoning_effort=None, temperature=None):
-                self.assertEqual(Path(policy_path).resolve(), (suite_root / "policy.json").resolve())
+            async def fake_run_design(*, taxonomy_path, out_dir, factors=None, context=None, model=None, level_count, reasoning_effort=None, temperature=None):
+                self.assertEqual(Path(taxonomy_path).resolve(), (suite_root / "taxonomy.json").resolve())
                 self.assertEqual(model, "test-model")
                 self.assertEqual(context, "A coding agent with shell access.")
                 self.assertEqual(Path(out_dir).resolve(), (root / "artifacts" / "custom-output").resolve())
@@ -166,25 +166,25 @@ class DesignStageConfigValidationTest(unittest.TestCase):
 
 
 class RunDesignTest(unittest.IsolatedAsyncioTestCase):
-    async def test_run_design_skips_llm_for_behavior_only(self) -> None:
+    async def test_run_design_skips_llm_for_failure_mode_only(self) -> None:
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             generate_mock = AsyncMock()
             with patch("p2m.stages.design.generate_structured", generate_mock):
                 result = await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     factors=[],
                     context="  Demo app  ",
@@ -195,25 +195,25 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["factor_sizes"], {})
         self.assertEqual(payload["_context"], "Demo app")
         self.assertEqual(
-            payload["behavior"][0],
-            {"name": "Behavior A", "description": "Definition A"},
+            payload["failure_mode"][0],
+            {"name": "FailureMode A", "description": "Definition A"},
         )
         generate_mock.assert_not_awaited()
 
     async def test_run_design_merges_provided_and_generated_levels(self) -> None:
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del prompt, options
             self.assertEqual(model, "azure/gpt-5.4")
-            self.assertEqual(schema_name, "policy_design")
+            self.assertEqual(schema_name, "taxonomy_design")
             self.assertEqual(set(json_schema["required"]), {"audience"})
             return ModelResponse(
                 parsed={
@@ -228,12 +228,12 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.design.generate_structured", new=fake_generate_structured):
                 result = await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     model="azure/gpt-5.4",
                     factors=[
@@ -262,22 +262,22 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
         """Factors with explicit levels should not require description."""
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             generate_mock = AsyncMock()
             with patch("p2m.stages.design.generate_structured", generate_mock):
                 result = await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     factors=[
                         {
@@ -300,21 +300,21 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
         """Factors without levels must provide a description."""
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with self.assertRaises(ValueError) as cm:
                 await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     model="azure/gpt-5.4",
                     factors=[{"name": "tone"}],
@@ -326,21 +326,21 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
         """Factors with levels: [] should be rejected."""
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with self.assertRaises(ValueError) as cm:
                 await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     factors=[{"name": "tone", "levels": []}],
                 )
@@ -351,10 +351,10 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
         """Mixed: one factor with explicit levels (no description), one generated."""
         from p2m.stages.design import run_design
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "Behavior A", "definition": "Definition A", "permissible": True},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
             ],
         }
 
@@ -372,12 +372,12 @@ class RunDesignTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            policy_path = root / "policy.json"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path = root / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.design.generate_structured", new=fake_generate_structured):
                 result = await run_design(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
                     model="azure/gpt-5.4",
                     factors=[

@@ -238,11 +238,11 @@ def _metadata_from_dict(data: Dict[str, Any]) -> "TranscriptMetadata":
     return TranscriptMetadata(
         kind=data["kind"],
         seed_id=data["seed_id"],
-        concept=data["concept"],
+        spec=data["spec"],
         target=data["target"],
-        auditor_model=data["auditor_model"],
+        tester_model=data["tester_model"],
         target_reasoning_effort=data.get("target_reasoning_effort"),
-        auditor_reasoning_effort=data.get("auditor_reasoning_effort"),
+        tester_reasoning_effort=data.get("tester_reasoning_effort"),
         factors=data.get("factors"),
     )
 
@@ -301,7 +301,7 @@ def _transcript_from_dict(data: Dict[str, Any]) -> "Transcript":
 class TranscriptEvent(BaseModel):
     """Single event in the transcript."""
     view: Union[str, List[str]]  # Which views this event affects
-    actor: Literal["auditor", "target", "tool", "system"]
+    actor: Literal["tester", "target", "tool", "system"]
     edit: Edit
     raw: Optional[Dict[str, Any]] = None  # Raw API request/response for debugging
 
@@ -310,16 +310,16 @@ class TranscriptMetadata(BaseModel):
     """Metadata for a transcript."""
     kind: str
     seed_id: str
-    concept: str
+    spec: str
     target: str
-    auditor_model: str
+    tester_model: str
     target_reasoning_effort: Optional[str] = None
-    auditor_reasoning_effort: Optional[str] = None
+    tester_reasoning_effort: Optional[str] = None
     factors: Optional[Dict[str, str]] = None
 
 
 class LLMCallTrace(BaseModel):
-    """One owned LLM invocation captured during rollout."""
+    """One owned LLM invocation captured during inference."""
     call_id: str
     source: str
     api_mode: str
@@ -384,7 +384,7 @@ class Transcript(BaseModel):
         Collect messages for a specific view.
         
         Args:
-            view: Which view to collect ("auditor", "target", "combined")
+            view: Which view to collect ("tester", "target", "combined")
         
         Returns:
             List of messages for the view.
@@ -491,14 +491,14 @@ class Transcript(BaseModel):
         result = {
             "kind": self.metadata.kind,
             "seed_id": self.metadata.seed_id,
-            "concept": self.metadata.concept,
+            "spec": self.metadata.spec,
             "events": [e.model_dump() for e in self.events],
             "llm_calls": [call.model_dump() for call in self.llm_calls],
             "stop_reason": self.stop_reason,
             "target": self.metadata.target,
-            "auditor_model": self.metadata.auditor_model,
+            "tester_model": self.metadata.tester_model,
             "target_reasoning_effort": self.metadata.target_reasoning_effort,
-            "auditor_reasoning_effort": self.metadata.auditor_reasoning_effort,
+            "tester_reasoning_effort": self.metadata.tester_reasoning_effort,
         }
         if self.metadata.factors:
             result["factors"] = self.metadata.factors

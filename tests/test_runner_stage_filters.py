@@ -86,7 +86,7 @@ class RunnerStageFilterTest(unittest.TestCase):
     # downstream cascade fix in p2m/runner.py).
     #
     # Without cascade, `--force-stage seeds` regenerates seeds.jsonl
-    # but rollout silently keeps the prior transcripts (its resume
+    # but inference silently keeps the prior transcripts (its resume
     # cache keys on seed_id, and seed ids are deterministic enough
     # to collide). Same hazard for judge against scores.jsonl. The
     # cascade extends the explicit forced set to every stage at or
@@ -101,25 +101,25 @@ class RunnerStageFilterTest(unittest.TestCase):
     def test_force_stage_cascade_only_includes_downstream(self) -> None:
         seen: list[str] = []
         suite_modules = {
-            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
+            "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
             "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=self._async_recorder("design", seen)),
             "seeds": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="seeds.jsonl", run=self._async_recorder("seeds", seen)),
-            "rollout": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("rollout", seen)),
+            "inference": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("inference", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
         }
 
         with TemporaryDirectory() as tmp_dir:
             suite_root = Path(tmp_dir) / "suite"
             suite_root.mkdir(parents=True)
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             (suite_root / "design.json").write_text("{}", encoding="utf-8")
             (suite_root / "seeds.jsonl").write_text("", encoding="utf-8")
             ctx = {
                 "stages": [
-                    ("policy", {}),
+                    ("taxonomy", {}),
                     ("design", {}),
                     ("seeds", {}),
-                    ("rollout", {}),
+                    ("inference", {}),
                     ("judge", {}),
                 ],
                 "suite_root": str(suite_root),
@@ -144,24 +144,24 @@ class RunnerStageFilterTest(unittest.TestCase):
                 rc = run_pipeline(config="config.yaml", force_stages=["seeds"])
 
         self.assertEqual(rc, 0)
-        # policy + design are upstream of seeds in PIPELINE_STAGE_ORDER
+        # taxonomy + design are upstream of seeds in PIPELINE_STAGE_ORDER
         # and have cached outputs, so they stay skipped. seeds is the
-        # explicit force; rollout + judge get cascaded in.
-        self.assertEqual(seen, ["seeds", "rollout", "judge"])
+        # explicit force; inference + judge get cascaded in.
+        self.assertEqual(seen, ["seeds", "inference", "judge"])
 
     def test_force_stage_no_cascade_when_only_terminal_stage_forced(self) -> None:
         seen: list[str] = []
         suite_modules = {
-            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
+            "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
         }
 
         with TemporaryDirectory() as tmp_dir:
             suite_root = Path(tmp_dir) / "suite"
             suite_root.mkdir(parents=True)
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             ctx = {
-                "stages": [("policy", {}), ("judge", {})],
+                "stages": [("taxonomy", {}), ("judge", {})],
                 "suite_root": str(suite_root),
                 "run_root": str(Path(tmp_dir) / "run"),
             }

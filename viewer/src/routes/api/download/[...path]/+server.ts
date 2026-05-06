@@ -7,7 +7,7 @@ import type { RequestHandler } from './$types.js';
 
 const ALLOWED_FILES = new Set([
 	'suite.json',
-	'policy.json',
+	'taxonomy.json',
 	'seeds.jsonl',
 	'manifest.json',
 	'config.yaml',

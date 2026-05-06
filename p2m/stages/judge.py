@@ -1,4 +1,4 @@
-"""Score unified transcript rollout artifacts."""
+"""Score unified transcript inference artifacts."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _judge_config_fingerprint(
     judge_reasoning_effort: str | None,
     judge_n: int,
     judge_dimensions: list[dict[str, Any]],
-    policy_raw: dict[str, Any],
+    taxonomy_raw: dict[str, Any],
     system_prompt: str,
     transcripts_path: Path,
 ) -> str:
@@ -50,7 +50,7 @@ def _judge_config_fingerprint(
             "judge_reasoning_effort": judge_reasoning_effort,
             "judge_n": judge_n,
             "judge_dimensions": judge_dimensions,
-            "policy": policy_raw,
+            "taxonomy": taxonomy_raw,
             "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
             "transcripts_sha": transcripts_sha,
         },
@@ -62,7 +62,7 @@ def _judge_config_fingerprint(
 async def run_judge(
     *,
     transcripts_path: str,
-    policy_path: str | None = None,
+    taxonomy_path: str | None = None,
     save_dir: str | None = None,
     evaluation: Any,
     judge_dimensions: list[dict[str, Any]] | None = None,
@@ -81,15 +81,15 @@ async def run_judge(
 
     out_dir = resolve_path(save_dir or str(resolved_transcripts_path.parent))
     out_dir.mkdir(parents=True, exist_ok=True)
-    if not policy_path:
-        raise ValueError("judge stage requires policy_path")
-    resolved_policy_path = resolve_path(policy_path)
-    if not resolved_policy_path.exists():
-        raise ValueError(f"Policy file not found: {policy_path}")
-    policy_raw = json.loads(resolved_policy_path.read_text(encoding="utf-8"))
+    if not taxonomy_path:
+        raise ValueError("judge stage requires taxonomy_path")
+    resolved_taxonomy_path = resolve_path(taxonomy_path)
+    if not resolved_taxonomy_path.exists():
+        raise ValueError(f"Taxonomy file not found: {taxonomy_path}")
+    taxonomy_raw = json.loads(resolved_taxonomy_path.read_text(encoding="utf-8"))
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
-        policy_raw=policy_raw,
+        taxonomy_raw=taxonomy_raw,
         judge_dimensions=judge_dimensions or [],
         schema_name="transcript_judgment",
     )
@@ -99,9 +99,9 @@ async def run_judge(
         transcript_metadata = TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            spec=str(row.get("spec") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             factors=row_factors(row),
         )
         transcript = Transcript(
@@ -124,7 +124,7 @@ async def run_judge(
             transcript=transcript,
             index_to_message_id=index_to_message_id,
             score_keys=judge_contract["score_keys"],
-            policy_raw=policy_raw,
+            taxonomy_raw=taxonomy_raw,
             judge_n=judge_n,
             judge_temperature=judge_temperature,
             judge_max_tokens=judge_max_tokens,
@@ -135,10 +135,10 @@ async def run_judge(
         score_row = {
             "kind": row.get("kind", ""),
             "seed_id": row.get("seed_id", ""),
-            "concept": row.get("concept", ""),
+            "spec": row.get("spec", ""),
             "judge_model": judge_model,
             "target": row.get("target", ""),
-            "auditor_model": row.get("auditor_model", ""),
+            "tester_model": row.get("tester_model", ""),
             "judge_status": infer_judge_status({
                 "judge_status": judge_result["judge_status"],
                 "verdict": judge_result["verdict"],
@@ -180,7 +180,7 @@ async def run_judge(
         judge_reasoning_effort=judge_reasoning_effort,
         judge_n=judge_n,
         judge_dimensions=judge_dimensions or [],
-        policy_raw=policy_raw,
+        taxonomy_raw=taxonomy_raw,
         system_prompt=judge_contract["system_prompt"],
         transcripts_path=resolved_transcripts_path,
     )
@@ -218,7 +218,7 @@ async def run_judge(
         if (str(row.get("kind") or ""), str(row.get("seed_id", ""))) not in completed_keys
     ]
 
-    semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
+    semaphore = asyncio.Semaphore(max(1, min(evaluation.inference.concurrency, len(pending) or 1)))
 
     async def guard(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         async with semaphore:
@@ -264,7 +264,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     cfg = resolve_stage_paths(
         {
             "transcripts_path": raw_cfg.get("transcripts_path") or str(Path(ctx["run_root"]) / TRANSCRIPTS_FILE),
-            "policy_path": raw_cfg.get("policy_path") or str(Path(ctx["suite_root"]) / "policy.json"),
+            "taxonomy_path": raw_cfg.get("taxonomy_path") or str(Path(ctx["suite_root"]) / "taxonomy.json"),
             "save_dir": raw_cfg.get("save_dir") or str(ctx["run_root"]),
         },
         cfg_path=ctx["config_path"],
@@ -272,7 +272,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     )
     result = await run_judge(
         transcripts_path=cfg["transcripts_path"],
-        policy_path=cfg.get("policy_path"),
+        taxonomy_path=cfg.get("taxonomy_path"),
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],
         judge_dimensions=judge_dimensions,

@@ -115,7 +115,7 @@ class PhoenixCollector:
     """SpanCollector backed by a local Phoenix instance.
 
     Phoenix is an OPTIONAL dependency — only imported when instantiated.
-    Install: pip install 'p2m-policy[otel]'
+    Install: pip install 'p2m-taxonomy[otel]'
 
     Queries Phoenix for DataFrame, then converts to list[OTelSpan] internally.
     """
@@ -132,7 +132,7 @@ class PhoenixCollector:
         except ImportError as e:
             raise ImportError(
                 "PhoenixCollector requires arize-phoenix. "
-                "Install with: pip install 'p2m-policy[otel]'"
+                "Install with: pip install 'p2m-taxonomy[otel]'"
             ) from e
         self._default_project = project_name
 

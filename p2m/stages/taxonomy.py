@@ -1,4 +1,4 @@
-"""Generate a policy artifact from a concept description."""
+"""Generate a taxonomy artifact from a spec description."""
 
 from __future__ import annotations
 
@@ -7,24 +7,24 @@ from typing import Any, Dict
 
 from p2m.config import parse_model_config, resolve_stage_paths
 from p2m.core.config_model import (
-    DEFAULT_POLICY_MAX_TOKENS,
-    DEFAULT_POLICY_TEMPERATURE,
+    DEFAULT_TAXONOMY_MAX_TOKENS,
+    DEFAULT_TAXONOMY_TEMPERATURE,
 )
 from p2m.core.io import write_json
 from p2m.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-GEN_PROMPT = (BASE_DIR / "prompts" / "policy_system.md").read_text()
-DEFAULT_BEHAVIOR_COUNT = 25
-MIN_POLICY_BEHAVIORS = 5
+GEN_PROMPT = (BASE_DIR / "prompts" / "taxonomy_system.md").read_text()
+DEFAULT_FAILURE_MODE_COUNT = 25
+MIN_TAXONOMY_FAILURE_MODES = 5
 
 SCOPE = "suite"
-SUITE_OUTPUT = "policy.json"
+SUITE_OUTPUT = "taxonomy.json"
 
 
-def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
-    """JSON schema for a risk policy with behaviors and term definitions."""
-    behaviors_prop: Dict[str, Any] = {
+def taxonomy_schema(*, min_failure_modes: int = 0) -> Dict[str, Any]:
+    """JSON schema for a risk taxonomy with failure_modes and term definitions."""
+    failure_modes_prop: Dict[str, Any] = {
         "type": "array",
         "items": {
             "type": "object",
@@ -38,13 +38,13 @@ def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
             "required": ["name", "definition", "examples", "permissible"],
         },
     }
-    if min_behaviors > 0:
-        behaviors_prop["minItems"] = min_behaviors
+    if min_failure_modes > 0:
+        failure_modes_prop["minItems"] = min_failure_modes
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "concept": {
+            "spec": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
@@ -66,89 +66,89 @@ def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
                     "required": ["term", "definition", "examples"],
                 },
             },
-            "behaviors": behaviors_prop,
+            "failure_modes": failure_modes_prop,
         },
-        "required": ["concept", "definition_of_terms", "behaviors"],
+        "required": ["spec", "definition_of_terms", "failure_modes"],
     }
 
 
-POLICY_SCHEMA = policy_schema(min_behaviors=MIN_POLICY_BEHAVIORS)
+TAXONOMY_SCHEMA = taxonomy_schema(min_failure_modes=MIN_TAXONOMY_FAILURE_MODES)
 
 
-async def run_policy(
+async def run_taxonomy(
     *,
-    concept: str,
+    spec: str,
     model: str,
-    behavior_count: int = DEFAULT_BEHAVIOR_COUNT,
+    failure_mode_count: int = DEFAULT_FAILURE_MODE_COUNT,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
     save_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Generate one policy JSON artifact from the provided concept text."""
-    if not concept:
-        raise ValueError("concept text is required")
+    """Generate one taxonomy JSON artifact from the provided spec text."""
+    if not spec:
+        raise ValueError("spec text is required")
 
-    concept_text = concept.strip()
-    temperature = temperature if temperature is not None else DEFAULT_POLICY_TEMPERATURE
-    max_tokens = max_tokens if max_tokens is not None else DEFAULT_POLICY_MAX_TOKENS
+    spec_text = spec.strip()
+    temperature = temperature if temperature is not None else DEFAULT_TAXONOMY_TEMPERATURE
+    max_tokens = max_tokens if max_tokens is not None else DEFAULT_TAXONOMY_MAX_TOKENS
     # Reasoning models don't support temperature
     if reasoning_effort is not None:
         temperature = None
     save_path = Path(save_dir) if save_dir else Path("artifacts/outputs")
-    system_prompt = GEN_PROMPT.replace("{{BEHAVIOR_TARGET}}", str(behavior_count))
+    system_prompt = GEN_PROMPT.replace("{{FAILURE_MODE_TARGET}}", str(failure_mode_count))
     messages = [
         Message(role="system", content=system_prompt),
-        Message(role="user", content=concept_text),
+        Message(role="user", content=spec_text),
     ]
 
     response = await generate_structured(
         model,
         messages,
-        schema_name="policy",
-        json_schema=POLICY_SCHEMA,
+        schema_name="taxonomy",
+        json_schema=TAXONOMY_SCHEMA,
         options=GenerateOptions(
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         ),
     )
-    policy_json = response.parsed
-    if not isinstance(policy_json, dict):
-        raise ValueError("policy generation returned non-JSON output")
+    taxonomy_json = response.parsed
+    if not isinstance(taxonomy_json, dict):
+        raise ValueError("taxonomy generation returned non-JSON output")
 
     save_path.mkdir(parents=True, exist_ok=True)
-    policy_path = save_path / "policy.json"
-    write_json(policy_path, policy_json)
+    taxonomy_path = save_path / "taxonomy.json"
+    write_json(taxonomy_path, taxonomy_json)
 
     return {
-        "policy_path": str(policy_path),
-        "policy": policy_json,
+        "taxonomy_path": str(taxonomy_path),
+        "taxonomy": taxonomy_json,
     }
 
 
 async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Validate config and run policy generation via systematization."""
+    """Validate config and run taxonomy generation via systematization."""
     if "validators" in raw_cfg or "validator_models" in raw_cfg:
-        raise ValueError("policy validators are no longer supported")
+        raise ValueError("taxonomy validators are no longer supported")
 
     model = raw_cfg.get("model")
     if not isinstance(model, dict):
-        raise ValueError("policy.model must be a mapping")
+        raise ValueError("taxonomy.model must be a mapping")
     model_cfg = parse_model_config(
         model,
-        field_name="policy.model",
-        default_temperature=DEFAULT_POLICY_TEMPERATURE,
-        default_max_tokens=DEFAULT_POLICY_MAX_TOKENS,
+        field_name="taxonomy.model",
+        default_temperature=DEFAULT_TAXONOMY_TEMPERATURE,
+        default_max_tokens=DEFAULT_TAXONOMY_MAX_TOKENS,
     )
 
-    behavior_count = raw_cfg.get("behavior_count", DEFAULT_BEHAVIOR_COUNT)
-    if not isinstance(behavior_count, int) or behavior_count < 1:
-        raise ValueError("policy.behavior_count must be a positive integer")
+    failure_mode_count = raw_cfg.get("failure_mode_count", DEFAULT_FAILURE_MODE_COUNT)
+    if not isinstance(failure_mode_count, int) or failure_mode_count < 1:
+        raise ValueError("taxonomy.failure_mode_count must be a positive integer")
 
     web_search_raw = raw_cfg.get("web_search")
     if web_search_raw is not None and not isinstance(web_search_raw, bool):
-        raise ValueError("policy.web_search must be a boolean")
+        raise ValueError("taxonomy.web_search must be a boolean")
     web_search = web_search_raw if web_search_raw is not None else True
 
     suite_root = Path(ctx["suite_root"])
@@ -160,45 +160,45 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         artifacts_root=ctx["artifacts_root"],
     )
 
-    concept_name = ctx.get("concept_name") or "concept"
-    concept_text = ctx.get("concept") or ""
+    spec_name = ctx.get("spec_name") or "spec"
+    spec_text = ctx.get("spec") or ""
     context = ctx.get("context")
 
     from p2m.core.config_model import ModelConfig as SysModelConfig
     from p2m.stages.systematization import run_systematization
-    from p2m.stages.systematization_convert import run_systematization_to_policy
+    from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
     sys_model_cfg = SysModelConfig(
         name=model_cfg.name,
         temperature=model_cfg.temperature,
-        max_tokens=model_cfg.max_tokens or DEFAULT_POLICY_MAX_TOKENS,
+        max_tokens=model_cfg.max_tokens or DEFAULT_TAXONOMY_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
     await run_systematization(
-        concept=concept_name,
-        concept_text=concept_text,
+        spec=spec_name,
+        spec_text=spec_text,
         save_path=sys_path,
         model_cfg=sys_model_cfg,
         web_search=web_search,
         context=context,
     )
 
-    policy_path_str = str(Path(cfg["save_dir"]) / "policy.json")
+    taxonomy_path_str = str(Path(cfg["save_dir"]) / "taxonomy.json")
     convert_model_cfg = SysModelConfig(
         name=model_cfg.name,
         temperature=model_cfg.temperature,
-        max_tokens=model_cfg.max_tokens or DEFAULT_POLICY_MAX_TOKENS,
+        max_tokens=model_cfg.max_tokens or DEFAULT_TAXONOMY_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
     )
-    await run_systematization_to_policy(
+    await run_systematization_to_taxonomy(
         systematization_path=sys_path,
-        save_path=policy_path_str,
+        save_path=taxonomy_path_str,
         model_cfg=convert_model_cfg,
-        behavior_count_hint=behavior_count,
+        failure_mode_count_hint=failure_mode_count,
     )
 
     return {
-        "policy_dir": cfg["save_dir"],
-        "policy_path": policy_path_str,
+        "taxonomy_dir": cfg["save_dir"],
+        "taxonomy_path": taxonomy_path_str,
     }

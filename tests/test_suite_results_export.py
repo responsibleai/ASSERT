@@ -40,7 +40,7 @@ class SuiteResultsExportTest(unittest.TestCase):
         self,
         *,
         seed_id: str,
-        behavior: str,
+        failure_mode: str,
         permissible: bool,
         policy_violation: bool,
         overrefusal: bool,
@@ -52,10 +52,10 @@ class SuiteResultsExportTest(unittest.TestCase):
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "target": "target-model",
-            "auditor_model": "auditor-model",
+            "tester_model": "tester-model",
             "judge_model": "judge-model",
             "judge_status": "ok",
             "judge_error": None,
@@ -66,7 +66,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                 },
                 "justification": "overall",
                 "dimension_justifications": {
-                    "policy_violation": "policy rationale",
+                    "policy_violation": "taxonomy rationale",
                     "overrefusal": "overrefusal rationale",
                 },
                 "node_judgments": [
@@ -110,14 +110,14 @@ class SuiteResultsExportTest(unittest.TestCase):
             json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
             encoding="utf-8",
         )
-        policy_raw = {
-            "concept": {"name": "Risk Name"},
-            "behaviors": [
+        taxonomy_raw = {
+            "spec": {"name": "Risk Name"},
+            "failure_modes": [
                 {"name": "node-a", "definition": "def a", "permissible": False},
                 {"name": "node-b", "definition": "def b", "permissible": True},
             ],
         }
-        (suite_dir / "policy.json").write_text(json.dumps(policy_raw), encoding="utf-8")
+        (suite_dir / "taxonomy.json").write_text(json.dumps(taxonomy_raw), encoding="utf-8")
         (suite_dir / "seeds.jsonl").write_text(
             "\n".join(
                 [
@@ -125,8 +125,8 @@ class SuiteResultsExportTest(unittest.TestCase):
                         {
                             "kind": "scenario",
                             "seed_id": "seed-1",
-                            "concept": "concept",
-                            "factors": {"behavior": "node-a"},
+                            "spec": "spec",
+                            "factors": {"failure_mode": "node-a"},
                             "seed": {
                                 "title": "Title A",
                                 "description": "Description A",
@@ -138,8 +138,8 @@ class SuiteResultsExportTest(unittest.TestCase):
                         {
                             "kind": "scenario",
                             "seed_id": "seed-2",
-                            "concept": "concept",
-                            "factors": {"behavior": "node-b"},
+                            "spec": "spec",
+                            "factors": {"failure_mode": "node-b"},
                             "seed": {
                                 "title": "Title B",
                                 "description": "Description B",
@@ -175,13 +175,13 @@ class SuiteResultsExportTest(unittest.TestCase):
             {
                 "kind": "scenario",
                 "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "node-a"},
+                "spec": "spec",
+                "factors": {"failure_mode": "node-a"},
                 "target": "target-model",
-                "auditor_model": "auditor-model",
-                "stop_reason": "auditor_ended",
+                "tester_model": "tester-model",
+                "stop_reason": "tester_ended",
                 "events": [
-                    self._event("user", "Need advice", actor="auditor"),
+                    self._event("user", "Need advice", actor="tester"),
                     self._event("assistant", "Here is a reply", actor="target"),
                 ],
             }
@@ -195,13 +195,13 @@ class SuiteResultsExportTest(unittest.TestCase):
                 {
                     "kind": "scenario",
                     "seed_id": "seed-2",
-                    "concept": "concept",
-                    "factors": {"behavior": "node-b"},
+                    "spec": "spec",
+                    "factors": {"failure_mode": "node-b"},
                     "target": "target-model-2",
-                    "auditor_model": "auditor-model-2",
+                    "tester_model": "tester-model-2",
                     "stop_reason": "max_turns",
                     "events": [
-                        self._event("user", "Hello", actor="auditor"),
+                        self._event("user", "Hello", actor="tester"),
                         self._event("assistant", "Hi", actor="target"),
                     ],
                 }
@@ -213,7 +213,7 @@ class SuiteResultsExportTest(unittest.TestCase):
         score_rows = [
             self._score_row(
                 seed_id="seed-1",
-                behavior="node-a",
+                failure_mode="node-a",
                 permissible=False,
                 policy_violation=True,
                 overrefusal=False,
@@ -224,7 +224,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             ),
             self._score_row(
                 seed_id="seed-2",
-                behavior="node-b",
+                failure_mode="node-b",
                 permissible=True,
                 policy_violation=False,
                 overrefusal=True,
@@ -241,7 +241,7 @@ class SuiteResultsExportTest(unittest.TestCase):
 
         if old_metrics:
             (run_a_dir / "metrics.json").write_text(
-                json.dumps({"overall_permissible": {}, "overall_not_permissible": {}, "by_behavior": []}),
+                json.dumps({"overall_permissible": {}, "overall_not_permissible": {}, "by_failure_mode": []}),
                 encoding="utf-8",
             )
 
@@ -452,8 +452,8 @@ class SuiteResultsExportTest(unittest.TestCase):
         rows = [
             {
                 "seed_id": "ok",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "failure_mode"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -468,8 +468,8 @@ class SuiteResultsExportTest(unittest.TestCase):
             },
             {
                 "seed_id": "bad",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "spec": "spec",
+                "factors": {"failure_mode": "failure_mode"},
                 "judge_model": "judge",
                 "judge_status": "judge_failed",
                 "judge_error": "judge_failed",
@@ -479,9 +479,9 @@ class SuiteResultsExportTest(unittest.TestCase):
 
         metrics = suite_export._build_score_metrics(
             rows,
-            policy_raw={
-                "concept": {"name": "concept"},
-                "behaviors": [{"name": "behavior", "definition": "def", "permissible": True}],
+            taxonomy_raw={
+                "spec": {"name": "spec"},
+                "failure_modes": [{"name": "failure_mode", "definition": "def", "permissible": True}],
             },
         )
         overall = metrics["overall_permissible"]
@@ -506,8 +506,8 @@ class SuiteResultsExportTest(unittest.TestCase):
         rows = [
             {
                 "seed_id": "row-1",
-                "concept": "concept",
-                "factors": {"behavior": "node-a"},
+                "spec": "spec",
+                "factors": {"failure_mode": "node-a"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -550,8 +550,8 @@ class SuiteResultsExportTest(unittest.TestCase):
             },
             {
                 "seed_id": "row-2",
-                "concept": "concept",
-                "factors": {"behavior": "node-b"},
+                "spec": "spec",
+                "factors": {"failure_mode": "node-b"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -594,8 +594,8 @@ class SuiteResultsExportTest(unittest.TestCase):
             },
             {
                 "seed_id": "row-3",
-                "concept": "concept",
-                "factors": {"behavior": "node-c"},
+                "spec": "spec",
+                "factors": {"failure_mode": "node-c"},
                 "judge_model": "judge",
                 "judge_status": "judge_failed",
                 "judge_error": "judge_failed",
@@ -605,9 +605,9 @@ class SuiteResultsExportTest(unittest.TestCase):
 
         metrics = suite_export._build_score_metrics(
             rows,
-            policy_raw={
-                "concept": {"name": "concept"},
-                "behaviors": [
+            taxonomy_raw={
+                "spec": {"name": "spec"},
+                "failure_modes": [
                     {"name": "node-a", "definition": "def a", "permissible": False},
                     {"name": "node-b", "definition": "def b", "permissible": True},
                     {"name": "node-c", "definition": "def c", "permissible": False},

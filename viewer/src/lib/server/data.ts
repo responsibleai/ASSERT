@@ -44,7 +44,7 @@ import type {
 	JudgedSample,
 	Manifest,
 	MultiJudge,
-	Policy,
+	Taxonomy,
 	RunListItem,
 	RunMetrics,
 	ScenarioSeed,
@@ -52,7 +52,7 @@ import type {
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
-	Behavior,
+	FailureMode,
 	ViewerResultItem
 } from '$lib/types.js';
 
@@ -78,9 +78,9 @@ interface AuditMetricView {
 	dimensions: Record<string, DimensionMetrics>;
 }
 
-interface RolloutPreviewRow {
+interface InferencePreviewRow {
 	seed_id: string;
-	behavior: string;
+	failure_mode: string;
 	turns_count: number;
 	stop_reason: string;
 }
@@ -116,8 +116,8 @@ interface CompareMetricSummary {
 	n: number;
 }
 
-interface BehaviorComparison {
-	behavior: string;
+interface FailureModeComparison {
+	failure_mode: string;
 	metrics: Record<string, Record<string, CompareMetricSummary>>;
 	deltas: Record<string, number>;
 }
@@ -150,38 +150,38 @@ function readFactors(value: unknown): Record<string, string> | undefined {
 	const factors = Object.fromEntries(Object.entries(record).filter((entry): entry is [string, string] => {
 		const [name, factor] = entry;
 		return typeof name === 'string' && typeof factor === 'string';
-	}).map(([name, factor]) => [name, name === 'behavior' ? factor : normalizeFactorValue(factor)]));
+	}).map(([name, factor]) => [name, name === 'failure_mode' ? factor : normalizeFactorValue(factor)]));
 	return Object.keys(factors).length > 0 ? factors : undefined;
 }
 
 function readBehavior(value: unknown): string {
 	const factors = readFactors(value);
-	return typeof factors?.behavior === 'string' ? factors.behavior : '';
+	return typeof factors?.failure_mode === 'string' ? factors.failure_mode : '';
 }
 
-function behaviorDefinition(policy: Policy | null, behavior: string): string {
-	const entry = policy?.behaviors?.find((item) => item.name === behavior);
-	if (!entry) throw new Error(`behavior '${behavior}' is missing from policy.behaviors`);
+function failureModeDefinition(taxonomy: Taxonomy | null, failure_mode: string): string {
+	const entry = taxonomy?.failure_modes?.find((item) => item.name === failure_mode);
+	if (!entry) throw new Error(`failure_mode '${failure_mode}' is missing from taxonomy.failure_modes`);
 	return entry.definition;
 }
 
 
-function normalizeBehavior(b: Behavior): Behavior {
+function normalizeBehavior(b: FailureMode): FailureMode {
 	return { ...b, permissible: b.permissible ?? false };
 }
 
-function normalizePromptSeed(item: PromptSeed, policy: Policy | null): PromptSeed {
+function normalizePromptSeed(item: PromptSeed, taxonomy: Taxonomy | null): PromptSeed {
 	const factors = readFactors(item.factors);
-	const behavior = readBehavior(item.factors);
-	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
-	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
+	const failure_mode = readBehavior(item.factors);
+	if (!failure_mode) throw new Error(`seed '${item.seed_id}' is missing factors.failure_mode`);
+	return { ...item, failure_mode, definition: failureModeDefinition(taxonomy, failure_mode), factors };
 }
 
-function normalizeScenarioSeed(item: ScenarioSeed, policy: Policy | null): ScenarioSeed {
+function normalizeScenarioSeed(item: ScenarioSeed, taxonomy: Taxonomy | null): ScenarioSeed {
 	const factors = readFactors(item.factors);
-	const behavior = readBehavior(item.factors);
-	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
-	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
+	const failure_mode = readBehavior(item.factors);
+	if (!failure_mode) throw new Error(`seed '${item.seed_id}' is missing factors.failure_mode`);
+	return { ...item, failure_mode, definition: failureModeDefinition(taxonomy, failure_mode), factors };
 }
 
 function normalizeJudgedSample(sample: JudgedSample): JudgedSample {
@@ -195,7 +195,7 @@ function normalizeAuditScore(score: AuditScore): AuditScore {
 function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript {
 	return {
 		...transcript,
-		behavior: readBehavior(transcript.factors),
+		failure_mode: readBehavior(transcript.factors),
 		factors: readFactors(transcript.factors)
 	};
 }
@@ -412,8 +412,8 @@ function buildJudgedSampleRow(
 		seed_id: typeof scoreRow.seed_id === 'string' ? scoreRow.seed_id : undefined,
 		prompt,
 		response,
-		concept: typeof scoreRow.concept === 'string' ? scoreRow.concept : null,
-		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		spec: typeof scoreRow.spec === 'string' ? scoreRow.spec : null,
+		failure_mode: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
 		run_id: runId,
 		judge_model: typeof scoreRow.judge_model === 'string' ? scoreRow.judge_model : undefined,
 		target:
@@ -480,7 +480,7 @@ function buildAuditScoreRow(
 
 	return normalizeAuditScore({
 		...(scoreRow as AuditScore & UnifiedScoreRow),
-		behavior: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
+		failure_mode: readBehavior(scoreRow.factors) || readBehavior(transcriptRow?.factors),
 		target_runtime_mode: runtimeMode,
 		factors,
 		metadata: {
@@ -531,8 +531,8 @@ function buildAuditTranscriptsFromSnapshot(snapshot: RunSnapshot): AuditTranscri
 		.map((row) => normalizeAuditTranscript(row));
 }
 
-function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPreviewRow[] {
-	if (snapshot.manifest?.stages?.rollout !== 'running') return [];
+function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): InferencePreviewRow[] {
+	if (snapshot.manifest?.stages?.inference !== 'running') return [];
 
 	return snapshot.transcriptRows
 		.filter((row): row is UnifiedTranscriptRow => hasKind(row, 'scenario'))
@@ -543,7 +543,7 @@ function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPrev
 			const messages = materializeTargetMessages(row);
 			return [{
 				seed_id: seedId,
-				behavior: readBehavior(row.factors),
+				failure_mode: readBehavior(row.factors),
 				turns_count: countConversationMessages(messages),
 				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
 			}];
@@ -566,12 +566,12 @@ function buildScenarioDrawerItem(
 		? matchedScore
 		: {
 				seed_id: seedId,
-				concept: typeof transcriptRow.concept === 'string' ? transcriptRow.concept : '',
-				behavior: readBehavior(transcriptRow.factors),
+				spec: typeof transcriptRow.spec === 'string' ? transcriptRow.spec : '',
+				failure_mode: readBehavior(transcriptRow.factors),
 				judge_model: '',
 				target: typeof transcriptRow.target === 'string' ? transcriptRow.target : undefined,
-				auditor_model:
-					typeof transcriptRow.auditor_model === 'string' ? transcriptRow.auditor_model : undefined,
+				tester_model:
+					typeof transcriptRow.tester_model === 'string' ? transcriptRow.tester_model : undefined,
 				verdict: null,
 				judge_status: null,
 				judge_error: null,
@@ -809,33 +809,33 @@ function buildBehaviorComparisons(
 	runIds: string[],
 	allMetrics: string[]
 ): {
-	comparisons: BehaviorComparison[];
+	comparisons: FailureModeComparison[];
 	samplesByBehavior: Record<string, Record<string, JudgedSample[]>>;
 } {
-	const comparisonByBehavior = new Map<string, BehaviorComparison>();
+	const comparisonByBehavior = new Map<string, FailureModeComparison>();
 	const samplesByBehavior: Record<string, Record<string, JudgedSample[]>> = {};
 
 	for (const run of runSummaries) {
 		const grouped = new Map<string, JudgedSample[]>();
 		for (const sample of run.samples) {
-			if (!grouped.has(sample.behavior)) grouped.set(sample.behavior, []);
-			grouped.get(sample.behavior)!.push(sample);
+			if (!grouped.has(sample.failure_mode)) grouped.set(sample.failure_mode, []);
+			grouped.get(sample.failure_mode)!.push(sample);
 
-			samplesByBehavior[sample.behavior] ??= {};
-			samplesByBehavior[sample.behavior][run.run_id] ??= [];
-			samplesByBehavior[sample.behavior][run.run_id].push(sample);
+			samplesByBehavior[sample.failure_mode] ??= {};
+			samplesByBehavior[sample.failure_mode][run.run_id] ??= [];
+			samplesByBehavior[sample.failure_mode][run.run_id].push(sample);
 		}
 
-		for (const [behavior, samples] of grouped) {
-			if (!comparisonByBehavior.has(behavior)) {
-				comparisonByBehavior.set(behavior, {
-					behavior,
+		for (const [failure_mode, samples] of grouped) {
+			if (!comparisonByBehavior.has(failure_mode)) {
+				comparisonByBehavior.set(failure_mode, {
+					failure_mode,
 					metrics: Object.fromEntries(allMetrics.map((metric) => [metric, {}])),
 					deltas: {}
 				});
 			}
 
-			const comparison = comparisonByBehavior.get(behavior)!;
+			const comparison = comparisonByBehavior.get(failure_mode)!;
 			for (const metric of allMetrics) {
 				const scores = emptyScoreCounts();
 				let count = 0;
@@ -895,21 +895,21 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		const scenarioRows = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario'));
 		const hasData = promptRows.length > 0 || scenarioRows.length > 0;
 		const hasEvalStage =
-			runSnapshot.manifest?.stages?.rollout != null || runSnapshot.manifest?.stages?.judge != null;
+			runSnapshot.manifest?.stages?.inference != null || runSnapshot.manifest?.stages?.judge != null;
 		if (!hasData && !hasEvalStage) continue;
 		if (!hasData && runSnapshot.manifest?.status === 'failed') continue;
 		evalRunCount += 1;
 		if (hasData) hasResults = true;
 	}
 
-	let status: SuiteStatus = 'policy_only';
+	let status: SuiteStatus = 'taxonomy_only';
 	if (hasResults) status = 'has_results';
 	else if (itemCounts.prompt > 0 || itemCounts.scenario > 0) status = 'seeds_ready';
 
 	return {
 		suite_id: suiteId,
-		concept_name: snapshot.policy?.concept?.name ?? suiteId,
-		behavior_count: snapshot.policy?.behaviors?.length ?? 0,
+		spec_name: snapshot.taxonomy?.spec?.name ?? suiteId,
+		failure_mode_count: snapshot.taxonomy?.failure_modes?.length ?? 0,
 		seed_count: itemCounts.prompt,
 		scenario_seed_count: itemCounts.scenario,
 		run_count: evalRunCount,
@@ -923,7 +923,7 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 function buildPromptSeeds(snapshot: SuiteSnapshot | null): PromptSeed[] {
 	if (!snapshot) return [];
 	return promptSeedRows(snapshot.seedRows).map((row) =>
-		normalizePromptSeed(row as unknown as PromptSeed, snapshot.policy)
+		normalizePromptSeed(row as unknown as PromptSeed, snapshot.taxonomy)
 	);
 }
 
@@ -940,16 +940,16 @@ function buildPromptSeedTitleMap(snapshot: SuiteSnapshot | null): Record<string,
 function buildScenarioSeeds(snapshot: SuiteSnapshot | null): ScenarioSeed[] {
 	if (!snapshot) return [];
 	return scenarioSeedRows(snapshot.seedRows).map((row) =>
-		normalizeScenarioSeed(row as unknown as ScenarioSeed, snapshot.policy)
+		normalizeScenarioSeed(row as unknown as ScenarioSeed, snapshot.taxonomy)
 	);
 }
 
-export function loadPolicy(suiteId: string): Policy | null {
+export function loadPolicy(suiteId: string): Taxonomy | null {
 	const snapshot = loadSuiteSnapshot(suiteId);
-	if (!snapshot?.policy) return null;
+	if (!snapshot?.taxonomy) return null;
 	return {
-		...snapshot.policy,
-		behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior)
+		...snapshot.taxonomy,
+		failure_modes: (snapshot.taxonomy.failure_modes ?? []).map(normalizeBehavior)
 	};
 }
 
@@ -1008,8 +1008,8 @@ export function loadSuitePageData(suiteId: string) {
 	return {
 		suite_id: suiteId,
 		suite: snapshot.suite,
-		policy: snapshot.policy
-			? { ...snapshot.policy, behaviors: (snapshot.policy.behaviors ?? []).map(normalizeBehavior) }
+		taxonomy: snapshot.taxonomy
+			? { ...snapshot.taxonomy, failure_modes: (snapshot.taxonomy.failure_modes ?? []).map(normalizeBehavior) }
 			: null,
 		promptSeeds,
 		scenarioSeeds,
@@ -1068,14 +1068,14 @@ function loadCompletedRunPageData(
 		auditCount,
 		hasAuditContent,
 		manifest,
-		policy: suiteSnapshot?.policy
-			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
+		taxonomy: suiteSnapshot?.taxonomy
+			? { ...suiteSnapshot.taxonomy, failure_modes: (suiteSnapshot.taxonomy.failure_modes ?? []).map(normalizeBehavior) }
 			: null,
 		samples,
 		auditScores,
-		rolloutPreviewRows: [],
+		inferencePreviewRows: [],
 		scenarioDrawerItems: {},
-		rolloutPreviewTotal: scenarioSeeds.length,
+		inferencePreviewTotal: scenarioSeeds.length,
 		scenarioSeedMap: buildScenarioSeedMap(scenarioSeeds, auditRows),
 		promptSeedTitleMap: buildPromptSeedTitleMap(suiteSnapshot),
 		dimensionDefs: loadDimensions(),
@@ -1103,7 +1103,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 	});
 	const promptCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'prompt')).length;
 	const auditCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario')).length;
-	const hasAuditContent = auditCount > 0 || runSnapshot.manifest?.stages?.rollout === 'running';
+	const hasAuditContent = auditCount > 0 || runSnapshot.manifest?.stages?.inference === 'running';
 
 	if (resolvedTab === 'prompts' && promptCount === 0 && hasAuditContent) {
 		resolvedTab = 'audit';
@@ -1114,12 +1114,12 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 
 	const samples = resolvedTab === 'prompts' ? buildJudgedSamplesFromSnapshot(runSnapshot) : [];
 	const auditScores = resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [];
-	const rolloutPreviewRows =
+	const inferencePreviewRows =
 		resolvedTab === 'audit' && auditScores.length === 0
 			? buildRolloutPreviewRowsFromSnapshot(runSnapshot)
 			: [];
 
-	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && rolloutPreviewRows.length === 0) {
+	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && inferencePreviewRows.length === 0) {
 		return null;
 	}
 
@@ -1137,14 +1137,14 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		auditCount,
 		hasAuditContent,
 		manifest: runSnapshot.manifest,
-		policy: suiteSnapshot?.policy
-			? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
+		taxonomy: suiteSnapshot?.taxonomy
+			? { ...suiteSnapshot.taxonomy, failure_modes: (suiteSnapshot.taxonomy.failure_modes ?? []).map(normalizeBehavior) }
 			: null,
 		samples,
 		auditScores,
-		rolloutPreviewRows,
+		inferencePreviewRows,
 		scenarioDrawerItems: {},
-		rolloutPreviewTotal: scenarioSeeds.length,
+		inferencePreviewTotal: scenarioSeeds.length,
 		scenarioSeedMap,
 		promptSeedTitleMap,
 		dimensionDefs: loadDimensions(),
@@ -1266,8 +1266,8 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 
 export function loadComparePageData(suiteId: string, runIds: string[]) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const policy = suiteSnapshot?.policy
-		? { ...suiteSnapshot.policy, behaviors: (suiteSnapshot.policy.behaviors ?? []).map(normalizeBehavior) }
+	const taxonomy = suiteSnapshot?.taxonomy
+		? { ...suiteSnapshot.taxonomy, failure_modes: (suiteSnapshot.taxonomy.failure_modes ?? []).map(normalizeBehavior) }
 		: null;
 
 	const runSummaries: CompareRunSummary[] = [];
@@ -1288,7 +1288,7 @@ export function loadComparePageData(suiteId: string, runIds: string[]) {
 
 	return {
 		suite_id: suiteId,
-		policy,
+		taxonomy,
 		runs: runSummaries.map(({ samples, ...summary }) => summary),
 		comparisons,
 		samplesByBehavior,

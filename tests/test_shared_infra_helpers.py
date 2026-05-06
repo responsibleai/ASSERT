@@ -27,10 +27,10 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             metadata=TranscriptMetadata(
                 kind="scenario",
                 seed_id="seed-1",
-                concept="concept",
+                spec="spec",
                 target="target",
-                factors={"behavior": "behavior"},
-                auditor_model="auditor",
+                factors={"failure_mode": "failure_mode"},
+                tester_model="tester",
             )
         )
         transcript.add_event(
@@ -254,7 +254,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[1].role, "user")
             return ModelResponse(
                 parsed=None,
-                text="Let me think through the policy carefully before deciding.",
+                text="Let me think through the taxonomy carefully before deciding.",
                 model=model,
             )
 
@@ -318,7 +318,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(model, "azure/gpt-5.4")
             return ModelResponse(
                 parsed=None,
-                text="Let me think through the policy carefully before deciding.",
+                text="Let me think through the taxonomy carefully before deciding.",
                 model=model,
             )
 
@@ -346,8 +346,8 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_build_judge_contract_uses_highlight_citations(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": []},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            taxonomy_raw={"failure_modes": []},
             judge_dimensions=[],
             schema_name="xml_judgment",
         )
@@ -359,12 +359,12 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("highlights", contract["response_schema"]["json_schema"]["required"])
         self.assertEqual(contract["response_schema"]["json_schema"]["properties"]["highlights"]["type"], "string")
         self.assertNotIn("citations", contract["response_schema"]["json_schema"]["properties"])
-        self.assertIn('"behaviors": []', contract["system_prompt"])
+        self.assertIn('"failure_modes": []', contract["system_prompt"])
 
-    def test_build_judge_contract_uses_behavior_names_enum(self) -> None:
+    def test_build_judge_contract_uses_failure_mode_names_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
             judge_dimensions=[],
             schema_name="xml_judgment",
         )
@@ -376,18 +376,18 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             ["a", "b", "c"],
         )
 
-    def test_build_judge_contract_rejects_duplicate_behavior_names(self) -> None:
+    def test_build_judge_contract_rejects_duplicate_failure_mode_names(self) -> None:
         with self.assertRaisesRegex(ValueError, "duplicate name"):
             build_judge_contract(
-                template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "a"}]},
+                template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+                taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "a"}]},
                 judge_dimensions=[],
             )
 
-    def test_build_judge_contract_strips_behavior_names_in_enum(self) -> None:
+    def test_build_judge_contract_strips_failure_mode_names_in_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": [{"name": "  a  "}, {"name": "b"}]},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            taxonomy_raw={"failure_modes": [{"name": "  a  "}, {"name": "b"}]},
             judge_dimensions=[],
         )
         node_schema = contract["response_schema"]["json_schema"]["properties"]["node_judgments"]
@@ -506,7 +506,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -549,7 +549,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                taxonomy_raw={"failure_modes": []},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -579,7 +579,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                taxonomy_raw={"failure_modes": []},
             )
 
         self.assertEqual(result["judge_status"], "judge_failed")
@@ -631,7 +631,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -659,7 +659,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                         },
                         "node_judgments": [
                             {
-                                "node_name": "not-a-real-behavior",
+                                "node_name": "not-a-real-failure_mode",
                                 "violated": False,
                                 "confidence": "high",
                                 "reasoning": "Allowed supportive guidance [1]",
@@ -680,7 +680,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "judge_failed")
@@ -726,7 +726,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}]},
+                taxonomy_raw={"failure_modes": [{"name": "a"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -765,7 +765,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                taxonomy_raw={"failure_modes": []},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -811,7 +811,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                taxonomy_raw={"failure_modes": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")

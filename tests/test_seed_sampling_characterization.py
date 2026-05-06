@@ -12,7 +12,7 @@ from p2m.analysis.design_metrics import (
     cross_axis_nmi,
     effective_dimensionality,
     intended_vs_observed_metrics,
-    behavior_agreement,
+    failure_mode_agreement,
 )
 from p2m.analysis.seed_labeling import (
     _label_entry_schema,
@@ -23,7 +23,7 @@ from p2m.analysis.seed_labeling import (
 from p2m.stages.design import (
     _design_response_schema,
     render_design_catalog,
-    render_behaviors,
+    render_failure_modes,
 )
 from p2m.stages.seeds import (
     PROMPT_FIELD_EXAMPLES,
@@ -38,7 +38,7 @@ from p2m.stages.seeds import (
 FACTOR_NAMES = ("domain", "user_context")
 
 
-def _minimal_design(include_behavior: bool = True) -> dict[str, list[dict[str, str]]]:
+def _minimal_design(include_failure_mode: bool = True) -> dict[str, list[dict[str, str]]]:
     design = {
         "domain": [
             {"name": "Healthcare", "definition": "Clinical settings."},
@@ -49,23 +49,23 @@ def _minimal_design(include_behavior: bool = True) -> dict[str, list[dict[str, s
             {"name": "No professional access", "definition": "The user has no access to qualified help."},
         ],
     }
-    if include_behavior:
+    if include_failure_mode:
         design = {
-            "behavior": [
-                {"name": "Behavior A", "description": "Definition A"},
-                {"name": "Behavior B", "description": "Definition B"},
+            "failure_mode": [
+                {"name": "FailureMode A", "description": "Definition A"},
+                {"name": "FailureMode B", "description": "Definition B"},
             ],
             **design,
         }
     return design
 
 
-def _minimal_policy() -> dict[str, Any]:
+def _minimal_taxonomy() -> dict[str, Any]:
     return {
-        "concept": {"name": "test_risk"},
-        "behaviors": [
-            {"name": "Behavior A", "definition": "Definition A", "permissible": True},
-            {"name": "Behavior B", "definition": "Definition B", "permissible": False},
+        "spec": {"name": "test_risk"},
+        "failure_modes": [
+            {"name": "FailureMode A", "definition": "Definition A", "permissible": True},
+            {"name": "FailureMode B", "definition": "Definition B", "permissible": False},
         ],
     }
 
@@ -89,14 +89,14 @@ class NormalizeGeneratedSeedTest(unittest.TestCase):
 
 
 class RenderDesignCatalogTest(unittest.TestCase):
-    def test_includes_behavior_when_present(self) -> None:
-        result = render_design_catalog(_minimal_design(), include_behavior=True)
-        self.assertIn("Behavior A", result)
+    def test_includes_failure_mode_when_present(self) -> None:
+        result = render_design_catalog(_minimal_design(), include_failure_mode=True)
+        self.assertIn("FailureMode A", result)
         self.assertIn("Healthcare", result)
 
-    def test_excludes_behavior_when_requested(self) -> None:
-        result = render_design_catalog(_minimal_design(), include_behavior=False)
-        self.assertNotIn("Behavior A", result)
+    def test_excludes_failure_mode_when_requested(self) -> None:
+        result = render_design_catalog(_minimal_design(), include_failure_mode=False)
+        self.assertNotIn("FailureMode A", result)
         self.assertIn("Healthcare", result)
 
 
@@ -106,18 +106,18 @@ class RenderTupleSpecTest(unittest.TestCase):
         spec = {
             "domain": design["domain"][0],
             "user_context": design["user_context"][0],
-            "behavior": design["behavior"][0],
+            "failure_mode": design["failure_mode"][0],
         }
-        result = render_tuple_spec(spec, include_behavior=True)
+        result = render_tuple_spec(spec, include_failure_mode=True)
         self.assertIn("Healthcare", result)
-        self.assertIn("Behavior A", result)
+        self.assertIn("FailureMode A", result)
 
 
 class RenderPolicyNodesTest(unittest.TestCase):
     def test_renders_permissible_and_non_permissible(self) -> None:
-        result = render_behaviors(_minimal_policy())
-        self.assertIn("Behavior A (PERMISSIBLE)", result)
-        self.assertIn("Behavior B (NOT PERMISSIBLE)", result)
+        result = render_failure_modes(_minimal_taxonomy())
+        self.assertIn("FailureMode A (PERMISSIBLE)", result)
+        self.assertIn("FailureMode B (NOT PERMISSIBLE)", result)
 
 
 class DesignResponseSchemaTest(unittest.TestCase):
@@ -135,16 +135,16 @@ class SeedsResponseSchemaTest(unittest.TestCase):
 
 class LabelEntrySchemaTest(unittest.TestCase):
     def test_schema_enumerates_present_factors_only(self) -> None:
-        schema = _label_entry_schema(_minimal_design(include_behavior=False))
+        schema = _label_entry_schema(_minimal_design(include_failure_mode=False))
         self.assertEqual(set(schema["required"]), set(FACTOR_NAMES))
         self.assertEqual(
             schema["properties"]["domain"]["enum"],
             ["Healthcare", "Education"],
         )
 
-    def test_schema_includes_behavior_when_present(self) -> None:
+    def test_schema_includes_failure_mode_when_present(self) -> None:
         schema = _label_entry_schema(_minimal_design())
-        self.assertIn("behavior", schema["required"])
+        self.assertIn("failure_mode", schema["required"])
 
 
 class LabelsResponseSchemaTest(unittest.TestCase):
@@ -175,34 +175,34 @@ class SchemaExampleTest(unittest.TestCase):
 
 
 class TemplateReplacementsTest(unittest.TestCase):
-    def test_policy_body_is_passed_through(self) -> None:
+    def test_taxonomy_body_is_passed_through(self) -> None:
         replacements = _template_replacements(
             "prompt",
-            "concept",
+            "spec",
             "beh",
             "def",
             ["ex1"],
             5,
             context=None,
             batch_guidance="",
-            policy_body="POLICY-BODY-SENTINEL",
+            taxonomy_body="TAXONOMY-BODY-SENTINEL",
         )
-        self.assertEqual(replacements["policy_body"], "POLICY-BODY-SENTINEL")
-        self.assertEqual(replacements["behavior"], "beh")
+        self.assertEqual(replacements["taxonomy_body"], "TAXONOMY-BODY-SENTINEL")
+        self.assertEqual(replacements["failure_mode"], "beh")
         self.assertEqual(replacements["definition"], "def")
         self.assertIn("ex1", replacements["examples"])
 
     def test_no_permissible_or_strategy_keys(self) -> None:
         replacements = _template_replacements(
             "scenario",
-            "concept",
+            "spec",
             "beh",
             "def",
             [],
             3,
             context=None,
             batch_guidance="",
-            policy_body="",
+            taxonomy_body="",
         )
         self.assertNotIn("permissible_status", replacements)
         self.assertNotIn("seed_strategy", replacements)
@@ -212,7 +212,7 @@ class NormalizeObservedLabelEntryTest(unittest.TestCase):
     def test_accepts_valid_entry(self) -> None:
         design = _minimal_design()
         entry = {
-            "behavior": "Behavior A",
+            "failure_mode": "FailureMode A",
             "domain": "Healthcare",
             "user_context": "User is a minor",
         }
@@ -222,15 +222,15 @@ class NormalizeObservedLabelEntryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _normalize_observed_label_entry(
                 {"domain": "Missing", "user_context": "User is a minor"},
-                _minimal_design(include_behavior=False),
+                _minimal_design(include_failure_mode=False),
             )
 
 
 class BuildLabelingPromptTest(unittest.TestCase):
-    def test_includes_concept_and_catalog(self) -> None:
+    def test_includes_spec_and_catalog(self) -> None:
         result = build_labeling_prompt(
             kind="prompt",
-            concept_name="test_risk",
+            spec_name="test_risk",
             design=_minimal_design(),
             rows=[{"seed_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
@@ -238,14 +238,14 @@ class BuildLabelingPromptTest(unittest.TestCase):
         self.assertIn("Healthcare", result)
         self.assertIn("Prompt 1:", result)
 
-    def test_omits_behavior_when_design_lacks_it(self) -> None:
+    def test_omits_failure_mode_when_design_lacks_it(self) -> None:
         result = build_labeling_prompt(
             kind="scenario",
-            concept_name="test_risk",
-            design=_minimal_design(include_behavior=False),
+            spec_name="test_risk",
+            design=_minimal_design(include_failure_mode=False),
             rows=[{"seed_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
-        self.assertNotIn("Policy node", result)
+        self.assertNotIn("Taxonomy node", result)
         self.assertIn("Scenario 1:", result)
 
 
@@ -253,8 +253,8 @@ class MetricsTest(unittest.TestCase):
     def test_effective_dimensionality_handles_assignments(self) -> None:
         design = _minimal_design()
         assignments = [
-            {"behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
-            {"behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
+            {"failure_mode": "FailureMode A", "domain": "Healthcare", "user_context": "User is a minor"},
+            {"failure_mode": "FailureMode B", "domain": "Education", "user_context": "No professional access"},
         ]
         result = effective_dimensionality(assignments, design)
         self.assertGreater(result["n_components_90"], 0)
@@ -262,38 +262,38 @@ class MetricsTest(unittest.TestCase):
     def test_cross_axis_nmi_returns_all_pairs(self) -> None:
         design = _minimal_design()
         assignments = [
-            {"behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
-            {"behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
+            {"failure_mode": "FailureMode A", "domain": "Healthcare", "user_context": "User is a minor"},
+            {"failure_mode": "FailureMode B", "domain": "Education", "user_context": "No professional access"},
         ] * 5
         result = cross_axis_nmi(assignments, design)
         self.assertEqual(len(result), 3)
 
     def test_intended_vs_observed_metrics_uses_present_factors(self) -> None:
-        design = _minimal_design(include_behavior=False)
+        design = _minimal_design(include_failure_mode=False)
         labels = [{"seed_id": "s1", "domain": "Healthcare", "user_context": "User is a minor"}]
         result = intended_vs_observed_metrics(labels, labels, design)
         self.assertEqual(result["exact_tuple_agreement"], 1.0)
 
     def test_confusion_matrices_match_level_names(self) -> None:
         design = _minimal_design()
-        labels = [{"seed_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"}]
+        labels = [{"seed_id": "s1", "failure_mode": "FailureMode A", "domain": "Healthcare", "user_context": "User is a minor"}]
         result = confusion_matrices(labels, labels, design)
         self.assertEqual(result["domain"]["Healthcare"]["Healthcare"], 1)
 
-    def test_behavior_agreement_uses_exact_behavior_name(self) -> None:
-        observed = [{"seed_id": "s1", "behavior": "Behavior A"}]
-        rows = [{"seed_id": "s1", "factors": {"behavior": "Behavior A"}}]
-        self.assertEqual(behavior_agreement(observed, rows), 1.0)
+    def test_failure_mode_agreement_uses_exact_failure_mode_name(self) -> None:
+        observed = [{"seed_id": "s1", "failure_mode": "FailureMode A"}]
+        rows = [{"seed_id": "s1", "factors": {"failure_mode": "FailureMode A"}}]
+        self.assertEqual(failure_mode_agreement(observed, rows), 1.0)
 
     def test_build_supplementary_metrics_shape(self) -> None:
         design = _minimal_design()
         observed = [
-            {"seed_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
-            {"seed_id": "s2", "behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
+            {"seed_id": "s1", "failure_mode": "FailureMode A", "domain": "Healthcare", "user_context": "User is a minor"},
+            {"seed_id": "s2", "failure_mode": "FailureMode B", "domain": "Education", "user_context": "No professional access"},
         ]
         rows = [
-            {"seed_id": "s1", "factors": {"behavior": "Behavior A"}},
-            {"seed_id": "s2", "factors": {"behavior": "Behavior B"}},
+            {"seed_id": "s1", "factors": {"failure_mode": "FailureMode A"}},
+            {"seed_id": "s2", "factors": {"failure_mode": "FailureMode B"}},
         ]
         result = build_supplementary_metrics(
             kind="scenario",

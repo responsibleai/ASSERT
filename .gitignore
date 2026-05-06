@@ -47,4 +47,4 @@ p2m-experiments/
 
 # Build artifacts
 *.egg-info/
-p2m_policy.*
+p2m_taxonomy.*

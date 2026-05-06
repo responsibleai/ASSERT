@@ -112,7 +112,7 @@ class ViewerCompareViewTest(unittest.TestCase):
                     node_judgments: []
                   }}
                 }};
-                const malformedRecord = {{ verdict: {{ policy_compliance: 3 }} }};
+                const malformedRecord = {{ verdict: {{ taxonomy_compliance: 3 }} }};
 
                 console.log(JSON.stringify({{
                   requiredBaseMetrics,

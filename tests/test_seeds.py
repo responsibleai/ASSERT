@@ -11,7 +11,7 @@ from p2m.analysis.design_metrics import (
 )
 from p2m.core.io import design_factors, fill_template
 from p2m.stages.design import (
-    build_behavior_factor,
+    build_failure_mode_factor,
     normalize_design,
 )
 from p2m.stages.seeds import (
@@ -25,19 +25,19 @@ from p2m.stages.seeds import (
 FACTOR_NAMES = ("domain", "user_context")
 
 
-def _make_policy(
-    behaviors: list[tuple[str, str, bool]] | None = None,
+def _make_taxonomy(
+    failure_modes: list[tuple[str, str, bool]] | None = None,
 ) -> dict[str, object]:
-    if behaviors is None:
-        behaviors = [
-            ("Behavior A", "Definition of A", True),
-            ("Behavior B", "Definition of B", False),
+    if failure_modes is None:
+        failure_modes = [
+            ("FailureMode A", "Definition of A", True),
+            ("FailureMode B", "Definition of B", False),
         ]
     return {
-        "concept": {"name": "test-concept"},
-        "behaviors": [
+        "spec": {"name": "test-spec"},
+        "failure_modes": [
             {"name": name, "definition": definition, "permissible": permissible}
-            for name, definition, permissible in behaviors
+            for name, definition, permissible in failure_modes
         ],
     }
 
@@ -55,60 +55,60 @@ def _make_factor_design(levels: int = 3) -> dict[str, list[dict[str, str]]]:
     }
 
 
-def _make_design_with_behavior(levels: int = 3) -> dict[str, list[dict[str, str]]]:
+def _make_design_with_failure_mode(levels: int = 3) -> dict[str, list[dict[str, str]]]:
     design = normalize_design(
         _make_factor_design(levels),
-        _make_policy(),
+        _make_taxonomy(),
         factor_order=list(FACTOR_NAMES),
-        inject_behavior=True,
+        inject_failure_mode=True,
     )
     return design
 
 
 class NormalizeDesignTest(unittest.TestCase):
-    def test_normalize_design_injects_behavior_when_requested(self) -> None:
+    def test_normalize_design_injects_failure_mode_when_requested(self) -> None:
         design = normalize_design(
             _make_factor_design(),
-            _make_policy(),
+            _make_taxonomy(),
             factor_order=list(FACTOR_NAMES),
-            inject_behavior=True,
+            inject_failure_mode=True,
         )
         self.assertEqual(list(design_factors(design)), list(FACTOR_NAMES))
-        self.assertIn("behavior", design)
+        self.assertIn("failure_mode", design)
 
-    def test_normalize_design_uses_design_behavior_subset(self) -> None:
+    def test_normalize_design_uses_design_failure_mode_subset(self) -> None:
         raw_design = {
-            "behavior": [
-                {"name": "Behavior B", "description": "Definition of B"},
+            "failure_mode": [
+                {"name": "FailureMode B", "description": "Definition of B"},
             ],
             **_make_factor_design(2),
         }
-        design = normalize_design(raw_design, _make_policy())
-        self.assertEqual([entry["name"] for entry in design["behavior"]], ["Behavior B"])
+        design = normalize_design(raw_design, _make_taxonomy())
+        self.assertEqual([entry["name"] for entry in design["failure_mode"]], ["FailureMode B"])
 
-    def test_normalize_design_allows_custom_behavior_not_in_policy(self) -> None:
+    def test_normalize_design_allows_custom_failure_mode_not_in_taxonomy(self) -> None:
         raw_design = {
-            "behavior": [
-                {"name": "custom_behavior", "description": "A brand-new probe"},
+            "failure_mode": [
+                {"name": "custom_failure_mode", "description": "A brand-new probe"},
             ],
         }
-        design = normalize_design(raw_design, _make_policy())
-        self.assertEqual([entry["name"] for entry in design["behavior"]], ["custom_behavior"])
-        self.assertEqual(design["behavior"][0]["description"], "A brand-new probe")
+        design = normalize_design(raw_design, _make_taxonomy())
+        self.assertEqual([entry["name"] for entry in design["failure_mode"]], ["custom_failure_mode"])
+        self.assertEqual(design["failure_mode"][0]["description"], "A brand-new probe")
 
     def test_normalize_design_preserves_diverging_description(self) -> None:
         raw_design = {
-            "behavior": [
+            "failure_mode": [
                 {
-                    "name": "Behavior A",
-                    "description": "A refined definition that differs from policy",
+                    "name": "FailureMode A",
+                    "description": "A refined definition that differs from taxonomy",
                 },
             ],
         }
-        design = normalize_design(raw_design, _make_policy())
+        design = normalize_design(raw_design, _make_taxonomy())
         self.assertEqual(
-            design["behavior"][0]["description"],
-            "A refined definition that differs from policy",
+            design["failure_mode"][0]["description"],
+            "A refined definition that differs from taxonomy",
         )
 
     def test_normalize_design_rejects_factor_mismatch_against_configured_order(self) -> None:
@@ -116,64 +116,64 @@ class NormalizeDesignTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_design(
                 raw_design,
-                _make_policy(),
+                _make_taxonomy(),
                 factor_order=["domain", "user_context"],
-                inject_behavior=True,
+                inject_failure_mode=True,
             )
 
-    def test_normalize_design_accepts_behavior_absent_mode(self) -> None:
-        design = normalize_design(_make_factor_design(), _make_policy())
-        self.assertNotIn("behavior", design)
+    def test_normalize_design_accepts_failure_mode_absent_mode(self) -> None:
+        design = normalize_design(_make_factor_design(), _make_taxonomy())
+        self.assertNotIn("failure_mode", design)
 
 
 class BuildGenerationJobsDisentangledTest(unittest.TestCase):
-    def test_custom_behavior_without_policy_entry_produces_jobs(self) -> None:
-        policy = _make_policy()
+    def test_custom_failure_mode_without_taxonomy_entry_produces_jobs(self) -> None:
+        taxonomy = _make_taxonomy()
         raw_design = {
-            "behavior": [
+            "failure_mode": [
                 {
                     "name": "custom_probe",
-                    "description": "A custom probe not in policy",
+                    "description": "A custom probe not in taxonomy",
                 },
             ],
             **_make_factor_design(2),
         }
-        design = normalize_design(raw_design, policy)
+        design = normalize_design(raw_design, taxonomy)
         jobs, _ = build_generation_jobs(
-            policy=policy, design=design, sample_size=4, rng=random.Random(0),
+            taxonomy=taxonomy, design=design, sample_size=4, rng=random.Random(0),
         )
         self.assertTrue(jobs)
         for job in jobs:
-            self.assertEqual(job.behavior["name"], "custom_probe")
+            self.assertEqual(job.failure_mode["name"], "custom_probe")
             self.assertEqual(
-                job.behavior["description"],
-                "A custom probe not in policy",
+                job.failure_mode["description"],
+                "A custom probe not in taxonomy",
             )
 
     def test_renamed_description_is_used_verbatim(self) -> None:
-        policy = _make_policy(behaviors=[("Behavior A", "policy definition", True)])
+        taxonomy = _make_taxonomy(failure_modes=[("FailureMode A", "taxonomy definition", True)])
         raw_design = {
-            "behavior": [
+            "failure_mode": [
                 {
-                    "name": "Behavior A",
+                    "name": "FailureMode A",
                     "description": "suite-specific refined definition",
                 },
             ],
             **_make_factor_design(2),
         }
-        design = normalize_design(raw_design, policy)
+        design = normalize_design(raw_design, taxonomy)
         jobs, _ = build_generation_jobs(
-            policy=policy, design=design, sample_size=2, rng=random.Random(0),
+            taxonomy=taxonomy, design=design, sample_size=2, rng=random.Random(0),
         )
         self.assertEqual(
-            jobs[0].behavior["description"],
+            jobs[0].failure_mode["description"],
             "suite-specific refined definition",
         )
 
 
 class CoveringArrayTest(unittest.TestCase):
     def test_build_covering_array_covers_all_pair_cells(self) -> None:
-        design = _make_design_with_behavior(3)
+        design = _make_design_with_failure_mode(3)
         ca = build_covering_array(design, random.Random(42), axes=FACTOR_NAMES)
         for factor_a, factor_b in combinations(FACTOR_NAMES, 2):
             observed = {(row[factor_a], row[factor_b]) for row in ca}
@@ -181,7 +181,7 @@ class CoveringArrayTest(unittest.TestCase):
             self.assertEqual(len(observed), possible)
 
     def test_sample_from_covering_array_returns_requested_count(self) -> None:
-        design = _make_design_with_behavior(3)
+        design = _make_design_with_failure_mode(3)
         ca = build_covering_array(design, random.Random(42), axes=FACTOR_NAMES)
         drawn = sample_from_covering_array(ca, 4, random.Random(7))
         self.assertEqual(len(drawn), 4)
@@ -210,7 +210,7 @@ class NormalizedEntropyTest(unittest.TestCase):
 
 class CoverageMetricsTest(unittest.TestCase):
     def test_coverage_metrics_full_coverage(self) -> None:
-        design = _make_design_with_behavior(2)
+        design = _make_design_with_failure_mode(2)
         factor_order = tuple(key for key in design if not key.startswith("_"))
         all_names = {key: [entry["name"] for entry in design[key]] for key in factor_order}
         assignments = [
@@ -226,7 +226,7 @@ class CoverageMetricsTest(unittest.TestCase):
 
 class LabelerRetestAgreementTest(unittest.TestCase):
     def test_labeler_retest_agreement_partial(self) -> None:
-        design = _make_design_with_behavior(2)
+        design = _make_design_with_failure_mode(2)
         factor_order = tuple(key for key in design if not key.startswith("_"))
         labels_a = [
             {"seed_id": "s1", **{key: design[key][0]["name"] for key in factor_order}},
@@ -246,7 +246,7 @@ class SeedRecordTest(unittest.TestCase):
         record = seed_record(
             kind="prompt",
             seed_id="ps-001",
-            concept="test-concept",
+            spec="test-spec",
             seed_payload={"title": "t", "description": "d"},
         )
         self.assertEqual(record["kind"], "prompt")
@@ -257,7 +257,7 @@ class SeedRecordTest(unittest.TestCase):
         record = seed_record(
             kind="prompt",
             seed_id="ps-001",
-            concept="test-concept",
+            spec="test-spec",
             seed_payload={"title": "t", "description": "d"},
             factors={},
         )
@@ -267,7 +267,7 @@ class SeedRecordTest(unittest.TestCase):
         record = seed_record(
             kind="prompt",
             seed_id="ps-001",
-            concept="test-concept",
+            spec="test-spec",
             seed_payload={"title": "t", "description": "d"},
             factors={"domain": "domain 0"},
         )
@@ -276,19 +276,19 @@ class SeedRecordTest(unittest.TestCase):
 
 class BuildGenerationPromptTest(unittest.TestCase):
     def _make_args(self, **overrides: object) -> dict[str, object]:
-        policy = _make_policy()
-        design = _make_design_with_behavior(3)
+        taxonomy = _make_taxonomy()
+        design = _make_design_with_failure_mode(3)
         defaults = {
             "kind": "prompt",
-            "policy": policy,
-            "behavior": design["behavior"][0],
+            "taxonomy": taxonomy,
+            "failure_mode": design["failure_mode"][0],
             "count": 4,
             "context": None,
             "design": design,
             "tuple_spec": {
                 "domain": design["domain"][0],
                 "user_context": design["user_context"][0],
-                "behavior": design["behavior"][0],
+                "failure_mode": design["failure_mode"][0],
             },
         }
         defaults.update(overrides)
@@ -297,89 +297,89 @@ class BuildGenerationPromptTest(unittest.TestCase):
     def test_build_generation_prompt_includes_assignments(self) -> None:
         prompt = build_generation_prompt(**self._make_args())
         self.assertIn("Exact Design Assignment", prompt)
-        self.assertIn("Behavior A", prompt)
+        self.assertIn("FailureMode A", prompt)
 
-    def test_build_generation_prompt_injects_policy_body(self) -> None:
-        policy = _make_policy(behaviors=[("Behavior A", "A-specific definition", True)])
-        design = _make_design_with_behavior(3)
-        # Override the behavior level so it matches the policy.
-        design["behavior"] = [{"name": "Behavior A", "description": "A-specific definition"}]
+    def test_build_generation_prompt_injects_taxonomy_body(self) -> None:
+        taxonomy = _make_taxonomy(failure_modes=[("FailureMode A", "A-specific definition", True)])
+        design = _make_design_with_failure_mode(3)
+        # Override the failure_mode level so it matches the taxonomy.
+        design["failure_mode"] = [{"name": "FailureMode A", "description": "A-specific definition"}]
         args = {
             "kind": "scenario",
-            "policy": policy,
-            "behavior": design["behavior"][0],
+            "taxonomy": taxonomy,
+            "failure_mode": design["failure_mode"][0],
             "count": 2,
             "context": None,
             "design": design,
             "tuple_spec": {
                 "domain": design["domain"][0],
                 "user_context": design["user_context"][0],
-                "behavior": design["behavior"][0],
+                "failure_mode": design["failure_mode"][0],
             },
         }
         prompt = build_generation_prompt(**args)
-        self.assertIn("Policy context", prompt)
+        self.assertIn("Taxonomy context", prompt)
         self.assertIn("A-specific definition", prompt)
-        self.assertNotIn("{{policy_body}}", prompt)
+        self.assertNotIn("{{taxonomy_body}}", prompt)
         self.assertNotIn("permissible_status", prompt)
         self.assertNotIn("seed_strategy", prompt)
 
 
 class BuildGenerationJobsTest(unittest.TestCase):
-    def test_generation_jobs_cover_behavior_subset(self) -> None:
-        policy = _make_policy()
+    def test_generation_jobs_cover_failure_mode_subset(self) -> None:
+        taxonomy = _make_taxonomy()
         design = normalize_design(
             {
-                "behavior": [{"name": "Behavior B", "description": "Definition of B"}],
+                "failure_mode": [{"name": "FailureMode B", "description": "Definition of B"}],
                 **_make_factor_design(2),
             },
-            policy,
+            taxonomy,
         )
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=4,
             rng=random.Random(42),
         )
         self.assertEqual(sum(job.count for job in jobs), 4)
         self.assertIsNotNone(assignments)
-        self.assertEqual({row["behavior"] for row in assignments or []}, {"Behavior B"})
+        self.assertEqual({row["failure_mode"] for row in assignments or []}, {"FailureMode B"})
 
-    def test_generation_jobs_always_include_behavior_in_assignments(self) -> None:
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+    def test_generation_jobs_always_include_failure_mode_in_assignments(self) -> None:
+        taxonomy = _make_taxonomy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_failure_mode=True)
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=6,
             rng=random.Random(42),
         )
         self.assertEqual(sum(job.count for job in jobs), 6)
         self.assertIsNotNone(assignments)
-        self.assertTrue(all("behavior" in row for row in assignments or []))
+        self.assertTrue(all("failure_mode" in row for row in assignments or []))
         self.assertTrue(
-            all(set(row) == {"behavior", *FACTOR_NAMES} for row in assignments or [])
+            all(set(row) == {"failure_mode", *FACTOR_NAMES} for row in assignments or [])
         )
 
-    def test_generation_jobs_with_behavior_only_design(self) -> None:
-        policy = _make_policy()
+    def test_generation_jobs_with_failure_mode_only_design(self) -> None:
+        taxonomy = _make_taxonomy()
         jobs, assignments = build_generation_jobs(
-            policy=policy,
-            design={"behavior": build_behavior_factor(policy)},
+            taxonomy=taxonomy,
+            design={"failure_mode": build_failure_mode_factor(taxonomy)},
             sample_size=3,
             rng=random.Random(0),
         )
         self.assertEqual(sum(job.count for job in jobs), 3)
-        self.assertTrue(all(set(row) == {"behavior"} for row in assignments or []))
+        self.assertTrue(all(set(row) == {"failure_mode"} for row in assignments or []))
 
     def test_generation_jobs_one_job_per_tuple(self) -> None:
         """Each covering-array tuple gets its own job."""
-        policy = _make_policy()
-        design = _make_design_with_behavior(2)
+        taxonomy = _make_taxonomy()
+        design = _make_design_with_failure_mode(2)
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
-            sample_size=len(build_covering_array(design, random.Random(42), axes=("behavior",) + FACTOR_NAMES)),
+            sample_size=len(build_covering_array(design, random.Random(42), axes=("failure_mode",) + FACTOR_NAMES)),
             rng=random.Random(42),
         )
         self.assertEqual(sum(job.count for job in jobs), len(jobs))
@@ -387,13 +387,13 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_budget_allocation_divmod(self) -> None:
         """Budget spreads evenly with remainder going to first tuples."""
-        policy = _make_policy()
-        design = _make_design_with_behavior(2)
-        ca = build_covering_array(design, random.Random(42), axes=("behavior",) + FACTOR_NAMES)
+        taxonomy = _make_taxonomy()
+        design = _make_design_with_failure_mode(2)
+        ca = build_covering_array(design, random.Random(42), axes=("failure_mode",) + FACTOR_NAMES)
         num_tuples = len(ca)
         sample_size = num_tuples * 2 + 3
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -406,11 +406,11 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_sample_size_smaller_than_array(self) -> None:
         """When sample_size < covering array, some tuples get 0 and are skipped."""
-        policy = _make_policy()
-        design = _make_design_with_behavior(2)
+        taxonomy = _make_taxonomy()
+        design = _make_design_with_failure_mode(2)
         sample_size = 3
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -421,10 +421,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_start_index_contiguous(self) -> None:
         """start_index values are contiguous across all jobs."""
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+        taxonomy = _make_taxonomy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_failure_mode=True)
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=10,
             rng=random.Random(42),
@@ -436,36 +436,36 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_singular_tuple_spec(self) -> None:
         """Each job carries a singular tuple_spec dict, not a list."""
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+        taxonomy = _make_taxonomy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_failure_mode=True)
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=6,
             rng=random.Random(42),
         )
         for job in jobs:
             self.assertIsInstance(job.tuple_spec, dict)
-            self.assertIn("behavior", job.tuple_spec)
+            self.assertIn("failure_mode", job.tuple_spec)
             for factor_name in FACTOR_NAMES:
                 self.assertIn(factor_name, job.tuple_spec)
 
 
 class BuildPolicyNodeFactorTest(unittest.TestCase):
-    def test_build_behavior_factor_creates_entries_from_behaviors(self) -> None:
-        factor = build_behavior_factor(_make_policy())
+    def test_build_failure_mode_factor_creates_entries_from_failure_modes(self) -> None:
+        factor = build_failure_mode_factor(_make_taxonomy())
         self.assertEqual(
             [entry["name"] for entry in factor],
-            ["Behavior A", "Behavior B"],
+            ["FailureMode A", "FailureMode B"],
         )
 
-    def test_build_behavior_factor_raises_on_missing_name(self) -> None:
+    def test_build_failure_mode_factor_raises_on_missing_name(self) -> None:
         with self.assertRaises(ValueError):
-            build_behavior_factor({"behaviors": [{"name": "", "definition": "def"}]})
+            build_failure_mode_factor({"failure_modes": [{"name": "", "definition": "def"}]})
 
-    def test_build_behavior_factor_returns_name_and_description_only(self) -> None:
-        policy = {
-            "behaviors": [
+    def test_build_failure_mode_factor_returns_name_and_description_only(self) -> None:
+        taxonomy = {
+            "failure_modes": [
                 {
                     "name": "B1",
                     "definition": "d1",
@@ -474,7 +474,7 @@ class BuildPolicyNodeFactorTest(unittest.TestCase):
                 },
             ],
         }
-        factor = build_behavior_factor(policy)
+        factor = build_failure_mode_factor(taxonomy)
         self.assertEqual(factor[0], {"name": "B1", "description": "d1"})
 
 

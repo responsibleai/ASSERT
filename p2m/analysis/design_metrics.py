@@ -12,7 +12,7 @@ from collections import Counter
 from itertools import combinations
 from typing import Any
 
-from p2m.core.io import design_factors, row_behavior
+from p2m.core.io import design_factors, row_failure_mode
 
 # ---------------------------------------------------------------------------
 # Design quality
@@ -75,15 +75,15 @@ def within_node_coverage_min(
     assignments: list[dict[str, str]],
     design: dict[str, list[dict[str, str]]],
 ) -> float:
-    """Worst-case per-factor entropy across all policy behaviors."""
-    if "behavior" not in design:
+    """Worst-case per-factor entropy across all taxonomy failure_modes."""
+    if "failure_mode" not in design:
         return 0.0
     flattened: list[float] = []
-    for policy_behavior in design["behavior"]:
+    for taxonomy_failure_mode in design["failure_mode"]:
         node_assignments = [
             a
             for a in assignments
-            if a.get("behavior") == policy_behavior["name"]
+            if a.get("failure_mode") == taxonomy_failure_mode["name"]
         ]
         if not node_assignments:
             return 0.0
@@ -315,18 +315,18 @@ def labeler_retest_agreement(
     }
 
 
-def behavior_agreement(
+def failure_mode_agreement(
     observed_assignments: list[dict[str, str]],
     rows: list[dict[str, Any]],
 ) -> float:
-    """Agreement between labeler-assigned behavior and conditioning behavior."""
+    """Agreement between labeler-assigned failure_mode and conditioning failure_mode."""
     if not observed_assignments or not rows:
         return 0.0
-    if not any("behavior" in a for a in observed_assignments):
+    if not any("failure_mode" in a for a in observed_assignments):
         return 0.0
     observed_by_seed_id = {
-        a["seed_id"]: a["behavior"] for a in observed_assignments
-        if "behavior" in a
+        a["seed_id"]: a["failure_mode"] for a in observed_assignments
+        if "failure_mode" in a
     }
     total = 0
     matches = 0
@@ -335,7 +335,7 @@ def behavior_agreement(
         if seed_id not in observed_by_seed_id:
             continue
         total += 1
-        if observed_by_seed_id[seed_id] == row_behavior(row):
+        if observed_by_seed_id[seed_id] == row_failure_mode(row):
             matches += 1
     return matches / total if total else 0.0
 
@@ -359,8 +359,8 @@ def build_supplementary_metrics(
         design_quality["cross_axis_nmi"] = cross_axis_nmi(observed_assignments, design)
 
     labeling_quality: dict[str, Any] = {}
-    if "behavior" in design:
-        labeling_quality["behavior_agreement_with_seed_behavior"] = behavior_agreement(
+    if "failure_mode" in design:
+        labeling_quality["failure_mode_agreement_with_seed_failure_mode"] = failure_mode_agreement(
             observed_assignments, rows
         )
     if intended_assignments is not None:

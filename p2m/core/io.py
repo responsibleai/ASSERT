@@ -186,10 +186,10 @@ SCORES_FILE = "scores.jsonl"
 def design_factors(design: dict[str, Any]) -> tuple[str, ...]:
     """Return user-defined design factors in stable order.
 
-    Excludes metadata keys and the reserved ``behavior`` factor.
+    Excludes metadata keys and the reserved ``failure_mode`` factor.
     """
     return tuple(
-        key for key in design if not key.startswith("_") and key != "behavior"
+        key for key in design if not key.startswith("_") and key != "failure_mode"
     )
 
 DESIGN_FILE = "design.json"
@@ -212,79 +212,79 @@ def fill_template(template: str, replacements: dict[str, str]) -> str:
     return rendered
 
 
-# ── Policy loading ────────────────────────────────────────────────
+# ── Taxonomy loading ────────────────────────────────────────────────
 
 
-def load_policy(path: str | Path) -> dict[str, Any]:
-    """Load and normalize a policy JSON file."""
-    policy = json.loads(resolve_path(path).read_text(encoding="utf-8"))
-    for behavior in policy.get("behaviors", []):
-        permissible = get_permissible_flag(behavior)
+def load_taxonomy(path: str | Path) -> dict[str, Any]:
+    """Load and normalize a taxonomy JSON file."""
+    taxonomy = json.loads(resolve_path(path).read_text(encoding="utf-8"))
+    for failure_mode in taxonomy.get("failure_modes", []):
+        permissible = get_permissible_flag(failure_mode)
         if permissible is not None:
-            behavior["permissible"] = permissible
-    return policy
+            failure_mode["permissible"] = permissible
+    return taxonomy
 
 
-def permissible_by_behavior(policy: dict[str, Any] | None) -> dict[str, bool]:
-    """Return canonical permissibility flags keyed by behavior name."""
-    behaviors = (policy or {}).get("behaviors")
-    if not isinstance(behaviors, list):
+def permissible_by_failure_mode(taxonomy: dict[str, Any] | None) -> dict[str, bool]:
+    """Return canonical permissibility flags keyed by failure_mode name."""
+    failure_modes = (taxonomy or {}).get("failure_modes")
+    if not isinstance(failure_modes, list):
         return {}
     return {
         str(entry.get("name") or ""): bool(entry.get("permissible"))
-        for entry in behaviors
+        for entry in failure_modes
         if isinstance(entry, dict) and str(entry.get("name") or "")
     }
 
 
-def definitions_by_behavior(policy: dict[str, Any] | None) -> dict[str, str]:
-    """Return canonical behavior definitions keyed by behavior name."""
-    behaviors = (policy or {}).get("behaviors")
-    if not isinstance(behaviors, list):
+def definitions_by_failure_mode(taxonomy: dict[str, Any] | None) -> dict[str, str]:
+    """Return canonical failure_mode definitions keyed by failure_mode name."""
+    failure_modes = (taxonomy or {}).get("failure_modes")
+    if not isinstance(failure_modes, list):
         return {}
     return {
         str(entry.get("name") or ""): str(entry.get("definition") or "")
-        for entry in behaviors
+        for entry in failure_modes
         if isinstance(entry, dict) and str(entry.get("name") or "")
     }
 
 
-def policy_definition(
-    policy_definition_by_name: dict[str, str],
-    behavior_name: str,
+def taxonomy_definition(
+    taxonomy_definition_by_name: dict[str, str],
+    failure_mode_name: str,
 ) -> str:
-    """Return a behavior's policy definition or raise on missing policy."""
+    """Return a failure_mode's taxonomy definition or raise on missing taxonomy."""
     try:
-        return policy_definition_by_name[behavior_name]
+        return taxonomy_definition_by_name[failure_mode_name]
     except KeyError as exc:
         raise ValueError(
-            f"behavior '{behavior_name}' is missing from policy.behaviors"
+            f"failure_mode '{failure_mode_name}' is missing from taxonomy.failure_modes"
         ) from exc
 
 
-def policy_permissible(
-    policy_permissible_by_name: dict[str, bool],
-    behavior_name: str,
+def taxonomy_permissible(
+    taxonomy_permissible_by_name: dict[str, bool],
+    failure_mode_name: str,
 ) -> bool:
-    """Return a behavior's policy permissibility or raise on missing policy."""
+    """Return a failure_mode's taxonomy permissibility or raise on missing taxonomy."""
     try:
-        return policy_permissible_by_name[behavior_name]
+        return taxonomy_permissible_by_name[failure_mode_name]
     except KeyError as exc:
         raise ValueError(
-            f"behavior '{behavior_name}' is missing from policy.behaviors"
+            f"failure_mode '{failure_mode_name}' is missing from taxonomy.failure_modes"
         ) from exc
 
 
-def row_behavior(row: dict[str, Any]) -> str:
-    """Return behavior name from a row's factors, or empty string if absent.
+def row_failure_mode(row: dict[str, Any]) -> str:
+    """Return failure_mode name from a row's factors, or empty string if absent.
 
-    Seed/transcript/score rows carry behavior inside `factors`; this is the
+    Seed/transcript/score rows carry failure_mode inside `factors`; this is the
     single, canonical accessor used everywhere downstream.
     """
     factors = row.get("factors")
     if not isinstance(factors, dict):
         return ""
-    value = factors.get("behavior")
+    value = factors.get("failure_mode")
     return str(value) if value else ""
 
 

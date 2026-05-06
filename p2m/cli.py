@@ -309,11 +309,11 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         ),
         None,
     ) or "-"
-    auditor_model = next(
+    tester_model = next(
         (
-            row.get("auditor_model")
+            row.get("tester_model")
             for row in rows
-            if isinstance(row.get("auditor_model"), str) and row.get("auditor_model")
+            if isinstance(row.get("tester_model"), str) and row.get("tester_model")
         ),
         None,
     ) or "-"
@@ -334,7 +334,7 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal") or 0.0,
         "dimensions": dimensions,
         "target": target,
-        "auditor_model": auditor_model,
+        "tester_model": tester_model,
         "judge_model": judge_model,
     }
 
@@ -342,8 +342,8 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    prompt_rows = [row for row in score_rows if not row.get("auditor_model")]
-    scenario_rows = [row for row in score_rows if row.get("auditor_model")]
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
     stages = (manifest or {}).get("stages", {})
     has_scores = isinstance(stages, dict) and stages.get("judge") is not None
@@ -384,8 +384,8 @@ def _count_seed_kinds(path: Path) -> tuple[int, int]:
 
 def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     suite_meta = load_json(suite_dir / "suite.json")
-    policy = load_json(suite_dir / "policy.json")
-    if suite_meta is None and policy is None:
+    taxonomy = load_json(suite_dir / "taxonomy.json")
+    if suite_meta is None and taxonomy is None:
         return None
 
     run_summaries = []
@@ -405,7 +405,7 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     created_at = (suite_meta or {}).get("created_at")
 
     risk_name = suite_dir.name
-    risk_block = (policy or {}).get("risk")
+    risk_block = (taxonomy or {}).get("risk")
     if isinstance(risk_block, dict) and isinstance(risk_block.get("name"), str) and risk_block.get("name"):
         risk_name = risk_block["name"]
 
@@ -414,13 +414,13 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     elif seed_count or scenario_seed_count:
         status = "seeds_ready"
     else:
-        status = "policy_only"
+        status = "taxonomy_only"
 
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
         "risk_name": risk_name,
-        "sub_risk_count": len((policy or {}).get("sub_risks") or []),
+        "sub_risk_count": len((taxonomy or {}).get("sub_risks") or []),
         "seed_count": seed_count,
         "scenario_seed_count": scenario_seed_count,
         "run_count": len(run_summaries),
@@ -756,7 +756,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
         table.add_row("Target", str(scenario_metrics.get("target") or "-"))
-        table.add_row("Auditor Model", str(scenario_metrics.get("auditor_model") or "-"))
+        table.add_row("Tester Model", str(scenario_metrics.get("tester_model") or "-"))
         table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
@@ -1170,7 +1170,7 @@ def analysis():
 
 
 @analysis.command("seed-metrics", short_help="Compute coverage and diversity metrics for seed files")
-@click.option("--policy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Policy JSON to score against.")
+@click.option("--taxonomy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Taxonomy JSON to score against.")
 @click.option("--seeds", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Seed JSONL file to analyze.")
 @click.option("--embed-model", default="text-embedding-3-large", show_default=True, help="Embedding model name.")
 @click.option("--embed-backend", type=click.Choice(["openai", "hf"]), default="openai", show_default=True, help="Embedding backend.")
@@ -1180,7 +1180,7 @@ def analysis():
 @click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "seed_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
 @click.option("--out-md", default=None, type=click.Path(path_type=Path), help="Optional Markdown report path.")
 def analysis_seed_metrics(
-    policy: Path,
+    taxonomy: Path,
     seeds: Path,
     embed_model: str,
     embed_backend: str,
@@ -1193,7 +1193,7 @@ def analysis_seed_metrics(
     """Compute seed metrics from the packaged CLI instead of calling the script directly."""
     seed_metrics = _load_analysis_module(_load_seed_metrics)
     cfg = seed_metrics.Config(
-        policy_path=str(policy),
+        taxonomy_path=str(taxonomy),
         seeds_path=str(seeds),
         embed_model=embed_model,
         embed_backend=embed_backend,
@@ -1212,12 +1212,12 @@ def analysis_seed_metrics(
         click.echo(f"Wrote {out_md}")
 
 
-@analysis.command("policy-logs", short_help="Summarize legacy policy-eval logs and write plots")
+@analysis.command("taxonomy-logs", short_help="Summarize legacy taxonomy-eval logs and write plots")
 @click.option("--logs-dir", default=DEFAULT_LOGS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory containing legacy .eval archives.")
 @click.option("--out-dir", default=DEFAULT_PLOTS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory for plots.")
 @click.option("--csv", default=None, type=click.Path(path_type=Path), help="Optional flattened CSV output path.")
-def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
-    """Analyze legacy policy-eval logs without leaving the packaged CLI."""
+def analysis_taxonomy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
+    """Analyze legacy taxonomy-eval logs without leaving the packaged CLI."""
     analyze_taxonomies = _load_analysis_module(_load_analyze_taxonomies)
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1237,7 +1237,7 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
     analyze_taxonomies.plot_dimensions(df, out_dir)
 
 
-@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running rollout")
+@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running inference")
 @click.option(
     "--traces",
     required=True,
@@ -1254,7 +1254,7 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
 @click.option("--group-by", default="session.id", show_default=True, help="OTel attribute to group spans by")
 @click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
 def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
-    """Judge pre-collected OTel traces without running rollout."""
+    """Judge pre-collected OTel traces without running inference."""
     from p2m.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")

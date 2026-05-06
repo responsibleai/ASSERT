@@ -1,4 +1,4 @@
-"""Rollout-stage metrics computed from transcripts.
+"""Inference-stage metrics computed from transcripts.
 
 Aggregates stop-reason distribution, turn counts, truncation rates,
 and conversation health indicators. All functions accept plain dicts
@@ -10,13 +10,13 @@ from __future__ import annotations
 import statistics
 from collections import Counter, defaultdict
 from typing import Any
-from p2m.core.io import row_behavior
+from p2m.core.io import row_failure_mode
 
 
-def count_rollout_turns(transcript_row: dict[str, Any]) -> int:
-    """Count the number of auditor-initiated rollout turns in a transcript.
+def count_inference_turns(transcript_row: dict[str, Any]) -> int:
+    """Count the number of tester-initiated inference turns in a transcript.
 
-    A rollout turn is an auditor user-message sent to the target view.
+    A inference turn is an tester user-message sent to the target view.
     """
     count = 0
     for event in transcript_row.get("events", []):
@@ -33,18 +33,18 @@ def count_rollout_turns(transcript_row: dict[str, Any]) -> int:
         if not isinstance(message, dict):
             continue
         role = message.get("role", "")
-        if "target" in view and actor == "auditor" and role == "user":
+        if "target" in view and actor == "tester" and role == "user":
             count += 1
     return count
 
 
-def compute_rollout_metrics(
+def compute_inference_metrics(
     transcript_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Compute aggregate rollout metrics from transcript rows.
+    """Compute aggregate inference metrics from transcript rows.
 
     Returns a dict with stop_reason distribution, turn stats, completion
-    rate, and per-behavior breakdowns.
+    rate, and per-failure_mode breakdowns.
     """
     n = len(transcript_rows)
     if n == 0:
@@ -53,19 +53,19 @@ def compute_rollout_metrics(
     # Stop-reason distribution
     stop_reasons: dict[str, int] = Counter()
     turn_counts: list[int] = []
-    per_behavior: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    per_failure_mode: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for row in transcript_rows:
         sr = str(row.get("stop_reason") or "unknown")
         stop_reasons[sr] += 1
-        turns = count_rollout_turns(row)
+        turns = count_inference_turns(row)
         turn_counts.append(turns)
-        behavior = (row_behavior(row) or "unknown")
-        per_behavior[behavior].append(row)
+        failure_mode = (row_failure_mode(row) or "unknown")
+        per_failure_mode[failure_mode].append(row)
 
     completed = stop_reasons.get("completed", 0) + stop_reasons.get("max_turns", 0)
     errored = stop_reasons.get("target_error", 0)
-    invalid_auditor = stop_reasons.get("invalid_auditor_turn", 0)
+    invalid_tester = stop_reasons.get("invalid_tester_turn", 0)
 
     # Turn stats
     turn_mean = statistics.fmean(turn_counts) if turn_counts else 0.0
@@ -77,12 +77,12 @@ def compute_rollout_metrics(
     c95 = min(f95 + 1, len(sorted_turns) - 1)
     turn_p95 = sorted_turns[f95] + (k95 - f95) * (sorted_turns[c95] - sorted_turns[f95])
 
-    # Per-behavior breakdown
-    behavior_summaries = {}
-    for behavior, rows in sorted(per_behavior.items()):
+    # Per-failure_mode breakdown
+    failure_mode_summaries = {}
+    for failure_mode, rows in sorted(per_failure_mode.items()):
         b_stop = Counter(str(r.get("stop_reason") or "unknown") for r in rows)
-        b_turns = [count_rollout_turns(r) for r in rows]
-        behavior_summaries[behavior] = {
+        b_turns = [count_inference_turns(r) for r in rows]
+        failure_mode_summaries[failure_mode] = {
             "total": len(rows),
             "stop_reasons": dict(b_stop),
             "turn_mean": statistics.fmean(b_turns) if b_turns else 0.0,
@@ -93,7 +93,7 @@ def compute_rollout_metrics(
         "total": n,
         "completion_rate": completed / n,
         "error_rate": errored / n,
-        "invalid_auditor_rate": invalid_auditor / n,
+        "invalid_tester_rate": invalid_tester / n,
         "stop_reasons": dict(stop_reasons),
         "turns": {
             "mean": round(turn_mean, 1),
@@ -102,5 +102,5 @@ def compute_rollout_metrics(
             "min": min(turn_counts),
             "max": max(turn_counts),
         },
-        "by_behavior": behavior_summaries,
+        "by_failure_mode": failure_mode_summaries,
     }

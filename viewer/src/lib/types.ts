@@ -1,18 +1,18 @@
-// Suite-level types (from suite.json, policy.json, seeds.jsonl)
+// Suite-level types (from suite.json, taxonomy.json, seeds.jsonl)
 
 export interface Suite {
 	created_at: string;
 }
 
-export interface Behavior {
+export interface FailureMode {
 	name: string;
 	definition: string;
 	examples: string[];
 	permissible: boolean;
 }
 
-export interface Policy {
-	concept: {
+export interface Taxonomy {
+	spec: {
 		name: string;
 		definition: string;
 	};
@@ -21,7 +21,7 @@ export interface Policy {
 		definition: string;
 		examples: string[];
 	}>;
-	behaviors: Behavior[];
+	failure_modes: FailureMode[];
 }
 
 export interface SeedPayload {
@@ -47,8 +47,8 @@ export type SeedFactors = Record<string, string>;
 
 export interface PromptSeed {
 	seed_id: string;
-	concept: string;
-	behavior: string;
+	spec: string;
+	failure_mode: string;
 	definition: string;
 	seed: SeedPayload;
 	factors?: SeedFactors;
@@ -56,8 +56,8 @@ export interface PromptSeed {
 
 export interface ScenarioSeed {
 	seed_id: string;
-	concept: string;
-	behavior: string;
+	spec: string;
+	failure_mode: string;
 	definition: string;
 	seed: SeedPayload;
 	factors?: SeedFactors;
@@ -68,7 +68,7 @@ export interface ViewerSeedItem {
 	kind: 'prompt' | 'scenario';
 	title: string;
 	description: string;
-	behavior: string;
+	failure_mode: string;
 	definition: string;
 	system_prompt?: string | null;
 	tools?: SeedPayload['tools'];
@@ -169,8 +169,8 @@ export interface JudgedSample {
 	seed_id?: string;
 	prompt: string;
 	response: string;
-	concept?: string | null;
-	behavior: string;
+	spec?: string | null;
+	failure_mode: string;
 	run_id?: string;
 	judge_model?: string;
 	target?: string;
@@ -198,7 +198,7 @@ export interface ViewerResultItem {
 	kind: 'prompt' | 'scenario';
 	row_title: string;
 	header_title: string;
-	behavior: string;
+	failure_mode: string;
 	verdict?: Verdict | AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
@@ -212,12 +212,12 @@ export interface ViewerResultItem {
 
 // Aggregated types for views
 
-export type SuiteStatus = 'policy_only' | 'seeds_ready' | 'has_results';
+export type SuiteStatus = 'taxonomy_only' | 'seeds_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
-	concept_name: string;
-	behavior_count: number;
+	spec_name: string;
+	failure_mode_count: number;
 	seed_count: number;
 	scenario_seed_count: number;
 	run_count: number;
@@ -284,12 +284,12 @@ export interface AuditRunMetrics {
 	overrefusal_rate: number;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	judge_model: string;
 }
 
 export interface ScoreDistribution {
-	behavior: string;
+	failure_mode: string;
 	counts: BinaryCounts;
 	total: number;
 }
@@ -382,23 +382,23 @@ export interface AuditTranscriptEvent {
 
 export interface AuditTranscript {
 	seed_id: string;
-	concept: string;
-	behavior: string;
+	spec: string;
+	failure_mode: string;
 	events: AuditTranscriptEvent[];
 	llm_calls?: LlmCallTrace[];
 	stop_reason: string;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	factors?: SeedFactors;
 }
 
 export interface AuditScore {
 	seed_id: string;
-	concept: string;
-	behavior: string;
+	spec: string;
+	failure_mode: string;
 	judge_model: string;
 	target?: string;
-	auditor_model?: string;
+	tester_model?: string;
 	verdict?: AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;

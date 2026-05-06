@@ -26,9 +26,9 @@
 		getRequiredBaseMetricNames(data.dimensionDefs as Record<string, DimensionDef>)
 	);
 
-	type RolloutPreviewItem = {
+	type InferencePreviewItem = {
 		seed_id: string;
-		behavior: string;
+		failure_mode: string;
 		turns_count: number;
 		stop_reason: string;
 	};
@@ -47,7 +47,7 @@
 	// --- Tab state ---
 	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
 	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
-	let hasAuditPreview = $derived((data.rolloutPreviewRows?.length ?? 0) > 0);
+	let hasAuditPreview = $derived((data.inferencePreviewRows?.length ?? 0) > 0);
 	let hasAuditContent = $derived(data.hasAuditContent ?? (hasAuditEval || hasAuditPreview));
 	let activeTab = $derived((data.activeTab ?? (page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts')) as 'prompts' | 'audit');
 
@@ -104,13 +104,13 @@
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
 	}
 
-	function getBehaviorViolated(score: { verdict?: Record<string, unknown> | null }, behaviorName: string): boolean | null {
+	function getBehaviorViolated(score: { verdict?: Record<string, unknown> | null }, failureModeName: string): boolean | null {
 		const nj = score.verdict?.node_judgments;
 		if (!Array.isArray(nj)) return null;
 		for (const node of nj) {
 			const name = ((node as Record<string, unknown>).node_name as string ?? '').trim();
 			const label = name || `(node ${(node as Record<string, unknown>).node_index ?? '?'})`;
-			if (label === behaviorName && (node as Record<string, unknown>).relevant) {
+			if (label === failureModeName && (node as Record<string, unknown>).relevant) {
 				return (node as Record<string, unknown>).violated === true;
 			}
 		}
@@ -138,7 +138,7 @@
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		seeds: 'Seed Generation',
-		rollout: 'Rollout',
+		inference: 'Inference',
 		judge: 'Scoring',
 	};
 
@@ -393,7 +393,7 @@
 		scenarioDrawerError = null;
 	}
 
-	async function openPreviewDrawer(item: RolloutPreviewItem) {
+	async function openPreviewDrawer(item: InferencePreviewItem) {
 		const token = bumpScenarioDrawerLoadToken();
 		drawerPreviewSeedId = item.seed_id;
 		previewNavIdx = previewNavList.findIndex((entry) => entry.seed_id === item.seed_id);
@@ -462,7 +462,7 @@
 		return flatAuditScores;
 	});
 
-	let previewNavList = $derived((data.rolloutPreviewRows ?? []) as RolloutPreviewItem[]);
+	let previewNavList = $derived((data.inferencePreviewRows ?? []) as InferencePreviewItem[]);
 	let auditNavIdx = $state(-1);
 	let previewNavIdx = $state(-1);
 	let currentRunKey = $derived(`${data.suite_id}:${data.run_id}`);
@@ -630,7 +630,7 @@
 	<div class="flex items-center gap-1.5 text-xs text-text-muted">
 		<a href="/" class="transition-colors hover:text-interactive">Measurement Suites</a>
 		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-		<a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.policy?.concept?.name ?? data.suite_id}</a>
+		<a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.taxonomy?.spec?.name ?? data.suite_id}</a>
 		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 		<span class="text-text-secondary">{data.run_id}</span>
 	</div>
@@ -731,7 +731,7 @@
 				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'audit' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
 				onclick={() => setActiveTab('audit')}
 				title="Multi-turn scenario results"
-			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.rolloutPreviewRows.length}</span></button>
+			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span></button>
 		</div>
 		</div>
 	{/if}
@@ -839,10 +839,10 @@
 						>
 							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
 							<div class="flex items-center gap-2">
-								{#if group.avgs['behavior_violation'] !== undefined}
-									{@const bv = group.avgs['behavior_violation']}
-									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
-										<span class="text-text-muted">behavior violated</span>
+								{#if group.avgs['failure_mode_violation'] !== undefined}
+									{@const bv = group.avgs['failure_mode_violation']}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific failure_mode">
+										<span class="text-text-muted">failure_mode violated</span>
 										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
 									</span>
 								{/if}
@@ -874,7 +874,7 @@
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(sample, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
-														<span class="text-text-muted">behavior</span>
+														<span class="text-text-muted">failure_mode</span>
 														<span class="font-semibold tabular-nums {metricOutcomeClass(getBehaviorViolated(sample, group.key))}">{metricOutcomeText(getBehaviorViolated(sample, group.key))}</span>
 													</span>
 												{/if}
@@ -1063,10 +1063,10 @@
 						>
 							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
 							<div class="flex items-center gap-2">
-								{#if group.avgs['behavior_violation'] !== undefined}
-									{@const bv = group.avgs['behavior_violation']}
-									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
-										<span class="text-text-muted">behavior violated</span>
+								{#if group.avgs['failure_mode_violation'] !== undefined}
+									{@const bv = group.avgs['failure_mode_violation']}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific failure_mode">
+										<span class="text-text-muted">failure_mode violated</span>
 										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
 									</span>
 								{/if}
@@ -1101,7 +1101,7 @@
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(auditScore, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
-														<span class="text-text-muted">behavior</span>
+														<span class="text-text-muted">failure_mode</span>
 														<span class="font-semibold tabular-nums {metricOutcomeClass(getBehaviorViolated(auditScore, group.key))}">{metricOutcomeText(getBehaviorViolated(auditScore, group.key))}</span>
 													</span>
 												{/if}
@@ -1197,9 +1197,9 @@
 
 	{#if activeTab === 'audit' && !hasAuditEval && hasAuditPreview}
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
-			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Rollout Preview</div>
+			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Inference Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.rolloutPreviewRows.length} / {data.rolloutPreviewTotal} conversations are available. Judgments will appear after rollout completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after inference completes.
 			</p>
 		</div>
 
@@ -1207,11 +1207,11 @@
 			<div class="mb-4 flex items-center gap-3">
 				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.rolloutPreviewRows.length} conversations</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
-				{#each data.rolloutPreviewRows as preview, sIdx}
+				{#each data.inferencePreviewRows as preview, sIdx}
 					{@const seedInfo = data.scenarioSeedMap[preview.seed_id]}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
@@ -1220,7 +1220,7 @@
 						>
 							<div class="min-w-0 flex-1">
 								<div class="truncate text-sm text-text-secondary">{seedInfo?.title ?? preview.seed_id}</div>
-								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
+								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.failure_mode}>{preview.failure_mode}</div>
 							</div>
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>
 							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{preview.stop_reason}</span>

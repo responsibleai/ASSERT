@@ -1,11 +1,11 @@
 # Writing Eval Specs
 
-An eval spec is a short markdown file that describes the behaviors you want to measure.
+An eval spec is a short markdown file that describes the failure_modes you want to measure.
 
 Good specs are:
 
 - specific to your product
-- grounded in user-visible behavior
+- grounded in user-visible failure_mode
 - clear about what counts as failure
 - broad enough for the generator to create varied test cases
 

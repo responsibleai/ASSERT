@@ -10,7 +10,7 @@ import type { AuditScore, JudgedSample, GroupAxis, GroupContext, GroupEntry, Nod
 // Constants
 // ---------------------------------------------------------------------------
 
-const NO_MATCHING_BEHAVIOR = 'No matching policy behavior';
+const NO_MATCHING_FAILURE_MODE = 'No matching taxonomy failure_mode';
 const JUDGE_FAILED = 'Judge failed to score';
 const NOT_JUDGED = 'Not judged yet';
 
@@ -49,7 +49,7 @@ function getRelevantNodeLabels(verdict: Record<string, unknown> | null | undefin
 // ---------------------------------------------------------------------------
 
 type ScoredRecord = {
-	behavior: string;
+	failure_mode: string;
 	permissible?: boolean | null;
 	verdict?: Record<string, unknown> | null;
 	judge_status?: string | null;
@@ -70,13 +70,13 @@ function observedNodeAccessor(s: ScoredRecord): string | string[] {
 	if (isErrorVerdict(s.verdict)) return JUDGE_FAILED;
 	if (!hasNodeJudgments(s.verdict)) return JUDGE_FAILED;
 	const labels = getRelevantNodeLabels(s.verdict);
-	if (labels.length === 0) return NO_MATCHING_BEHAVIOR;
+	if (labels.length === 0) return NO_MATCHING_FAILURE_MODE;
 	return labels;
 }
 
 function observedNodeSort(a: GroupEntry<ScoredRecord>, b: GroupEntry<ScoredRecord>): number {
 	const specialOrder = (key: string) =>
-		key === JUDGE_FAILED ? 3 : key === NOT_JUDGED ? 2 : key === NO_MATCHING_BEHAVIOR ? 1 : 0;
+		key === JUDGE_FAILED ? 3 : key === NOT_JUDGED ? 2 : key === NO_MATCHING_FAILURE_MODE ? 1 : 0;
 	const aSpecial = specialOrder(a.key);
 	const bSpecial = specialOrder(b.key);
 	if (aSpecial !== bSpecial) return aSpecial - bSpecial;
@@ -88,7 +88,7 @@ function observedNodeSort(a: GroupEntry<ScoredRecord>, b: GroupEntry<ScoredRecor
 // ---------------------------------------------------------------------------
 
 const GROUP_AXES: GroupAxis<ScoredRecord>[] = [
-	{ key: 'observed_node', label: 'Observed behavior (judge)', accessor: observedNodeAccessor, sortGroups: observedNodeSort },
+	{ key: 'observed_node', label: 'Observed failure_mode (judge)', accessor: observedNodeAccessor, sortGroups: observedNodeSort },
 ];
 
 export const AUDIT_GROUP_AXES: GroupAxis<AuditScore>[] = GROUP_AXES;
@@ -157,15 +157,15 @@ export function groupByAxis<T extends { verdict?: Record<string, unknown> | null
 			}
 		}
 
-		// Per-behavior violation: check if the node matching this group key was violated
+		// Per-failure_mode violation: check if the node matching this group key was violated
 		const nodeJudgments = item.verdict?.node_judgments;
 		if (Array.isArray(nodeJudgments)) {
 			for (const node of nodeJudgments as NodeJudgment[]) {
 				const name = (node.node_name ?? '').trim();
 				const label = name || `(node ${node.node_index ?? '?'})`;
 				if (label === key && node.relevant) {
-					bucket.sums['behavior_violation'] = (bucket.sums['behavior_violation'] ?? 0) + (node.violated ? 1 : 0);
-					bucket.counts['behavior_violation'] = (bucket.counts['behavior_violation'] ?? 0) + 1;
+					bucket.sums['failure_mode_violation'] = (bucket.sums['failure_mode_violation'] ?? 0) + (node.violated ? 1 : 0);
+					bucket.counts['failure_mode_violation'] = (bucket.counts['failure_mode_violation'] ?? 0) + 1;
 					break;
 				}
 			}
@@ -192,8 +192,8 @@ export function groupByAxis<T extends { verdict?: Record<string, unknown> | null
 		for (const m of metricNames) {
 			if (g.counts[m]) avgs[m] = g.sums[m] / g.counts[m];
 		}
-		if (g.counts['behavior_violation']) {
-			avgs['behavior_violation'] = g.sums['behavior_violation'] / g.counts['behavior_violation'];
+		if (g.counts['failure_mode_violation']) {
+			avgs['failure_mode_violation'] = g.sums['failure_mode_violation'] / g.counts['failure_mode_violation'];
 		}
 		return {
 			key,

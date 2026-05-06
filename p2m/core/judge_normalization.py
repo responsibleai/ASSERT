@@ -25,7 +25,7 @@ def _normalize_transcript_judge_verdict_impl(
     transcript: Transcript,
     index_to_message_id: dict[str, str],
     score_keys: list[str],
-    policy_raw: dict[str, Any],
+    taxonomy_raw: dict[str, Any],
     extract_xml_citations_fn: Callable[..., list[dict[str, Any]]],
     summary_justification_fn: Callable[[dict[str, Any], list[str]], str],
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -102,11 +102,11 @@ def _normalize_transcript_judge_verdict_impl(
     if isinstance(raw_justification, str) and raw_justification.strip():
         explanation_texts.append(raw_justification)
 
-    behaviors = policy_raw.get("behaviors")
-    if not isinstance(behaviors, list):
-        return None, "missing_policy_behaviors"
+    failure_modes = taxonomy_raw.get("failure_modes")
+    if not isinstance(failure_modes, list):
+        return None, "missing_taxonomy_failure_modes"
     name_to_index: dict[str, int] = {}
-    for idx, entry in enumerate(behaviors):
+    for idx, entry in enumerate(failure_modes):
         if isinstance(entry, dict) and isinstance(entry.get("name"), str):
             stripped = entry["name"].strip()
             if stripped:
@@ -225,7 +225,7 @@ def _normalize_transcript_judge_verdict_impl(
 
     dense_node_judgments = _expand_sparse_node_judgments(
         sparse_nodes,
-        behaviors=behaviors,
+        failure_modes=failure_modes,
         citation_by_index=citation_by_index,
     )
 
@@ -298,37 +298,37 @@ def _citation_turns_for_indices(
     return sorted(turns)
 
 
-def _behavior_name(behaviors: list[Any], node_index: int) -> str:
-    behavior = behaviors[node_index] if 0 <= node_index < len(behaviors) else None
-    if isinstance(behavior, dict) and isinstance(behavior.get("name"), str):
-        return str(behavior["name"]).strip()
+def _failure_mode_name(failure_modes: list[Any], node_index: int) -> str:
+    failure_mode = failure_modes[node_index] if 0 <= node_index < len(failure_modes) else None
+    if isinstance(failure_mode, dict) and isinstance(failure_mode.get("name"), str):
+        return str(failure_mode["name"]).strip()
     return ""
 
 
 def _expand_sparse_node_judgments(
     raw_nodes: list[dict[str, Any]],
     *,
-    behaviors: list[Any],
+    failure_modes: list[Any],
     citation_by_index: dict[int, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     dense_nodes = [
         {
             "node_index": index,
-            "node_name": _behavior_name(behaviors, index),
+            "node_name": _failure_mode_name(failure_modes, index),
             "relevant": False,
             "violated": None,
             "confidence": None,
             "evidence_turns": [],
             "reasoning": "",
         }
-        for index in range(len(behaviors))
+        for index in range(len(failure_modes))
     ]
     for node in raw_nodes:
         node_index = int(node["node_index"])
         reasoning = str(node["reasoning"]).strip()
         dense_nodes[node_index] = {
             "node_index": node_index,
-            "node_name": _behavior_name(behaviors, node_index),
+            "node_name": _failure_mode_name(failure_modes, node_index),
             "relevant": True,
             "violated": bool(node["violated"]),
             "confidence": str(node["confidence"]),

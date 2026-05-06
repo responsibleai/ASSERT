@@ -1,37 +1,37 @@
-# Concepts
+# Specs
 
 Adaptive Eval is a spec-driven evaluation pipeline for AI agents.
 
 The mental model is:
 
 ```text
-spec -> behavior categories -> test cases -> execute -> judge -> artifacts
+spec -> failure_mode categories -> test cases -> execute -> judge -> artifacts
 ```
 
 ## Spec
 
-The spec is the plain-English behavior definition you author before running the pipeline. In current YAML, this is configured with `concept.name`, which points to a `.md` file next to the config.
+The spec is the plain-English failure_mode definition you author before running the pipeline. In current YAML, this is configured with `spec.name`, which points to a `.md` file next to the config.
 
 Example:
 
 ```yaml
-concept:
+spec:
   name: travel_planner_eval
 ```
 
 This loads `travel_planner_eval.md`.
 
-## Behavior categories
+## FailureMode categories
 
-The `policy` stage reads the spec and target context, then creates a structured taxonomy of behaviors or failure modes to test.
+The `taxonomy` stage reads the spec and target context, then creates a structured taxonomy of failure_modes or failure modes to test.
 
 ```yaml
 pipeline:
-  policy:
-    behavior_count: 6
+  taxonomy:
+    failure_mode_count: 6
 ```
 
-Output: `policy.json`.
+Output: `taxonomy.json`.
 
 ## Variations
 
@@ -58,13 +58,13 @@ Output: `seeds.jsonl`.
 
 ## Execute
 
-The `rollout` stage executes each generated test case against your target.
+The `inference` stage executes each generated test case against your target.
 
 For any agent or multi-agent system, use a callable entrypoint. OpenTelemetry trace capture is an optional upgrade for richer judge evidence:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       # Optional — add to capture tool calls, routing, and intermediate decisions:

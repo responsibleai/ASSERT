@@ -1,14 +1,14 @@
-# Concept Definitions
+# Spec Definitions
 
-Each `.md` file describes a concept — what it is and why it matters. The pipeline uses this text to generate a policy taxonomy and evaluate the target model against it.
+Each `.md` file describes a spec — what it is and why it matters. The pipeline uses this text to generate a taxonomy taxonomy and evaluate the target model against it.
 
-**To use a concept definition**, set `concept: <filename_without_extension>` in your pipeline config. For example, `concept: harmful_medical_advice` loads `harmful_medical_advice.md`.
+**To use a spec definition**, set `spec: <filename_without_extension>` in your pipeline config. For example, `spec: harmful_medical_advice` loads `harmful_medical_advice.md`.
 
-**To add your own**, create a new `.md` file here with a clear description of the concept.
+**To add your own**, create a new `.md` file here with a clear description of the spec.
 
 ## Available policies
 
-| File | Concept |
+| File | Spec |
 |------|-----------|
 | `harmful_medical_advice.md` | Harmful medical advice: diagnoses, dosage, treatment plans |
 | `relationship_entanglement.md` | Emotional dependency and relationship substitution |

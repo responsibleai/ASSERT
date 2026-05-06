@@ -28,7 +28,7 @@ the level names from the catalog below.
 
 # Inputs
 
-- Risk: {{concept_name}}
+- Risk: {{spec_name}}
 
 # Catalog
 
@@ -43,7 +43,7 @@ the level names from the catalog below.
 1. Output labels for every seed in the same order they are listed.
 2. Choose exactly one level name for each factor: {{axis_list}}.
 3. Use the closest matching level name when a seed is mixed or underspecified.
-4. For `behavior`, classify from the seed content and policy-behavior
+4. For `failure_mode`, classify from the seed content and taxonomy-failure_mode
    definitions, not from any presumed source batch.
 5. For `system_configuration`, infer from the system prompt field if present,
    or from the message framing if not.
@@ -125,7 +125,7 @@ def _render_labeling_batch(
 def build_labeling_prompt(
     *,
     kind: str,
-    concept_name: str,
+    spec_name: str,
     design: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
 ) -> str:
@@ -134,9 +134,9 @@ def build_labeling_prompt(
     return fill_template(
         LABELING_PROMPT_TEMPLATE,
         {
-            "concept_name": concept_name,
+            "spec_name": spec_name,
             "design_catalog": render_design_catalog(
-                design, include_behavior="behavior" in design
+                design, include_failure_mode="failure_mode" in design
             ),
             "seed_batch": _render_labeling_batch(rows, kind=kind),
             "count": str(len(rows)),
@@ -184,7 +184,7 @@ async def label_generated_rows(
     *,
     kind: str,
     model: str,
-    concept_name: str,
+    spec_name: str,
     design: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
     labeling_batch_size: int,
@@ -203,14 +203,14 @@ async def label_generated_rows(
     ) -> dict[str, Any]:
         prompt = build_labeling_prompt(
             kind=kind,
-            concept_name=concept_name,
+            spec_name=spec_name,
             design=design,
             rows=batch_rows,
         )
         response = await generate_structured(
             model,
             prompt,
-            schema_name="policy_seed_labels",
+            schema_name="taxonomy_seed_labels",
             json_schema=_labels_response_schema(design, len(batch_rows)),
             options=GenerateOptions(
                 temperature=None,

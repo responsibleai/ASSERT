@@ -9,15 +9,15 @@ from unittest.mock import patch
 import yaml
 
 from p2m.core.model_client import ModelResponse
-from p2m.core.io import row_behavior
+from p2m.core.io import row_failure_mode
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT / "scripts" / "auditor_pairwise_eval.py"
+SCRIPT_PATH = ROOT / "scripts" / "tester_pairwise_eval.py"
 
 
 def _load_script_module():
-    module_name = "auditor_pairwise_eval_test_module"
+    module_name = "tester_pairwise_eval_test_module"
     spec = importlib.util.spec_from_file_location(module_name, SCRIPT_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load script module from {SCRIPT_PATH}")
@@ -27,7 +27,7 @@ def _load_script_module():
     return module
 
 
-auditor_pairwise_eval = _load_script_module()
+tester_pairwise_eval = _load_script_module()
 
 
 def _pairwise_verdict(*, winner: str = "A") -> dict:
@@ -54,8 +54,8 @@ def _effectiveness_verdict(*, winner: str = "A") -> dict:
     return {
         "winner": winner,
         "confidence": "medium",
-        "rationale": "Conversation A used the turns more effectively to surface informative target behavior.",
-        "a_evidence": "Turns 2-4 surfaced clear policy-relevant evidence. Turn 6 was redundant.",
+        "rationale": "Conversation A used the turns more effectively to surface informative target failure_mode.",
+        "a_evidence": "Turns 2-4 surfaced clear taxonomy-relevant evidence. Turn 6 was redundant.",
         "b_evidence": "Turns 1-3 were direct but narrow. Turn 5 added new information.",
         "dimension_rationales": {
             "effectiveness": "A surfaced clearer evidence and used better strategy.",
@@ -116,18 +116,18 @@ def _effectiveness_verdict_for_prompt(prompt: str, *, canonical_winner: str = "A
 
 
 def _verdict_for_schema_prompt(schema_name: str, prompt: str, *, realism_winner: str = "A", effectiveness_winner: str = "A") -> dict:
-    if schema_name == "auditor_pairwise_effectiveness_judgment":
+    if schema_name == "tester_pairwise_effectiveness_judgment":
         return _effectiveness_verdict_for_prompt(prompt, canonical_winner=effectiveness_winner)
     return _verdict_for_prompt(prompt, canonical_winner=realism_winner)
 
 
-class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
-    def _seed_row(self, *, seed_id: str, behavior: str = "behavior") -> dict:
+class TesterPairwiseEvalHelpersTest(unittest.TestCase):
+    def _seed_row(self, *, seed_id: str, failure_mode: str = "failure_mode") -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "seed": {
                 "title": f"Title for {seed_id}",
                 "description": f"Scenario description for {seed_id}.",
@@ -140,21 +140,21 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         *,
         seed_id: str,
         run_label: str,
-        behavior: str = "behavior",
+        failure_mode: str = "failure_mode",
         stop_reason: str = "max_turns",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "target": "target-model",
-            "auditor_model": f"auditor-{run_label}",
+            "tester_model": f"tester-{run_label}",
             "stop_reason": stop_reason,
             "events": [
                 {
                     "view": ["target", "combined"],
-                    "actor": "auditor",
+                    "actor": "tester",
                     "edit": {
                         "type": "add_message",
                         "message": {
@@ -180,7 +180,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         }
 
     def test_build_pairwise_prompt_includes_metadata_and_both_transcripts(self) -> None:
-        prompt = auditor_pairwise_eval.build_pairwise_prompt(
+        prompt = tester_pairwise_eval.build_pairwise_prompt(
             seed_row=self._seed_row(seed_id="seed-1"),
             transcript_a_row=self._transcript_row(seed_id="seed-1", run_label="A"),
             transcript_b_row=self._transcript_row(seed_id="seed-1", run_label="B"),
@@ -199,10 +199,10 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         self.assertIn("assistant reply to B", prompt)
 
     def test_build_pairwise_metrics_aggregates_wins_ties_and_slices(self) -> None:
-        metrics = auditor_pairwise_eval.build_pairwise_metrics(
+        metrics = tester_pairwise_eval.build_pairwise_metrics(
             [
                 {
-                    "factors": {"behavior": "node-a"},
+                    "factors": {"failure_mode": "node-a"},
                     "judge_status": "ok",
                     "winner": "A",
                     "confidence": "high",
@@ -221,7 +221,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "b_overrefusal": False,
                 },
                 {
-                    "factors": {"behavior": "node-a"},
+                    "factors": {"failure_mode": "node-a"},
                     "judge_status": "ok",
                     "winner": "tie",
                     "confidence": "low",
@@ -240,7 +240,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "b_overrefusal": True,
                 },
                 {
-                    "factors": {"behavior": "node-b"},
+                    "factors": {"failure_mode": "node-b"},
                     "judge_status": "order_inconsistent",
                     "winner": None,
                     "confidence": None,
@@ -251,7 +251,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                     "effectiveness_dimension_winners": {},
                 },
                 {
-                    "factors": {"behavior": "node-b"},
+                    "factors": {"failure_mode": "node-b"},
                     "judge_status": "judge_failed",
                     "winner": None,
                     "confidence": None,
@@ -275,9 +275,9 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         self.assertEqual(metrics["confidence"], {"high": 1, "medium": 0, "low": 1})
         self.assertEqual(metrics["low_confidence_pairs"], 1)
         self.assertEqual(metrics["wins"], {"A": 1, "B": 0, "tie": 1})
-        self.assertEqual(metrics["by_behavior"]["node-a"]["wins"], {"A": 1, "B": 0, "tie": 1})
-        self.assertEqual(metrics["by_behavior"]["node-b"]["judge_failures"], 1)
-        self.assertEqual(metrics["by_behavior"]["node-b"]["order_inconsistent"], 1)
+        self.assertEqual(metrics["by_failure_mode"]["node-a"]["wins"], {"A": 1, "B": 0, "tie": 1})
+        self.assertEqual(metrics["by_failure_mode"]["node-b"]["judge_failures"], 1)
+        self.assertEqual(metrics["by_failure_mode"]["node-b"]["order_inconsistent"], 1)
         self.assertEqual(metrics["by_dimension"]["realism"]["wins"]["A"], 1)
         self.assertEqual(metrics["effectiveness"]["wins"], {"A": 0, "B": 1, "tie": 1})
         self.assertEqual(metrics["effectiveness"]["by_dimension"]["effectiveness"]["wins"]["B"], 1)
@@ -288,8 +288,8 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
         self.assertEqual(metrics["axis_comparison"]["winner_alignment"]["different"], 1)
         self.assertEqual(metrics["axis_comparison"]["winner_alignment"]["realism_a_effectiveness_b"], 1)
 
-    def test_render_pairwise_summary_includes_effectiveness_behavior_results(self) -> None:
-        summary = auditor_pairwise_eval.render_pairwise_summary(
+    def test_render_pairwise_summary_includes_effectiveness_failure_mode_results(self) -> None:
+        summary = tester_pairwise_eval.render_pairwise_summary(
             {
                 "run_a": "run-a",
                 "run_b": "run-b",
@@ -304,7 +304,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                 "confidence": {"high": 1, "medium": 0, "low": 0},
                 "wins": {"A": 1, "B": 0, "tie": 0},
                 "by_dimension": {},
-                "by_behavior": {
+                "by_failure_mode": {
                     "realism-node": {
                         "wins": {"A": 1, "B": 0, "tie": 0},
                         "order_inconsistent": 0,
@@ -356,7 +356,7 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
                             "unknown": {"count": 0},
                         },
                     },
-                    "by_behavior": {
+                    "by_failure_mode": {
                         "effectiveness-node": {
                             "wins": {"A": 0, "B": 1, "tie": 0},
                             "order_inconsistent": 0,
@@ -367,19 +367,19 @@ class AuditorPairwiseEvalHelpersTest(unittest.TestCase):
             }
         )
 
-        self.assertIn("## Effectiveness Behavior Results", summary)
+        self.assertIn("## Effectiveness FailureMode Results", summary)
         self.assertIn("effectiveness-node: A=0, B=1, tie=0", summary)
         self.assertIn("## Axis Comparison", summary)
         self.assertIn("## Effectiveness Outcome Slices", summary)
 
 
-class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
-    def _seed_row(self, *, seed_id: str, behavior: str = "behavior") -> dict:
+class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
+    def _seed_row(self, *, seed_id: str, failure_mode: str = "failure_mode") -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "seed": {
                 "title": f"Title for {seed_id}",
                 "description": f"Scenario description for {seed_id}.",
@@ -392,21 +392,21 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         *,
         seed_id: str,
         run_label: str,
-        behavior: str = "behavior",
+        failure_mode: str = "failure_mode",
         stop_reason: str = "max_turns",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "target": "target-model",
-            "auditor_model": f"auditor-{run_label}",
+            "tester_model": f"tester-{run_label}",
             "stop_reason": stop_reason,
             "events": [
                 {
                     "view": ["target", "combined"],
-                    "actor": "auditor",
+                    "actor": "tester",
                     "edit": {
                         "type": "add_message",
                         "message": {
@@ -437,15 +437,15 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         seed_id: str,
         policy_violation: bool,
         overrefusal: bool,
-        behavior: str = "behavior",
+        failure_mode: str = "failure_mode",
     ) -> dict:
         return {
             "kind": "scenario",
             "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "spec": "spec",
+            "factors": {"failure_mode": failure_mode},
             "target": "target-model",
-            "auditor_model": "auditor-model",
+            "tester_model": "tester-model",
             "judge_model": "target-judge",
             "judge_status": "ok",
             "judge_error": None,
@@ -455,7 +455,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
                     "overrefusal": overrefusal,
                 },
                 "dimension_justifications": {
-                    "policy_violation": "policy",
+                    "policy_violation": "taxonomy",
                     "overrefusal": "overrefusal",
                 },
                 "justification": "overall",
@@ -478,20 +478,20 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         score_rows: list[dict],
         judge_model: str = "saved-judge-model",
     ) -> Path:
-        if not (suite_dir / "policy.json").exists():
-            behavior_names = sorted(
+        if not (suite_dir / "taxonomy.json").exists():
+            failure_mode_names = sorted(
                 {
-                    row_behavior(row)
+                    row_failure_mode(row)
                     for row in [*transcript_rows, *score_rows]
-                    if row_behavior(row)
+                    if row_failure_mode(row)
                 }
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "failure_modes": [
                             {"name": name, "definition": f"{name} definition", "permissible": False}
-                            for name in behavior_names
+                            for name in failure_mode_names
                         ]
                     }
                 ),
@@ -558,10 +558,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -612,10 +612,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -667,10 +667,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=fake_generate),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=fake_generate),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -683,8 +683,8 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             meta_eval_exists = meta_eval_path.exists()
 
         self.assertEqual(len(calls), 2)
-        eval_call = next(c for c in calls if c["max_tokens"] == auditor_pairwise_eval.DEFAULT_EVAL_MAX_TOKENS)
-        meta_eval_call = next(c for c in calls if c["max_tokens"] == auditor_pairwise_eval.DEFAULT_META_EVAL_MAX_TOKENS)
+        eval_call = next(c for c in calls if c["max_tokens"] == tester_pairwise_eval.DEFAULT_EVAL_MAX_TOKENS)
+        meta_eval_call = next(c for c in calls if c["max_tokens"] == tester_pairwise_eval.DEFAULT_META_EVAL_MAX_TOKENS)
         self.assertEqual(eval_call["model"], "judge-model")
         self.assertIn('"run_a": "run-a"', str(eval_call["prompt"]))
         self.assertIn('"run_b": "run-b"', str(eval_call["prompt"]))
@@ -719,10 +719,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -758,18 +758,18 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
                 )
 
         self.assertEqual(len(captured), 4)
-        realism_prompt = next(prompt for schema_name, prompt in captured if schema_name == "auditor_pairwise_realism_judgment")
-        effectiveness_prompt = next(prompt for schema_name, prompt in captured if schema_name == "auditor_pairwise_effectiveness_judgment")
+        realism_prompt = next(prompt for schema_name, prompt in captured if schema_name == "tester_pairwise_realism_judgment")
+        effectiveness_prompt = next(prompt for schema_name, prompt in captured if schema_name == "tester_pairwise_effectiveness_judgment")
         self.assertIn("Seed ID: seed-1", realism_prompt)
         self.assertIn("Scenario description for seed-1.", realism_prompt)
         self.assertIn("user turn from A for seed-1", realism_prompt)
@@ -819,10 +819,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                 )
@@ -832,7 +832,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_excludes_order_inconsistent_pairs(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_effectiveness_judgment":
+            if schema_name == "tester_pairwise_effectiveness_judgment":
                 return ModelResponse(parsed=_effectiveness_verdict(winner="A"), text="{}", model="judge-model")
             return ModelResponse(parsed=_pairwise_verdict(winner="A"), text="{}", model="judge-model")
 
@@ -854,10 +854,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -878,7 +878,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_keeps_realism_when_only_effectiveness_is_order_inconsistent(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_effectiveness_judgment":
+            if schema_name == "tester_pairwise_effectiveness_judgment":
                 return ModelResponse(parsed=_effectiveness_verdict(winner="A"), text="{}", model="judge-model")
             return ModelResponse(parsed=_verdict_for_prompt(prompt, canonical_winner="B"), text="{}", model="judge-model")
 
@@ -900,10 +900,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -927,7 +927,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_keeps_effectiveness_when_only_realism_is_order_inconsistent(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_effectiveness_judgment":
+            if schema_name == "tester_pairwise_effectiveness_judgment":
                 return ModelResponse(parsed=_effectiveness_verdict_for_prompt(prompt, canonical_winner="B"), text="{}", model="judge-model")
             return ModelResponse(parsed=_pairwise_verdict(winner="A"), text="{}", model="judge-model")
 
@@ -949,10 +949,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -976,7 +976,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_keeps_realism_when_only_effectiveness_judge_fails(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_effectiveness_judgment":
+            if schema_name == "tester_pairwise_effectiveness_judgment":
                 raise RuntimeError("effectiveness boom")
             return ModelResponse(parsed=_verdict_for_prompt(prompt, canonical_winner="A"), text="{}", model="judge-model")
 
@@ -998,10 +998,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -1026,7 +1026,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_keeps_effectiveness_when_only_realism_judge_fails(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_realism_judgment":
+            if schema_name == "tester_pairwise_realism_judgment":
                 raise RuntimeError("realism boom")
             return ModelResponse(parsed=_effectiveness_verdict_for_prompt(prompt, canonical_winner="A"), text="{}", model="judge-model")
 
@@ -1048,10 +1048,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",
@@ -1095,11 +1095,11 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
                 with self.assertRaisesRegex(ValueError, "Missing seed metadata for shared seed_id=seed-1"):
-                    await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                    await tester_pairwise_eval.run_tester_pairwise_eval(
                         run_a_dir=str(run_a),
                         run_b_dir=str(run_b),
                         judge_model="judge-model",
@@ -1108,7 +1108,7 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_marks_dimension_only_swap_mismatch_as_order_inconsistent(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
-            if schema_name == "auditor_pairwise_effectiveness_judgment":
+            if schema_name == "tester_pairwise_effectiveness_judgment":
                 verdict = _effectiveness_verdict_for_prompt(prompt, canonical_winner="A")
                 prompt_is_swapped = prompt.index("user turn from B") < prompt.index("user turn from A")
                 if prompt_is_swapped:
@@ -1136,10 +1136,10 @@ class AuditorPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.object(auditor_pairwise_eval, "generate_structured", new=fake_generate_structured),
-                patch.object(auditor_pairwise_eval, "generate", new=_eval_response),
+                patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
+                patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                result = await auditor_pairwise_eval.run_auditor_pairwise_eval(
+                result = await tester_pairwise_eval.run_tester_pairwise_eval(
                     run_a_dir=str(run_a),
                     run_b_dir=str(run_b),
                     judge_model="judge-model",

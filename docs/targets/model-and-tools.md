@@ -6,14 +6,14 @@ Use the model and tools target for simple prompt agents: a hosted model, a syste
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0
         max_tokens: 8000
       system_prompt: |
-        You are a helpful assistant. Follow the product policy and ask clarifying
+        You are a helpful assistant. Follow the product taxonomy and ask clarifying
         questions when user constraints are missing.
 ```
 
@@ -23,7 +23,7 @@ This is the fastest way to smoke-test a single model target.
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -37,7 +37,7 @@ Use this when the tool implementation exists and can run locally.
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini

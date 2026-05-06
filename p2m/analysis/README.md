@@ -4,13 +4,13 @@ Post-hoc analysis of pipeline results. Each module computes metrics from the JSO
 
 ## Modules
 
-**stats.py** — Confidence intervals and rate aggregation. Wilson score intervals for single-run proportions, cluster bootstrap when observations are grouped (e.g. multiple rollouts per seed). Also provides macro-averaging across behavior groups with configurable minimum support.
+**stats.py** — Confidence intervals and rate aggregation. Wilson score intervals for single-run proportions, cluster bootstrap when observations are grouped (e.g. multiple inferences per seed). Also provides macro-averaging across failure_mode groups with configurable minimum support.
 
-**rollout_metrics.py** — Rollout-stage health metrics from `transcripts.jsonl`. Stop-reason distribution, turn counts (mean/median/p95), completion rate, invalid-auditor-turn rate, per-behavior breakdowns.
+**inference_metrics.py** — Inference-stage health metrics from `transcripts.jsonl`. Stop-reason distribution, turn counts (mean/median/p95), completion rate, invalid-tester-turn rate, per-failure_mode breakdowns.
 
-**stability.py** — Outcome stability across runs. Two analyses that must not be conflated: *repeatability* (same auditor, same seeds, different rollouts — measures rollout stochasticity) and *cross-auditor variation* (different auditors, same seeds — measures how much auditor choice affects results).
+**stability.py** — Outcome stability across runs. Two analyses that must not be conflated: *repeatability* (same tester, same seeds, different inferences — measures inference stochasticity) and *cross-tester variation* (different testers, same seeds — measures how much tester choice affects results).
 
-**suite_analysis.py** — Orchestrator that loads a suite directory, computes rollout, judge, and stability metrics for all runs, and formats a human-readable terminal summary. The summary is structured: comparison table → cross-auditor variation → repeatability → non-main runs → per-run behavior detail.
+**suite_analysis.py** — Orchestrator that loads a suite directory, computes inference, judge, and stability metrics for all runs, and formats a human-readable terminal summary. The summary is structured: comparison table → cross-tester variation → repeatability → non-main runs → per-run failure_mode detail.
 
 ## Usage
 
@@ -27,13 +27,13 @@ The `results` dict contains structured data for programmatic use. The `format_su
 
 The summary answers four questions about a suite of evaluation runs:
 
-1. **How often does the target violate policy?** Per-run violation rates with 90% Wilson CIs. Only behaviors with n≥5 are shown individually; sparse behaviors are collapsed.
+1. **How often does the target violate taxonomy?** Per-run violation rates with 90% Wilson CIs. Only failure_modes with n≥5 are shown individually; sparse failure_modes are collapsed.
 
-2. **How much does auditor choice matter?** Cross-auditor variation shows the spread in violation rates across different auditor models on the same seeds (main runs only).
+2. **How much does tester choice matter?** Cross-tester variation shows the spread in violation rates across different tester models on the same seeds (main runs only).
 
 3. **How stable are results across reruns?** Repeatability shows what fraction of shared seeds produce the same outcome across runs of the same configuration. Agreement is computed on shared seeds only.
 
-4. **Is the run data trustworthy?** Run quality flags (high/medium/low) surface invalid-auditor-turn rates, target errors, and judge failures.
+4. **Is the run data trustworthy?** Run quality flags (high/medium/low) surface invalid-tester-turn rates, target errors, and judge failures.
 
 ## Dependencies
 

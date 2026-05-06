@@ -7,7 +7,7 @@ class ResultsTest(unittest.TestCase):
     def test_compute_prompt_metrics_omits_permissible_breakdown(self) -> None:
         rows = [
             {
-                "factors": {"behavior": "allowed-behavior"},
+                "factors": {"failure_mode": "allowed-failure_mode"},
                 "judge_status": "ok",
                 "judge_error": None,
                 "verdict": {
@@ -19,7 +19,7 @@ class ResultsTest(unittest.TestCase):
                 },
             },
             {
-                "factors": {"behavior": "blocked-behavior"},
+                "factors": {"failure_mode": "blocked-failure_mode"},
                 "judge_status": "ok",
                 "judge_error": None,
                 "verdict": {

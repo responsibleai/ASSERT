@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_ROUTE_SRC = ROOT / "viewer" / "src" / "routes" / "api" / "policy" / "+server.ts"
+TAXONOMY_ROUTE_SRC = ROOT / "viewer" / "src" / "routes" / "api" / "taxonomy" / "+server.ts"
 
 
 class ViewerPolicyApiTest(unittest.TestCase):
@@ -27,8 +27,8 @@ class ViewerPolicyApiTest(unittest.TestCase):
 
     _ENV_MOCK = "export const env = { VIEWER_EDIT_MODE: '1' };\n"
 
-    def _prepare_policy_harness(self, harness_dir: Path, artifacts_root: Path) -> None:
-        source = POLICY_ROUTE_SRC.read_text(encoding="utf-8")
+    def _prepare_taxonomy_harness(self, harness_dir: Path, artifacts_root: Path) -> None:
+        source = TAXONOMY_ROUTE_SRC.read_text(encoding="utf-8")
         source = source.replace("from '$lib/server/config.js';", "from './config.js';")
         source = source.replace("from '$lib/server/artifacts.js';", "from './artifacts.js';")
         source = source.replace("from '@sveltejs/kit';", "from './kit.js';")
@@ -55,18 +55,18 @@ class ViewerPolicyApiTest(unittest.TestCase):
         )
         (harness_dir / "env.js").write_text(self._ENV_MOCK, encoding="utf-8")
 
-    def test_put_returns_400_when_existing_policy_is_malformed(self) -> None:
+    def test_put_returns_400_when_existing_taxonomy_is_malformed(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
             harness_dir.mkdir()
 
             artifacts_root = tmp_root / "artifacts" / "results"
-            self._prepare_policy_harness(harness_dir, artifacts_root)
+            self._prepare_taxonomy_harness(harness_dir, artifacts_root)
 
             suite_dir = artifacts_root / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            (suite_dir / "policy.json").write_text("{bad json", encoding="utf-8")
+            (suite_dir / "taxonomy.json").write_text("{bad json", encoding="utf-8")
 
             env = os.environ.copy()
             env["ARTIFACTS_ROOT"] = str(artifacts_root)
@@ -78,9 +78,9 @@ class ViewerPolicyApiTest(unittest.TestCase):
                   request: {
                     json: async () => ({
                       suite_id: 'suite-a',
-                      policy: {
-                        concept: { name: 'Risk', definition: 'Definition' },
-                        behaviors: []
+                      taxonomy: {
+                        spec: { name: 'Risk', definition: 'Definition' },
+                        failure_modes: []
                       }
                     })
                   }
@@ -93,24 +93,24 @@ class ViewerPolicyApiTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], 400)
-            self.assertEqual(payload["body"]["error"], "Existing policy is malformed")
+            self.assertEqual(payload["body"]["error"], "Existing taxonomy is malformed")
 
-    def test_put_returns_400_when_existing_policy_has_malformed_behavior_entry(self) -> None:
+    def test_put_returns_400_when_existing_taxonomy_has_malformed_failure_mode_entry(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
             harness_dir.mkdir()
 
             artifacts_root = tmp_root / "artifacts" / "results"
-            self._prepare_policy_harness(harness_dir, artifacts_root)
+            self._prepare_taxonomy_harness(harness_dir, artifacts_root)
 
             suite_dir = artifacts_root / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
-                        "behaviors": [None],
+                        "spec": {"name": "Risk", "definition": "Definition"},
+                        "failure_modes": [None],
                     }
                 ),
                 encoding="utf-8",
@@ -126,9 +126,9 @@ class ViewerPolicyApiTest(unittest.TestCase):
                   request: {
                     json: async () => ({
                       suite_id: 'suite-a',
-                      policy: {
-                        concept: { name: 'Risk', definition: 'Definition' },
-                        behaviors: [{ name: 'Test behavior' }]
+                      taxonomy: {
+                        spec: { name: 'Risk', definition: 'Definition' },
+                        failure_modes: [{ name: 'Test failure_mode' }]
                       }
                     })
                   }
@@ -141,24 +141,24 @@ class ViewerPolicyApiTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], 400)
-            self.assertEqual(payload["body"]["error"], "Existing policy is malformed")
+            self.assertEqual(payload["body"]["error"], "Existing taxonomy is malformed")
 
-    def test_put_returns_400_when_request_behavior_entry_is_malformed(self) -> None:
+    def test_put_returns_400_when_request_failure_mode_entry_is_malformed(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
             harness_dir.mkdir()
 
             artifacts_root = tmp_root / "artifacts" / "results"
-            self._prepare_policy_harness(harness_dir, artifacts_root)
+            self._prepare_taxonomy_harness(harness_dir, artifacts_root)
 
             suite_dir = artifacts_root / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
-                        "behaviors": [{"name": "Behavior"}],
+                        "spec": {"name": "Risk", "definition": "Definition"},
+                        "failure_modes": [{"name": "FailureMode"}],
                     }
                 ),
                 encoding="utf-8",
@@ -174,9 +174,9 @@ class ViewerPolicyApiTest(unittest.TestCase):
                   request: {
                     json: async () => ({
                       suite_id: 'suite-a',
-                      policy: {
-                        concept: { name: 'Risk', definition: 'Definition' },
-                        behaviors: [null]
+                      taxonomy: {
+                        spec: { name: 'Risk', definition: 'Definition' },
+                        failure_modes: [null]
                       }
                     })
                   }
@@ -189,7 +189,7 @@ class ViewerPolicyApiTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], 400)
-            self.assertEqual(payload["body"]["error"], "policy must have concept and behaviors")
+            self.assertEqual(payload["body"]["error"], "taxonomy must have spec and failure_modes")
 
 
 if __name__ == "__main__":

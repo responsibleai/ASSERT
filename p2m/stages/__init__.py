@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from . import design, judge, policy, rollout, seeds, systematization, systematization_convert
+from . import design, judge, taxonomy, inference, seeds, systematization, systematization_convert
 
 STAGES = {
-    "policy": policy,
+    "taxonomy": taxonomy,
     "design": design,
     "seeds": seeds,
-    "rollout": rollout,
+    "inference": inference,
     "judge": judge,
     "systematization": systematization,
     "systematization_convert": systematization_convert,

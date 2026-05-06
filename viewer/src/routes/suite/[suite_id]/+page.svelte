@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Policy } from '$lib/types.js';
+import type { Taxonomy } from '$lib/types.js';
 import { goto, invalidateAll } from '$app/navigation';
 import { page } from '$app/state';
 import { slide } from 'svelte/transition';
@@ -21,8 +21,8 @@ import {
 let { data } = $props();
 
 // Tab state — source of truth is URL ?section=
-type Tab = 'policy' | 'seeds' | 'results';
-const VALID_TABS = new Set<string>(['policy', 'seeds', 'results']);
+type Tab = 'taxonomy' | 'seeds' | 'results';
+const VALID_TABS = new Set<string>(['taxonomy', 'seeds', 'results']);
 let activeTab = $derived.by(() => {
 	const section = page.url.searchParams.get('section');
 	return VALID_TABS.has(section ?? '') ? (section as Tab) : null;
@@ -60,14 +60,14 @@ function toggleRunSelection(runId: string | null) {
 
 let canCompare = $derived(selectedRuns.size >= 2 && selectedRuns.size <= 4);
 
-// Policy editing
+// Taxonomy editing
 interface EditableBehavior {
 	name: string;
 	definition: string;
 	examples: string[];
 	permissible: boolean;
 }
-type EditablePolicy = Omit<Policy, 'behaviors'> & { behaviors: EditableBehavior[] };
+type EditablePolicy = Omit<Taxonomy, 'failure_modes'> & { failure_modes: EditableBehavior[] };
 
 let editModalOpen = $state(false);
 let editingIndex = $state<number | null>(null);
@@ -93,14 +93,14 @@ function closeEditModal() {
 	editError = null;
 }
 
-async function savePolicy(policy: Record<string, unknown>) {
+async function savePolicy(taxonomy: Record<string, unknown>) {
 	editSaving = true;
 	editError = null;
 	try {
-		const res = await fetch('/api/policy', {
+		const res = await fetch('/api/taxonomy', {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ suite_id: data.suite_id, policy })
+			body: JSON.stringify({ suite_id: data.suite_id, taxonomy })
 		});
 		const body = await res.json();
 		if (!res.ok) { editError = body.error ?? 'Failed to save'; editSaving = false; return false; }
@@ -118,15 +118,15 @@ async function handleSaveBehavior() {
 	if (!editForm.name.trim()) { editError = 'Name is required'; return; }
 	if (!editForm.definition.trim()) { editError = 'Definition is required'; return; }
 
-	const currentTax = data.policy ? structuredClone(data.policy) as EditablePolicy : null;
+	const currentTax = data.taxonomy ? structuredClone(data.taxonomy) as EditablePolicy : null;
 	if (!currentTax) return;
-	const behaviors = currentTax.behaviors;
+	const failure_modes = currentTax.failure_modes;
 	const entry = { name: editForm.name.trim(), definition: editForm.definition.trim(), examples, permissible: editForm.permissible };
 
 	if (editingIndex === null) return;
 	const origName = sortedBehaviors[editingIndex].name;
-	const realIdx = behaviors.findIndex(sr => sr.name === origName);
-	if (realIdx >= 0) behaviors[realIdx] = entry;
+	const realIdx = failure_modes.findIndex(sr => sr.name === origName);
+	if (realIdx >= 0) failure_modes[realIdx] = entry;
 
 	const hasSeeds = data.promptSeeds.length > 0 || data.scenarioSeeds.length > 0;
 	if (hasSeeds) {
@@ -178,14 +178,14 @@ let scenarioSeedFactorNames = $derived(observedFactorNames(scenarioSeedItems));
 
 let filteredPromptSeeds = $derived(filterViewerSeeds(promptSeedItems, promptSeedFilter));
 
-let sortedBehaviors = $derived(data.policy?.behaviors ?? []);
+let sortedBehaviors = $derived(data.taxonomy?.failure_modes ?? []);
 
 let filteredScenarioSeeds = $derived(filterViewerSeeds(scenarioSeedItems, scenarioSeedFilter));
 
 // Truncated description
-let conceptDef = $derived(data.policy?.concept?.definition ?? '');
-let needsTruncation = $derived(conceptDef.length > 120);
-let displayDef = $derived(needsTruncation && !descExpanded ? conceptDef.slice(0, 120) + '…' : conceptDef);
+let specDef = $derived(data.taxonomy?.spec?.definition ?? '');
+let needsTruncation = $derived(specDef.length > 120);
+let displayDef = $derived(needsTruncation && !descExpanded ? specDef.slice(0, 120) + '…' : specDef);
 
 function summaryItemCountFor(systematization: Record<string, unknown> | null): number {
 	if (!systematization) return 0;
@@ -211,7 +211,7 @@ let systematizationMode = $derived(
 );
 
 const TAB_DESCRIPTIONS: Record<string, string> = {
-	policy: 'Concept policy broken into categories with definitions and examples',
+	taxonomy: 'Spec taxonomy broken into categories with definitions and examples',
 	seeds: 'Test seeds and multi-turn scenarios used to evaluate the model',
 	results: 'Results from measurement runs',
 };
@@ -222,13 +222,13 @@ let allRuns = $derived.by(() => {
 });
 
 const TAB_ICONS: Record<string, string> = {
-	policy: '<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>',
+	taxonomy: '<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>',
 	seeds: '<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>',
 	results: '<path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>',
 };
 
 const tabs: { key: Tab; label: string; count: number }[] = $derived([
-	{ key: 'policy', label: 'Policy', count: sortedBehaviors.length },
+	{ key: 'taxonomy', label: 'Taxonomy', count: sortedBehaviors.length },
 	{ key: 'seeds', label: 'Seeds', count: data.promptSeeds.length + data.scenarioSeeds.length },
 	{ key: 'results', label: 'Results', count: allRuns.length },
 ]);
@@ -243,9 +243,9 @@ const tabs: { key: Tab; label: string; count: number }[] = $derived([
 All measurement suites
 </a>
 <div class="text-center">
-<h1 class="mt-2 text-xl font-semibold tracking-tight">{data.policy?.concept?.name ?? data.suite_id}</h1>
+<h1 class="mt-2 text-xl font-semibold tracking-tight">{data.taxonomy?.spec?.name ?? data.suite_id}</h1>
 <span class="mt-1.5 inline-block rounded bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-muted">{data.suite_id}</span>
-{#if data.policy?.concept}
+{#if data.taxonomy?.spec}
 <p class="mx-auto mt-2 max-w-2xl text-sm text-text-secondary leading-relaxed">
 {displayDef}
 {#if needsTruncation}
@@ -284,7 +284,7 @@ title="Suite metadata"
 {#if summaryItemCount > 0}
 <span class="text-xs text-text-muted"><span class="text-text-secondary">pattern summaries:</span> {summaryItemCount}</span>
 {/if}
-<span class="text-xs text-text-muted"><span class="text-text-secondary">policy categories:</span> {sortedBehaviors.length}</span>
+<span class="text-xs text-text-muted"><span class="text-text-secondary">taxonomy categories:</span> {sortedBehaviors.length}</span>
 </div>
 </div>
 {/if}
@@ -315,13 +315,13 @@ onclick={() => setActiveTab(activeTab === tab.key ? null : tab.key)}
 </div>
 
 {#if activeTab !== null}
-<!-- Tab: Policy -->
-{#if activeTab === 'policy'}
+<!-- Tab: Taxonomy -->
+{#if activeTab === 'taxonomy'}
 {#if hasSystematization}
 <!-- Systematization banner -->
 <div class="mb-4 rounded-lg border border-border bg-surface p-4">
 <div class="flex items-center gap-3 text-xs text-text-muted">
-<span class="text-text-secondary font-medium">{sortedBehaviors.length > 0 ? 'Policy generated via' : 'Systematization available'}</span>
+<span class="text-text-secondary font-medium">{sortedBehaviors.length > 0 ? 'Taxonomy generated via' : 'Systematization available'}</span>
 <div class="flex items-center gap-1.5">
 <button
 class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-text-secondary hover:text-text border border-transparent hover:border-interactive/30 transition-colors"
@@ -334,7 +334,7 @@ Systematization
 <svg class="h-3 w-3 text-text-muted/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 <span class="inline-flex items-center gap-1 rounded-full bg-interactive/10 border border-interactive/20 px-2.5 py-1 font-medium text-interactive">
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-Policy
+Taxonomy
 </span>
 {/if}
 </div>
@@ -346,8 +346,8 @@ Policy
 <svg class="mx-auto mb-3 h-8 w-8 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
 </svg>
-<p class="text-sm text-text-secondary">No policy generated yet.</p>
-<p class="mt-1 text-xs text-text-muted">Run the pipeline to generate a concept policy.</p>
+<p class="text-sm text-text-secondary">No taxonomy generated yet.</p>
+<p class="mt-1 text-xs text-text-muted">Run the pipeline to generate a spec taxonomy.</p>
 </div>
 {:else}
 <div class="overflow-hidden rounded-lg border border-border">
@@ -613,7 +613,7 @@ class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-
 {@const avg = qRun.metrics.policy_violation_rate}
 {@const judgeFailures = qRun.metrics.judge_failures}
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px]">
-<span class="text-text-muted">policy violation</span>
+<span class="text-text-muted">taxonomy violation</span>
 <span class="font-semibold tabular-nums {avg >= 0.5 ? 'text-score-fail' : avg > 0 ? 'text-score-border' : 'text-score-pass'}">{(avg * 100).toFixed(0)}%</span>
 </span>
 {#each Object.entries(qRun.metrics.dimensions ?? {}).filter(([k]) => k !== 'policy_violation' && k !== 'overrefusal') as [dim, d]}
@@ -649,7 +649,7 @@ class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-
 {@const avg = aRun.metrics.policy_violation_rate}
 {@const judgeFailures = aRun.metrics.judge_failures}
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px]">
-<span class="text-text-muted">policy violation</span>
+<span class="text-text-muted">taxonomy violation</span>
 <span class="font-semibold tabular-nums {avg >= 0.5 ? 'text-score-fail' : avg > 0 ? 'text-score-border' : 'text-score-pass'}">{(avg * 100).toFixed(0)}%</span>
 </span>
 {#each Object.entries(aRun.metrics.dimensions ?? {}).filter(([k]) => k !== 'policy_violation' && k !== 'overrefusal') as [dim, d]}
@@ -661,9 +661,9 @@ class="flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors hover:bg-
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px] text-text-muted">
 target: <span class="font-mono">{aRun.metrics.target}</span>
 </span>
-{#if aRun.metrics.auditor_model}
+{#if aRun.metrics.tester_model}
 <span class="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[10px] text-text-muted">
-auditor: <span class="font-mono">{aRun.metrics.auditor_model}</span>
+tester: <span class="font-mono">{aRun.metrics.tester_model}</span>
 </span>
 {/if}
 {#if aRun.metrics.judge_model}
@@ -687,7 +687,7 @@ judge: <span class="font-mono">{aRun.metrics.judge_model}</span>
 {/if}
 {/if}
 
-<!-- Behavior Editor Modal -->
+<!-- FailureMode Editor Modal -->
 {#if editModalOpen}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="fixed inset-0 z-50 flex items-center justify-center p-4" onkeydown={(e) => { if (e.key === 'Escape') closeEditModal(); }}>
@@ -716,7 +716,7 @@ class="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text 
 class="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text leading-relaxed outline-none focus:border-interactive resize-y font-mono"></textarea>
 </div>
 <div class="flex items-center gap-3">
-<span class="text-xs font-medium text-text-secondary">Behavior</span>
+<span class="text-xs font-medium text-text-secondary">FailureMode</span>
 <button
 onclick={() => editForm.permissible = !editForm.permissible}
 class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors {editForm.permissible ? 'bg-interactive/10 text-interactive border border-interactive/30' : 'bg-not-permissible/10 text-not-permissible border border-not-permissible/30'}"
@@ -755,7 +755,7 @@ This suite has <strong class="text-text-secondary">{data.promptSeeds.length} pro
 {#if data.scenarioSeeds.length > 0}
 and <strong class="text-text-secondary">{data.scenarioSeeds.length} scenarios</strong>
 {/if}
-that were generated from the previous policy. Editing the policy won't update them — you'll need to regenerate seeds for changes to take effect.
+that were generated from the previous taxonomy. Editing the taxonomy won't update them — you'll need to regenerate seeds for changes to take effect.
 </p>
 </div>
 </div>

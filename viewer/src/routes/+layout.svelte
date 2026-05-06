@@ -34,7 +34,7 @@
 				p2m
 			</a>
 			<div class="h-4 w-px bg-border"></div>
-			<span class="text-xs text-text-muted">Policy to Metric</span>
+			<span class="text-xs text-text-muted">Taxonomy to Metric</span>
 
 			{#if $activeRuns.length > 0}
 				<div class="h-4 w-px bg-border"></div>

@@ -70,22 +70,22 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 result = await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context="A coding agent with filesystem and shell tools.",
                     prompt={
@@ -102,7 +102,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     target=TargetConfig(model="azure/gpt-5.4"),
                     tool_source="runtime",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    design={"failure_mode": [{"name": "failure_mode-a", "description": "definition"}]},
                 )
 
             rows = [json.loads(line) for line in seeds_path.read_text(encoding="utf-8").splitlines()]
@@ -133,22 +133,22 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context=None,
                     prompt={
@@ -160,7 +160,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4", system_prompt="fixed prompt"),
                     tool_source="runtime",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    design={"failure_mode": [{"name": "failure_mode-a", "description": "definition"}]},
                 )
 
             [row] = [json.loads(line) for line in seeds_path.read_text(encoding="utf-8").splitlines()]
@@ -168,22 +168,22 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("system_prompt", row["seed"])
 
     async def test_run_seeds_per_seed_requires_simulator_target(self) -> None:
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "seeds.tool_source=per_seed requires target.tools.simulator"):
                 await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context=None,
                     prompt={
@@ -225,22 +225,22 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context="Exploratory eval across toolsets.",
                     prompt={
@@ -255,14 +255,14 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                         tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                     ),
                     tool_source="per_seed",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    design={"failure_mode": [{"name": "failure_mode-a", "description": "definition"}]},
                 )
 
             [row] = [json.loads(line) for line in seeds_path.read_text(encoding="utf-8").splitlines()]
 
         self.assertEqual(row["seed"]["tools"][0]["name"], "lookup")
 
-    async def test_run_seeds_injects_behavior_when_design_empty(self) -> None:
+    async def test_run_seeds_injects_failure_mode_when_design_empty(self) -> None:
         prompts: list[str] = []
 
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
@@ -274,22 +274,22 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["ex1"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["ex1"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 result = await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context="ctx",
                     prompt={
@@ -318,10 +318,10 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
         design = normalize_design(
@@ -331,19 +331,19 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     {"name": "Urgent", "definition": "Urgent tone."},
                 ]
             },
-            policy_payload,
-            inject_behavior=True,
+            taxonomy_payload,
+            inject_failure_mode=True,
         )
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "generated_seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 result = await run_seeds(
-                    policy_path=str(policy_path),
+                    taxonomy_path=str(taxonomy_path),
                     save_path=str(seeds_path),
                     context="A helpful assistant.",
                     prompt={
@@ -364,14 +364,14 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["seed"]["description"], "seed one")
         self.assertEqual(result["saved_count"], 1)
         self.assertTrue(prompts)
-        self.assertEqual(set(row["factors"]), {"behavior", "tone"})
+        self.assertEqual(set(row["factors"]), {"failure_mode", "tone"})
         self.assertIn(row["factors"]["tone"], prompts[0])
 
     async def test_stage_passes_design_to_run_seeds(self) -> None:
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
         design_payload = {
@@ -387,7 +387,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
             suite_root.mkdir()
             config_path = tmp_path / "config.yaml"
             config_path.write_text("suite: demo\n", encoding="utf-8")
-            (suite_root / "policy.json").write_text(json.dumps(policy_payload), encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
             (suite_root / "design.json").write_text(json.dumps(design_payload), encoding="utf-8")
 
             run_seeds_mock = AsyncMock(return_value={"seeds_path": str(suite_root / "seeds.jsonl"), "saved_count": 1})
@@ -412,11 +412,11 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
             "Neutral",
         )
 
-    async def test_stage_uses_behavior_only_design_when_design_file_missing(self) -> None:
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+    async def test_stage_uses_failure_mode_only_design_when_design_file_missing(self) -> None:
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
@@ -426,7 +426,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
             suite_root.mkdir()
             config_path = tmp_path / "config.yaml"
             config_path.write_text("suite: demo\n", encoding="utf-8")
-            (suite_root / "policy.json").write_text(json.dumps(policy_payload), encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             run_seeds_mock = AsyncMock(return_value={"seeds_path": str(suite_root / "seeds.jsonl"), "saved_count": 1})
             with patch("p2m.stages.seeds.run_seeds", run_seeds_mock):
@@ -445,10 +445,10 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run_seeds_mock.await_args.kwargs["design"], {})
 
     async def test_stage_requires_design_file_when_factors_are_configured(self) -> None:
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
@@ -458,7 +458,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
             suite_root.mkdir()
             config_path = tmp_path / "config.yaml"
             config_path.write_text("suite: demo\n", encoding="utf-8")
-            (suite_root / "policy.json").write_text(json.dumps(policy_payload), encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "seed generation requires a design"):
                 await run_stage(
@@ -496,23 +496,23 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 model="azure/gpt-5.4",
             )
 
-        policy_payload = {
-            "concept": {"name": "Risk"},
-            "behaviors": [
-                {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
+        taxonomy_payload = {
+            "spec": {"name": "Risk"},
+            "failure_modes": [
+                {"name": "failure_mode-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            policy_path = tmp_path / "policy.json"
+            taxonomy_path = tmp_path / "taxonomy.json"
             seeds_path = tmp_path / "seeds.jsonl"
-            policy_path.write_text(json.dumps(policy_payload), encoding="utf-8")
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             with patch("p2m.stages.seeds.generate_structured", new=fake_generate_structured):
                 with self.assertRaisesRegex(ValueError, "generated seed contains invalid tool definitions"):
                     await run_seeds(
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_path=str(seeds_path),
                         context=None,
                         prompt={
@@ -527,7 +527,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                             tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                         ),
                         tool_source="per_seed",
-                        design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                        design={"failure_mode": [{"name": "failure_mode-a", "description": "definition"}]},
                     )
 
 

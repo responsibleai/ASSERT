@@ -4208,7 +4208,7 @@ wheels = [
 ]
 
 [[package]]
-name = "p2m-policy"
+name = "p2m-taxonomy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -4305,7 +4305,7 @@ regression = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "p2m-policy", extra = ["examples", "langgraph", "otel"] },
+    { name = "p2m-taxonomy", extra = ["examples", "langgraph", "otel"] },
     { name = "pytest" },
 ]
 
@@ -4338,7 +4338,7 @@ requires-dist = [
     { name = "openpyxl", marker = "extra == 'analysis'", specifier = ">=3.1.5" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.39.0" },
-    { name = "p2m-policy", extras = ["otel", "langgraph", "analysis", "examples", "regression"], marker = "extra == 'all'" },
+    { name = "p2m-taxonomy", extras = ["otel", "langgraph", "analysis", "examples", "regression"], marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'analysis'", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai", marker = "extra == 'examples'", specifier = ">=0.8.1" },
@@ -4359,7 +4359,7 @@ provides-extras = ["otel", "langgraph", "analysis", "regression", "examples", "a
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "p2m-policy", extras = ["otel", "langgraph", "examples"] },
+    { name = "p2m-taxonomy", extras = ["otel", "langgraph", "examples"] },
     { name = "pytest", specifier = ">=9.0.3" },
 ]
 

@@ -103,28 +103,28 @@ def _progress(line: str) -> None:
 
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
     """Print a human-readable stage header."""
-    risk = ctx.get("risk") or ctx.get("concept") or ""
-    if stage_name == "policy":
+    risk = ctx.get("risk") or ctx.get("spec") or ""
+    if stage_name == "taxonomy":
         label = risk.replace("\n", " ").strip()
         if len(label) > 80:
             label = label[:77] + "..."
-        policy_model = ""
+        taxonomy_model = ""
         if isinstance(raw_cfg.get("model"), dict):
-            policy_model = raw_cfg["model"].get("name", "")
-        model_suffix = f" ({policy_model})" if policy_model else ""
-        _progress(f'  Generating behavior taxonomy for "{label}"{model_suffix}')
+            taxonomy_model = raw_cfg["model"].get("name", "")
+        model_suffix = f" ({taxonomy_model})" if taxonomy_model else ""
+        _progress(f'  Generating failure_mode taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
-        _progress(f"  Refining policy structure...")
+        _progress(f"  Refining taxonomy structure...")
     elif stage_name == "design":
         level_count = raw_cfg.get("level_count")
         factor_count = 0
         factors = ctx.get("factors") or []
         if isinstance(factors, list):
             factor_count = len(factors)
-        # Always-present "behavior" factor is generated automatically.
+        # Always-present "failure_mode" factor is generated automatically.
         # Surface it in the count for accuracy.
-        synthetic_behavior_factor = 1
-        total_factors = factor_count + synthetic_behavior_factor
+        synthetic_failure_mode_factor = 1
+        total_factors = factor_count + synthetic_failure_mode_factor
         design_model = ""
         if isinstance(raw_cfg.get("model"), dict):
             design_model = raw_cfg["model"].get("name", "")
@@ -134,7 +134,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         elif factor_count:
             _progress(f"  Designing seed-coverage grid: {total_factors} factors{model_suffix}...")
         else:
-            _progress(f"  Designing seed-coverage grid (behavior factor only){model_suffix}...")
+            _progress(f"  Designing seed-coverage grid (failure_mode factor only){model_suffix}...")
     elif stage_name == "seeds":
         prompt_budget = 0
         scenario_budget = 0
@@ -142,16 +142,16 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             prompt_budget = raw_cfg["prompt"].get("budget", 0) or raw_cfg["prompt"].get("sample_size", 0)
         if isinstance(raw_cfg.get("scenario"), dict):
             scenario_budget = raw_cfg["scenario"].get("budget", 0) or raw_cfg["scenario"].get("sample_size", 0)
-        # Read behavior count from the policy output. Fall back to the
+        # Read failure_mode count from the taxonomy output. Fall back to the
         # legacy `sub_risks` key for any pre-merge artifacts on disk.
-        behavior_count = 0
-        policy_path = Path(ctx["suite_root"]) / "policy.json"
-        if policy_path.exists():
+        failure_mode_count = 0
+        taxonomy_path = Path(ctx["suite_root"]) / "taxonomy.json"
+        if taxonomy_path.exists():
             try:
-                policy_data = json.loads(policy_path.read_text(encoding="utf-8"))
-                behavior_count = len(
-                    policy_data.get("behaviors")
-                    or policy_data.get("sub_risks")
+                taxonomy_data = json.loads(taxonomy_path.read_text(encoding="utf-8"))
+                failure_mode_count = len(
+                    taxonomy_data.get("failure_modes")
+                    or taxonomy_data.get("sub_risks")
                     or []
                 )
             except Exception:
@@ -162,8 +162,8 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if scenario_budget:
             parts.append(f"{scenario_budget} scenario{'s' if scenario_budget != 1 else ''}")
         detail = f" ({' + '.join(parts)}" if parts else ""
-        if detail and behavior_count:
-            detail += f" from {behavior_count} behaviors)"
+        if detail and failure_mode_count:
+            detail += f" from {failure_mode_count} failure_modes)"
         elif detail:
             detail += ")"
         seed_models = set()
@@ -174,18 +174,18 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         seed_models.discard("")
         model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
         _progress(f"  Generating test cases{detail}{model_suffix}...")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         target = ctx.get("target")
         target_name = ""
         if target and target.model:
             target_name = target.model.name or ""
         if target and target.callable:
             target_name = target.callable or target_name
-        auditor_name = ""
-        if isinstance(raw_cfg.get("auditor"), dict) and isinstance(raw_cfg["auditor"].get("model"), dict):
-            auditor_name = raw_cfg["auditor"]["model"].get("name", "")
-        if auditor_name and target_name:
-            _progress(f"  Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
+        tester_name = ""
+        if isinstance(raw_cfg.get("tester"), dict) and isinstance(raw_cfg["tester"].get("model"), dict):
+            tester_name = raw_cfg["tester"]["model"].get("name", "")
+        if tester_name and target_name:
+            _progress(f"  Running test cases (tester: {tester_name} \u2192 target: {target_name})...")
         elif target_name:
             _progress(f"  Running test cases against target ({target_name})...")
         else:
@@ -212,17 +212,17 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
 def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] | None) -> None:
     """Print a human-readable stage completion summary."""
     s = summary or {}
-    if stage_name == "policy":
+    if stage_name == "taxonomy":
         # Prefer the new-science key; fall back to legacy for pre-merge artifacts.
-        count = s.get("behavior_count") or s.get("sub_risk_count", 0)
-        names = s.get("behavior_names") or s.get("sub_risk_names") or []
+        count = s.get("failure_mode_count") or s.get("sub_risk_count", 0)
+        names = s.get("failure_mode_names") or s.get("sub_risk_names") or []
         preview = ", ".join(names[:3])
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            _progress(f"  \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)")
+            _progress(f"  \u2713 Generated {count} failure_modes: {preview} ({elapsed:.1f}s)")
         else:
-            _progress(f"  \u2713 Generated policy ({elapsed:.1f}s)")
+            _progress(f"  \u2713 Generated taxonomy ({elapsed:.1f}s)")
     elif stage_name == "design":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
@@ -243,7 +243,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
         _progress(f"  \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
         new = s.get("new_count", count)
@@ -253,7 +253,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        _progress(f"  \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
+        _progress(f"  \u2713 Completed {count} inferences{extra} ({elapsed:.1f}s)")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -335,7 +335,7 @@ def run_pipeline(
 
     # Cascade: forcing an upstream stage logically invalidates every stage
     # downstream of it. Without this, `--force-stage seeds` regenerates seeds
-    # but rollout silently keeps the old transcripts (its resume cache keys on
+    # but inference silently keeps the old transcripts (its resume cache keys on
     # seed_id, and seed ids are deterministic so they collide with the prior
     # run's content). Same hazard for judge against scores.jsonl. Computing
     # the closure here keeps the workflow `--force-stage <upstream>` honest
@@ -393,7 +393,7 @@ def run_pipeline(
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
         # Pass the per-stage "was this forced" flag through ctx so stages
-        # like rollout/judge can distinguish a real cache-mismatch warning
+        # like inference/judge can distinguish a real cache-mismatch warning
         # from a redundant one (the user already opted into discarding via
         # --force-stage, possibly via cascade). Stages that don't read
         # _stage_forced ignore it.

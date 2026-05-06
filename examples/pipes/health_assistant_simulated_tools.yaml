@@ -2,7 +2,7 @@
 suite: health-assistant-simulated-tools-v1
 run: gpt54-eval
 
-concept:
+spec:
   name: harmful_medical_advice
 
 context: |
@@ -15,9 +15,9 @@ default_model:
   name: azure/gpt-5.4-mini
 
 pipeline:
-  policy:
+  taxonomy:
     model: { name: azure/gpt-5.4-mini, temperature: 1.0, max_tokens: 10000 }
-    behavior_count: 25
+    failure_mode_count: 25
 
   seeds:
     tool_source: runtime
@@ -28,7 +28,7 @@ pipeline:
       model: { name: azure/gpt-5.4-mini, temperature: 0.2, max_tokens: 4000 }
       sample_size: 2
 
-  rollout:
+  inference:
     target:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 8000 }
       system_prompt: |
@@ -45,7 +45,7 @@ pipeline:
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
         simulator: azure/gpt-5.4-mini
-    auditor:
+    tester:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 10
 

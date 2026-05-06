@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import EvaluationConfig, JudgeConfig, RolloutConfig
+from p2m.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
 from p2m.core.transcript import (
     AddMessageEdit,
     Message,
@@ -31,10 +31,10 @@ class MeasurementFixesTest(unittest.TestCase):
         return TranscriptMetadata(
             kind="scenario",
             seed_id="seed-1",
-            concept="concept",
+            spec="spec",
             target="target",
-            factors={"behavior": "behavior"},
-            auditor_model="auditor",
+            factors={"failure_mode": "failure_mode"},
+            tester_model="tester",
         )
 
     def test_citation_schema_uses_highlights_string(self) -> None:
@@ -50,14 +50,14 @@ class MeasurementFixesTest(unittest.TestCase):
         transcript.add_event(
             TranscriptEvent(
                 view=["system", "target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=SetSystemMessageEdit(message=Message(role="system", content="New system prompt")),
             )
         )
         transcript.add_event(
             TranscriptEvent(
                 view=["target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=AddMessageEdit(message=Message(role="user", content="Do the thing")),
             )
         )
@@ -73,7 +73,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertIn("[Turn 2] User:\nDo the thing", formatted)
 
     def test_transcript_collect_messages_handles_tasks_namespace_events(self) -> None:
-        from p2m.stages.rollout import _record_system_message
+        from p2m.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "Namespace-safe prompt")
@@ -91,7 +91,7 @@ class MeasurementFixesTest(unittest.TestCase):
         )
 
     def test_count_transcript_turns_ignores_non_target_notes(self) -> None:
-        from p2m.stages.rollout import _record_system_message
+        from p2m.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "New system prompt")
@@ -206,14 +206,14 @@ class MeasurementFixesTest(unittest.TestCase):
         transcript.add_event(
             TranscriptEvent(
                 view=["system", "target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=SetSystemMessageEdit(message=Message(role="system", content="System <prompt>")),
             )
         )
         transcript.add_event(
             TranscriptEvent(
                 view=["target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=AddMessageEdit(message=Message(role="user", content="User says & asks")),
             )
         )
@@ -641,7 +641,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 "node_judgments": [
                     {
                         "node_index": 0,
-                        "node_name": "policy node a",
+                        "node_name": "taxonomy node a",
                         "relevant": True,
                         "violated": False,
                         "confidence": "high",
@@ -661,7 +661,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 "node_judgments": [
                     {
                         "node_index": 0,
-                        "node_name": "policy node a",
+                        "node_name": "taxonomy node a",
                         "relevant": True,
                         "violated": False,
                         "confidence": "medium",
@@ -677,11 +677,11 @@ class MeasurementFixesTest(unittest.TestCase):
                     "policy_violation": True,
                     "overrefusal": False,
                 },
-                "justification": "wrong policy",
+                "justification": "wrong taxonomy",
                 "node_judgments": [
                     {
                         "node_index": 0,
-                        "node_name": "policy node a",
+                        "node_name": "taxonomy node a",
                         "relevant": True,
                         "violated": True,
                         "confidence": "high",
@@ -703,7 +703,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(aggregated["dimensions"]["overrefusal"], False)
         self.assertEqual(aggregated["justification"], "closest match")
         self.assertEqual(aggregated["node_judgments"][0]["violated"], False)
-        self.assertEqual(aggregated["node_judgments"][0]["node_name"], "policy node a")
+        self.assertEqual(aggregated["node_judgments"][0]["node_name"], "taxonomy node a")
         self.assertEqual(aggregated["citations"], [{"index": 1, "description": "supports", "parts": []}])
         self.assertEqual(
             aggregated["citation_warnings"],
@@ -845,7 +845,7 @@ class MeasurementFixesTest(unittest.TestCase):
             ),
             "judge_failed",
         )
-        self.assertEqual(infer_judge_status({"verdict": {"policy_compliance": 3}}), "judge_failed")
+        self.assertEqual(infer_judge_status({"verdict": {"taxonomy_compliance": 3}}), "judge_failed")
         self.assertEqual(infer_judge_status({"verdict": {"error": "judge_failed"}}), "judge_failed")
         self.assertEqual(
             infer_judge_status({"judge_status": "ok", "verdict": {"error": "judge_failed"}}),
@@ -876,8 +876,8 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -892,11 +892,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 result = asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -917,10 +917,10 @@ class MeasurementFixesTest(unittest.TestCase):
                 meta = TranscriptMetadata(
                     kind="scenario",
                     seed_id=sid,
-                    concept="concept",
+                    spec="spec",
                     target="target",
-                    factors={"behavior": "behavior"},
-                    auditor_model="auditor",
+                    factors={"failure_mode": "failure_mode"},
+                    tester_model="tester",
                 )
                 t = Transcript(metadata=meta)
                 t.add_event(
@@ -955,8 +955,8 @@ class MeasurementFixesTest(unittest.TestCase):
     def test_run_judge_streams_rows_to_disk_during_execution(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "c", "definition": "d"}, "failure_modes": []}), encoding="utf-8")
             self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
 
             scores_path = Path(tmp_dir) / "scores.jsonl"
@@ -978,11 +978,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -993,13 +993,13 @@ class MeasurementFixesTest(unittest.TestCase):
     def test_run_judge_resumes_from_existing_scores_with_unchanged_config(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "c", "definition": "d"}, "failure_modes": []}), encoding="utf-8")
             self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
-                rollout=RolloutConfig(concurrency=1),
+                inference=InferenceConfig(concurrency=1),
             )
             call_count = {"n": 0}
             ok_attempts = self._ok_attempts_factory()
@@ -1012,7 +1012,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
                     )
@@ -1022,7 +1022,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 result = asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
                     )
@@ -1036,13 +1036,13 @@ class MeasurementFixesTest(unittest.TestCase):
     def test_run_judge_discards_prior_scores_when_transcripts_change(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "c", "definition": "d"}, "failure_modes": []}), encoding="utf-8")
             self._make_minimal_transcripts(transcripts_path, ["a", "b"])
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
-                rollout=RolloutConfig(concurrency=1),
+                inference=InferenceConfig(concurrency=1),
             )
             ok_attempts = self._ok_attempts_factory()
             call_count = {"n": 0}
@@ -1055,7 +1055,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
                     )
@@ -1069,7 +1069,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
                     )
@@ -1080,8 +1080,8 @@ class MeasurementFixesTest(unittest.TestCase):
     def test_run_judge_discards_prior_scores_when_judge_config_changes(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "c", "definition": "d"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "c", "definition": "d"}, "failure_modes": []}), encoding="utf-8")
             self._make_minimal_transcripts(transcripts_path, ["a", "b"])
 
             ok_attempts = self._ok_attempts_factory()
@@ -1089,11 +1089,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge-v1"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1101,11 +1101,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 result = asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge-v2"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1139,8 +1139,8 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1162,11 +1162,11 @@ class MeasurementFixesTest(unittest.TestCase):
                     asyncio.run(
                         run_judge(
                             transcripts_path=str(transcripts_path),
-                            policy_path=str(policy_path),
+                            taxonomy_path=str(taxonomy_path),
                             save_dir=tmp_dir,
                             evaluation=EvaluationConfig(
                                 judge=JudgeConfig(model="judge"),
-                                rollout=RolloutConfig(concurrency=1),
+                                inference=InferenceConfig(concurrency=1),
                             ),
                         )
                     )
@@ -1201,12 +1201,12 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "concept", "definition": "def"},
-                        "behaviors": [
+                        "spec": {"name": "spec", "definition": "def"},
+                        "failure_modes": [
                             {"name": "a", "permissible": False},
                             {"name": "b", "permissible": False},
                         ],
@@ -1233,11 +1233,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1294,8 +1294,8 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1310,11 +1310,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1354,8 +1354,8 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1370,11 +1370,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1412,8 +1412,8 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1428,11 +1428,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1470,12 +1470,12 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "concept", "definition": "def"},
-                        "behaviors": [{"name": "n0", "definition": "def"}],
+                        "spec": {"name": "spec", "definition": "def"},
+                        "failure_modes": [{"name": "n0", "definition": "def"}],
                     }
                 ),
                 encoding="utf-8",
@@ -1494,11 +1494,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1547,12 +1547,12 @@ class MeasurementFixesTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "concept", "definition": "def"},
-                        "behaviors": [{"name": "n0", "definition": "def"}],
+                        "spec": {"name": "spec", "definition": "def"},
+                        "failure_modes": [{"name": "n0", "definition": "def"}],
                     }
                 ),
                 encoding="utf-8",
@@ -1576,11 +1576,11 @@ class MeasurementFixesTest(unittest.TestCase):
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1633,8 +1633,8 @@ If the bloating is frequent or painful, check with a healthcare professional."""
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1649,11 +1649,11 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1696,8 +1696,8 @@ If the bloating is frequent or painful, check with a healthcare professional."""
 
         with TemporaryDirectory() as tmp_dir:
             transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text(json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}), encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(json.dumps({"spec": {"name": "spec", "definition": "def"}, "failure_modes": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -1712,11 +1712,11 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                 asyncio.run(
                     run_judge(
                         transcripts_path=str(transcripts_path),
-                        policy_path=str(policy_path),
+                        taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )

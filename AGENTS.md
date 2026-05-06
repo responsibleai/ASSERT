@@ -9,7 +9,7 @@ Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A 
 Use this mental model:
 
 ```text
-eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
+eval spec -> failure_mode categories -> test cases -> execute target -> judge -> artifacts
 ```
 
 ## Safety and privacy rules
@@ -34,17 +34,17 @@ Start with these files:
 
 ## Current preview terminology
 
-Use the developer-friendly concepts in prose, and mention current YAML keys when needed.
+Use the developer-friendly specs in prose, and mention current YAML keys when needed.
 
-| Concept to explain | Current YAML / artifact |
+| Spec to explain | Current YAML / artifact |
 |---|---|
-| Eval spec | `concept.name`, `concept.md`, `<name>.md` |
+| Eval spec | `spec.name`, `spec.md`, `<name>.md` |
 | Target description | `context` |
 | Variations | `factors` |
-| Behavior categories | `pipeline.policy`, `policy.json` |
+| FailureMode categories | `pipeline.taxonomy`, `taxonomy.json` |
 | Test cases | `pipeline.seeds`, `seeds.jsonl` |
-| Execute | `pipeline.rollout`, `transcripts.jsonl` |
-| Target | `pipeline.rollout.target` |
+| Execute | `pipeline.inference`, `transcripts.jsonl` |
+| Target | `pipeline.inference.target` |
 | Trace capture | `target.trace` |
 | Judge | `pipeline.judge`, `scores.jsonl` |
 | Metrics | `metrics.json` |
@@ -96,7 +96,7 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 2. Create or adapt an eval spec markdown file.
 3. Add `context` describing the agent, tools, users, and constraints.
 4. Add `factors` only when systematic variation matters.
-5. Configure the target in `pipeline.rollout.target`.
+5. Configure the target in `pipeline.inference.target`.
 6. Add judge dimensions with concrete descriptions and rubrics.
 7. Run `p2m run --config <path>`.
 

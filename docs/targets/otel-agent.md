@@ -26,10 +26,10 @@ def chat_sync(message: str) -> str:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: package.module:chat_sync
-    auditor:
+    tester:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0 }
     max_turns: 6
 ```
@@ -50,13 +50,13 @@ from examples.travel_planner_langgraph.agent import chat_sync
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:
         backend: phoenix
         group_by: session.id
-    auditor:
+    tester:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0 }
     max_turns: 6
 ```

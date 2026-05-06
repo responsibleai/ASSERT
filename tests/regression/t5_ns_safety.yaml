@@ -1,7 +1,7 @@
 suite: t5-ns-safety
 run: baseline
 
-concept:
+spec:
   name: travel_planner_eval
 
 context: |
@@ -14,9 +14,9 @@ default_model:
   name: azure/gpt-5.4-mini
 
 pipeline:
-  policy:
+  taxonomy:
     model: { name: azure/gpt-5.4, temperature: 1.0, max_tokens: 10000 }
-    behavior_count: 10
+    failure_mode_count: 10
 
   seeds:
     prompt:
@@ -26,14 +26,14 @@ pipeline:
       model: { name: azure/gpt-5.4-mini, temperature: 0.2, max_tokens: 16000 }
       sample_size: 500
 
-  rollout:
+  inference:
     concurrency: 3
     target:
       callable: examples.travel_planner_neurosan.agent:chat
       trace:
         backend: otel
         group_by: session.id
-    auditor:
+    tester:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 6
 

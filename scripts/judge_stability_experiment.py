@@ -10,10 +10,10 @@ from pathlib import Path
 
 from p2m.core.io import (
     load_jsonl,
-    permissible_by_behavior,
-    policy_permissible,
+    permissible_by_failure_mode,
+    taxonomy_permissible,
     write_jsonl,
-    row_behavior,
+    row_failure_mode,
     row_factors,
 )
 from p2m.core.judge import build_judge_contract, run_transcript_judge
@@ -26,9 +26,9 @@ def transcript_from_row(row: dict) -> Transcript:
         metadata=TranscriptMetadata(
             kind=str(row.get("kind") or ""),
             seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            spec=str(row.get("spec") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             factors=row_factors(row),
         ),
         events=[
@@ -52,10 +52,10 @@ class JudgeRunConfig:
 RESULTS_BASE = Path("artifacts/results/relationship-entanglement-v1")
 
 RUN_DIRS = [
-    "gpt54-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54mini-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54nano-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt5rrf0726-auditor_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54mini-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54nano-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt5rrf0726-tester_gpt54nano-target_gpt54-judge_30turns",
 ]
 
 JUDGE_DIMENSIONS = ["harm_actionability", "overrefusal"]
@@ -91,14 +91,14 @@ ALL_CONFIGS = Q1_CONFIGS + Q2_CONFIGS + Q6_CONFIGS
 
 async def score_transcripts(
     transcript_rows: list[dict],
-    policy_raw: dict,
+    taxonomy_raw: dict,
     judge_contract: dict,
     config: JudgeRunConfig,
     concurrency: int,
 ) -> list[dict]:
     semaphore = asyncio.Semaphore(concurrency)
     results: list[dict] = []
-    permissible_by_name = permissible_by_behavior(policy_raw)
+    permissible_by_name = permissible_by_failure_mode(taxonomy_raw)
 
     async def score_one(idx: int, row: dict) -> dict:
         async with semaphore:
@@ -113,7 +113,7 @@ async def score_transcripts(
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=judge_contract["score_keys"],
-                policy_raw=policy_raw,
+                taxonomy_raw=taxonomy_raw,
                 judge_n=config.judge_n,
                 judge_temperature=config.temperature,
                 judge_max_tokens=config.max_tokens,
@@ -121,9 +121,9 @@ async def score_transcripts(
             )
             score_row = {
                 "seed_id": row.get("seed_id", ""),
-                "concept": row.get("concept", ""),
+                "spec": row.get("spec", ""),
                 "target": row.get("target", ""),
-                "auditor_model": row.get("auditor_model", ""),
+                "tester_model": row.get("tester_model", ""),
                 "judge_model": config.judge_model,
                 "judge_temperature": config.temperature,
                 "judge_n": config.judge_n,
@@ -131,9 +131,9 @@ async def score_transcripts(
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
             }
-            behavior = row_behavior(row)
-            score_row["factors"] = {"behavior": behavior}
-            score_row["permissible"] = policy_permissible(permissible_by_name, behavior)
+            failure_mode = row_failure_mode(row)
+            score_row["factors"] = {"failure_mode": failure_mode}
+            score_row["permissible"] = taxonomy_permissible(permissible_by_name, failure_mode)
             if judge_result.get("multi_judge") is not None:
                 score_row["multi_judge"] = judge_result["multi_judge"]
             return score_row
@@ -169,15 +169,15 @@ async def run_experiment(
     print(f"  model={config.judge_model} temp={config.temperature} n={config.judge_n}")
 
     transcripts = load_jsonl(run_dir / "transcripts.jsonl")
-    policy_raw = json.loads((run_dir.parent / "policy.json").read_text())
+    taxonomy_raw = json.loads((run_dir.parent / "taxonomy.json").read_text())
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
-        policy_raw=policy_raw,
+        taxonomy_raw=taxonomy_raw,
         judge_dimensions=JUDGE_DIMENSIONS,
         schema_name="transcript_judgment",
     )
 
-    results = await score_transcripts(transcripts, policy_raw, judge_contract, config, concurrency)
+    results = await score_transcripts(transcripts, taxonomy_raw, judge_contract, config, concurrency)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(scores_path, results)

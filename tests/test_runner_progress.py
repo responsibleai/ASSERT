@@ -11,8 +11,8 @@ from p2m.runner import run_pipeline
 
 
 class RunnerProgressTest(unittest.TestCase):
-    def _write_concept_markdown(self, root: Path) -> None:
-        (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+    def _write_spec_markdown(self, root: Path) -> None:
+        (root / "spec.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
     def test_run_pipeline_writes_minimal_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -22,14 +22,14 @@ class RunnerProgressTest(unittest.TestCase):
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
             transcripts_path.write_text('{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8")
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(
                 "\n".join(
                     [
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "spec:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -40,7 +40,7 @@ class RunnerProgressTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self._write_concept_markdown(root)
+            self._write_spec_markdown(root)
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
@@ -75,7 +75,7 @@ class RunnerProgressTest(unittest.TestCase):
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "spec:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -85,7 +85,7 @@ class RunnerProgressTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self._write_concept_markdown(root)
+            self._write_spec_markdown(root)
 
             self.assertEqual(run_pipeline(config=str(cfg_path)), 1)
 
@@ -99,7 +99,7 @@ class RunnerProgressTest(unittest.TestCase):
                         "suite_id: suite-a",
                         "run_id: run-a",
                         "pipeline:",
-                        "  rollout:",
+                        "  inference:",
                         "    target:",
                         "      model:",
                         "        name: azure/gpt-5.4",
@@ -151,14 +151,14 @@ class RunnerProgressTest(unittest.TestCase):
         transcripts_path.write_text(
             '{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8"
         )
-        (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+        (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
         cfg_path.write_text(
             "\n".join(
                 [
                     "suite: suite-a",
                     "run: run-a",
                     f"results_dir: {root / 'results'}",
-                    "concept:",
+                    "spec:",
                     "  name: harmful_medical_advice",
                     "pipeline:",
                     "  judge:",
@@ -169,7 +169,7 @@ class RunnerProgressTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self._write_concept_markdown(root)
+        self._write_spec_markdown(root)
         return cfg_path
 
     def _make_fake_run_judge(self, root: Path):

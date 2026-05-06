@@ -30,16 +30,16 @@ class SystematizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _humanize_concept_name(concept_name: str | None) -> str:
-    return str(concept_name or "").replace("_", " ").replace("-", " ").strip()
+def _humanize_spec_name(spec_name: str | None) -> str:
+    return str(spec_name or "").replace("_", " ").replace("-", " ").strip()
 
-def _build_prompt(*, concept: str, concept_text: str, context: str | None = None) -> str:
+def _build_prompt(*, spec: str, spec_text: str, context: str | None = None) -> str:
     parts = [
         f"{SYSTEMATIZATION_PROMPT}\n\n",
         "# Input\n",
-        "The following is the actual concept to systematize. Treat the label and body below as the real input, not as examples.\n\n",
-        f"## Concept Label\n{concept}\n\n",
-        f"## Background Concept of Interest\n{concept_text.strip()}\n",
+        "The following is the actual spec to systematize. Treat the label and body below as the real input, not as examples.\n\n",
+        f"## Spec Label\n{spec}\n\n",
+        f"## Background Spec of Interest\n{spec_text.strip()}\n",
     ]
     if context:
         parts.append(f"\n## Application Context\n{context.strip()}\n")
@@ -98,8 +98,8 @@ def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
 
 async def run_systematization(
     *,
-    concept: str,
-    concept_text: str,
+    spec: str,
+    spec_text: str,
     save_path: str,
     model_cfg: ModelConfig,
     mode: str = "research",
@@ -107,8 +107,8 @@ async def run_systematization(
     context: str | None = None,
 ) -> Path:
     """Generate one systematization artifact and persist it to disk."""
-    if not concept_text.strip():
-        raise ValueError("systematization requires non-empty concept text")
+    if not spec_text.strip():
+        raise ValueError("systematization requires non-empty spec text")
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
 
@@ -119,7 +119,7 @@ async def run_systematization(
 
     response = await generate_structured(
         model_cfg.name,
-        _build_prompt(concept=concept, concept_text=concept_text, context=context),
+        _build_prompt(spec=spec, spec_text=spec_text, context=context),
         schema_name="systematization",
         json_schema=SystematizationResponse.model_json_schema(),
         options=GenerateOptions(
@@ -147,7 +147,7 @@ async def run_systematization(
     _validate_summary_items(parsed.summary_items)
 
     artifact = {
-        "concept": concept,
+        "spec": spec,
         "systematization": parsed.systematization,
         "summary_items": [item.model_dump() for item in parsed.summary_items],
         "meta": {

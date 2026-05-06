@@ -11,15 +11,15 @@ Goal:
 - Help me run the eval and interpret the artifacts.
 
 Mental model:
-eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
+eval spec -> failure_mode categories -> test cases -> execute target -> judge -> artifacts
 
 Current YAML names:
-- eval spec: concept.name
+- eval spec: spec.name
 - target description: context
 - variations: factors
-- behavior categories: pipeline.policy -> policy.json
+- failure_mode categories: pipeline.taxonomy -> taxonomy.json
 - test cases: pipeline.seeds -> seeds.jsonl
-- execute: pipeline.rollout -> transcripts.jsonl
+- execute: pipeline.inference -> transcripts.jsonl
 - judge: pipeline.judge -> scores.jsonl and metrics.json
 
 Target selection:
@@ -45,7 +45,7 @@ Security:
 Ask me these questions first:
 1. What runtime does my agent or multi-agent system use? (framework, custom orchestration, or plain hosted model)
 2. What function or endpoint should Adaptive Eval call?
-3. What behavior requirements should the eval spec test?
-4. Optional: do I want trace capture so the judge can inspect tool calls, routing, dynamic DAG behavior, or framework internals? (Skippable on the first run.)
+3. What failure_mode requirements should the eval spec test?
+4. Optional: do I want trace capture so the judge can inspect tool calls, routing, dynamic DAG failure_mode, or framework internals? (Skippable on the first run.)
 5. What model should be used for generation and judging?
 ```

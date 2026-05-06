@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { parse as parseYaml } from 'yaml';
 import { ARTIFACTS_ROOT } from './config.js';
-import type { Manifest, Policy, Suite } from '$lib/types.js';
+import type { Manifest, Taxonomy, Suite } from '$lib/types.js';
 
 export const SUITE_SEEDS_FILE = 'seeds.jsonl';
 export const RUN_TRANSCRIPTS_FILE = 'transcripts.jsonl';
@@ -17,7 +17,7 @@ export const VIEWER_AUDIT_ROWS_FILE = 'viewer_audit_rows.json';
 export const VIEWER_TRANSCRIPT_INDEX_FILE = 'viewer_transcript_index.json';
 export const VIEWER_SCORE_INDEX_FILE = 'viewer_score_index.json';
 export const SUITE_METADATA_FILE = 'suite.json';
-export const SUITE_POLICY_FILE = 'policy.json';
+export const SUITE_TAXONOMY_FILE = 'taxonomy.json';
 export const SUITE_SYSTEMATIZATION_FILE = 'systematization.json';
 export const VIEWER_READ_MODEL_SCHEMA_VERSION = 1;
 export const VIEWER_READ_MODEL_GENERATOR_VERSION = 'viewer-read-model-v1';
@@ -37,10 +37,10 @@ export type UnifiedTranscriptRow = Record<string, unknown> & {
 	events?: unknown;
 	llm_calls?: unknown;
 	stop_reason?: unknown;
-	concept?: unknown;
+	spec?: unknown;
 	permissible?: unknown;
 	target?: unknown;
-	auditor_model?: unknown;
+	tester_model?: unknown;
 	factors?: unknown;
 };
 
@@ -51,7 +51,7 @@ export type UnifiedScoreRow = Record<string, unknown> & {
 	judge_status?: unknown;
 	judge_error?: unknown;
 	target?: unknown;
-	auditor_model?: unknown;
+	tester_model?: unknown;
 	factors?: unknown;
 };
 
@@ -59,7 +59,7 @@ export interface SuiteSnapshot {
 	suiteId: string;
 	suiteDir: string;
 	suite: Suite | null;
-	policy: Policy | null;
+	taxonomy: Taxonomy | null;
 	seedRows: UnifiedSeedRow[];
 	runIds: string[];
 	systematization: Record<string, unknown> | null;
@@ -492,8 +492,8 @@ function readObject(value: unknown): Record<string, unknown> | null {
 
 export function loadRunRuntimeMode(config: Record<string, unknown> | null): string | null {
 	const pipeline = readObject(config?.pipeline);
-	const rollout = readObject(pipeline?.rollout);
-	const target = readObject(rollout?.target);
+	const inference = readObject(pipeline?.inference);
+	const target = readObject(inference?.target);
 	const tools = readObject(target?.tools);
 
 	if (typeof target?.connector === 'string' && target.connector) return 'external';
@@ -567,14 +567,14 @@ export function loadViewerRunIndexes(suiteId: string, runId: string): ViewerRunI
 export function loadSuiteSnapshot(suiteId: string): SuiteSnapshot | null {
 	const suiteDir = suiteDirPath(suiteId);
 	const suite = readJsonFile<Suite>(path.join(suiteDir, SUITE_METADATA_FILE), { missingOk: true });
-	const policy = readJsonFile<Policy>(path.join(suiteDir, SUITE_POLICY_FILE), { missingOk: true });
-	if (!suite && !policy) return null;
+	const taxonomy = readJsonFile<Taxonomy>(path.join(suiteDir, SUITE_TAXONOMY_FILE), { missingOk: true });
+	if (!suite && !taxonomy) return null;
 
 	return {
 		suiteId,
 		suiteDir,
 		suite,
-		policy,
+		taxonomy,
 		seedRows: readJsonlFile<UnifiedSeedRow>(path.join(suiteDir, SUITE_SEEDS_FILE), { missingOk: true }),
 		runIds: listSubdirectories(suiteDir),
 		systematization: readJsonFile<Record<string, unknown>>(
@@ -595,7 +595,7 @@ export function loadRunSnapshot(
 		missingOk: true
 	});
 	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
-	const rolloutRunning = manifest?.stages?.rollout === 'running';
+	const inferenceRunning = manifest?.stages?.inference === 'running';
 	const includeTranscripts = options.includeTranscripts ?? true;
 	const transcriptLineMatcher = options.transcriptKind
 		? buildJsonStringFieldMatcher('kind', options.transcriptKind)
@@ -612,7 +612,7 @@ export function loadRunSnapshot(
 			scoreRows: readJsonlFile<UnifiedScoreRow>(path.join(runDir, RUN_SCORES_FILE), { missingOk: true }),
 			transcriptRows: !includeTranscripts
 				? []
-				: rolloutRunning
+				: inferenceRunning
 					? readLiveTranscriptJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
 							missingOk: true,
 							lineMatcher: transcriptLineMatcher
@@ -636,9 +636,9 @@ export async function loadRunTranscriptRow(
 	const lineMatcher = (line: string) => seedMatcher(line) && kindMatcher(line);
 	const runDir = runDirPath(suiteId, runId);
 	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
-	const rolloutRunning = manifest?.stages?.rollout === 'running';
+	const inferenceRunning = manifest?.stages?.inference === 'running';
 
-	return rolloutRunning
+	return inferenceRunning
 		? readLiveJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
 				missingOk: true,
 				lineMatcher

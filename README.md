@@ -12,13 +12,13 @@
 
 Most eval tools start with a fixed benchmark. Real agents fail in product-specific ways: they call the wrong tool, ignore a constraint, fabricate a price, skip a safety check, or agree with a risky plan.
 
-Adaptive Eval flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives behavior categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. When your agent emits OpenTelemetry spans (optional upgrade), the judge can also inspect the execution trace: tool calls, arguments, routing, latency, and intermediate decisions.
+Adaptive Eval flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives failure_mode categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. When your agent emits OpenTelemetry spans (optional upgrade), the judge can also inspect the execution trace: tool calls, arguments, routing, latency, and intermediate decisions.
 
 You get:
 
 - **Spec-driven coverage** - test cases are generated from your product requirements, not a generic benchmark.
 - **Any agent works** - evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the eval pipeline.
-- **Optional trace-grounded judgment** - opt-in OpenTelemetry capture (Phoenix/OpenInference) lets the judge see real agent behavior beyond the final response. New to OTel? Skip it on the first run; add it later when you need it.
+- **Optional trace-grounded judgment** - opt-in OpenTelemetry capture (Phoenix/OpenInference) lets the judge see real agent failure_mode beyond the final response. New to OTel? Skip it on the first run; add it later when you need it.
 - **Portable artifacts** - every stage writes JSON/JSONL files locally for inspection, CI, and sharing.
 
 ## Quickstart: LangGraph travel planner (any agent works the same way)
@@ -73,12 +73,12 @@ xattr -cr .venv
 
 What the quickstart does:
 
-| Step | Developer concept | Current YAML / artifact |
+| Step | Developer spec | Current YAML / artifact |
 |---|---|---|
-| 1 | **Eval spec**: plain-English behavior requirements | `concept.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
-| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.policy` writes `policy.json` |
+| 1 | **Eval spec**: plain-English failure_mode requirements | `spec.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
+| 2 | **FailureMode categories**: generated failure-mode taxonomy | `pipeline.taxonomy` writes `taxonomy.json` |
 | 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.seeds` writes `seeds.jsonl` |
-| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + optional `target.trace` write `transcripts.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + optional `target.trace` write `transcripts.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
@@ -89,14 +89,14 @@ Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
 your eval spec (.md)
         |
         v
-behavior categories  ->  test cases + variations  ->  execute target  ->  judge
+failure_mode categories  ->  test cases + variations  ->  execute target  ->  judge
         |                         |                         |              |
         v                         v                         v              v
-   policy.json                seeds.jsonl          transcripts.jsonl   scores.jsonl
+   taxonomy.json                seeds.jsonl          transcripts.jsonl   scores.jsonl
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/glossary.md`](docs/glossary.md).
+Today the YAML still uses implementation names such as `spec`, `factors`, `taxonomy`, `seeds`, and `inference`. The docs use the developer-facing specs - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each spec appears. See [`docs/glossary.md`](docs/glossary.md).
 
 ## Choose your target
 
@@ -108,7 +108,7 @@ Pick a target based on how your agent is built.
 | A Python function that accepts a user message and returns a string or model response | **Plain callable target**: `target.callable: package.module:function` | Inputs/outputs, plus structured tool/model metadata if your callable returns it | [`docs/targets/callable.md`](docs/targets/callable.md) |
 | A hosted model with a system prompt, optionally with tools | **Model + tools target**: `target.model`, `target.system_prompt`, and optional `target.tools` | Conversation transcript and tool traces for simple prompt-agent setups | [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md) |
 
-**Recommended for best eval results:** add OTel trace capture to your callable when your agent has meaningful internals. Otherwise, the judge is mostly evaluating final text and may miss tool calls, routing decisions, dynamic DAG behavior, and framework internals.
+**Recommended for best eval results:** add OTel trace capture to your callable when your agent has meaningful internals. Otherwise, the judge is mostly evaluating final text and may miss tool calls, routing decisions, dynamic DAG failure_mode, and framework internals.
 
 **New to OpenTelemetry?** You can still use Adaptive Eval. Start with the plain callable or model target. Add trace capture when you need to debug why an agent produced an answer, not just what answer it produced.
 
@@ -132,7 +132,7 @@ Every run writes a self-contained directory under `artifacts/results/<suite>/<ru
 ```text
 artifacts/results/<suite>/
 ├── suite.json
-├── policy.json
+├── taxonomy.json
 ├── seeds.jsonl
 └── <run>/
     ├── manifest.json
@@ -144,17 +144,17 @@ artifacts/results/<suite>/
 
 These artifacts are portable and inspectable:
 
-- `policy.json` - generated behavior taxonomy from your spec.
+- `taxonomy.json` - generated failure_mode taxonomy from your spec.
 - `seeds.jsonl` - generated prompts and scenarios.
 - `transcripts.jsonl` - target conversations and trace references.
 - `scores.jsonl` - per-conversation verdicts with reasoning and evidence.
-- `metrics.json` - aggregate rates by judge dimension and behavior category.
+- `metrics.json` - aggregate rates by judge dimension and failure_mode category.
 
 Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves your machine unless you send it somewhere.
 
 ## Documentation map
 
-- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md), [`docs/glossary.md`](docs/glossary.md)
+- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/specs.md`](docs/specs.md), [`docs/glossary.md`](docs/glossary.md)
 - **Targets:** [`docs/targets/overview.md`](docs/targets/overview.md), [`docs/targets/otel-agent.md`](docs/targets/otel-agent.md) (callable agent target), [`docs/targets/callable.md`](docs/targets/callable.md), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
@@ -167,7 +167,7 @@ Adaptive Eval is a customer preview / POC, not a GA service.
 
 Stable enough to try:
 
-- spec -> behavior categories -> test cases -> execute -> judge workflow
+- spec -> failure_mode categories -> test cases -> execute -> judge workflow
 - local artifact layout
 - `target.callable`
 - Optional OTel trace capture through Phoenix/OpenInference for supported frameworks (opt-in)
@@ -179,4 +179,4 @@ Still evolving:
 - hosted/cloud integration story
 - framework-specific quickstarts beyond the current examples
 
-Preview feedback is welcome: confusing names, missing target examples, trace gaps, judge behavior, artifact shape, and docs clarity are all useful signals.
+Preview feedback is welcome: confusing names, missing target examples, trace gaps, judge failure_mode, artifact shape, and docs clarity are all useful signals.
