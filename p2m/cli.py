@@ -499,12 +499,25 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
     default=None,
     help="Write all log output to a file (in addition to stderr).",
 )
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Log output format. Use 'json' for CI pipelines.",
+)
 @click.pass_context
-def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None):
+def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, output_format: str):
     """Safety evaluation workflows for pipeline runs, artifacts, and post-hoc analysis."""
     ctx.ensure_object(dict)
     ctx.obj["logging_configured"] = True
-    configure_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    configure_logging(
+        verbose=verbose,
+        quiet=quiet,
+        log_file=log_file,
+        json_output=(output_format == "json"),
+    )
 
 
 @cli.command(short_help="Run a pipeline from a YAML config")
@@ -535,6 +548,14 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None):
     default=None,
     help="Write all log output to a file (in addition to stderr).",
 )
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Log output format. Use 'json' for CI pipelines.",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -544,12 +565,18 @@ def run(
     verbose: bool,
     quiet: bool,
     log_file: Path | None,
+    output_format: str,
 ):
     """Run the evaluation pipeline."""
     # Re-configure logging if flags were passed on the subcommand
     # (e.g. `p2m run --verbose` instead of `p2m --verbose run`).
-    if verbose or quiet or log_file:
-        configure_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    if verbose or quiet or log_file or output_format != "text":
+        configure_logging(
+            verbose=verbose,
+            quiet=quiet,
+            log_file=log_file,
+            json_output=(output_format == "json"),
+        )
     runner = _load_runner_module()
     rc = runner.run_pipeline(
         config=str(config),
