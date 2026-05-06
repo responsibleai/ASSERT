@@ -37,6 +37,7 @@ from p2m.core.io import (
     row_factors,
 )
 from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
+from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.session import (
     CallableSession,
     ExternalSession,
@@ -658,6 +659,11 @@ async def _run_auditor_target_loop(
                 auditor_messages = [m for m in auditor_messages if m.content != _AUDITOR_RETRY_GUIDANCE]
                 auditor_messages.append(auditor_response.message)
                 break
+            except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+                # Transport/auth/rate-limit errors should propagate to the
+                # runner's top-level handler — not be treated as bad auditor
+                # output.  The runner presents these with clean messages.
+                raise
             except Exception as exc:
                 last_error = str(exc)
                 if attempt < 2:
@@ -742,6 +748,12 @@ async def _run_auditor_target_loop(
                     turn_index + 1,
                     max_turns,
                 )
+        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+            # LLM-level errors (rate limit, auth, bad request, provider 5xx)
+            # should propagate to the runner's top-level handler instead of
+            # being buried in the transcript as a target_error.  The runner
+            # presents these with clean, actionable messages.
+            raise
         except Exception as exc:
             tb = traceback.format_exc()
             transcript.add_event(TranscriptEvent(
