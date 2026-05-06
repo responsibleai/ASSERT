@@ -1,6 +1,6 @@
 # Status and Roadmap
 
-Adaptive Eval is in customer preview. It is useful for design partners and GBB-led trials, but it is not a GA service.
+Adaptive Eval is in customer preview. It is useful for design partners and structured trials, but it is not a GA service.
 
 ## Stable enough to try
 

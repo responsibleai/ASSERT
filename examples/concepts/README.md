@@ -2,7 +2,7 @@
 
 Each `.md` file describes a concept — what it is and why it matters. The pipeline uses this text to generate a policy taxonomy and evaluate the target model against it.
 
-**To use a concept definition**, set `concept: <filename_without_extension>` in your pipeline config. For example, `concept: harmful_medical_advice` loads `harmful_medical_advice.md`.
+**To use a concept definition**, set `concept.name: <filename_without_extension>` in your pipeline config. For example, `concept.name: harmful_medical_advice` loads `harmful_medical_advice.md`.
 
 **To add your own**, create a new `.md` file here with a clear description of the concept.
 

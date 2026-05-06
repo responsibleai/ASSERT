@@ -1,15 +1,23 @@
-# Phoenix Auto-Trace — Framework-agnostic eval config
+# Phoenix Auto-Trace — Framework-agnostic eval TEMPLATE
 #
-# Swap the callable line to evaluate any framework demo:
-#
-#   callable: examples.phoenix_auto_trace.travel_openai_agents:chat
-#   callable: examples.phoenix_auto_trace.travel_instructor:chat
-#   callable: examples.phoenix_auto_trace.travel_pydantic_ai:chat
-#   callable: examples.phoenix_auto_trace.travel_autogen:chat
-#   callable: examples.phoenix_auto_trace.travel_smolagents:chat
-#   callable: examples.phoenix_auto_trace.travel_haystack:chat
-#
-# The eval pipeline, judge, and artifacts stay identical.
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ TEMPLATE ONLY — not runnable as-is.                                 │
+# │                                                                     │
+# │ This file shows the shape of an eval config that targets a          │
+# │ Phoenix-instrumented framework callable. Copy it, then replace      │
+# │ `REPLACE_WITH_FRAMEWORK:chat` (line below) with the actual          │
+# │ callable for your framework, e.g.:                                  │
+# │                                                                     │
+# │   callable: examples.phoenix_auto_trace.travel_openai_agents:chat   │
+# │   callable: examples.phoenix_auto_trace.travel_instructor:chat      │
+# │   callable: examples.phoenix_auto_trace.travel_pydantic_ai:chat     │
+# │   callable: examples.phoenix_auto_trace.travel_autogen:chat         │
+# │   callable: examples.phoenix_auto_trace.travel_smolagents:chat      │
+# │   callable: examples.phoenix_auto_trace.travel_haystack:chat        │
+# │                                                                     │
+# │ The pipeline, judge, and artifacts stay identical regardless of     │
+# │ which framework you target.                                         │
+# └─────────────────────────────────────────────────────────────────────┘
 
 suite: framework-eval-mini
 run: REPLACE_ME

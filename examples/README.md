@@ -9,13 +9,15 @@ Start with the LangGraph travel planner. It is the customer-preview flagship bec
 ## First run
 
 ```powershell
-uv venv
-uv sync
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 # Edit .env with your Azure OpenAI settings.
 
-uv run p2m run --config examples\travel_planner_langgraph\eval_config.yaml
-uv run p2m results status travel-planner-langgraph-v1 demo-1
+p2m run --config examples\travel_planner_langgraph\eval_config.yaml
+p2m results status travel-planner-langgraph-v1 demo-1
 ```
 
 ## Which example to start with

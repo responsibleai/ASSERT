@@ -196,8 +196,6 @@ Accepted keys:
 
 For customer-preview configs, `target` must define exactly one of `model`, `callable`, or `endpoint`.
 
-`target.tools` is valid only with `target.model`. It may define `module`, `toolset + simulator`, or `simulator` alone. `toolset` requires `simulator`. If you omit `target.system_prompt`, rollout uses each seed's `system_prompt` when present. Scenario seeds require `auditor`. Prompt seeds do not.
-
 Callable agent example with optional OTel trace capture:
 
 ```yaml
@@ -414,10 +412,14 @@ pipeline:
       sample_size: 10
   rollout:
     target:
+      model:
+        name: azure/gpt-5.4-mini
       system_prompt: |
         You are a health assistant.
   judge: {}
 ```
+
+`target.tools` is valid only with `target.model`. It may define `module`, `toolset + simulator`, or `simulator` alone. `toolset` requires `simulator`. If you omit `target.system_prompt`, rollout uses each seed's `system_prompt` when present. Scenario seeds require `auditor`. Prompt seeds do not.
 
 `concept.md` next to that file:
 

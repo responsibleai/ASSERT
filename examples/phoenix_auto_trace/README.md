@@ -1,8 +1,6 @@
-# Phoenix Auto-Trace Demo — Same Scenario, 28 Frameworks
+# Phoenix Auto-Trace Demo — Same Scenario, 33 Frameworks
 
-This demo proves the spec's core claim (§4.4.3 Approach A): **2 lines of
-Phoenix instrumentation gives full OTel tracing across 28 frameworks — zero
-per-framework maintenance for P2M.**
+This demo shows how a single Phoenix/OpenInference instrumentation snippet (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives you OpenTelemetry tracing across 33 supported frameworks — without per-framework integration work in Adaptive Eval itself.
 
 All examples implement the **same travel planner** with 5 mock tools:
 - `search_flights` — find flights to a destination
@@ -60,44 +58,48 @@ always the same 2 lines. Mock tool responses come from `_tools.py`.
 | `openinference-instrumentation-agentspec` | AgentSpec |
 | `openinference-instrumentation-vertexai` | VertexAI |
 
-**Total: 28 auto-instrumented frameworks + manual `@tracer` for anything else.**
+**Total: 33 auto-instrumented frameworks** (this README enumerates 28 of them with example demos; the remaining handful follow the same install + `register(auto_instrument=True)` pattern). For anything not in OpenInference, you can still emit spans via the OpenTelemetry SDK with `@tracer.start_as_current_span`.
 
 ---
 
 ## Architecture
 
 ```
-_tools.py              → shared mock tool data + simulate_tool() + schemas
-travel_openai.py       → OpenAI SDK + 2-line instrumentation + tool loop
-travel_langchain.py    → LangGraph + 2-line instrumentation + graph routing
-travel_crewai.py       → CrewAI + 2-line instrumentation + multi-agent crew
-...                    → same pattern for each framework
+_tools.py              -> shared mock tool data + simulate_tool() + schemas
+travel_openai.py       -> OpenAI SDK + 2-line instrumentation + tool loop
+travel_langchain.py    -> LangGraph + 2-line instrumentation + graph routing
+travel_crewai.py       -> CrewAI + 2-line instrumentation + multi-agent crew
+...                    -> same pattern for each framework
 ```
 
 ## Running
 
-```bash
+```powershell
 # Install Phoenix + the instrumentor for your framework
 pip install arize-phoenix-otel openinference-instrumentation-openai
+
+# (Windows only — avoids UnicodeEncodeError on console output with arrows)
+$env:PYTHONUTF8 = "1"
 
 # Run any example — traces appear in Phoenix
 python -m examples.phoenix_auto_trace.travel_openai
 
-# View traces
-phoenix serve  # http://localhost:6006
+# View traces (in a separate terminal)
+phoenix serve   # http://localhost:6006
 ```
 
-## The P2M integration
+## The Adaptive Eval integration
 
-All of these can be evaluated by P2M with the same config:
+All of these can be evaluated by Adaptive Eval with the same config:
 
 ```yaml
-rollout:
-  target:
-    callable: examples.phoenix_auto_trace.travel_openai:chat
-    trace:
-      backend: phoenix
-      group_by: session.id
+pipeline:
+  rollout:
+    target:
+      callable: examples.phoenix_auto_trace.travel_openai:chat
+      trace:
+        backend: phoenix
+        group_by: session.id
 ```
 
 Swap the callable to any framework — the eval pipeline, judge, and artifacts

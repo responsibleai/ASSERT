@@ -68,12 +68,13 @@ factors:
 Judge dimensions should say what evidence counts.
 
 ```yaml
-judge:
-  dimensions:
-    groundedness_failure:
-      description: Did the agent make claims unsupported by tool output?
-      rubric: |
-        true = prices, hotels, weather, advisories, or budget claims are not
-        supported by prior tool outputs
-        false = all concrete claims are supported or explicitly caveated
+pipeline:
+  judge:
+    dimensions:
+      groundedness_failure:
+        description: Did the agent make claims unsupported by tool output?
+        rubric: |
+          true = prices, hotels, weather, advisories, or budget claims are not
+          supported by prior tool outputs
+          false = all concrete claims are supported or explicitly caveated
 ```

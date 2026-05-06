@@ -29,24 +29,35 @@ target:
 ## Prerequisites
 
 - Python 3.11+
-- `uv`
+- `pip` (uv also works for contributors; see the README install path)
 - Azure OpenAI credentials in `.env`
 - Optional: Phoenix running locally if you want to browse traces during the run
 
 ## Run it
 
+> **Setup is the same `pip install -e ".[otel,langgraph]"` flow shown in the [README](../README.md#quickstart-langgraph-travel-planner-any-agent-works-the-same-way).** This page focuses on what you do after setup.
+
 ```powershell
-uv venv
-uv sync
+# (one-time setup, see README for full details)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 # Edit .env with AZURE_API_KEY, AZURE_API_BASE, and any deployment settings.
 
-uv run phoenix serve
-uv run p2m run --config examples\travel_planner_langgraph\eval_config.yaml
-uv run p2m results status travel-planner-langgraph-v1 demo-1
+# Run the pipeline
+p2m run --config examples\travel_planner_langgraph\eval_config.yaml
+p2m results status travel-planner-langgraph-v1 demo-1
 ```
 
-If you skip Phoenix, the pipeline can still run the target, but you will not get the same trace-browsing experience.
+> **Optional — browse traces in Phoenix.** In a separate terminal, before running the eval:
+>
+> ```powershell
+> phoenix serve   # opens http://localhost:6006
+> ```
+>
+> If you skip Phoenix, the pipeline still runs the target and judges results — you just won't get the live trace-browsing UI.
 
 ## Read the config
 
@@ -79,4 +90,4 @@ Read:
 - `scores.jsonl` for judge verdicts and evidence.
 - `metrics.json` for aggregate rates.
 
-For the agent graph itself, see [`docs\travel-planner-agent-flow.md`](travel-planner-agent-flow.md) if present in your branch, or inspect `examples\travel_planner_langgraph\agent.py`.
+For the agent graph itself, see [`docs/travel-planner-agent-flow.md`](travel-planner-agent-flow.md) or inspect [`examples/travel_planner_langgraph/agent.py`](../examples/travel_planner_langgraph/agent.py).

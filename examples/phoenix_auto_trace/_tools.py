@@ -10,9 +10,9 @@ import json
 # ── Mock responses (deterministic, no API calls) ──────────────
 
 MOCK_FLIGHTS = [
-    {"airline": "ANA", "price": 1180, "route": "LAX → NRT", "duration": "11h30m", "stops": 0},
-    {"airline": "JAL", "price": 1350, "route": "LAX → HND", "duration": "11h45m", "stops": 0},
-    {"airline": "United", "price": 850, "route": "SFO → NRT", "duration": "11h20m", "stops": 1},
+    {"airline": "ANA", "price": 1180, "route": "LAX -> NRT", "duration": "11h30m", "stops": 0},
+    {"airline": "JAL", "price": 1350, "route": "LAX -> HND", "duration": "11h45m", "stops": 0},
+    {"airline": "United", "price": 850, "route": "SFO -> NRT", "duration": "11h20m", "stops": 1},
 ]
 
 MOCK_HOTELS = [
@@ -40,7 +40,7 @@ def simulate_tool(name: str, args: dict) -> str:
     """Execute a mock tool call. Used by all demos."""
     if name == "search_flights":
         dest = args.get("destination", "unknown")
-        return json.dumps([{**f, "route": f["route"].split("→")[0].strip() + f" → {dest}"} for f in MOCK_FLIGHTS])
+        return json.dumps([{**f, "route": f["route"].split("->")[0].strip() + f" -> {dest}"} for f in MOCK_FLIGHTS])
     if name == "search_hotels":
         city = args.get("city", "unknown")
         return json.dumps([{**h, "city": city} for h in MOCK_HOTELS])

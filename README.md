@@ -6,7 +6,7 @@
 
 **Spec-driven evaluation for any agent or multi-agent system - local-first, framework-agnostic, and trace-aware.**
 
-> **Customer preview.** Adaptive Eval is a preview / POC for design-partner and GBB engagements. The core workflow is stable: write an eval spec, generate targeted test cases, execute them against your agent, and judge the results against your rubric. Some YAML field names are still evolving; the docs bridge current names to the intended developer-facing terminology.
+> **Customer preview.** Adaptive Eval is a preview / POC distribution for design partners. The core workflow is stable: write an eval spec, generate targeted test cases, execute them against your agent, and judge the results against your rubric. Some YAML field names are still evolving; the docs bridge current names to the intended developer-facing terminology.
 
 ## Why Adaptive Eval
 
@@ -59,18 +59,6 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 p2m results status travel-planner-langgraph-v1 demo-1
 ```
 
-### macOS install note
-
-Use the `pip install -e ".[otel,langgraph]"` path above as the primary preview install path on macOS.
-
-We have seen macOS security tooling silently block `uv sync` from extracting several large files from the `litellm` wheel. When that happens, Python imports `litellm` as an empty namespace package and later fails with errors such as `AttributeError: module 'litellm' has no attribute 'acompletion'`. `pip` uses a copy-based install path and avoids this issue.
-
-If you still prefer `uv`, and `litellm` imports without expected attributes, try granting your terminal Full Disk Access and clearing quarantine attributes on the environment:
-
-```bash
-xattr -cr .venv
-```
-
 What the quickstart does:
 
 | Step | Developer concept | Current YAML / artifact |
@@ -96,7 +84,7 @@ behavior categories  ->  test cases + variations  ->  execute target  ->  judge
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/glossary.md`](docs/glossary.md).
+Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
 
 ## Choose your target
 
@@ -104,8 +92,7 @@ Pick a target based on how your agent is built.
 
 | Your target looks like... | Use this path | Trace fidelity | Start here |
 |---|---|---|---|
-| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, …) | **Callable agent target**: point `target.callable` at your entry function. Optionally add Phoenix/OpenInference instrumentation and `target.trace` for richer judge evidence. | Final text out of the box; tool calls, arguments, routing, model calls, and latency when you opt into OTel trace capture | [`docs/targets/otel-agent.md`](docs/targets/otel-agent.md) |
-| A Python function that accepts a user message and returns a string or model response | **Plain callable target**: `target.callable: package.module:function` | Inputs/outputs, plus structured tool/model metadata if your callable returns it | [`docs/targets/callable.md`](docs/targets/callable.md) |
+| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, …) — or a plain Python function wrapping a model | **Callable target**: point `target.callable` at your entry function. Optionally add Phoenix/OpenInference instrumentation and `target.trace` for richer judge evidence. | Final text out of the box; tool calls, arguments, routing, model calls, and latency when you opt into OTel trace capture | [`docs/targets/callable.md`](docs/targets/callable.md) |
 | A hosted model with a system prompt, optionally with tools | **Model + tools target**: `target.model`, `target.system_prompt`, and optional `target.tools` | Conversation transcript and tool traces for simple prompt-agent setups | [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md) |
 
 **Recommended for best eval results:** add OTel trace capture to your callable when your agent has meaningful internals. Otherwise, the judge is mostly evaluating final text and may miss tool calls, routing decisions, dynamic DAG behavior, and framework internals.
@@ -154,12 +141,12 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 
 ## Documentation map
 
-- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md), [`docs/glossary.md`](docs/glossary.md)
-- **Targets:** [`docs/targets/overview.md`](docs/targets/overview.md), [`docs/targets/otel-agent.md`](docs/targets/otel-agent.md) (callable agent target), [`docs/targets/callable.md`](docs/targets/callable.md), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
+- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
+- **Targets:** [`docs/targets/overview.md`](docs/targets/overview.md), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
-- **AI assistants:** [`AGENTS.md`](AGENTS.md), [`docs/ai-agent-onboarding.md`](docs/ai-agent-onboarding.md)
-- **Preview operations:** [`docs/private-preview/access-and-repo-workflow.md`](docs/private-preview/access-and-repo-workflow.md), [`docs/status-and-roadmap.md`](docs/status-and-roadmap.md)
+- **AI assistants:** [`AGENTS.md`](AGENTS.md)
+- **Preview status:** [`docs/status-and-roadmap.md`](docs/status-and-roadmap.md)
 
 ## Status
 
@@ -180,3 +167,10 @@ Still evolving:
 - framework-specific quickstarts beyond the current examples
 
 Preview feedback is welcome: confusing names, missing target examples, trace gaps, judge behavior, artifact shape, and docs clarity are all useful signals.
+
+## Troubleshooting
+
+- **macOS, `litellm` AttributeError after install** — some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`, causing errors like `AttributeError: module 'litellm' has no attribute 'acompletion'`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
+- **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
+- **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
+

@@ -52,4 +52,4 @@ Simulated tools are useful when:
 - real backends are not available yet
 - you want to test whether the model calls the right tool and uses plausible results
 
-They are not a replacement for evaluating a real agent or multi-agent system. If you already have a LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen/MAF, DSPy, or custom-orchestrated agent, prefer the [callable agent target](otel-agent.md) — it accepts any agent or multi-agent system you can invoke from Python, with optional OTel trace capture for richer judge evidence.
+They are not a replacement for evaluating a real agent or multi-agent system. If you already have a LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen/MAF, DSPy, or custom-orchestrated agent, prefer the [callable target](callable.md) — it accepts any agent or multi-agent system you can invoke from Python, with optional OTel trace capture for richer judge evidence.

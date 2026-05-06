@@ -17,7 +17,7 @@ eval spec -> behavior categories -> test cases -> execute target -> judge -> art
 - Never read, print, commit, summarize, or infer values from `.env` or other local environment files.
 - Use placeholder names such as `AZURE_API_KEY` and `AZURE_API_BASE`; never invent or expose credential values.
 - Do not recommend committing generated artifacts, local traces, `.venv`, logs, or `.env` files.
-- Treat this repo as a customer-preview distribution repo. Avoid internal strategy, roadmap, TAM, LT review, or PM planning content.
+- Treat this repo as a customer-preview distribution. Keep contributions customer-safe — avoid any internal-only planning, prioritization, or organizational content.
 
 ## Authoritative files
 
@@ -26,8 +26,7 @@ Start with these files:
 - `README.md` - customer-facing overview and quickstart.
 - `docs/quickstart.md` - LangGraph travel planner walkthrough.
 - `docs/targets/overview.md` - target decision tree.
-- `docs/targets/otel-agent.md` - callable agent target with optional trace capture (any agent or multi-agent system).
-- `docs/targets/callable.md` - Python callable target (final-text only, the simplest path).
+- `docs/targets/callable.md` - Python callable target for any agent or multi-agent system, with an optional OpenTelemetry trace-capture upgrade.
 - `docs/targets/model-and-tools.md` - hosted model and simple model+tools target.
 - `CONFIG_REFERENCE.md` - current YAML schema reference.
 - `examples/README.md` - example selection guide.
@@ -123,7 +122,31 @@ Keep docs customer-safe. Prefer improving:
 - `docs/reading-results.md`
 - `examples/README.md`
 
-Do not reintroduce internal planning docs into this private-preview distribution branch.
+Do not reintroduce internal-only planning docs into this customer-preview distribution.
+
+## Paste-in prompt for end users
+
+End users can paste the following block into their AI assistant to get the same orientation this file gives you:
+
+```text
+You are helping me with the Adaptive Eval repo (https://github.com/microsoft/adaptive-eval).
+
+Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. The mental model:
+
+  eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
+
+Key facts:
+- The CLI entrypoint is `p2m`. Configs live in `examples/`. Artifacts land in `artifacts/results/<suite>/<run>/`.
+- For any agent or multi-agent system with a Python entry function, use `target.callable`.
+  OpenTelemetry trace capture (Phoenix/OpenInference) is an optional upgrade — not required.
+- For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.
+- Read `README.md`, `docs/quickstart.md`, `docs/targets/overview.md`, `docs/targets/callable.md`, and
+  `CONFIG_REFERENCE.md` before suggesting changes to YAML schema.
+- Never read or print values from `.env`. Use placeholder names like AZURE_API_KEY and AZURE_API_BASE.
+- Keep all suggestions customer-safe.
+
+When I ask for help, prefer concrete file paths, runnable commands, and the YAML keys defined in CONFIG_REFERENCE.md.
+```
 
 ## Output style for coding agents
 
