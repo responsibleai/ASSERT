@@ -587,6 +587,20 @@ def _get_value(obj: Any, key: str) -> Any:
 
 # ── Public API ─────────────────────────────────────────────────
 
+
+def _log_response(label: str, model: str, response: "ModelResponse", elapsed: float, **extra: object) -> None:
+    """Log a compact one-line summary of an LLM call at DEBUG level."""
+    usage = response.usage
+    if usage and usage.prompt_tokens is not None:
+        tokens = f"{usage.prompt_tokens}+{usage.completion_tokens or 0} tokens"
+    else:
+        tokens = "? tokens"
+    parts = [f"model={model}"]
+    for key, value in extra.items():
+        parts.append(f"{key}={value}")
+    parts.extend([f"{elapsed:.1f}s", tokens, f"finish={response.finish_reason or '?'}"])
+    log.debug(f"{label}: {', '.join(parts)}")
+
 __all__ = [
     "build_llm_call_trace",
     "GenerateOptions",
@@ -791,7 +805,7 @@ async def generate(
     resolved_options = options or GenerateOptions()
     litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
-    log.debug(f"generate: model={model}, api_mode={api_mode}")
+    t0 = time.monotonic()
 
     if resolved_options.web_search:
         payload = _build_responses_payload(model, messages, resolved_options)
@@ -819,11 +833,13 @@ async def generate(
             )
 
     raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
-    return normalize_response(
+    result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
         request_payload=payload,
     )
+    _log_response("generate", model, result, time.monotonic() - t0, api_mode=api_mode)
+    return result
 
 
 async def generate_structured(
@@ -838,7 +854,7 @@ async def generate_structured(
     resolved_options = options or GenerateOptions()
     litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
-    log.debug(f"generate_structured: model={model}, schema={schema_name}, api_mode={api_mode}")
+    t0 = time.monotonic()
 
     if resolved_options.web_search:
         payload = _build_responses_payload(model, messages, resolved_options)
@@ -876,11 +892,13 @@ async def generate_structured(
             )
 
     raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
-    return normalize_response(
+    result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
         request_payload=payload,
     )
+    _log_response("generate_structured", model, result, time.monotonic() - t0, api_mode=api_mode, schema=schema_name)
+    return result
 
 
 async def generate_with_tools(
@@ -892,7 +910,7 @@ async def generate_with_tools(
 ) -> ModelResponse:
     """Run a tool-capable chat completion."""
     resolved_options = options or GenerateOptions()
-    log.debug(f"generate_with_tools: model={model}, tools={len(tools)}")
+    t0 = time.monotonic()
     payload = _build_chat_payload(model, messages, resolved_options)
     payload["tools"] = tools
     if resolved_options.tool_choice is not None:
@@ -907,8 +925,10 @@ async def generate_with_tools(
         )
 
     raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
-    return normalize_response(
+    result = normalize_response(
         raw_response,
         api_mode="chat_completion",
         request_payload=payload,
     )
+    _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
+    return result
