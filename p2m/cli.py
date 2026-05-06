@@ -499,8 +499,11 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
     default=None,
     help="Write all log output to a file (in addition to stderr).",
 )
-def cli(verbose: bool, quiet: bool, log_file: Path | None):
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None):
     """Safety evaluation workflows for pipeline runs, artifacts, and post-hoc analysis."""
+    ctx.ensure_object(dict)
+    ctx.obj["logging_configured"] = True
     configure_logging(verbose=verbose, quiet=quiet, log_file=log_file)
 
 
@@ -524,12 +527,29 @@ def cli(verbose: bool, quiet: bool, log_file: Path | None):
     show_envvar=True,
 )
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
+@click.option(
+    "--log-file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write all log output to a file (in addition to stderr).",
+)
+@click.pass_context
 def run(
+    ctx: click.Context,
     config: Path,
     force_stage: tuple[str, ...],
     strict: bool,
+    verbose: bool,
+    quiet: bool,
+    log_file: Path | None,
 ):
     """Run the evaluation pipeline."""
+    # Re-configure logging if flags were passed on the subcommand
+    # (e.g. `p2m run --verbose` instead of `p2m --verbose run`).
+    if verbose or quiet or log_file:
+        configure_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     runner = _load_runner_module()
     rc = runner.run_pipeline(
         config=str(config),
