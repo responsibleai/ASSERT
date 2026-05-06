@@ -247,6 +247,7 @@ def normalize_response(
             _get_value(choice, "finish_reason")
             or _get_value(raw_response, "stop_reason")
             or _get_value(_get_value(raw_response, "incomplete_details"), "reason")
+            or _get_value(raw_response, "status")
         ),
         status=_get_value(raw_response, "status"),
         incomplete_details=_get_value(raw_response, "incomplete_details"),
@@ -514,10 +515,17 @@ def _first_choice(raw_response: Any) -> Any:
 def _normalize_usage(raw_usage: Any) -> UsageStats | None:
     if raw_usage is None:
         return None
+    # Chat Completions API uses prompt_tokens/completion_tokens;
+    # Responses API uses input_tokens/output_tokens.
+    prompt = _coerce_int(_get_value(raw_usage, "prompt_tokens")) or _coerce_int(_get_value(raw_usage, "input_tokens"))
+    completion = _coerce_int(_get_value(raw_usage, "completion_tokens")) or _coerce_int(_get_value(raw_usage, "output_tokens"))
+    total = _coerce_int(_get_value(raw_usage, "total_tokens"))
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
     return UsageStats(
-        prompt_tokens=_coerce_int(_get_value(raw_usage, "prompt_tokens")),
-        completion_tokens=_coerce_int(_get_value(raw_usage, "completion_tokens")),
-        total_tokens=_coerce_int(_get_value(raw_usage, "total_tokens")),
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
         raw=raw_usage,
     )
 
