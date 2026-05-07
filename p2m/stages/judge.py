@@ -218,7 +218,8 @@ async def run_judge(
         if (str(row.get("kind") or ""), str(row.get("seed_id", ""))) not in completed_keys
     ]
 
-    semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
+    judge_concurrency = evaluation.judge.concurrency if evaluation.judge else evaluation.rollout.concurrency
+    semaphore = asyncio.Semaphore(max(1, min(judge_concurrency, len(pending) or 1)))
 
     async def guard(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         async with semaphore:

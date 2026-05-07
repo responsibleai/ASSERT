@@ -146,6 +146,7 @@ Accepted keys:
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
   - `model` — model config.
 - `tool_source` — string. Default: `runtime`. Allowed values: `runtime`, `per_seed`.
+- `concurrency` — positive integer. Default: `8`. Maximum concurrent LLM calls for seed generation.
 - `model` — shared fallback for `prompt.model` and `scenario.model`.
 
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `seeds.prompt.model`, then `seeds.model`, then `default_model`. Scenario generation uses the same order with `seeds.scenario.model` first.
@@ -252,6 +253,7 @@ Accepted keys:
   - `required_base` — optional boolean accepted by the parser and passed through unchanged. Current judge construction code does not read it.
 - `model` — model config. Required unless `default_model` is set.
 - `n` — positive integer. Default: `1`.
+- `concurrency` — positive integer. Default: `10`. Maximum concurrent LLM calls for judging.
 
 For customer-preview runs, define the dimensions you want the judge to score. If you omit `model` and `default_model`, config validation fails.
 
