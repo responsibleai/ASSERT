@@ -7,6 +7,22 @@ The callable target has two integration paths:
 - **Recommended (happy path):** OTel-traced agent — two-line auto-instrumentation across 33 supported frameworks. The judge cites tool calls, routing decisions, model calls, and latency as evidence.
 - **Customization:** for unsupported frameworks (emit your own OTel spans) or for cases where instrumentation is impossible or unnecessary (plain callable / HTTP endpoint, no traces).
 
+## What the judge sees, by integration path
+
+Pick the path that exposes enough internals for the judge to score what matters. OTel is recommended because every other path is strictly narrower.
+
+| Observability for the judge | Plain `str` return | LiteLLM-style response | OTel traces (recommended) |
+|---|:---:|:---:|:---:|
+| Final response text | ✅ | ✅ | ✅ |
+| Final tool calls (names + arguments) | — | ✅ | ✅ |
+| Token usage | — | ✅ | ✅ |
+| Model name | — | ✅ | ✅ |
+| Intermediate tool calls (per step) | — | — | ✅ |
+| Routing / sub-agent decisions | — | — | ✅ |
+| Intermediate model calls | — | — | ✅ |
+| Per-span latency | — | — | ✅ |
+| **Total** | **1 / 8** | **4 / 8** | **8 / 8** |
+
 ## Recommended: OTel-traced agent (33 frameworks)
 
 When your agent emits OpenTelemetry spans, the judge can cite tool arguments, routing decisions, model calls, and latency as evidence — not just the final response. This is the integration shape every flagship example uses.
@@ -71,62 +87,49 @@ pipeline:
 
 Omit `target.trace` only when:
 
-- your target is a black-box API you cannot instrument (e.g. a third-party endpoint with no execution surface to trace)
-- you are running a quick smoke against a thin model wrapper with no real internals
+- your target is a black-box API you cannot instrument
+- you are smoke-testing a thin wrapper around a hosted model
 - you are validating the eval pipeline itself, not the agent
 
-**This path is not recommended for evaluating real agents.** Without traces the judge sees only the final response (and, for litellm-style returns, the final tool calls) — it misses intermediate routing, sub-agent decisions, and the per-step tool argument flow. Add OTel instrumentation as soon as the agent has internals worth scoring.
+For real agents this is **not recommended** — the visibility table above shows what the judge loses. To recover tool-call visibility without OTel, return the response object from [LiteLLM](https://github.com/BerriAI/litellm) (a unified Python interface supporting 100+ model providers — Azure OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) directly:
+
+```python
+import litellm
+
+def chat(message: str, history: list[dict[str, str]]) -> "litellm.ModelResponse":
+    return litellm.completion(model="azure/gpt-5.4-mini", messages=history)
+```
+
+The judge then sees final tool calls, token usage, and model name — still narrower than OTel (no intermediate routing or sub-agent decisions).
 
 #### Plain Python callable (`target.callable`)
 
-The callable can be sync or async. The signature determines what the runtime passes:
+Sync or async function with one of two signatures:
 
 ```python
-# Single-turn — receives only the current user message.
-def chat_sync(message: str) -> str:
-    return "assistant response"
-
-# Multi-turn — also receives the full conversation as OpenAI-format messages.
-def chat_sync(message: str, history: list[dict[str, str]]) -> str:
+def chat(message: str) -> str: ...                              # single-turn
+def chat(message: str, history: list[dict[str, str]]) -> str:   # multi-turn
     ...
 ```
 
-`history` is the OpenAI / LiteLLM messages list, filtered to user and assistant roles only (system and tool roles are stripped). The **current** user turn is included in `history[-1]`; `message: str` is a convenience giving you the same latest-user text directly so simple `fn(message) -> str` callables can ignore the history entirely.
+`history` follows the [OpenAI / LiteLLM chat-messages format](https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages), filtered to `user` / `assistant` roles only. The current user turn is at `history[-1]`; `message` is a convenience for callables that ignore history. System prompts are owned by your callable (`target.system_prompt` is consumed only by the model+tools target).
 
-```python
-# message  == "Plan 5 days in Tokyo"  (latest user turn, as a string)
-# history  == [
-#     {"role": "user",      "content": "I have $3000"},      # earlier user turn
-#     {"role": "assistant", "content": "Where to?"},          # prior assistant reply
-#     {"role": "user",      "content": "Plan 5 days in Tokyo"}, # ← same as `message`
-# ]
-```
-
-To round-trip directly into LiteLLM, pass `history` as the messages list — do **not** re-append `message` (it is already at `history[-1]`):
+To round-trip directly into LiteLLM, pass `history` as `messages` — do **not** re-append `message` (it is already at `history[-1]`):
 
 ```python
 import litellm
 
 def chat(message: str, history: list[dict[str, str]]) -> str:
-    response = litellm.completion(
-        model="azure/gpt-5.4-mini",
-        messages=history,   # already contains the current user turn
-    )
+    response = litellm.completion(model="azure/gpt-5.4-mini", messages=history)
     return response.choices[0].message.content
 ```
-
-System prompts are **not** included in `history` — your callable owns the system prompt. (`target.system_prompt` is only consumed by the model+tools target, not by `target.callable`.)
 
 Return types and what the judge sees:
 
 | Return type | Judge sees |
 |---|---|
-| `str` | final response text only |
-| `dict` with `text` or `content` field | final response text only |
-| LiteLLM / OpenAI-style response object (has `choices`) | final response text **plus** final tool calls, token usage, and model name extracted from the response |
-| `p2m.core.model_client.ModelResponse` | same as the litellm/OpenAI shape above |
-
-Returning the raw litellm/OpenAI response is a useful middle ground for thin model wrappers — the judge gets some tool-call visibility without OTel setup. It is still narrower than OTel: only the **final** tool calls on the response are visible, not intermediate routing or sub-agent decisions.
+| `str`, or `dict` with `text` / `content` | final response text only |
+| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`p2m.core.model_client.ModelResponse`](../../p2m/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `p2m.core.model_client.ModelResponse` internally) |
 
 #### HTTP endpoint (`target.endpoint`)
 
@@ -139,4 +142,4 @@ pipeline:
       endpoint: https://my-agent.internal/chat
 ```
 
-The runtime POSTs `{"message": "...", "history": [...]}` (same shape as the plain-callable history above) and expects `{"response": "..."}` back. Same black-box visibility as a plain string-returning callable. Requires `aiohttp` (`pip install aiohttp`).
+The runtime POSTs `{"message": "...", "history": [...]}` (same `history` shape as above) and expects `{"response": "..."}` back. Same black-box visibility as a plain string-returning callable. Requires [`aiohttp`](https://github.com/aio-libs/aiohttp) (`pip install aiohttp`).
