@@ -139,7 +139,7 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 ## Documentation map
 
 - **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
-- **Targets:** [`docs/targets/overview.md`](docs/targets/overview.md), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
+- **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **AI assistants:** [`AGENTS.md`](AGENTS.md)
