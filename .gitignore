@@ -1,3 +1,9 @@
+# Local-only Copilot/agent instructions (never commit internal-only content)
+# Pattern: any *.local.md file is treated as private/local-only.
+*.local.md
+**/copilot-instructions.local.md
+**/AGENTS.local.md
+
 # Environments and local config
 .venv/
 .env

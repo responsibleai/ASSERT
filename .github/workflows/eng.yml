@@ -1,0 +1,139 @@
+# Engineering Test — Tier 1 (unit) + Smoke (broad coverage across examples/)
+#
+# Contract:
+#   - Blocking by default — a real p2m bug fails the PR.
+#   - Non-blocking when the failure is classified as external (model API rate
+#     limit, 5xx from Azure, network blip, content filter). The cell exits 0
+#     in that case and is annotated as a warning in the PR summary.
+#
+# Triggers on PRs that touch p2m code, examples, prompts, or related scripts.
+# Wall-clock budget: ~12 min (4 min checkout/install + ≤8 min slowest cell).
+
+name: Engineering Test
+
+on:
+  pull_request:
+    paths:
+      - 'p2m/**'
+      - 'examples/**'
+      - 'prompts/**'
+      - 'pyproject.toml'
+      - 'scripts/smoke_*.py'
+      - 'scripts/regression_*.py'
+
+concurrency:
+  group: eng-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+  AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
+  AZURE_API_VERSION: "2024-12-01-preview"
+  P2M_AZURE_DEPLOYMENT: "gpt-5.4-mini"
+
+jobs:
+  tier1-unit:
+    name: "Tier 1: Unit Tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: viewer/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+      - name: Install viewer npm dependencies
+        # tests/test_viewer_*.py shells out to `node` against viewer/src;
+        # without node_modules the harness fails with ERR_MODULE_NOT_FOUND.
+        run: npm ci --prefix viewer
+      - name: Run unit tests
+        run: pytest tests/ -x -q
+
+  smoke:
+    name: "Smoke: ${{ matrix.cell.label }}"
+    needs: tier1-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        cell:
+          - { label: "langgraph",          config: "examples/travel_planner_langgraph/eval_config.yaml" }
+          - { label: "neurosan",           config: "examples/travel_planner_neurosan/eval_config.yaml" }
+          - { label: "phoenix-multinode",  config: "examples/phoenix_auto_trace/eval_config.yaml" }
+          - { label: "phoenix-openai",     config: "examples/phoenix_auto_trace/eval_openai.yaml" }
+          - { label: "phoenix-litellm",    config: "examples/phoenix_auto_trace/eval_litellm.yaml" }
+          - { label: "phoenix-langchain",  config: "examples/phoenix_auto_trace/eval_langchain.yaml" }
+          - { label: "phoenix-dspy",       config: "examples/phoenix_auto_trace/eval_dspy.yaml" }
+          - { label: "phoenix-crewai",     config: "examples/phoenix_auto_trace/eval_crewai.yaml" }
+          - { label: "pipes-health",       config: "examples/pipes/health_assistant.yaml" }
+          - { label: "pipes-simulated",    config: "examples/pipes/health_assistant_simulated_tools.yaml" }
+          - { label: "pipes-generated",    config: "examples/pipes/health_assistant_generated_tools.yaml" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+      - name: Run smoke cell
+        id: cell
+        # smoke_cell.py wraps `p2m run` with light budget overrides, isolated
+        # suite/run ids per cell, hard timeout. Always exits 0; classification
+        # happens in the next step so we always get an artifact uploaded.
+        run: |
+          python scripts/smoke_cell.py \
+            --label "${{ matrix.cell.label }}" \
+            --config "${{ matrix.cell.config }}" \
+            --suite "smoke-${{ matrix.cell.label }}-${{ github.run_id }}" \
+            --run "pr${{ github.event.pull_request.number }}-${{ github.run_attempt }}" \
+            --budget light \
+            --artifacts-dir "artifacts/smoke/${{ matrix.cell.label }}" \
+            --result-json "artifacts/smoke/${{ matrix.cell.label }}/result.json"
+      - name: Classify cell outcome
+        id: classify
+        # Reads cell log + exit code, emits classification + final exit code.
+        # P2M_BUG → exit 1 (block). EXTERNAL_* → exit 0 (warn).
+        run: |
+          python scripts/smoke_classify.py \
+            --result-json "artifacts/smoke/${{ matrix.cell.label }}/result.json" \
+            --log "artifacts/smoke/${{ matrix.cell.label }}/cell.log" \
+            --output "artifacts/smoke/${{ matrix.cell.label }}/classification.json"
+      - name: Upload cell artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.cell.label }}
+          path: artifacts/smoke/${{ matrix.cell.label }}/
+          retention-days: 14
+
+  smoke-summary:
+    name: "Smoke: Summary"
+    needs: smoke
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/smoke
+          pattern: smoke-*
+          merge-multiple: false
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Render PR summary
+        # Walks artifacts/smoke/*/classification.json, renders markdown table
+        # to $GITHUB_STEP_SUMMARY, exits 0 always (classifier already gated).
+        run: |
+          python scripts/smoke_classify.py --summarize \
+            --artifacts-root artifacts/smoke \
+            --output "$GITHUB_STEP_SUMMARY"
