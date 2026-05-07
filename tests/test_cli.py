@@ -88,6 +88,14 @@ class CliTest(unittest.TestCase):
         result = self.runner.invoke(cli, ["--log-file", "/tmp/test.log", "--help"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
 
+    def test_output_json_flag_accepted(self) -> None:
+        result = self.runner.invoke(cli, ["--output", "json", "--help"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+
+    def test_output_text_flag_accepted(self) -> None:
+        result = self.runner.invoke(cli, ["--output", "text", "--help"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+
 
 if __name__ == "__main__":
     unittest.main()

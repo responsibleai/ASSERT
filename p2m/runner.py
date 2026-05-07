@@ -130,8 +130,6 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             prompt_budget = raw_cfg["prompt"].get("budget", 0) or raw_cfg["prompt"].get("sample_size", 0)
         if isinstance(raw_cfg.get("scenario"), dict):
             scenario_budget = raw_cfg["scenario"].get("budget", 0) or raw_cfg["scenario"].get("sample_size", 0)
-        # Read behavior count from the policy output. Fall back to the
-        # legacy `sub_risks` key for any pre-merge artifacts on disk.
         behavior_count = 0
         policy_path = Path(ctx["suite_root"]) / "policy.json"
         if policy_path.exists():
@@ -181,8 +179,6 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
     elif stage_name == "judge":
         eval_cfg = ctx.get("evaluation")
         judge_model_obj = eval_cfg.judge.model if eval_cfg else None
-        # judge.model is a ModelConfig dataclass post-init; reach for .name
-        # rather than letting the dataclass repr leak into the header.
         if judge_model_obj is not None and hasattr(judge_model_obj, "name"):
             judge_model = judge_model_obj.name or ""
         elif isinstance(judge_model_obj, str):
@@ -202,7 +198,6 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
     tag = f"[{stage_name}]"
     s = summary or {}
     if stage_name == "policy":
-        # Prefer the new-science key; fall back to legacy for pre-merge artifacts.
         count = s.get("behavior_count") or s.get("sub_risk_count", 0)
         names = s.get("behavior_names") or s.get("sub_risk_names") or []
         preview = ", ".join(names[:3])

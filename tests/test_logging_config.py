@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import unittest
@@ -67,3 +68,44 @@ class ConfigureLoggingTest(unittest.TestCase):
         configure_logging()
         root = logging.getLogger()
         self.assertEqual(len(root.handlers), 1)
+
+    def test_json_output_uses_stream_handler(self) -> None:
+        configure_logging(json_output=True)
+        root = logging.getLogger()
+        self.assertEqual(len(root.handlers), 1)
+        handler = root.handlers[0]
+        self.assertIsInstance(handler, logging.StreamHandler)
+        self.assertNotIsInstance(handler, logging.FileHandler)
+
+    def test_json_output_emits_valid_json(self) -> None:
+        configure_logging(json_output=True)
+        root = logging.getLogger()
+        handler = root.handlers[0]
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="hello world", args=(), exc_info=None,
+        )
+        output = handler.format(record)
+        parsed = json.loads(output)
+        self.assertEqual(parsed["level"], "INFO")
+        self.assertEqual(parsed["message"], "hello world")
+        self.assertEqual(parsed["logger"], "test")
+        self.assertIn("timestamp", parsed)
+
+    def test_json_output_includes_exception(self) -> None:
+        configure_logging(json_output=True)
+        root = logging.getLogger()
+        handler = root.handlers[0]
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            import sys
+            exc_info = sys.exc_info()
+        record = logging.LogRecord(
+            name="test", level=logging.ERROR, pathname="", lineno=0,
+            msg="failed", args=(), exc_info=exc_info,
+        )
+        output = handler.format(record)
+        parsed = json.loads(output)
+        self.assertIn("exception", parsed)
+        self.assertIn("boom", parsed["exception"])
