@@ -136,6 +136,85 @@ def verify_cli_run_layout(suite_dir):
     return VERDICT_PASS, f"layout artifacts/results/{suite_dir.name}/<run>/ confirmed"
 
 
+# --- Code-presence verifiers (don't depend on suite_dir) -------------------
+# These verify that the production-spec / arch-doc claims about the code
+# surface match what's in the repo. They scan the source tree, not the run.
+
+import importlib
+import subprocess
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text()
+    except FileNotFoundError:
+        return ""
+
+
+@verifier("AE-CLI-FORCE")
+def verify_cli_force_stage(_suite_dir):
+    cli_text = _read(REPO_ROOT / "p2m" / "cli.py")
+    if "--force-stage" not in cli_text:
+        return VERDICT_FAIL, "--force-stage flag not found in p2m/cli.py"
+    return VERDICT_PASS, "--force-stage flag declared in p2m/cli.py"
+
+
+@verifier("AE-CLI-RESULTS")
+def verify_cli_results(_suite_dir):
+    cli_text = _read(REPO_ROOT / "p2m" / "cli.py")
+    missing = [c for c in ("results", "list", "status", "compare") if c not in cli_text]
+    if missing:
+        return VERDICT_FAIL, f"missing CLI subcommands in cli.py: {missing}"
+    return VERDICT_PASS, "results list/status/compare all declared in p2m/cli.py"
+
+
+@verifier("AE-TGT-MODEL")
+def verify_target_model(_suite_dir):
+    text = _read(REPO_ROOT / "p2m" / "core" / "session.py")
+    if "class HostedSession" not in text:
+        return VERDICT_FAIL, "HostedSession not defined in p2m/core/session.py"
+    return VERDICT_PASS, "HostedSession class present (target.model entry point)"
+
+
+@verifier("AE-TGT-CALLABLE")
+def verify_target_callable(_suite_dir):
+    text = _read(REPO_ROOT / "p2m" / "core" / "session.py")
+    if "class CallableSession" not in text:
+        return VERDICT_FAIL, "CallableSession not defined in p2m/core/session.py"
+    return VERDICT_PASS, "CallableSession class present (target.callable entry point)"
+
+
+@verifier("AE-TGT-HTTP")
+def verify_target_http(_suite_dir):
+    text = _read(REPO_ROOT / "p2m" / "core" / "session.py")
+    if "class HTTPEndpointSession" not in text:
+        return VERDICT_FAIL, "HTTPEndpointSession not defined in p2m/core/session.py"
+    return VERDICT_PASS, "HTTPEndpointSession class present (target.endpoint entry point)"
+
+
+@verifier("AE-TGT-OTEL")
+def verify_target_otel(_suite_dir):
+    text = _read(REPO_ROOT / "p2m" / "core" / "otel_session.py")
+    if "class OTelTracedSession" not in text:
+        return VERDICT_FAIL, "OTelTracedSession not defined in p2m/core/otel_session.py"
+    collector = _read(REPO_ROOT / "p2m" / "core" / "collector.py")
+    if "SpanCollector" not in collector and "SpanCollector" not in text:
+        return VERDICT_FAIL, "SpanCollector protocol not found in core/"
+    return VERDICT_PASS, "OTelTracedSession + SpanCollector present (OTel happy path)"
+
+
+@verifier("AE-X-LITELLM")
+def verify_litellm_routing(_suite_dir):
+    text = _read(REPO_ROOT / "p2m" / "core" / "model_client.py")
+    if "litellm" not in text:
+        return VERDICT_FAIL, "no litellm references in p2m/core/model_client.py"
+    if "_get_litellm_module" not in text and "importlib.import_module(\"litellm\")" not in text:
+        return VERDICT_FAIL, "litellm not loaded via the model_client module"
+    return VERDICT_PASS, "model_client.py routes through LiteLLM (lazy import)"
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: verify.py <suite_dir>", file=sys.stderr)

@@ -1,7 +1,7 @@
 {
   "schema_version": "0.2",
   "last_updated": "2026-05-06",
-  "notes": "v0 scaffold. Framework rows (AE-*) seeded from docs/adaptive-eval-spec.md (pipeline stages, CLI surface, target shapes). Scenario rows (TP-*) seeded from tests/regression/risks/travel_planner_*.md, written in agent-behavior form pending v1 rewrite into 'judge flags X' form once harness exists. All spec IDs are placeholders pending canonical schemes.",
+  "notes": "v0 scaffold. Framework rows (AE-*) seeded from the architecture design doc (Aaron Aspinwall, 2026-04-30, aligned with adaptive-eval-spec.md v1.2.0-draft) and the Adaptive Eval Production Spec consensus doc (May 2026, Chang Liu). Scenario rows (TP-*) seeded from tests/regression/risks/travel_planner_*.md, written in agent-behavior form pending v1 rewrite into 'judge flags X' form once harness exists. All spec IDs are placeholders pending canonical schemes from Chang.",
   "row_types": {
     "framework": "Claim about adaptive-eval itself, sourced from the spec doc. Verified by running the pipeline against fixtures.",
     "scenario": "Claim that the pipeline catches a known failure mode in a reference scenario. Verified by running the scenario end-to-end and confirming labeled failures are caught."
