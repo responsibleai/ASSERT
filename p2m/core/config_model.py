@@ -23,6 +23,8 @@ DEFAULT_ROLLOUT_CONCURRENCY = 10
 DEFAULT_AUDITOR_MAX_TURNS = 10
 DEFAULT_JUDGE_TEMPERATURE = None
 DEFAULT_JUDGE_MAX_TOKENS = 12000
+DEFAULT_JUDGE_CONCURRENCY = 10
+DEFAULT_SEEDS_CONCURRENCY = 8
 DEFAULT_MODEL_TIMEOUT_S = 300.0  # 5 minutes per API call
 
 
@@ -183,6 +185,7 @@ class AuditorConfig:
 class JudgeConfig:
     model: ModelConfig | str
     n: int = 1
+    concurrency: int = DEFAULT_JUDGE_CONCURRENCY
     dimensions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -190,6 +193,8 @@ class JudgeConfig:
             self.model = ModelConfig(name=self.model)
         if self.n <= 0:
             raise ValueError("judge.n must be > 0")
+        if self.concurrency <= 0:
+            raise ValueError("judge.concurrency must be > 0")
         if not isinstance(self.dimensions, list):
             raise ValueError("judge.dimensions must be a list")
         for dimension in self.dimensions:

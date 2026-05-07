@@ -1160,6 +1160,60 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("parent_seed_id", canonical_rows[2])
 
+    async def test_run_rollout_cancels_remaining_tasks_on_fatal_auth_error(self) -> None:
+        """When one seed raises LLMAuthError, remaining tasks are cancelled."""
+        from p2m.core.model_client import LLMAuthError
+
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(5)
+        ]
+        call_count = 0
+
+        async def fake_run_prompt_seed(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First task to run raises a fatal auth error
+            if call_count == 1:
+                raise LLMAuthError("Invalid API key")
+            # Other tasks should be cancelled before reaching here, but if
+            # they do run, add a small delay so the cancellation has time
+            await asyncio.sleep(0.5)
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": str(kwargs["seed"]["seed_id"])}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                with self.assertRaises(LLMAuthError):
+                    await run_rollout(
+                        seed_path=str(seed_path),
+                        target=TargetConfig(model="azure/gpt-5.4"),
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="azure/gpt-5.4"),
+                            rollout=RolloutConfig(concurrency=1),
+                        ),
+                        save_dir=str(out_dir),
+                        run_id="run-rollout",
+                    )
+
+        # With concurrency=1 and fail-fast, the fatal error should cancel
+        # remaining tasks. At most 2 may enter the worker (the failing one
+        # plus one that acquires the semaphore before cancel takes effect),
+        # but far fewer than all 5 seeds.
+        self.assertLessEqual(call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

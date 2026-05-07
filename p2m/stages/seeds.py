@@ -14,6 +14,7 @@ from p2m.core.async_utils import gather_limited
 from p2m.core.config_model import (
     DEFAULT_GENERATION_MAX_TOKENS,
     DEFAULT_GENERATION_TEMPERATURE,
+    DEFAULT_SEEDS_CONCURRENCY,
     TargetConfig,
 )
 from p2m.core.io import (
@@ -825,6 +826,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "tool_source",
             "model",
             "timeout_s",
+            "concurrency",
             "prompt",
             "scenario",
             "validators",
@@ -836,6 +838,14 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     tool_source = raw_cfg.get("tool_source", TOOL_SOURCE_RUNTIME)
     if not isinstance(tool_source, str):
         raise ValueError("seeds.tool_source must be a string")
+
+    concurrency_raw = raw_cfg.get("concurrency")
+    if concurrency_raw is not None:
+        concurrency = int(concurrency_raw)
+        if concurrency <= 0:
+            raise ValueError("seeds.concurrency must be > 0")
+    else:
+        concurrency = DEFAULT_SEEDS_CONCURRENCY
 
     prompt_cfg = None
     scenario_cfg = None
@@ -889,6 +899,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target=ctx.get("target"),
         tool_source=tool_source,
         design=raw_design,
+        concurrency=concurrency,
     )
     return {
         "seeds_path": result["seeds_path"],

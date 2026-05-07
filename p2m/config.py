@@ -12,6 +12,7 @@ import yaml
 
 from p2m.core.config_model import (
     DEFAULT_AUDITOR_MAX_TURNS,
+    DEFAULT_JUDGE_CONCURRENCY,
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
     DEFAULT_ROLLOUT_CONCURRENCY,
@@ -678,7 +679,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         reject_unknown_keys(
             scorer_stage,
             field_name="pipeline.judge",
-            allowed={"model", "n", "dimensions", "transcripts_path", "policy_path", "save_dir",
+            allowed={"model", "n", "concurrency", "dimensions", "transcripts_path", "policy_path", "save_dir",
                        "enabled", "file_path"},
         )
         if judge_enabled:
@@ -696,6 +697,10 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
                     default_max_tokens=DEFAULT_JUDGE_MAX_TOKENS,
                 ),
                 n=_coalesce(_optional_int(scorer_stage.get("n"), field_name="pipeline.judge.n"), 1),
+                concurrency=_coalesce(_optional_int(
+                    scorer_stage.get("concurrency"),
+                    field_name="pipeline.judge.concurrency",
+                ), DEFAULT_JUDGE_CONCURRENCY),
                 dimensions=dimensions,
             )
 

@@ -17,6 +17,7 @@ from p2m.core.judge import (
     infer_judge_status,
     run_transcript_judge as run_llm_judge,
 )
+from p2m.core.model_client import LLMAuthError, LLMInputError
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from p2m.viewer_read_model import build_run_viewer_artifacts
 
@@ -218,7 +219,8 @@ async def run_judge(
         if (str(row.get("kind") or ""), str(row.get("seed_id", ""))) not in completed_keys
     ]
 
-    semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
+    judge_concurrency = evaluation.judge.concurrency if evaluation.judge else evaluation.rollout.concurrency
+    semaphore = asyncio.Semaphore(max(1, min(judge_concurrency, len(pending) or 1)))
 
     async def guard(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         async with semaphore:
@@ -236,6 +238,13 @@ async def run_judge(
         error = result.get("error")
         if error is not None:
             errors.append(error)
+            # Fatal errors (bad credentials, invalid request) cannot
+            # succeed on retry — cancel remaining tasks to avoid wasting
+            # API budget.
+            if isinstance(error, (LLMAuthError, LLMInputError)):
+                for task in tasks:
+                    task.cancel()
+                break
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
