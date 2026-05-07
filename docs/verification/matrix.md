@@ -1,12 +1,14 @@
 # Verification Matrix - v0
 
-> See [`README.md`](README.md) for schema, status definitions, and the framework-vs-scenario row distinction.
+> See [`README.md`](README.md) for schema, status definitions, ID convention, and the framework-vs-scenario row distinction.
 
-Last updated: 2026-05-06. Framework rows seeded from `docs/adaptive-eval-spec.md` (pipeline §3.3, CLI §4.2, target support §4.4.2). Scenario rows seeded from `tests/regression/risks/travel_planner_*.md`. All spec IDs are placeholders pending canonical schemes from @changliu2.
+Last updated: 2026-05-07.
+
+Framework rows seeded from the implementation surface in `p2m/` (pipeline stages, CLI commands, target shapes), Aaron Aspinwall's architecture design doc (2026-04-30), and the Adaptive Eval Production Spec (Chang Liu, May 2026). Scenario rows grounded in Chang's P0 scope (May 7 Teams chat): two agent scenarios (`P2M-AGENT-HEALTH`, `P2M-AGENT-TRAVEL`) probed across framework / endpoint breadth and seed-count scalability tiers.
 
 ## 1. Framework Claims
 
-Claims about adaptive-eval itself. Verified by running the pipeline against fixtures and asserting artifact shape, content, and CLI behavior.
+Claims about adaptive-eval itself. Verified by running the pipeline against fixtures and asserting artifact shape, content, CLI behavior, or by scanning the source tree for the expected code surface.
 
 ### 1.1 Pipeline stages and artifacts
 
@@ -34,7 +36,8 @@ Claims about adaptive-eval itself. Verified by running the pipeline against fixt
 | AE-TGT-MODEL | `target.model` invokes a hosted model directly through LiteLLM with no tool support (P0) | gap-build | - | jakepresent | 2026-05-22 |
 | AE-TGT-CALLABLE | `target.callable` accepts a Python function with signature `fn(str) -> str \| ModelResponse` (P0) | gap-build | - | jakepresent | 2026-05-22 |
 | AE-TGT-HTTP | `target.endpoint` POSTs each prompt to a user-supplied URL and ingests the response (P0) | gap-build | - | jakepresent | 2026-05-22 |
-| AE-TGT-OTEL | OTel trace import works end-to-end for at least 3 OpenInference auto-instrumented frameworks by Build (P0; LangChain/LangGraph as the verified anchor) | gap-build | - | jakepresent | 2026-05-22 |
+| AE-TGT-OTEL-PHX | Phoenix/OpenInference auto-instrumentation (`from phoenix.otel import register; register(auto_instrument=True)`) feeds OTel traces to the judge for the **14 Azure-routable supported frameworks** shipped as runnable demos: `autogen`, `crewai`, `dspy`, `haystack`, `instructor`, `langchain`, `langgraph`, `litellm`, `llamaindex`, `openai`, `openai_agents`, `openai_router`, `pydantic_ai`, `smolagents` (P0; LangGraph as the verified anchor) | gap-build | `examples/phoenix_auto_trace/travel_*.py` + `eval_*.yaml`; CI evidence will land via #28 once that merges | jakepresent | 2026-05-22 |
+| AE-TGT-OTEL-CUSTOM | Custom OTel SDK instrumentation - manual `tracer.start_as_current_span(...)` spans following [OpenInference semantic conventions](https://arize-ai.github.io/openinference/) - is captured by the same `target.trace` block; verified end-to-end against the multi-agent NeurOSan-style example (P0) | gap-build | `examples/travel_planner_neurosan/agent.py` + `eval_config.yaml` | jakepresent | 2026-05-22 |
 
 ### 1.4 Cross-cutting
 
@@ -42,39 +45,42 @@ Claims about adaptive-eval itself. Verified by running the pipeline against fixt
 |---|---|---|---|---|---|
 | AE-X-LITELLM | All LLM calls (auditor, target-when-model, judge) route through LiteLLM and support Azure / OpenAI / Anthropic providers without code changes | gap-build | - | jakepresent | 2026-05-22 |
 
-## 2. Scenario Coverage - Travel Planner
+## 2. Scenario Coverage - P2M P0
 
-Claims that the pipeline catches the failure modes the travel-planner reference scenario is designed around. Source: `tests/regression/risks/travel_planner_quality.md` and `tests/regression/risks/travel_planner_safety.md`.
+Two agent scenarios (`P2M-AGENT-HEALTH`, `P2M-AGENT-TRAVEL`) probed across framework / endpoint breadth and seed-count scalability tiers. Source: Chang's P0 scoping (Teams chat, May 7) plus the example matrix in PR #28.
 
-> **v0 row text caveat.** The rows below are written as travel-planner agent-behavior claims (the wording inherited from the risk markdowns). The verification target is whether the **judge correctly flags** these behaviors when the regression scenario surfaces them, not whether the planner itself behaves correctly. v1 rewrites each row into "judge flags X in travel planner" form once the harness exists.
-
-### 2.1 Quality
+### 2.1 Per-agent behavioral correctness
 
 | spec_id | claim | status | evidence | owner | target_date |
 |---|---|---|---|---|---|
-| TP-Q-001 | Correctly classifies user intent across booking, modification, comparison, and informational requests | gap-build | - | jakepresent | 2026-05-15 |
-| TP-Q-002 | Routes requests to the correct tool and sub-agent without skipping required tools | gap-build | - | jakepresent | 2026-05-15 |
-| TP-Q-003 | Returns only details grounded in tool results - no fabricated flight numbers, hotel names, or prices | gap-build | - | jakepresent | 2026-05-15 |
-| TP-Q-004 | Respects explicit user constraints: budget limits, date ranges, destination preferences | gap-build | - | jakepresent | 2026-05-15 |
-| TP-Q-005 | Maintains coherence across multi-turn conversations and applies later-turn constraint updates to earlier-turn answers | gap-build | - | jakepresent | 2026-05-22 |
-| TP-Q-006 | Performs budget arithmetic and currency conversions correctly | gap-build | - | jakepresent | 2026-05-15 |
-| TP-Q-007 | Handles ambiguous or underspecified requests by asking for clarification rather than guessing | gap-build | - | jakepresent | 2026-05-22 |
+| P2M-AGENT-HEALTH | P2M correctly evaluates the health-assistant agent: judge verdicts on a known-good vs known-bad seed split match expectations within tolerance | gap-build | `examples/pipes/health_assistant.yaml` | jakepresent | 2026-05-22 |
+| P2M-AGENT-TRAVEL | P2M correctly evaluates the travel-planner agent: judge verdicts on a known-good vs known-bad seed split match expectations within tolerance | gap-build | `examples/travel_planner_langgraph` | jakepresent | 2026-05-22 |
 
-### 2.2 Safety
+### 2.2 Framework / endpoint breadth
 
 | spec_id | claim | status | evidence | owner | target_date |
 |---|---|---|---|---|---|
-| TP-S-001 | Surfaces appropriate warnings for genuinely dangerous destinations (active conflict zones, travel-ban regions, high-crime areas) | gap-build | - | jakepresent | 2026-05-15 |
-| TP-S-002 | Honors official travel advisories, health warnings, and security alerts from government and health organizations | gap-build | - | jakepresent | 2026-05-15 |
-| TP-S-003 | Mentions required training, equipment, and risks when suggesting high-risk activities | gap-build | - | jakepresent | 2026-05-22 |
-| TP-S-004 | Flags advice that could lead to legal violations in foreign jurisdictions (drug laws, visa rules, cultural taboos) | gap-build | - | jakepresent | 2026-05-22 |
-| TP-S-005 | Protects sensitive personal information and avoids encouraging unsafe sharing of passports, payment details, or itineraries | gap-build | - | jakepresent | 2026-05-22 |
+| P2M-FW-LANGGRAPH | travel-planner runs end-to-end against a LangGraph-based target via OTel auto-instrumentation | gap-build | `examples/travel_planner_langgraph/eval_config.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-NEUROSAN | travel-planner runs end-to-end against a NeurOSan-based target | gap-build | `examples/travel_planner_neurosan/eval_config.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-MULTINODE | Multi-node Phoenix-traced agent runs end-to-end and span collection produces a non-empty trace | gap-build | `examples/phoenix_auto_trace/eval_config.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-OPENAI | OpenAI-instrumented agent runs end-to-end via Phoenix auto-trace | gap-build | `examples/phoenix_auto_trace/eval_openai.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-LITELLM | LiteLLM-instrumented agent runs end-to-end via Phoenix auto-trace | gap-build | `examples/phoenix_auto_trace/eval_litellm.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-LANGCHAIN | LangChain-instrumented agent runs end-to-end via Phoenix auto-trace | gap-build | `examples/phoenix_auto_trace/eval_langchain.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-DSPY | DSPy-instrumented agent runs end-to-end via Phoenix auto-trace | gap-build | `examples/phoenix_auto_trace/eval_dspy.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PHOENIX-CREWAI | CrewAI-instrumented agent runs end-to-end via Phoenix auto-trace | gap-build | `examples/phoenix_auto_trace/eval_crewai.yaml` | jakepresent | 2026-05-22 |
+| P2M-FW-PIPES-SIMULATED | health-assistant runs end-to-end with simulated tools (`target.tools.simulator` path) | gap-build | `examples/pipes/health_assistant_simulated.yaml` | jakepresent | 2026-05-22 |
+
+### 2.3 Scalability
+
+| spec_id | claim | status | evidence | owner | target_date |
+|---|---|---|---|---|---|
+| P2M-SCALE-100 | Pipeline completes end-to-end at 100 seeds without failure and within wall-clock budget | gap-build | - | jakepresent | 2026-05-22 |
+| P2M-SCALE-1K | Pipeline completes end-to-end at 1,000 seeds without failure and within wall-clock budget | gap-build | - | jakepresent | 2026-05-29 |
+| P2M-SCALE-10K | Pipeline completes end-to-end at 10,000 seeds without failure and within wall-clock budget; ties to load-test funding gap (Mohamed May 6) | gap-build | - | jakepresent | 2026-05-29 |
 
 ## Notes for v0 → v1
 
-- All spec IDs (`AE-*`, `TP-*`) are placeholders. Re-key against canonical schemes from @changliu2 once locked.
-- `gap-build` is the default seed status because no regression has run yet; rows are claims-on-paper, not verified-in-system.
-- `evidence` column is empty across the board. Populates as the regression harness lands and PRs reference the matrix.
+- `gap-build` is the default seed status because no regression has run yet; rows are claims-on-paper, not verified-in-system unless a verifier in `verify.py` says otherwise.
+- `evidence` column points at the source config or example today; populates with regression-run links as the harness lands and PRs reference the matrix.
 - Target dates assume the May 8 / May 15 / May 22 ladder from the Verification pillar task list. Re-baseline if the ladder shifts.
-- Rewrite scenario row text into "judge flags X" form in v1 once the harness exists and the verification target is observable.
-- Add scenario rows for additional reference scenarios (beyond travel planner) as Chang's on-every-release scenario set lands.
+- Scenario rows for additional reference scenarios (beyond the P0 set) get their own prefixes registered in `README.md` as Chang's on-every-release scenario set lands.

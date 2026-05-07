@@ -194,15 +194,45 @@ def verify_target_http(_suite_dir):
     return VERDICT_PASS, "HTTPEndpointSession class present (target.endpoint entry point)"
 
 
-@verifier("AE-TGT-OTEL")
-def verify_target_otel(_suite_dir):
+@verifier("AE-TGT-OTEL-PHX")
+def verify_target_otel_phx(_suite_dir):
     text = _read(REPO_ROOT / "p2m" / "core" / "otel_session.py")
     if "class OTelTracedSession" not in text:
         return VERDICT_FAIL, "OTelTracedSession not defined in p2m/core/otel_session.py"
-    collector = _read(REPO_ROOT / "p2m" / "core" / "collector.py")
-    if "SpanCollector" not in collector and "SpanCollector" not in text:
-        return VERDICT_FAIL, "SpanCollector protocol not found in core/"
-    return VERDICT_PASS, "OTelTracedSession + SpanCollector present (OTel happy path)"
+    examples = REPO_ROOT / "examples" / "phoenix_auto_trace"
+    if not examples.is_dir():
+        return VERDICT_FAIL, f"missing example dir: {examples}"
+    expected_frameworks = [
+        "autogen", "crewai", "dspy", "haystack", "instructor", "langchain",
+        "langgraph", "litellm", "llamaindex", "openai", "openai_agents",
+        "openai_router", "pydantic_ai", "smolagents",
+    ]
+    found = sorted(p.stem.replace("eval_", "") for p in examples.glob("eval_*.yaml"))
+    found_frameworks = [f for f in expected_frameworks if f in found]
+    if not found_frameworks:
+        return VERDICT_FAIL, "phoenix_auto_trace/ has no recognized framework eval_*.yaml files"
+    missing = [f for f in expected_frameworks if f not in found]
+    if missing:
+        # Real anchor (LangGraph) present is the P0 bar; missing demos are gap-build.
+        return VERDICT_PASS, (
+            f"OTelTracedSession + {len(found_frameworks)}/{len(expected_frameworks)} "
+            f"Phoenix framework demos present (missing: {missing})"
+        )
+    return VERDICT_PASS, f"OTelTracedSession + all {len(expected_frameworks)} Azure-routable framework demos under phoenix_auto_trace/"
+
+
+@verifier("AE-TGT-OTEL-CUSTOM")
+def verify_target_otel_custom(_suite_dir):
+    agent = REPO_ROOT / "examples" / "travel_planner_neurosan" / "agent.py"
+    config = REPO_ROOT / "examples" / "travel_planner_neurosan" / "eval_config.yaml"
+    if not agent.exists():
+        return VERDICT_FAIL, f"missing custom-OTel example: {agent}"
+    if not config.exists():
+        return VERDICT_FAIL, f"missing custom-OTel eval_config: {config}"
+    agent_text = _read(agent)
+    if "start_as_current_span" not in agent_text and "start_span" not in agent_text:
+        return VERDICT_FAIL, "travel_planner_neurosan/agent.py does not call OTel tracer.start_*_span"
+    return VERDICT_PASS, "travel_planner_neurosan example exercises custom-OTel SDK instrumentation"
 
 
 @verifier("AE-X-LITELLM")

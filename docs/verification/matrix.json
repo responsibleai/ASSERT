@@ -1,7 +1,7 @@
 {
   "schema_version": "0.2",
   "last_updated": "2026-05-06",
-  "notes": "v0 scaffold for the P1 science-quality CI lane. Chang's PR #28 ships the P0 engineering CI lane (11-cell smoke matrix, blocks on P2M bugs, warns on external errors). Chang explicitly carved out the P1 science lane as an engineer-owned follow-up PR (Teams chat May 7): 'science quality - did our PR regress on the science efficacy inadvertently - trickier to measure and require large runs to gain statistical significance/ensure not spurious'. This matrix + verify.py is the foundation for that follow-up. Framework rows (AE-*) seeded from Aaron Aspinwall's architecture design doc (2026-04-30, aligned with adaptive-eval-spec.md v1.2.0-draft) and the Adaptive Eval Production Spec consensus doc (Chang Liu, May 2026). Scenario rows grounded in Chang's P0 scope (May 7 Teams chat): two agent scenarios (P2M-AGENT-HEALTH, P2M-AGENT-TRAVEL) plus framework breadth rows derived from PR #28's example matrix and three scalability rows (100/1k/10k seeds).",
+  "notes": "v0 scaffold for the P1 science-quality CI lane. Chang's PR #28 ships the P0 engineering CI lane (11-cell smoke matrix, blocks on P2M bugs, warns on external errors). Chang explicitly carved out the P1 science lane as an engineer-owned follow-up PR (Teams chat May 7): 'science quality - did our PR regress on the science efficacy inadvertently - trickier to measure and require large runs to gain statistical significance/ensure not spurious'. This matrix + verify.py is the foundation for that follow-up. Framework rows seeded from the implementation surface in p2m/ (pipeline stages, CLI commands, target shapes) plus Aaron Aspinwall's architecture design doc (2026-04-30) and the Adaptive Eval Production Spec (Chang Liu, May 2026). Scenario rows grounded in Chang's P0 scope (May 7 Teams chat): two agent scenarios (P2M-AGENT-HEALTH, P2M-AGENT-TRAVEL) plus framework breadth rows derived from PR #28's example matrix and three scalability rows (100/1k/10k seeds). spec_id scheme locked May 7 per Chang's PR #15 review.",
   "row_types": {
     "framework": "Claim about adaptive-eval itself, sourced from the spec doc. Verified by running the pipeline against fixtures.",
     "scenario": "Claim that the pipeline catches a known failure mode in a reference scenario. Verified by running the scenario end-to-end and confirming labeled failures are caught."
@@ -116,11 +116,20 @@
       "target_date": "2026-05-22"
     },
     {
-      "spec_id": "AE-TGT-OTEL",
+      "spec_id": "AE-TGT-OTEL-PHX",
       "type": "framework",
-      "claim": "OTel trace import works end-to-end for at least 3 OpenInference auto-instrumented frameworks by Build (P0; LangChain/LangGraph as the verified anchor)",
+      "claim": "Phoenix/OpenInference auto-instrumentation (`from phoenix.otel import register; register(auto_instrument=True)`) feeds OTel traces to the judge for the 14 Azure-routable supported frameworks shipped as runnable demos: autogen, crewai, dspy, haystack, instructor, langchain, langgraph, litellm, llamaindex, openai, openai_agents, openai_router, pydantic_ai, smolagents (P0; LangGraph as the verified anchor)",
       "status": "gap-build",
-      "evidence": null,
+      "evidence": "examples/phoenix_auto_trace/travel_*.py + eval_*.yaml; CI evidence will land via #28 once that merges",
+      "owner": "jakepresent",
+      "target_date": "2026-05-22"
+    },
+    {
+      "spec_id": "AE-TGT-OTEL-CUSTOM",
+      "type": "framework",
+      "claim": "Custom OTel SDK instrumentation - manual tracer.start_as_current_span(...) spans following OpenInference semantic conventions - is captured by the same target.trace block; verified end-to-end against the multi-agent NeurOSan-style example (P0)",
+      "status": "gap-build",
+      "evidence": "examples/travel_planner_neurosan/agent.py + eval_config.yaml",
       "owner": "jakepresent",
       "target_date": "2026-05-22"
     },
