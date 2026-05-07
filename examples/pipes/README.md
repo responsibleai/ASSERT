@@ -22,4 +22,4 @@ These configs evaluate a health assistant with simple hosted-model and model+too
 
 > **Docker prerequisite.** The `_sandbox.yaml` and `_external.yaml` variants spin up containers per conversation. Make sure Docker Desktop is running before invoking those configs, or you'll see "docker daemon unavailable" errors.
 
-For any agent or multi-agent system, use `target.callable`. OTel trace capture is an optional upgrade for richer judge evidence. See [`..\travel_planner_langgraph\eval_config.yaml`](../travel_planner_langgraph/eval_config.yaml).
+For any agent or multi-agent system, use `target.callable` with OTel trace capture so the judge sees tool calls and routing. See [`..\travel_planner_langgraph\eval_config.yaml`](../travel_planner_langgraph/eval_config.yaml) for the recommended integration shape.

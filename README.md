@@ -12,18 +12,18 @@
 
 Most eval tools start with a fixed benchmark. Real agents fail in product-specific ways: they call the wrong tool, ignore a constraint, fabricate a price, skip a safety check, or agree with a risky plan.
 
-Adaptive Eval flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives behavior categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. When your agent emits OpenTelemetry spans (optional upgrade), the judge can also inspect the execution trace: tool calls, arguments, routing, latency, and intermediate decisions.
+Adaptive Eval flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives behavior categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. The recommended integration captures the agent's OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can inspect tool calls, arguments, routing, latency, and intermediate decisions — not just the final response.
 
 You get:
 
 - **Spec-driven coverage** - test cases are generated from your product requirements, not a generic benchmark.
 - **Any agent works** - evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the eval pipeline.
-- **Optional trace-grounded judgment** - opt-in OpenTelemetry capture (Phoenix/OpenInference) lets the judge see real agent behavior beyond the final response. New to OTel? Skip it on the first run; add it later when you need it.
+- **Trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.
 - **Portable artifacts** - every stage writes JSON/JSONL files locally for inspection, CI, and sharing.
 
 ## Quickstart: LangGraph travel planner (any agent works the same way)
 
-The flagship example evaluates a multi-tool LangGraph travel planner. The target is reached through `target.callable` — the same integration boundary you would use for any agent or multi-agent system. Phoenix/OpenInference auto-instrumentation is wired up as an optional trace-capture upgrade. **You do not need to understand OpenTelemetry to start.**
+The flagship example evaluates a multi-tool LangGraph travel planner. The target is reached through `target.callable` — the same integration boundary you would use for any agent or multi-agent system — and Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge can cite tool calls and routing decisions. **This is the recommended integration shape for any non-trivial agent.**
 
 Recommended install path for preview customers:
 
@@ -66,7 +66,7 @@ What the quickstart does:
 | 1 | **Eval spec**: plain-English behavior requirements | `concept.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
 | 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.policy` writes `policy.json` |
 | 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.seeds` writes `seeds.jsonl` |
-| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + optional `target.trace` write `transcripts.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + `target.trace` write `transcripts.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
@@ -90,14 +90,11 @@ Today the YAML still uses implementation names such as `concept`, `factors`, `po
 
 Pick a target based on how your agent is built.
 
-| Your target looks like... | Use this path | Trace fidelity | Start here |
-|---|---|---|---|
-| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, …) — or a plain Python function wrapping a model | **Callable target**: point `target.callable` at your entry function. Optionally add Phoenix/OpenInference instrumentation and `target.trace` for richer judge evidence. | Final text out of the box; tool calls, arguments, routing, model calls, and latency when you opt into OTel trace capture | [`docs/targets/callable.md`](docs/targets/callable.md) |
-| A hosted model with a system prompt, optionally with tools | **Model + tools target**: `target.model`, `target.system_prompt`, and optional `target.tools` | Conversation transcript and tool traces for simple prompt-agent setups | [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md) |
-
-**Recommended for best eval results:** add OTel trace capture to your callable when your agent has meaningful internals. Otherwise, the judge is mostly evaluating final text and may miss tool calls, routing decisions, dynamic DAG behavior, and framework internals.
-
-**New to OpenTelemetry?** You can still use Adaptive Eval. Start with the plain callable or model target. Add trace capture when you need to debug why an agent produced an answer, not just what answer it produced.
+| Your target looks like... | Use this path | Start here |
+|---|---|---|
+| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, …) | **Callable target with OTel traces (recommended)**: point `target.callable` at your entry function and add `target.trace` so Phoenix/OpenInference (or your own OTel SDK spans) feed tool calls, routing, model calls, and latency to the judge | [`docs/targets/callable.md`](docs/targets/callable.md) |
+| A hosted model with a system prompt, optionally with tools | **Model + tools target**: `target.model`, `target.system_prompt`, and optional `target.tools` | [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md) |
+| A black-box API you cannot instrument | **Plain callable (customization fallback, not recommended)**: `target.callable` with no `target.trace`. The judge sees only the final response — use only when instrumentation is impossible | [`docs/targets/callable.md`](docs/targets/callable.md#customization-path-plain-callable-without-traces) |
 
 **Use simulated tools intentionally:** simulated tools are helpful for prompt agents when real backends are not ready. They are not a substitute for tracing a real multi-agent framework.
 
@@ -105,7 +102,7 @@ Pick a target based on how your agent is built.
 
 | Example | What it shows | Best for |
 |---|---|---|
-| [`examples/travel_planner_langgraph`](examples/travel_planner_langgraph/) | Full pipeline with `target.callable` and optional Phoenix OTel trace capture, generated test cases, and judge dimensions for quality + safety | Start here for any agent or multi-agent system |
+| [`examples/travel_planner_langgraph`](examples/travel_planner_langgraph/) | Full pipeline with `target.callable` + Phoenix OTel trace capture, generated test cases, and judge dimensions for quality + safety | Start here for any agent or multi-agent system |
 | [`examples/phoenix_auto_trace`](examples/phoenix_auto_trace/) | The same travel-planner idea across 33 framework instrumentation paths | Understanding framework breadth |
 | [`examples/pipes/health_assistant.yaml`](examples/pipes/health_assistant.yaml) | Simple hosted model target with a system prompt | Quick smoke test for a single model |
 | [`examples/pipes/health_assistant_simulated_tools.yaml`](examples/pipes/health_assistant_simulated_tools.yaml) | Hosted model with simulated tool responses from a fixed schema | Prompt agents with planned tools but no backend yet |
@@ -156,8 +153,7 @@ Stable enough to try:
 
 - spec -> behavior categories -> test cases -> execute -> judge workflow
 - local artifact layout
-- `target.callable`
-- Optional OTel trace capture through Phoenix/OpenInference for supported frameworks (opt-in)
+- `target.callable` with OTel trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) — the recommended integration path
 - hosted model and model+tools targets
 
 Still evolving:

@@ -2,58 +2,25 @@
 
 Use the callable target for any agent or multi-agent system with a Python entry function. This is the universal integration boundary — frameworks (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, …), custom orchestration, REST clients, and thin model wrappers all qualify.
 
-## Shape
+The callable target has two integration paths. **Pick the OTel-traced path for any non-trivial agent.** The plain-callable path exists as a customization fallback and is not recommended for evaluating real agents.
 
-The callable can be synchronous or asynchronous. The simplest shape is:
+## Recommended path: OTel-traced agent
 
-```python
-def chat_sync(message: str) -> str:
-    return "assistant response"
-```
+When your agent emits OpenTelemetry spans, the judge can cite tool arguments, routing decisions, model calls, and latency as evidence — not just the final response. This is the integration shape every flagship example uses.
 
-Then configure:
-
-```yaml
-pipeline:
-  rollout:
-    target:
-      callable: package.module:chat_sync
-```
-
-## Conversation history
-
-If your callable accepts a `history` parameter, Adaptive Eval can pass prior user/assistant turns:
+For 33+ supported frameworks (OpenAI Agents SDK, LangChain/LangGraph, CrewAI, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, Smolagents, Instructor, Haystack, …), instrumentation is **two lines** at the top of your callable module:
 
 ```python
-def chat_sync(message: str, history: list[dict[str, str]]) -> str:
-    ...
-```
-
-Use this shape for agents that need multi-turn state during scenario rollout.
-
-## Return values
-
-The callable can return:
-
-- a plain string
-- a structured model response supported by the runtime
-- a dictionary with text/content fields
-
-## Optional: add trace capture for richer evidence
-
-When the judge would benefit from seeing tool calls, routing, or intermediate decisions, add OpenTelemetry instrumentation around your callable. The simplest path is Phoenix + OpenInference auto-instrumentation:
-
-```python
-# in your callable module, e.g. examples/travel_planner_langgraph/auto_trace.py
+# e.g. examples/travel_planner_langgraph/auto_trace.py
 from phoenix.otel import register
 
-register(auto_instrument=True)  # picks up any OpenInference instrumentor on PYTHONPATH
+register(auto_instrument=True)  # picks up any installed openinference-instrumentation-* package
 
 def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:
     return run_my_agent(message, history)
 ```
 
-Then opt in from your config:
+Wire the target up in your config:
 
 ```yaml
 pipeline:
@@ -65,25 +32,48 @@ pipeline:
         group_by: session.id
 ```
 
-Adaptive Eval will capture the OTel spans your agent emits and attach them to each transcript so the judge can cite tool arguments, routing decisions, and latency — not just the final response.
+For frameworks not on the auto-instrument list, or for custom orchestration, emit your own OTel spans with the OpenTelemetry SDK and the same `target.trace` config picks them up. See `examples/travel_planner_neurosan/` for a manual-span example.
 
-### Why trace capture matters
+### Why traces matter to the judge
 
-The judge can only score what it sees. With final-text-only:
+The judge can only score what it sees. With final text only:
 
 - it cannot tell if the agent used the right tool with the right arguments
 - it cannot tell which sub-agent or branch made a decision
 - "the answer was right but for the wrong reason" looks like a pass
 
-With trace capture, the judge can cite specific spans as evidence and catch process failures even when the surface answer looks fine.
+With trace capture, the judge cites specific spans as evidence and catches process failures even when the surface answer looks fine.
 
-## When the plain callable is enough
+## Callable shape
 
-Use the plain callable (no trace capture) when:
+The callable can be synchronous or asynchronous. The simplest shape:
 
-- you want a quick first integration
-- final text is enough for the first eval
-- the target does not yet emit useful spans
-- you are evaluating a small wrapper around an existing system
+```python
+def chat_sync(message: str) -> str:
+    return "assistant response"
+```
 
-Add trace capture later when tool calls, routing, or intermediate decisions matter to the judge.
+If your callable accepts a `history` parameter, Adaptive Eval passes prior user/assistant turns:
+
+```python
+def chat_sync(message: str, history: list[dict[str, str]]) -> str:
+    ...
+```
+
+Use this shape for agents that need multi-turn state during scenario rollout.
+
+The callable can return:
+
+- a plain string
+- a structured model response supported by the runtime
+- a dictionary with text/content fields
+
+## Customization path: plain callable without traces
+
+You can omit the `target.trace` block, but only when:
+
+- your target is a black-box API you cannot instrument (e.g. a third-party endpoint with no execution surface to trace)
+- you are running a quick smoke against a thin model wrapper with no real internals
+- you are validating the eval pipeline itself, not the agent
+
+**This path is not recommended for evaluating real agents or multi-agent systems.** Without traces, the judge sees only the final response and misses tool calls, routing, and intermediate decisions. Add OTel instrumentation as soon as the agent has internals worth scoring.

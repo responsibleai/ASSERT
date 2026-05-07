@@ -60,18 +60,19 @@ Output: `seeds.jsonl`.
 
 The `rollout` stage executes each generated test case against your target.
 
-For any agent or multi-agent system, use a callable entrypoint. OpenTelemetry trace capture is an optional upgrade for richer judge evidence:
+For any agent or multi-agent system, use a callable entrypoint with OpenTelemetry trace capture so the judge can see tool calls, routing, and intermediate decisions — not just the final response:
 
 ```yaml
 pipeline:
   rollout:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
-      # Optional — add to capture tool calls, routing, and intermediate decisions:
       trace:
         backend: phoenix
         group_by: session.id
 ```
+
+The `auto_trace` module above adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) that auto-instrument 33+ supported frameworks. For unsupported frameworks or custom orchestration, emit your own OTel spans with the OpenTelemetry SDK — the same `target.trace` config picks them up. A plain callable without `target.trace` is only recommended when you cannot instrument the target.
 
 Output: `transcripts.jsonl`.
 

@@ -26,7 +26,7 @@ Start with these files:
 - `README.md` - customer-facing overview and quickstart.
 - `docs/quickstart.md` - LangGraph travel planner walkthrough.
 - `docs/targets/overview.md` - target decision tree.
-- `docs/targets/callable.md` - Python callable target for any agent or multi-agent system, with an optional OpenTelemetry trace-capture upgrade.
+- `docs/targets/callable.md` - Python callable target for any agent or multi-agent system, with OpenTelemetry trace capture as the recommended integration path.
 - `docs/targets/model-and-tools.md` - hosted model and simple model+tools target.
 - `CONFIG_REFERENCE.md` - current YAML schema reference.
 - `examples/README.md` - example selection guide.
@@ -54,12 +54,12 @@ Do not rename schema fields unless explicitly asked. Some naming is still evolvi
 
 When helping a developer choose a target:
 
-1. If they have any agent or multi-agent system with a Python entry function (frameworks like LangGraph / CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen / MAF, or custom orchestration), use `target.callable`. Trace capture through Phoenix/OpenInference is an optional upgrade — recommend it when the judge would benefit from seeing tool calls, routing, and intermediate decisions.
-2. If they have a plain Python function that wraps a hosted model, use `target.callable`.
+1. If they have any agent or multi-agent system with a Python entry function (frameworks like LangGraph / CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen / MAF, or custom orchestration), use `target.callable` **with `target.trace`** so Phoenix/OpenInference (or the agent's own OTel SDK spans) feed tool calls, routing, and intermediate decisions to the judge. This is the recommended integration path.
+2. If they have a plain Python function that wraps a hosted model, use `target.callable` (still with OTel trace capture if the wrapper does anything meaningful — model call, retry, post-processing — that the judge should see).
 3. If they have a hosted model with a system prompt and optional tools, use `target.model` and optional `target.tools`.
 4. Simulated tools are useful for simple prompt-agent setups before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
 
-Do not require customers to understand OpenTelemetry before their first eval. The plain callable path works without trace capture.
+Recommend a plain callable without `target.trace` only when the target is a black-box API that cannot be instrumented, or for quick pipeline smoke tests. Flag this as a customization fallback, not the recommended path.
 
 Do not recommend an external connector path for customer-preview onboarding.
 
@@ -137,8 +137,8 @@ Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. T
 
 Key facts:
 - The CLI entrypoint is `p2m`. Configs live in `examples/`. Artifacts land in `artifacts/results/<suite>/<run>/`.
-- For any agent or multi-agent system with a Python entry function, use `target.callable`.
-  OpenTelemetry trace capture (Phoenix/OpenInference) is an optional upgrade — not required.
+- For any agent or multi-agent system with a Python entry function, use `target.callable` with `target.trace`.
+  OpenTelemetry trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) is the recommended integration path so the judge can score tool calls and routing, not just final text.
 - For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.
 - Read `README.md`, `docs/quickstart.md`, `docs/targets/overview.md`, `docs/targets/callable.md`, and
   `CONFIG_REFERENCE.md` before suggesting changes to YAML schema.
@@ -153,5 +153,5 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 - Be concise and action-oriented.
 - Prefer runnable commands and real paths.
 - Use forward slashes in customer-facing docs unless the block is explicitly PowerShell-only.
-- Explain OpenTelemetry as optional trace capture; do not require users to understand it before running the first eval.
+- Frame OpenTelemetry trace capture as the recommended integration path for any non-trivial agent — not as an optional add-on. A plain callable without traces is a customization fallback for black-box APIs or pipeline smoke tests.
 - If a command needs credentials, say which environment variable names are required but do not inspect or print their values.
