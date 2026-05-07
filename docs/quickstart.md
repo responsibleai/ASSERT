@@ -30,7 +30,7 @@ target:
 
 - Python 3.11+
 - `pip` (uv also works for contributors; see the README install path)
-- Azure OpenAI credentials in `.env`
+- Credentials for whichever model provider the example calls. The shipped `examples/travel_planner_langgraph/eval_config.yaml` uses `azure/gpt-5.4-mini`, so by default you set `AZURE_API_KEY` and `AZURE_API_BASE` in `.env`. To use any other [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers) (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …), edit `model.name` in the YAML and set the matching env vars (`.env.example` lists the common ones).
 - Optional: Phoenix UI running locally if you want to browse traces interactively (the pipeline still captures OTel spans without it)
 
 ## Run it
@@ -44,7 +44,8 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
-# Edit .env with AZURE_API_KEY, AZURE_API_BASE, and any deployment settings.
+# Edit .env with credentials for your provider. Defaults match the example's `azure/...` model;
+# any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
 # Run the pipeline
 p2m run --config examples\travel_planner_langgraph\eval_config.yaml

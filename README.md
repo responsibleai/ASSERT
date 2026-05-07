@@ -33,7 +33,8 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env
-# Edit .env with AZURE_API_KEY, AZURE_API_BASE, and any model deployment settings.
+# Edit .env with credentials for your provider. Defaults match the example's `azure/...` model;
+# any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
 # Optional: run Phoenix locally if you want to browse traces.
 phoenix serve

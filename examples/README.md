@@ -14,7 +14,8 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
-# Edit .env with your Azure OpenAI settings.
+# Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
+# any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
 p2m run --config examples\travel_planner_langgraph\eval_config.yaml
 p2m results status travel-planner-langgraph-v1 demo-1
