@@ -1,7 +1,7 @@
 {
   "schema_version": "0.2",
   "last_updated": "2026-05-06",
-  "notes": "v0 scaffold for the P1 science-quality CI lane. Chang's PR #28 ships the P0 engineering CI lane (11-cell smoke matrix, blocks on P2M bugs, warns on external errors). Chang explicitly carved out the P1 science lane as an engineer-owned follow-up PR: 'science quality - did our PR regress on the science efficacy inadvertently - trickier to measure and require large runs to gain statistical significance/ensure not spurious'. This matrix + verify.py is the foundation for that follow-up. Framework rows (AE-*) seeded from Aaron Aspinwall's architecture design doc (2026-04-30, aligned with adaptive-eval-spec.md v1.2.0-draft) and the Adaptive Eval Production Spec consensus doc (Chang Liu, May 2026). Scenario rows (TP-*) are placeholders pending the canonical spec_id scheme from Chang and the rewrite from agent-behavior form into 'judge flags X' form. Real scenarios will land via the 11-cell example matrix in PR #28: examples/travel_planner_*, examples/phoenix_auto_trace/*, examples/pipes/*.",
+  "notes": "v0 scaffold for the P1 science-quality CI lane. Chang's PR #28 ships the P0 engineering CI lane (11-cell smoke matrix, blocks on P2M bugs, warns on external errors). Chang explicitly carved out the P1 science lane as an engineer-owned follow-up PR (Teams chat May 7): 'science quality - did our PR regress on the science efficacy inadvertently - trickier to measure and require large runs to gain statistical significance/ensure not spurious'. This matrix + verify.py is the foundation for that follow-up. Framework rows (AE-*) seeded from Aaron Aspinwall's architecture design doc (2026-04-30, aligned with adaptive-eval-spec.md v1.2.0-draft) and the Adaptive Eval Production Spec consensus doc (Chang Liu, May 2026). Scenario rows grounded in Chang's P0 scope (May 7 Teams chat): two agent scenarios (P2M-AGENT-HEALTH, P2M-AGENT-TRAVEL) plus framework breadth rows derived from PR #28's example matrix and three scalability rows (100/1k/10k seeds).",
   "row_types": {
     "framework": "Claim about adaptive-eval itself, sourced from the spec doc. Verified by running the pipeline against fixtures.",
     "scenario": "Claim that the pipeline catches a known failure mode in a reference scenario. Verified by running the scenario end-to-end and confirming labeled failures are caught."
@@ -134,112 +134,144 @@
       "target_date": "2026-05-22"
     },
     {
-      "spec_id": "TP-Q-001",
+      "spec_id": "P2M-AGENT-HEALTH",
       "type": "scenario",
-      "claim": "Correctly classifies user intent across booking, modification, comparison, and informational requests",
+      "claim": "P2M correctly evaluates the health-assistant agent: judge verdicts on a known-good vs known-bad seed split match expectations within tolerance",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/pipes/health_assistant.yaml + Chang P0 scope (May 7)"
     },
     {
-      "spec_id": "TP-Q-002",
+      "spec_id": "P2M-AGENT-TRAVEL",
       "type": "scenario",
-      "claim": "Routes requests to the correct tool and sub-agent without skipping required tools",
+      "claim": "P2M correctly evaluates the travel-planner agent: judge verdicts on a known-good vs known-bad seed split match expectations within tolerance",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/travel_planner_langgraph + Chang P0 scope (May 7)"
     },
     {
-      "spec_id": "TP-Q-003",
+      "spec_id": "P2M-FW-LANGGRAPH",
       "type": "scenario",
-      "claim": "Returns only details grounded in tool results - no fabricated flight numbers, hotel names, or prices",
+      "claim": "travel-planner runs end-to-end against a LangGraph-based target via OTel auto-instrumentation",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/travel_planner_langgraph/eval_config.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-Q-004",
+      "spec_id": "P2M-FW-NEUROSAN",
       "type": "scenario",
-      "claim": "Respects explicit user constraints: budget limits, date ranges, destination preferences",
+      "claim": "travel-planner runs end-to-end against a NeurOSan-based target",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/travel_planner_neurosan/eval_config.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-Q-005",
+      "spec_id": "P2M-FW-PHOENIX-MULTINODE",
       "type": "scenario",
-      "claim": "Maintains coherence across multi-turn conversations and applies later-turn constraint updates to earlier-turn answers",
+      "claim": "Multi-node Phoenix-traced agent runs end-to-end and span collection produces a non-empty trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-22"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_config.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-Q-006",
+      "spec_id": "P2M-FW-PHOENIX-OPENAI",
       "type": "scenario",
-      "claim": "Performs budget arithmetic and currency conversions correctly",
+      "claim": "OpenAI-instrumented agent runs end-to-end via Phoenix auto-trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_openai.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-Q-007",
+      "spec_id": "P2M-FW-PHOENIX-LITELLM",
       "type": "scenario",
-      "claim": "Handles ambiguous or underspecified requests by asking for clarification rather than guessing",
+      "claim": "LiteLLM-instrumented agent runs end-to-end via Phoenix auto-trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-22"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_litellm.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-S-001",
+      "spec_id": "P2M-FW-PHOENIX-LANGCHAIN",
       "type": "scenario",
-      "claim": "Surfaces appropriate warnings for genuinely dangerous destinations (active conflict zones, travel-ban regions, high-crime areas)",
+      "claim": "LangChain-instrumented agent runs end-to-end via Phoenix auto-trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_langchain.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-S-002",
+      "spec_id": "P2M-FW-PHOENIX-DSPY",
       "type": "scenario",
-      "claim": "Honors official travel advisories, health warnings, and security alerts from government and health organizations",
+      "claim": "DSPy-instrumented agent runs end-to-end via Phoenix auto-trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-15"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_dspy.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-S-003",
+      "spec_id": "P2M-FW-PHOENIX-CREWAI",
       "type": "scenario",
-      "claim": "Mentions required training, equipment, and risks when suggesting high-risk activities",
+      "claim": "CrewAI-instrumented agent runs end-to-end via Phoenix auto-trace",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-22"
+      "target_date": "2026-05-22",
+      "source": "examples/phoenix_auto_trace/eval_crewai.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-S-004",
+      "spec_id": "P2M-FW-PIPES-SIMULATED",
       "type": "scenario",
-      "claim": "Flags advice that could lead to legal violations in foreign jurisdictions (drug laws, visa rules, cultural taboos)",
+      "claim": "health-assistant runs end-to-end with simulated tools (target.tools.simulator path)",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-22"
+      "target_date": "2026-05-22",
+      "source": "examples/pipes/health_assistant_simulated.yaml (PR #28 cell)"
     },
     {
-      "spec_id": "TP-S-005",
+      "spec_id": "P2M-SCALE-100",
       "type": "scenario",
-      "claim": "Protects sensitive personal information and avoids encouraging unsafe sharing of passports, payment details, or itineraries",
+      "claim": "Pipeline completes end-to-end at 100 seeds without failure and within wall-clock budget",
       "status": "gap-build",
       "evidence": null,
       "owner": "jakepresent",
-      "target_date": "2026-05-22"
+      "target_date": "2026-05-22",
+      "source": "Chang P0 scalability scope (May 7) + Production Spec §6"
+    },
+    {
+      "spec_id": "P2M-SCALE-1K",
+      "type": "scenario",
+      "claim": "Pipeline completes end-to-end at 1,000 seeds without failure and within wall-clock budget",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-29",
+      "source": "Chang P0 scalability scope (May 7) + Production Spec §6"
+    },
+    {
+      "spec_id": "P2M-SCALE-10K",
+      "type": "scenario",
+      "claim": "Pipeline completes end-to-end at 10,000 seeds without failure and within wall-clock budget; ties to load-test funding gap (Mohamed May 6)",
+      "status": "gap-build",
+      "evidence": null,
+      "owner": "jakepresent",
+      "target_date": "2026-05-29",
+      "source": "Chang P0 scalability scope (May 7) + Production Spec §6"
     }
   ]
 }
