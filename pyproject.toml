@@ -57,6 +57,16 @@ examples = [
   "openai-agents>=0.14.5",
   "pydantic-ai>=0.8.1",
   "smolagents>=1.22.0",
+  # Framework-specific OpenInference instrumentors used by the
+  # examples/phoenix_auto_trace/* demos. `phoenix.otel.register(auto_instrument=True)`
+  # auto-loads every installed `openinference-instrumentation-*` package and a
+  # single version mismatch crashes the whole call, so the upper bounds below
+  # match the framework versions pinned above. Bump these together when bumping
+  # crewai >= 1.10 or dspy >= 2.7.
+  "openinference-instrumentation-openai>=0.1.45",
+  "openinference-instrumentation-litellm>=0.1.30",
+  "openinference-instrumentation-dspy>=0.1.19,<0.1.20",
+  "openinference-instrumentation-crewai>=0.1.22,<1.0.0",
 ]
 all = [
   "p2m-policy[otel,langgraph,analysis,examples,regression]",
