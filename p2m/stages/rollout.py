@@ -37,6 +37,7 @@ from p2m.core.io import (
     row_factors,
 )
 from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
+from p2m.core.model_client import LLMAuthError, LLMInputError
 from p2m.core.session import (
     CallableSession,
     ExternalSession,
@@ -1026,10 +1027,20 @@ async def run_rollout(
             f"  rollout [{done}/{total}] {status} {kind_tag}{label}\n"
         )
         sys.__stderr__.flush()
+        # Fatal errors (bad credentials, invalid request) cannot succeed
+        # on retry — cancel remaining tasks to avoid wasting API budget.
+        if error is not None and isinstance(error, (LLMAuthError, LLMInputError)):
+            for task in tasks:
+                task.cancel()
+            break
 
+    # Always build viewer artifacts so partial results are visible, even
+    # when we are about to raise a fatal error — but only if any
+    # transcripts were actually written.
+    if transcripts_path.exists():
+        build_run_viewer_artifacts(out_dir)
     if errors:
         raise errors[0]
-    build_run_viewer_artifacts(out_dir)
 
     return {
         "transcripts_path": str(transcripts_path),
