@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -50,9 +51,23 @@ def _remove_legacy_viewer_files(run_dir: Path) -> None:
         legacy_path.unlink(missing_ok=True)
 
 
-def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path:
+def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
+    """Resolve a manifest-provided relative path under ``base_dir``.
+
+    Rejects any path with parent-directory (``..``) segments so that a
+    tampered or corrupted ``manifest.json`` cannot redirect viewer reads
+    outside the suite directory.
+    """
+
     parts = [part for part in raw_path.replace("\\", "/").split("/") if part and part != "."]
-    return base_dir.joinpath(*parts)
+    if any(part == ".." for part in parts):
+        print(
+            f"[viewer-read-model] warning: refusing manifest path with parent "
+            f"segments: {raw_path!r}",
+            file=sys.stderr,
+        )
+        return None
+    return base_dir.joinpath(*parts) if parts else base_dir
 
 
 def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Path:
@@ -67,7 +82,9 @@ def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Pat
                 path = Path(raw_path)
                 if path.is_absolute():
                     return path
-                return _manifest_relative_path(suite_dir, raw_path)
+                resolved = _manifest_relative_path(suite_dir, raw_path)
+                if resolved is not None:
+                    return resolved
     return suite_dir / "seeds.jsonl"
 
 

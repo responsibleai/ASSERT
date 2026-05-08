@@ -188,6 +188,43 @@ def activate_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
     return ref
 
 
+# Per-stage mapping of raw_cfg output-location keys to the canonical artifact
+# location they must resolve to when that stage is being cached. Each value is
+# either the sentinel ``"__artifact_dir__"`` (meaning "the version directory
+# itself") or the name of an entry in ``plan.output_paths``.
+_RAW_CFG_OUTPUT_OVERRIDES: dict[str, list[tuple[str, str]]] = {
+    "policy": [("save_dir", "__artifact_dir__")],
+    "design": [("save_dir", "__artifact_dir__")],
+    "seeds": [("save_path", "seeds")],
+}
+
+
+def override_cacheable_output_paths(
+    stage_name: str,
+    raw_cfg: dict[str, Any],
+    plan: ArtifactPlan,
+) -> dict[str, Any]:
+    """Return a shallow copy of ``raw_cfg`` with cache-managed output keys forced.
+
+    When artifact caching is active for a cacheable stage, the runner must not
+    let ``raw_cfg`` redirect outputs (``save_dir`` / ``save_path``) outside the
+    versioned artifact directory. ``finalize_artifact_plan`` reads back from
+    ``plan.output_paths`` and would otherwise fail (or silently produce stale
+    cache entries) if the stage wrote elsewhere.
+    """
+
+    overrides = _RAW_CFG_OUTPUT_OVERRIDES.get(stage_name)
+    if not overrides:
+        return raw_cfg
+    cfg = dict(raw_cfg)
+    for cfg_key, source in overrides:
+        if source == "__artifact_dir__":
+            cfg[cfg_key] = str(plan.artifact_dir)
+        else:
+            cfg[cfg_key] = str(plan.output_paths[source])
+    return cfg
+
+
 def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
     """Load latest artifact refs into context for run-only stage configs.
 
@@ -603,6 +640,16 @@ def _resolve_ref_path(suite_root: Path, raw_path: Any) -> Path | None:
     if path.is_absolute():
         return path
     parts = [part for part in raw_path.replace("\\", "/").split("/") if part and part != "."]
+    if any(part == ".." for part in parts):
+        # Defense in depth: a tampered or corrupted latest.json must not be
+        # able to point activate_latest_artifacts at a location outside the
+        # suite root.
+        print(
+            f"[artifact-cache] warning: refusing to resolve cache reference "
+            f"with parent-directory segments: {raw_path!r}",
+            file=sys.stderr,
+        )
+        return None
     return suite_root.joinpath(*parts)
 
 
@@ -649,8 +696,22 @@ def _file_hashes(output_paths: dict[str, Path]) -> dict[str, str]:
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
+        return None
+    except OSError as exc:
+        print(
+            f"[artifact-cache] warning: failed to read {path}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        print(
+            f"[artifact-cache] warning: ignoring corrupt JSON at {path}: {exc}",
+            file=sys.stderr,
+        )
         return None
     if not isinstance(payload, dict):
         return None

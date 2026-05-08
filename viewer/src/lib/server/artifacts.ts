@@ -185,9 +185,15 @@ function viewerArtifactPath(runDir: string, fileName: string): string {
 	return path.join(runDir, VIEWER_CACHE_DIR, fileName);
 }
 
-function manifestRelativePath(baseDir: string, rawPath: string): string {
+function manifestRelativePath(baseDir: string, rawPath: string): string | null {
 	const parts = rawPath.split(/[\\/]+/).filter((part) => part.length > 0 && part !== '.');
-	return path.join(baseDir, ...parts);
+	if (parts.some((part) => part === '..')) {
+		console.warn(
+			`[viewer] refusing manifest path with parent-directory segments: ${rawPath}`
+		);
+		return null;
+	}
+	return parts.length > 0 ? path.join(baseDir, ...parts) : baseDir;
 }
 
 function manifestArtifactPath(suiteDir: string, rawPath: unknown): string | null {
@@ -491,6 +497,7 @@ export function listSubdirectories(dirPath: string): string[] {
 function listRunIds(suiteDir: string): string[] {
 	return listSubdirectories(suiteDir).filter((entry) => {
 		if (entry === SUITE_ARTIFACTS_DIR) return false;
+		if (!isSafeArtifactId(entry)) return false;
 		const runDir = path.join(suiteDir, entry);
 		return (
 			fs.existsSync(path.join(runDir, RUN_MANIFEST_FILE)) ||

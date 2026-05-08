@@ -8,8 +8,11 @@ from p2m.core.artifact_cache import (
     artifact_ref,
     finalize_artifact_plan,
     hash_payload,
+    override_cacheable_output_paths,
     prepare_artifact_plan,
+    _load_json_object,
     _relative_to_suite,
+    _resolve_ref_path,
 )
 
 
@@ -197,6 +200,107 @@ class ArtifactCacheTest(unittest.TestCase):
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
             self.assertNotIn("policy", recovery_ctx.get("artifact_versions", {}))
+
+    def test_load_json_object_ignores_corrupt_json_gracefully(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            corrupt = Path(tmp_dir) / "latest.json"
+            corrupt.write_text("{not json", encoding="utf-8")
+            self.assertIsNone(_load_json_object(corrupt))
+
+    def test_load_json_object_returns_none_for_non_object_payload(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            list_payload = Path(tmp_dir) / "latest.json"
+            list_payload.write_text("[1, 2, 3]", encoding="utf-8")
+            self.assertIsNone(_load_json_object(list_payload))
+
+    def test_resolve_ref_path_rejects_parent_segments(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            suite_root = Path(tmp_dir) / "suite"
+            suite_root.mkdir()
+            self.assertIsNone(_resolve_ref_path(suite_root, "../../etc/passwd"))
+            self.assertIsNone(_resolve_ref_path(suite_root, "artifacts/../../escape"))
+            inside = _resolve_ref_path(suite_root, "artifacts/policy/v0001/policy.json")
+            assert inside is not None
+            self.assertEqual(inside, suite_root / "artifacts" / "policy" / "v0001" / "policy.json")
+
+    def test_override_cacheable_output_paths_redirects_user_save_dir(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_count": 2,
+                "save_dir": "user/elsewhere",
+            }
+            plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, plan)
+            overridden = override_cacheable_output_paths("policy", raw_cfg, plan)
+
+            self.assertNotEqual(overridden["save_dir"], "user/elsewhere")
+            self.assertEqual(Path(overridden["save_dir"]), plan.artifact_dir)
+            # Must be a copy: the original config is left untouched so other
+            # references (logs, ctx history) keep the user's value.
+            self.assertEqual(raw_cfg["save_dir"], "user/elsewhere")
+
+    def test_override_cacheable_output_paths_redirects_seeds_save_path(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            self._finalize_policy(ctx, {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2})
+            design_plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="design",
+                raw_cfg={"model": {"name": "azure/gpt-5.4"}, "level_count": 3},
+                forced=False,
+            )
+            activate_artifact_plan(ctx, design_plan)
+            design_plan.output_paths["design"].parent.mkdir(parents=True, exist_ok=True)
+            design_plan.output_paths["design"].write_text("{}", encoding="utf-8")
+            finalize_artifact_plan(ctx, design_plan)
+
+            seeds_cfg = {
+                "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1},
+                "save_path": "user/elsewhere/seeds.jsonl",
+            }
+            seeds_plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="seeds",
+                raw_cfg=seeds_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, seeds_plan)
+            overridden = override_cacheable_output_paths("seeds", seeds_cfg, seeds_plan)
+
+            self.assertEqual(Path(overridden["save_path"]), seeds_plan.output_paths["seeds"])
+            self.assertEqual(seeds_cfg["save_path"], "user/elsewhere/seeds.jsonl")
+
+    def test_override_cacheable_output_paths_returns_input_for_unknown_stage(self) -> None:
+        raw_cfg = {"foo": "bar"}
+        # Use a placeholder plan; the function should short-circuit before
+        # touching it for non-cacheable stage names.
+        from p2m.core.artifact_cache import ArtifactPlan, ArtifactFingerprint
+
+        plan = ArtifactPlan(
+            stage_name="rollout",
+            version="v0001",
+            artifact_dir=Path("/tmp"),
+            output_paths={},
+            fingerprint=ArtifactFingerprint(
+                stage_name="rollout",
+                concept_hash=None,
+                config_hash="x",
+                input_hash="y",
+                descriptor={},
+            ),
+            reused=False,
+        )
+        result = override_cacheable_output_paths("rollout", raw_cfg, plan)
+        self.assertIs(result, raw_cfg)
 
 
 if __name__ == "__main__":

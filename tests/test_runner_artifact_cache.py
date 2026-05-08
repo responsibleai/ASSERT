@@ -303,6 +303,91 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             )
             self.assertEqual(manifest["artifact_versions"]["seeds"]["version"], "v0001")
 
+    def test_user_save_dir_in_raw_cfg_does_not_redirect_cached_outputs(self) -> None:
+        """Regression for Copilot review #003.
+
+        When a user supplies ``save_dir`` (or ``save_path``) in the raw stage
+        config for a cacheable stage, the runner must override it so the
+        artifact still lands in the versioned cache directory. Otherwise the
+        stage writes outside the artifact dir, ``finalize_artifact_plan`` cannot
+        find the outputs to hash, and the pipeline fails.
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            seen: list[str] = []
+
+            # Realistic stages that honor raw_cfg["save_dir"] / "save_path",
+            # mirroring the actual policy/design/seeds modules. The test then
+            # verifies the runner's override takes precedence.
+            async def policy(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+                seen.append("policy")
+                save_dir = Path(raw_cfg.get("save_dir") or ctx["policy_artifact_dir"])
+                save_dir.mkdir(parents=True, exist_ok=True)
+                (save_dir / "policy.json").write_text(
+                    json.dumps({"concept": {"name": ctx["concept_name"]}, "behaviors": []}),
+                    encoding="utf-8",
+                )
+                (save_dir / "systematization.json").write_text("{}", encoding="utf-8")
+                return {"policy_path": str(save_dir / "policy.json")}
+
+            async def design(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+                seen.append("design")
+                save_dir = Path(raw_cfg.get("save_dir") or ctx["design_artifact_dir"])
+                save_dir.mkdir(parents=True, exist_ok=True)
+                (save_dir / "design.json").write_text("{}", encoding="utf-8")
+                return {"design_path": str(save_dir / "design.json")}
+
+            async def seeds(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+                seen.append("seeds")
+                save_path = Path(raw_cfg.get("save_path") or ctx["seeds_path"])
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                save_path.write_text(
+                    '{"kind":"prompt","seed_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                    encoding="utf-8",
+                )
+                return {"seeds_path": str(save_path)}
+
+            modules = {
+                "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=policy),
+                "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=design),
+                "seeds": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="seeds.jsonl", run=seeds),
+            }
+
+            ctx = self._ctx(root)
+            # Inject user-provided output overrides into the cacheable stages.
+            user_policy_dir = root / "user-policy"
+            user_design_dir = root / "user-design"
+            user_seeds_path = root / "user-seeds" / "out.jsonl"
+            ctx["stages"] = [
+                ("policy", {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2, "save_dir": str(user_policy_dir)}),
+                ("design", {"model": {"name": "azure/gpt-5.4"}, "level_count": 3, "save_dir": str(user_design_dir)}),
+                (
+                    "seeds",
+                    {
+                        "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1},
+                        "save_path": str(user_seeds_path),
+                    },
+                ),
+            ]
+
+            with (
+                patch("p2m.runner._load_context", side_effect=[ctx]),
+                patch("p2m.runner.STAGES", modules),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(ctx["config_path"]))
+
+            self.assertEqual(code, 0)
+            suite_artifacts = root / "results" / "suite-a" / "artifacts"
+            self.assertTrue((suite_artifacts / "policy" / "v0001" / "policy.json").exists())
+            self.assertTrue((suite_artifacts / "design" / "v0001" / "design.json").exists())
+            self.assertTrue((suite_artifacts / "seeds" / "v0001" / "seeds.jsonl").exists())
+            # The user-supplied directories must be ignored entirely.
+            self.assertFalse(user_policy_dir.exists())
+            self.assertFalse(user_design_dir.exists())
+            self.assertFalse(user_seeds_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

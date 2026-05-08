@@ -28,6 +28,7 @@ from p2m.core.artifact_cache import (
     activate_artifact_plan,
     finalize_artifact_plan,
     is_cacheable_stage,
+    override_cacheable_output_paths,
     prepare_artifact_plan,
     refresh_compatibility_files,
     supports_artifact_cache,
@@ -420,6 +421,13 @@ def run_pipeline(
                         f"{plan.version}; input hashes match, use --force-stage {stage_name} to regenerate)"
                     )
                     continue
+                # Force cacheable stages to write into their versioned artifact
+                # directory regardless of any save_dir/save_path the user set
+                # in raw_cfg. Without this override, finalize_artifact_plan
+                # would look for outputs in plan.output_paths and fail (or
+                # silently produce stale cache entries) because the stage
+                # honored the user's path instead.
+                raw_cfg = override_cacheable_output_paths(stage_name, raw_cfg, plan)
             elif (
                 module.SUITE_OUTPUT
                 and stage_name not in requested_force_stages
