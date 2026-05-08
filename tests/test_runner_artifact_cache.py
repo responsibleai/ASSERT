@@ -388,6 +388,63 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertFalse(user_design_dir.exists())
             self.assertFalse(user_seeds_path.exists())
 
+    def test_failed_cacheable_stage_cleans_up_partial_version_dir(self) -> None:
+        """Regression for Jake's review (round 5).
+
+        When a cacheable suite stage fails after ``prepare_artifact_plan``
+        allocates ``vNNNN/`` (and the stage may have written partial outputs)
+        but before ``finalize_artifact_plan`` writes the sidecar, the runner
+        must remove the abandoned version directory so it does not leak on
+        disk and ``_next_version`` does not increment past empty slots.
+        """
+
+        modules = self._modules([])
+
+        async def failing_design(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+            # Simulate the realistic case where a stage writes partial
+            # outputs into its allocated artifact_dir before crashing.
+            Path(ctx["design_path"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(ctx["design_path"]).write_text(
+                '{"partial": true}', encoding="utf-8"
+            )
+            raise RuntimeError("simulated design failure")
+
+        modules["design"] = SimpleNamespace(
+            SCOPE="suite", SUITE_OUTPUT="design.json", run=failing_design
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            with (
+                patch("p2m.runner._load_context", return_value=ctx),
+                patch("p2m.runner.STAGES", modules),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(ctx["config_path"]))
+
+            self.assertEqual(code, 1)
+            design_root = (
+                root / "results" / "suite-a" / "artifacts" / "design"
+            )
+            # The abandoned v0001 directory must have been removed.
+            self.assertFalse((design_root / "v0001").exists())
+
+            # And on a follow-up run, _next_version should reuse v0001
+            # rather than incrementing past the cleaned-up slot.
+            seen: list[str] = []
+            modules2 = self._modules(seen)
+            with (
+                patch("p2m.runner._load_context", return_value=self._ctx(root)),
+                patch("p2m.runner.STAGES", modules2),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(ctx["config_path"]))
+
+            self.assertEqual(code, 0)
+            self.assertTrue((design_root / "v0001" / "design.json").exists())
+            self.assertFalse((design_root / "v0002").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

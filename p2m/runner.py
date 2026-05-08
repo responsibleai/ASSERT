@@ -26,6 +26,7 @@ from p2m.config import (
 from p2m.core.artifact_cache import (
     activate_latest_artifacts,
     activate_artifact_plan,
+    discard_artifact_plan,
     finalize_artifact_plan,
     is_cacheable_stage,
     override_cacheable_output_paths,
@@ -470,6 +471,16 @@ def run_pipeline(
         except Exception:  # noqa: BLE001
             ok = False
             log.error(f"[{stage_name}] Unexpected error", exc_info=True)
+
+        if not ok and stage_name in artifact_plans:
+            # The stage failed (either before or during finalize). For non-reused
+            # cacheable plans this means we allocated vNNNN/ but never wrote a
+            # complete artifact.json sidecar. Without cleanup, _next_version
+            # would forever increment past the abandoned slot and the stage_root
+            # would accumulate dead version directories on every failed run.
+            # discard_artifact_plan no-ops for reused plans so a downstream
+            # failure cannot wipe a healthy upstream cache hit.
+            discard_artifact_plan(ctx, artifact_plans[stage_name])
 
         elapsed = time.monotonic() - stage_start
         if ok:

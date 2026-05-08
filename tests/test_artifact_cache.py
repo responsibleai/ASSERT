@@ -1,3 +1,4 @@
+import logging
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -6,6 +7,7 @@ from p2m.core.artifact_cache import (
     activate_artifact_plan,
     activate_latest_artifacts,
     artifact_ref,
+    discard_artifact_plan,
     finalize_artifact_plan,
     hash_payload,
     override_cacheable_output_paths,
@@ -412,6 +414,210 @@ class ArtifactCacheTest(unittest.TestCase):
         )
         result = override_cacheable_output_paths("rollout", raw_cfg, plan)
         self.assertIs(result, raw_cfg)
+
+    def test_override_cacheable_output_paths_warns_when_user_save_dir_overridden(
+        self,
+    ) -> None:
+        """Regression for Jake's review (round 5).
+
+        Customers who set ``save_dir`` / ``save_path`` in YAML must see a
+        warning explaining why their location is being ignored when the
+        artifact cache is active for that stage. Silently swapping the value
+        is confusing.
+        """
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_count": 2,
+                "save_dir": "/home/user/my_runs/foo",
+            }
+            plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, plan)
+
+            with self.assertLogs("p2m.core.artifact_cache", level="WARNING") as cm:
+                override_cacheable_output_paths("policy", raw_cfg, plan)
+
+            joined = "\n".join(cm.output)
+            self.assertIn("save_dir", joined)
+            self.assertIn("/home/user/my_runs/foo", joined)
+            self.assertIn("policy", joined)
+
+    def test_override_cacheable_output_paths_silent_when_no_user_value(
+        self,
+    ) -> None:
+        """When the user did not set save_dir, the override is invisible —
+        no spurious warning should appear."""
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, plan)
+
+            logger = logging.getLogger("p2m.core.artifact_cache")
+            previous_level = logger.level
+            logger.setLevel(logging.WARNING)
+            try:
+                with self.assertNoLogs("p2m.core.artifact_cache", level="WARNING"):
+                    override_cacheable_output_paths("policy", raw_cfg, plan)
+            finally:
+                logger.setLevel(previous_level)
+
+
+class DiscardArtifactPlanTest(unittest.TestCase):
+    """Cleanup of allocated-but-not-finalized version directories.
+
+    Regression for Jake's review (round 5): a stage that fails after
+    ``prepare_artifact_plan`` allocates ``vNNNN/`` but before
+    ``finalize_artifact_plan`` writes the sidecar must not leave a dead
+    version directory on disk. Otherwise ``_next_version`` keeps incrementing
+    past abandoned slots and the stage_root accumulates leaks.
+    """
+
+    def _ctx(self, root: Path) -> dict:
+        config_path = root / "config.yaml"
+        config_path.write_text("suite: suite-a\n", encoding="utf-8")
+        suite_root = root / "results" / "suite-a"
+        suite_root.mkdir(parents=True, exist_ok=True)
+        return {
+            "config_path": config_path,
+            "artifacts_root": root / "artifacts",
+            "suite_root": suite_root,
+            "concept_name": "travel_planner_eval",
+            "concept": "Travel planner must produce grounded itineraries.",
+            "context": "Travel planner with flight and hotel tools.",
+            "artifact_versions": {},
+        }
+
+    def test_discard_removes_partial_version_dir_and_clears_ctx(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, plan)
+            plan.artifact_dir.mkdir(parents=True, exist_ok=True)
+            (plan.artifact_dir / "policy.json").write_text(
+                '{"behaviors":["partial"]}', encoding="utf-8"
+            )
+
+            self.assertTrue(plan.artifact_dir.exists())
+            self.assertIn("policy", ctx.get("artifact_versions", {}))
+
+            discard_artifact_plan(ctx, plan)
+
+            self.assertFalse(plan.artifact_dir.exists())
+            self.assertNotIn("policy", ctx.get("artifact_versions", {}))
+
+    def test_discard_handles_missing_directory_silently(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, plan)
+
+            self.assertFalse(plan.artifact_dir.exists())
+            discard_artifact_plan(ctx, plan)
+            self.assertNotIn("policy", ctx.get("artifact_versions", {}))
+
+    def test_discard_leaves_reused_plan_untouched(self) -> None:
+        """A reused plan points at a healthy on-disk artifact predating this
+        run. A downstream stage failure must not blow away that cache hit."""
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+
+            first_plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, first_plan)
+            first_plan.output_paths["policy"].parent.mkdir(parents=True, exist_ok=True)
+            first_plan.output_paths["policy"].write_text(
+                '{"behaviors":[]}', encoding="utf-8"
+            )
+            first_plan.output_paths["systematization"].write_text(
+                "{}", encoding="utf-8"
+            )
+            finalize_artifact_plan(ctx, first_plan)
+
+            reused_ctx = self._ctx(root)
+            reused_plan = prepare_artifact_plan(
+                ctx=reused_ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(reused_ctx, reused_plan)
+            self.assertTrue(reused_plan.reused)
+
+            discard_artifact_plan(reused_ctx, reused_plan)
+
+            self.assertTrue(reused_plan.artifact_dir.exists())
+            self.assertTrue(
+                (reused_plan.artifact_dir / "artifact.json").exists()
+            )
+
+    def test_next_version_does_not_leak_after_discard(self) -> None:
+        """After discard the slot is freed: the next prepare allocates the
+        same vNNNN number rather than incrementing past the abandoned one."""
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+
+            first_plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg=raw_cfg,
+                forced=False,
+            )
+            activate_artifact_plan(ctx, first_plan)
+            first_plan.artifact_dir.mkdir(parents=True, exist_ok=True)
+            (first_plan.artifact_dir / "policy.json").write_text(
+                '{"behaviors":["partial"]}', encoding="utf-8"
+            )
+            self.assertEqual(first_plan.version, "v0001")
+
+            discard_artifact_plan(ctx, first_plan)
+
+            retry_plan = prepare_artifact_plan(
+                ctx=ctx,
+                stage_name="policy",
+                raw_cfg={**raw_cfg, "behavior_count": 5},
+                forced=False,
+            )
+            self.assertEqual(retry_plan.version, "v0001")
 
 
 if __name__ == "__main__":

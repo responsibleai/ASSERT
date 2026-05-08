@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -41,6 +42,9 @@ from pathlib import Path
 from typing import Any
 
 from p2m.core.io import PROMPTS_DIR, write_json
+
+
+log = logging.getLogger(__name__)
 
 
 CACHEABLE_STAGES = ("policy", "design", "seeds")
@@ -211,6 +215,10 @@ def override_cacheable_output_paths(
     versioned artifact directory. ``finalize_artifact_plan`` reads back from
     ``plan.output_paths`` and would otherwise fail (or silently produce stale
     cache entries) if the stage wrote elsewhere.
+
+    Logs a warning per overridden key so users understand why a ``save_dir``
+    or ``save_path`` they set in YAML is being ignored — the artifact cache
+    owns those paths whenever it is active.
     """
 
     overrides = _RAW_CFG_OUTPUT_OVERRIDES.get(stage_name)
@@ -219,9 +227,22 @@ def override_cacheable_output_paths(
     cfg = dict(raw_cfg)
     for cfg_key, source in overrides:
         if source == "__artifact_dir__":
-            cfg[cfg_key] = str(plan.artifact_dir)
+            new_value = str(plan.artifact_dir)
         else:
-            cfg[cfg_key] = str(plan.output_paths[source])
+            new_value = str(plan.output_paths[source])
+        previous = raw_cfg.get(cfg_key)
+        if previous is not None and str(previous) != new_value:
+            log.warning(
+                "[%s] Ignoring %s=%r from config; artifact cache writes outputs "
+                "to %s. Use --force-stage %s to regenerate, or disable the cache "
+                "for this stage to honor the configured location.",
+                stage_name,
+                cfg_key,
+                previous,
+                new_value,
+                stage_name,
+            )
+        cfg[cfg_key] = new_value
     return cfg
 
 
@@ -368,6 +389,47 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
     return ref
 
 
+def discard_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> None:
+    """Roll back an allocated artifact version after a stage failure.
+
+    Removes the (possibly partially-written) version directory and clears the
+    stage's entry from ``ctx['artifact_versions']`` so that:
+
+    * no dead ``vNNNN/`` directory accumulates between failures (otherwise
+      ``_next_version`` keeps incrementing past abandoned slots and the
+      stage_root fills with empty/incomplete version dirs over time), and
+    * the failed run's manifest does not record an ``artifact_versions``
+      reference pointing at a directory we just deleted.
+
+    Reused plans are left untouched: the on-disk artifact predates this run,
+    and a downstream stage failure must not blow away a healthy cached
+    upstream artifact whose sidecar is intact. ``latest.json`` is also left
+    alone — ``finalize_artifact_plan`` is the only writer for non-reused
+    plans, so a non-reused plan that reaches ``discard_artifact_plan`` never
+    updated ``latest.json`` in the first place.
+    """
+
+    if plan.reused:
+        return
+    artifact_dir = plan.artifact_dir
+    if artifact_dir.exists() and artifact_dir.is_dir():
+        try:
+            shutil.rmtree(artifact_dir)
+        except OSError as exc:
+            log.warning(
+                "[artifact-cache] failed to clean up abandoned %s version %s "
+                "at %s: %s",
+                plan.stage_name,
+                plan.version,
+                artifact_dir,
+                exc,
+            )
+            return
+    artifacts = ctx.get("artifact_versions")
+    if isinstance(artifacts, dict):
+        artifacts.pop(plan.stage_name, None)
+
+
 def refresh_compatibility_files(
     ctx: dict[str, Any],
     stage_name: str,
@@ -496,6 +558,15 @@ def _stage_descriptor(
     stage_name: str,
     raw_cfg: dict[str, Any],
 ) -> dict[str, Any]:
+    # ``concept_hash`` is computed only for the policy stage. Downstream
+    # cacheable stages (design, seeds) do NOT recompute it — they pick the
+    # concept change up transitively via ``_dependency_descriptor``: design
+    # depends on policy's input_hash and seeds depends on design's, so any
+    # change to the concept invalidates policy's input_hash and the cascade
+    # invalidates every stage that consumes it. This relies on the
+    # dependency chain being complete; if a future cacheable stage stops
+    # depending on its upstream artifact, hash this concept directly here
+    # too or the cache will reuse stale outputs after a concept edit.
     concept_hash = None
     if stage_name == "policy":
         concept_hash = hash_payload({
