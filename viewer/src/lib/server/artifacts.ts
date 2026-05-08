@@ -187,13 +187,19 @@ function viewerArtifactPath(runDir: string, fileName: string): string {
 
 function manifestRelativePath(baseDir: string, rawPath: string): string | null {
 	const parts = rawPath.split(/[\\/]+/).filter((part) => part.length > 0 && part !== '.');
+	if (parts.length === 0) {
+		console.warn(
+			`[viewer] refusing manifest path that normalizes to no segments: ${rawPath}`
+		);
+		return null;
+	}
 	if (parts.some((part) => part === '..')) {
 		console.warn(
 			`[viewer] refusing manifest path with parent-directory segments: ${rawPath}`
 		);
 		return null;
 	}
-	return parts.length > 0 ? path.join(baseDir, ...parts) : baseDir;
+	return path.join(baseDir, ...parts);
 }
 
 function manifestArtifactPath(suiteDir: string, rawPath: unknown): string | null {

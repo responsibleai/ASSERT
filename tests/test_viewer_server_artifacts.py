@@ -1790,6 +1790,37 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                 suite_dir / "seeds.jsonl",
             )
 
+    def test_seed_artifact_path_rejects_paths_that_normalize_to_directory(self) -> None:
+        """Regression for Copilot review #002 (round 3).
+
+        A manifest path that normalizes to no segments (``"."``, ``"./"``,
+        ``"/."``) must not resolve to the suite directory itself, or the
+        loader will try to read a directory as a JSONL file (raising
+        IsADirectoryError / EISDIR).
+        """
+
+        from p2m.viewer_read_model import _manifest_relative_path, _seed_artifact_path
+
+        with TemporaryDirectory() as tmp_dir:
+            suite_dir = Path(tmp_dir) / "suite-a"
+            suite_dir.mkdir(parents=True)
+
+            for raw_path in (".", "./", "/.", "./.", "././"):
+                self.assertIsNone(
+                    _manifest_relative_path(suite_dir, raw_path),
+                    msg=f"expected None for {raw_path!r}",
+                )
+                manifest = {
+                    "artifact_versions": {
+                        "seeds": {"version": "v0001", "path": raw_path}
+                    }
+                }
+                self.assertEqual(
+                    _seed_artifact_path(suite_dir, manifest),
+                    suite_dir / "seeds.jsonl",
+                    msg=f"expected fallback for {raw_path!r}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

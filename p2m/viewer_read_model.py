@@ -56,10 +56,19 @@ def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
 
     Rejects any path with parent-directory (``..``) segments so that a
     tampered or corrupted ``manifest.json`` cannot redirect viewer reads
-    outside the suite directory.
+    outside the suite directory. Also rejects paths that normalize to no
+    segments (e.g. ``"."`` or ``"./"``) so the loader does not try to read
+    the suite directory itself as a JSONL file.
     """
 
     parts = [part for part in raw_path.replace("\\", "/").split("/") if part and part != "."]
+    if not parts:
+        print(
+            f"[viewer-read-model] warning: refusing manifest path that "
+            f"normalizes to no segments: {raw_path!r}",
+            file=sys.stderr,
+        )
+        return None
     if any(part == ".." for part in parts):
         print(
             f"[viewer-read-model] warning: refusing manifest path with parent "
@@ -67,7 +76,7 @@ def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
             file=sys.stderr,
         )
         return None
-    return base_dir.joinpath(*parts) if parts else base_dir
+    return base_dir.joinpath(*parts)
 
 
 def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Path:
