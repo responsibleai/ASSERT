@@ -635,12 +635,25 @@ def _recover_latest_valid_version(
     return None
 
 
+def _is_safe_artifact_basename(filename: Any) -> bool:
+    if not isinstance(filename, str) or not filename or filename in {".", ".."}:
+        return False
+    candidate = Path(filename)
+    if candidate.is_absolute():
+        return False
+    if candidate.name != filename:
+        return False
+    if any(sep in filename for sep in (os.sep, os.altsep) if sep):
+        return False
+    return True
+
+
 def _metadata_outputs_exist(version_dir: Path, metadata: dict[str, Any]) -> bool:
     files = metadata.get("files")
     if not isinstance(files, dict):
         return False
     for filename in files.values():
-        if not isinstance(filename, str) or not (version_dir / filename).exists():
+        if not _is_safe_artifact_basename(filename) or not (version_dir / filename).exists():
             return False
     return True
 
