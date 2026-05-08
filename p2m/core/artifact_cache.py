@@ -667,8 +667,19 @@ def _resolve_ref_path(suite_root: Path, raw_path: Any) -> Path | None:
     if not isinstance(raw_path, str) or not raw_path:
         return None
     path = Path(raw_path)
+    suite_root_resolved = suite_root.resolve()
     if path.is_absolute():
-        return path
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(suite_root_resolved)
+        except ValueError:
+            print(
+                f"[artifact-cache] warning: refusing to resolve absolute cache reference "
+                f"outside suite root: {raw_path!r}",
+                file=sys.stderr,
+            )
+            return None
+        return resolved_path
     parts = [part for part in raw_path.replace("\\", "/").split("/") if part and part != "."]
     if any(part == ".." for part in parts):
         # Defense in depth: a tampered or corrupted latest.json must not be
