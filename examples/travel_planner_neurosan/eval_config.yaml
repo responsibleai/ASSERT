@@ -7,8 +7,11 @@
 # "custom path" for frameworks without auto-instrumentors.
 #
 # Key difference from LangGraph demo:
-#   LangGraph: 2 lines (auto-instrument) → trace.backend: phoenix
-#   NeurOSan:  ~20 lines (manual spans) → trace.backend: otel
+#   LangGraph: 2 lines (auto-instrument)  → trace.backend: phoenix
+#   NeurOSan:  ~20 lines (manual spans)   → trace.backend: phoenix
+# The runtime treats trace.backend as informational; both auto-instrument
+# and manual OTel spans are read by the same in-process exporter. Use
+# trace.backend: phoenix consistently.
 # Same eval pipeline. Same results format. Same judge visibility.
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -74,20 +77,21 @@ pipeline:
       sample_size: 2
 
   # ── STAGE 3: ROLLOUT ───────────────────────────────────────────────
-  # Key difference: trace.backend: otel (generic OTel) instead of phoenix.
-  # The agent emits manual OTel spans (~20 lines in agent.py):
+  # Both LangGraph (auto-instrument) and NeurOSan (manual spans) use
+  # trace.backend: phoenix. The runtime's exporter is backend-agnostic
+  # — it captures whatever spans the global TracerProvider emits, no
+  # matter how they got there. The agent emits manual OTel spans
+  # (~20 lines in agent.py):
   #   with tracer.start_as_current_span("intent_classifier") as span:
   #       span.set_attribute("agent.name", "intent_classifier")
   #       result = classify(message)
-  # Same trace visibility, different instrumentation path.
   rollout:
     concurrency: 1
     target:
       callable: examples.travel_planner_neurosan.agent:chat
                                     # Python callable — same pattern as LangGraph.
       trace:
-        backend: otel               # ← Generic OTel (vs phoenix for auto-instrument).
-                                    # Reads spans from any OTel-compatible exporter.
+        backend: phoenix
         group_by: session.id
     auditor:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }

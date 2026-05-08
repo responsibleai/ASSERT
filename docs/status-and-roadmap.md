@@ -7,9 +7,9 @@ Adaptive Eval is in customer preview. It is useful for design partners and struc
 - Spec-driven pipeline: spec -> behavior categories -> test cases -> execute -> judge.
 - Local artifact layout under `artifacts/results/`.
 - `target.callable` for any agent or multi-agent system with a Python entrypoint.
-- Optional OTel/Phoenix trace capture for supported agent frameworks (opt-in upgrade for richer judge evidence).
+- OTel/Phoenix trace capture for 33+ supported frameworks via two-line auto-instrumentation, plus custom OTel SDK spans for everything else — the recommended integration path.
 - Hosted model targets.
-- Hosted model + tools targets for simple prompt-agent setups.
+- Prompt Agent target (`target.model` + `target.system_prompt` + optional `target.tools`) — declare agent behavior in YAML; the runtime owns the tool-call loop.
 - Judge dimensions with descriptions and rubrics.
 
 ## Still evolving

@@ -31,7 +31,7 @@ pipeline:
     target:
       callable: examples.travel_planner_neurosan.agent:chat
       trace:
-        backend: otel
+        backend: phoenix
         group_by: session.id
     auditor:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }

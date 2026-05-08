@@ -10,7 +10,7 @@ p2m run --config examples/pipes/<name>.yaml
 
 ## Simple target shapes
 
-These configs evaluate a health assistant with simple hosted-model and model+tools targets. They are useful smoke tests, but the flagship framework-agent example is `examples\travel_planner_langgraph\eval_config.yaml`.
+These configs evaluate a health assistant with simple hosted-model and Prompt Agent targets. They are useful smoke tests, but the flagship framework-agent example is `examples\travel_planner_langgraph\eval_config.yaml`.
 
 | Config | Target | What it demonstrates |
 |---|---|---|
@@ -22,4 +22,4 @@ These configs evaluate a health assistant with simple hosted-model and model+too
 
 > **Docker prerequisite.** The `_sandbox.yaml` and `_external.yaml` variants spin up containers per conversation. Make sure Docker Desktop is running before invoking those configs, or you'll see "docker daemon unavailable" errors.
 
-For any agent or multi-agent system, use `target.callable`. OTel trace capture is an optional upgrade for richer judge evidence. See [`..\travel_planner_langgraph\eval_config.yaml`](../travel_planner_langgraph/eval_config.yaml).
+For any agent or multi-agent system, use `target.callable` with OTel trace capture so the judge sees tool calls and routing. See [`..\travel_planner_langgraph\eval_config.yaml`](../travel_planner_langgraph/eval_config.yaml) for the recommended integration shape.

@@ -2,58 +2,44 @@
 
 Use the callable target for any agent or multi-agent system with a Python entry function. This is the universal integration boundary — frameworks (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, …), custom orchestration, REST clients, and thin model wrappers all qualify.
 
-## Shape
+The callable target has two integration paths:
 
-The callable can be synchronous or asynchronous. The simplest shape is:
+- **Recommended (happy path):** OTel-traced agent — two-line auto-instrumentation across 33 supported frameworks. The judge cites tool calls, routing decisions, model calls, and latency as evidence.
+- **Customization:** for unsupported frameworks (emit your own OTel spans) or for cases where instrumentation is impossible or unnecessary (plain callable / HTTP endpoint, no traces).
 
-```python
-def chat_sync(message: str) -> str:
-    return "assistant response"
-```
+## What the judge sees, by integration path
 
-Then configure:
+Pick the path that exposes enough internals for the judge to score what matters. OTel is recommended because every other path is strictly narrower.
 
-```yaml
-pipeline:
-  rollout:
-    target:
-      callable: package.module:chat_sync
-```
+| Observability for the judge | Plain `str` return | LiteLLM-style response | OTel traces (recommended) |
+|---|:---:|:---:|:---:|
+| Final response text | ✅ | ✅ | ✅ |
+| Final tool calls (names + arguments) | — | ✅ | ✅ |
+| Token usage | — | ✅ | ✅ |
+| Model name | — | ✅ | ✅ |
+| Intermediate tool calls (per step) | — | — | ✅ |
+| Routing / sub-agent decisions | — | — | ✅ |
+| Intermediate model calls | — | — | ✅ |
+| Per-span latency | — | — | ✅ |
+| **Total** | **1 / 8** | **4 / 8** | **8 / 8** |
 
-## Conversation history
+## Recommended: OTel-traced agent (33 frameworks)
 
-If your callable accepts a `history` parameter, Adaptive Eval can pass prior user/assistant turns:
+When your agent emits OpenTelemetry spans, the judge can cite tool arguments, routing decisions, model calls, and latency as evidence — not just the final response. This is the integration shape every flagship example uses.
 
-```python
-def chat_sync(message: str, history: list[dict[str, str]]) -> str:
-    ...
-```
-
-Use this shape for agents that need multi-turn state during scenario rollout.
-
-## Return values
-
-The callable can return:
-
-- a plain string
-- a structured model response supported by the runtime
-- a dictionary with text/content fields
-
-## Optional: add trace capture for richer evidence
-
-When the judge would benefit from seeing tool calls, routing, or intermediate decisions, add OpenTelemetry instrumentation around your callable. The simplest path is Phoenix + OpenInference auto-instrumentation:
+For 33 supported frameworks (OpenAI Agents SDK, LangChain/LangGraph, CrewAI, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, Smolagents, Instructor, Haystack, …), instrumentation is **two lines** at the top of your callable module:
 
 ```python
-# in your callable module, e.g. examples/travel_planner_langgraph/auto_trace.py
+# e.g. examples/travel_planner_langgraph/auto_trace.py
 from phoenix.otel import register
 
-register(auto_instrument=True)  # picks up any OpenInference instrumentor on PYTHONPATH
+register(auto_instrument=True)  # picks up any installed openinference-instrumentation-* package
 
 def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:
     return run_my_agent(message, history)
 ```
 
-Then opt in from your config:
+Wire the target up in your config:
 
 ```yaml
 pipeline:
@@ -65,25 +51,95 @@ pipeline:
         group_by: session.id
 ```
 
-Adaptive Eval will capture the OTel spans your agent emits and attach them to each transcript so the judge can cite tool arguments, routing decisions, and latency — not just the final response.
+See `examples/phoenix_auto_trace/` for one runnable file per framework.
 
-### Why trace capture matters
+### Why traces matter to the judge
 
-The judge can only score what it sees. With final-text-only:
+The judge can only score what it sees. With final text only:
 
 - it cannot tell if the agent used the right tool with the right arguments
 - it cannot tell which sub-agent or branch made a decision
 - "the answer was right but for the wrong reason" looks like a pass
 
-With trace capture, the judge can cite specific spans as evidence and catch process failures even when the surface answer looks fine.
+With trace capture, the judge cites specific spans as evidence and catches process failures even when the surface answer looks fine.
 
-## When the plain callable is enough
+## Customization
 
-Use the plain callable (no trace capture) when:
+The customization paths exist as fallbacks. The judge sees less, so use them only when (a) you cannot instrument the target or (b) you are validating the eval pipeline itself, not the agent.
 
-- you want a quick first integration
-- final text is enough for the first eval
-- the target does not yet emit useful spans
-- you are evaluating a small wrapper around an existing system
+### Customization with OTel traces (frameworks not on the auto-instrument list)
 
-Add trace capture later when tool calls, routing, or intermediate decisions matter to the judge.
+If your framework is not in the [auto-instrument list](https://github.com/Arize-ai/openinference#instrumentations) — or you have custom orchestration — emit OTel spans yourself with the OpenTelemetry SDK. Adaptive Eval's `target.trace` block reads the same span data either way.
+
+```yaml
+pipeline:
+  rollout:
+    target:
+      callable: examples.travel_planner_neurosan.agent:plan_trip_sync
+      trace:
+        backend: phoenix
+        group_by: session.id
+```
+
+`examples/travel_planner_neurosan/agent.py` shows ~20 lines that wrap a multi-agent flow in `tracer.start_as_current_span(...)` calls following OpenInference semantic conventions. Same trace visibility as auto-instrumentation; the judge cannot tell the difference.
+
+### Customization without traces
+
+Omit `target.trace` only when:
+
+- your target is a black-box API you cannot instrument
+- you are smoke-testing a thin wrapper around a hosted model
+- you are validating the eval pipeline itself, not the agent
+
+For real agents this is **not recommended** — the visibility table above shows what the judge loses. To recover tool-call visibility without OTel, return the response object from [LiteLLM](https://github.com/BerriAI/litellm) (a unified Python interface supporting 100+ model providers — Azure OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) directly:
+
+```python
+import litellm
+
+def chat(message: str, history: list[dict[str, str]]) -> "litellm.ModelResponse":
+    return litellm.completion(model="azure/gpt-5.4-mini", messages=history)
+```
+
+The judge then sees final tool calls, token usage, and model name — still narrower than OTel (no intermediate routing or sub-agent decisions).
+
+#### Plain Python callable (`target.callable`)
+
+Sync or async function with one of two signatures:
+
+```python
+def chat(message: str) -> str: ...                              # single-turn
+def chat(message: str, history: list[dict[str, str]]) -> str:   # multi-turn
+    ...
+```
+
+`history` follows the [OpenAI / LiteLLM chat-messages format](https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages), filtered to `user` / `assistant` roles only. The current user turn is at `history[-1]`; `message` is a convenience for callables that ignore history. System prompts are owned by your callable (`target.system_prompt` is consumed only by the Prompt Agent target).
+
+To round-trip directly into LiteLLM, pass `history` as `messages` — do **not** re-append `message` (it is already at `history[-1]`):
+
+```python
+import litellm
+
+def chat(message: str, history: list[dict[str, str]]) -> str:
+    response = litellm.completion(model="azure/gpt-5.4-mini", messages=history)
+    return response.choices[0].message.content
+```
+
+Return types and what the judge sees:
+
+| Return type | Judge sees |
+|---|---|
+| `str`, or `dict` with `text` / `content` | final response text only |
+| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`p2m.core.model_client.ModelResponse`](../../p2m/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `p2m.core.model_client.ModelResponse` internally) |
+
+#### HTTP endpoint (`target.endpoint`)
+
+When your agent runs as a service you cannot import as Python, point at its URL:
+
+```yaml
+pipeline:
+  rollout:
+    target:
+      endpoint: https://my-agent.internal/chat
+```
+
+The runtime POSTs `{"message": "...", "history": [...]}` (same `history` shape as above) and expects `{"response": "..."}` back. Same black-box visibility as a plain string-returning callable. Requires [`aiohttp`](https://github.com/aio-libs/aiohttp) (`pip install aiohttp`).

@@ -177,7 +177,7 @@ pipeline:
 Accepted keys:
 
 - `target` — mapping. Required when `rollout` is enabled.
-  - `model` — model config. Use for hosted model or simple model+tools targets.
+  - `model` — model config. Use for the [Prompt Agent target](docs/targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop).
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
   - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
   - `system_prompt` — string. Optional.

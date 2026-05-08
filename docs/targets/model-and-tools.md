@@ -1,8 +1,53 @@
-# Model and Tools Target
+# Prompt Agent Target (model + tools)
 
-Use the model and tools target for simple prompt agents: a hosted model, a system prompt, and optionally tool definitions.
+A **Prompt Agent** is an agent declared in YAML — a hosted model + a system prompt + an optional tool schema — with no orchestration code. The runtime owns the tool-call loop (up to 10 rounds, real Python tools or LLM-simulated tool responses); you own the prompt and the schema.
 
-## Hosted model
+The key value: **you can test the prompt and toolset design before any agent code is written.**
+
+## Test-driven prompt + toolset design
+
+You don't need an implemented agent to start evaluating. With a system prompt and a toolset YAML, you can run the full eval pipeline against a *simulated* tool layer — the runtime stands in a model that role-plays plausible tool responses. This lets you:
+
+- iterate on the system prompt against realistic conversations before any orchestration is written
+- catch toolset-design mistakes (missing arguments, ambiguous tool descriptions, unreachable tools) early
+- decide which behaviors require real backends and which can be specced from the prompt + schema alone
+
+```yaml
+pipeline:
+  rollout:
+    target:
+      model:
+        name: azure/gpt-5.4-mini
+        temperature: 0.0
+      system_prompt: |
+        You are a helpful assistant. Follow the product policy and ask clarifying
+        questions when user constraints are missing.
+      tools:
+        toolset: examples/agents/health_assistant_tools.yaml
+        simulator: azure/gpt-5.4-mini
+```
+
+The eval runs end-to-end: policy → test cases → rollout (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
+
+## Prompt Agent with real Python tools
+
+Once tools are implemented, point at the Python module that exposes them:
+
+```yaml
+pipeline:
+  rollout:
+    target:
+      model:
+        name: azure/gpt-5.4-mini
+      tools:
+        module: examples.agents.health_assistant
+```
+
+The toolset, system prompt, and rest of the eval config stay the same — only `tools.toolset` + `tools.simulator` are replaced by `tools.module`. This makes the TDD-then-real progression a one-line change.
+
+## Hosted model only (smoke)
+
+The smallest configuration — model + system prompt, no tools — for sanity-checking the eval pipeline against a Prompt Agent with no tool surface:
 
 ```yaml
 pipeline:
@@ -17,39 +62,6 @@ pipeline:
         questions when user constraints are missing.
 ```
 
-This is the fastest way to smoke-test a single model target.
+## When to switch to the callable target
 
-## Hosted model with Python tools
-
-```yaml
-pipeline:
-  rollout:
-    target:
-      model:
-        name: azure/gpt-5.4-mini
-      tools:
-        module: examples.agents.health_assistant
-```
-
-Use this when the tool implementation exists and can run locally.
-
-## Hosted model with simulated tools
-
-```yaml
-pipeline:
-  rollout:
-    target:
-      model:
-        name: azure/gpt-5.4-mini
-      tools:
-        toolset: examples/agents/health_assistant_tools.yaml
-        simulator: azure/gpt-5.4-mini
-```
-
-Simulated tools are useful when:
-
-- your prompt agent has a planned tool schema
-- real backends are not available yet
-- you want to test whether the model calls the right tool and uses plausible results
-
-They are not a replacement for evaluating a real agent or multi-agent system. If you already have a LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen/MAF, DSPy, or custom-orchestrated agent, prefer the [callable target](callable.md) — it accepts any agent or multi-agent system you can invoke from Python, with optional OTel trace capture for richer judge evidence.
+The Prompt Agent target is for agents declared in YAML — one model in a runtime-owned tool loop. Once you have a real agent implemented in code (LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen / MAF, DSPy, custom orchestration, …), switch to the [callable target](callable.md). At that point your code owns the loop, and the recommended OTel-traced integration captures routing, sub-agent decisions, and intermediate tool calls — visibility the Prompt Agent target cannot give you because, by design, you didn't write the loop.
