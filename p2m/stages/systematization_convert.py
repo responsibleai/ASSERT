@@ -137,20 +137,44 @@ async def run_systematization_to_policy(
     # Reasoning models don't support temperature
     if model_cfg.reasoning_effort is not None:
         temperature = None
-    response = await generate_structured(
-        model_cfg.name,
-        prompt,
-        schema_name="policy",
-        json_schema=POLICY_SCHEMA,
-        options=GenerateOptions(
-            temperature=temperature,
-            max_tokens=model_cfg.max_tokens,
-            reasoning_effort=model_cfg.reasoning_effort,
-        ),
-    )
-    policy_payload = response.parsed
+
+    # Retry structured generation up to 2 times if the model returns
+    # a response that doesn't parse into a valid policy dict.  This is
+    # a transient LLM output quality issue — the model occasionally
+    # produces malformed JSON even with response_format set.
+    _MAX_PARSE_ATTEMPTS = 2
+    policy_payload: dict[str, Any] | None = None
+    last_text = ""
+    for _attempt in range(_MAX_PARSE_ATTEMPTS):
+        response = await generate_structured(
+            model_cfg.name,
+            prompt,
+            schema_name="policy",
+            json_schema=POLICY_SCHEMA,
+            options=GenerateOptions(
+                temperature=temperature,
+                max_tokens=model_cfg.max_tokens,
+                reasoning_effort=model_cfg.reasoning_effort,
+            ),
+        )
+        if isinstance(response.parsed, dict) and response.parsed:
+            policy_payload = response.parsed
+            break
+        last_text = response.text or ""
+        if _attempt < _MAX_PARSE_ATTEMPTS - 1:
+            logging.warning(
+                "Policy generation returned unparseable output (attempt %d/%d), retrying",
+                _attempt + 1,
+                _MAX_PARSE_ATTEMPTS,
+            )
+
     if not isinstance(policy_payload, dict) or not policy_payload:
-        raise ValueError("systematization_convert returned no structured policy")
+        raise ValueError(
+            f"systematization_convert returned no structured policy after "
+            f"{_MAX_PARSE_ATTEMPTS} attempts (last response: {last_text[:200]}). "
+            f"This is usually a transient model issue — rerun the command to retry. "
+            f"If it persists, check your endpoint's token rate limit and quota."
+        )
 
     concept_block = policy_payload.get("concept")
     if not isinstance(concept_block, dict):
