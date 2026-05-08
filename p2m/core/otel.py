@@ -509,15 +509,26 @@ class LiveOTelExporter:
         LiveOTelExporter._sdk_exporter = _Collector()
         processor = SimpleSpanProcessor(LiveOTelExporter._sdk_exporter)
 
+        def _add_processor_preserving(provider, proc):
+            # Phoenix's TracerProvider removes its default gRPC exporter
+            # when add_span_processor is called. Passing
+            # replace_default_processor=False preserves it. Standard OTel
+            # SDK providers don't accept this kwarg, so fall back to the
+            # normal call which already appends correctly.
+            try:
+                provider.add_span_processor(proc, replace_default_processor=False)
+            except TypeError:
+                provider.add_span_processor(proc)
+
         # Piggyback on existing provider if one is set (e.g., by Phoenix register())
         existing = otel_trace.get_tracer_provider()
         if isinstance(existing, TracerProvider):
-            existing.add_span_processor(processor)
+            _add_processor_preserving(existing, processor)
         else:
             # Unwrap ProxyTracerProvider if needed
             real = getattr(existing, "_real_provider", None)
             if isinstance(real, TracerProvider):
-                real.add_span_processor(processor)
+                _add_processor_preserving(real, processor)
             else:
                 # No SDK provider exists — create one as fallback
                 provider = TracerProvider()
