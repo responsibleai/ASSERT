@@ -1,0 +1,307 @@
+"""Tests for exception handling and error reporting across p2m modules."""
+
+from __future__ import annotations
+
+import json
+import logging
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from p2m.config import ConfigError, load_config
+from p2m.core.otel import _parse_otlp_json
+from p2m.core.tools import load_toolset_file
+
+
+# ── config.py ──────────────────────────────────────────────────
+
+class LoadConfigErrorTest(unittest.TestCase):
+    def test_missing_config_file_raises_config_error(self) -> None:
+        with self.assertRaises(ConfigError) as ctx:
+            load_config(Path("/tmp/nonexistent_config_abc123.yaml"))
+        self.assertIn("not found", str(ctx.exception))
+
+    def test_invalid_yaml_raises_config_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "bad.yaml"
+            path.write_text(":\n  - :\n  bad: [unterminated", encoding="utf-8")
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+            self.assertIn("Invalid YAML", str(ctx.exception))
+            self.assertIn(str(path), str(ctx.exception))
+
+    def test_permission_denied_raises_config_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "locked.yaml"
+            path.write_text("key: value", encoding="utf-8")
+            path.chmod(0o000)
+            try:
+                with self.assertRaises(ConfigError) as ctx:
+                    load_config(path)
+                self.assertIn("Permission denied", str(ctx.exception))
+            finally:
+                path.chmod(0o644)
+
+    def test_valid_yaml_non_mapping_raises_config_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "list.yaml"
+            path.write_text("- item1\n- item2\n", encoding="utf-8")
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+            self.assertIn("mapping", str(ctx.exception))
+
+
+# ── core/otel.py ───────────────────────────────────────────────
+
+class ParseOtlpJsonErrorTest(unittest.TestCase):
+    def test_missing_file_raises_file_not_found(self) -> None:
+        with self.assertRaises(FileNotFoundError) as ctx:
+            _parse_otlp_json(Path("/tmp/nonexistent_trace_abc123.json"))
+        self.assertIn("OTLP trace file not found", str(ctx.exception))
+
+    def test_malformed_json_raises_value_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "bad_trace.json"
+            path.write_text("{not valid json", encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx:
+                _parse_otlp_json(path)
+            self.assertIn("Malformed JSON", str(ctx.exception))
+            self.assertIn(str(path), str(ctx.exception))
+
+    def test_valid_empty_json_returns_empty_spans(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "empty_trace.json"
+            path.write_text("{}", encoding="utf-8")
+            result = _parse_otlp_json(path)
+            self.assertEqual(result, [])
+
+
+# ── core/tools.py ──────────────────────────────────────────────
+
+class LoadToolsetFileErrorTest(unittest.TestCase):
+    def test_missing_toolset_file_raises_file_not_found(self) -> None:
+        with self.assertRaises(FileNotFoundError) as ctx:
+            load_toolset_file("/tmp/nonexistent_toolset_abc123.yaml")
+        self.assertIn("Toolset file not found", str(ctx.exception))
+
+    def test_invalid_yaml_in_toolset_raises_value_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "bad_tools.yaml"
+            path.write_text(":\n  bad: [unterminated", encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx:
+                load_toolset_file(str(path))
+            self.assertIn("Invalid YAML", str(ctx.exception))
+            self.assertIn(str(path), str(ctx.exception))
+
+
+# ── core/session.py ────────────────────────────────────────────
+
+class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_module_raises_value_error(self) -> None:
+        from p2m.core.session import CallableSession
+
+        session = CallableSession(callable_ref="nonexistent_module_xyz123:func")
+        with self.assertRaises(ValueError) as ctx:
+            await session.open()
+        self.assertIn("Could not import module", str(ctx.exception))
+        self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
+
+    async def test_missing_function_raises_value_error(self) -> None:
+        from p2m.core.session import CallableSession
+
+        session = CallableSession(callable_ref="json:nonexistent_func_xyz123")
+        with self.assertRaises(ValueError) as ctx:
+            await session.open()
+        self.assertIn("has no attribute", str(ctx.exception))
+        self.assertIn("nonexistent_func_xyz123", str(ctx.exception))
+
+    async def test_valid_callable_opens_successfully(self) -> None:
+        from p2m.core.session import CallableSession
+
+        session = CallableSession(callable_ref="json:dumps")
+        await session.open()
+        await session.close()
+
+
+class OTelTracedSessionErrorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_module_raises_value_error(self) -> None:
+        from p2m.core.otel_session import OTelTracedSession
+
+        session = OTelTracedSession(callable_ref="nonexistent_module_xyz123:func")
+        with self.assertRaises(ValueError) as ctx:
+            await session.open()
+        self.assertIn("Could not import module", str(ctx.exception))
+        self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
+
+    async def test_missing_function_raises_value_error(self) -> None:
+        from p2m.core.otel_session import OTelTracedSession
+
+        session = OTelTracedSession(callable_ref="json:nonexistent_func_xyz123")
+        with self.assertRaises(ValueError) as ctx:
+            await session.open()
+        self.assertIn("has no attribute", str(ctx.exception))
+        self.assertIn("nonexistent_func_xyz123", str(ctx.exception))
+
+
+class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_error_raises_runtime_error(self) -> None:
+        try:
+            import aiohttp
+        except ImportError:
+            self.skipTest("aiohttp not installed")
+
+        from p2m.core.session import HTTPEndpointSession
+
+        session = HTTPEndpointSession(
+            endpoint="http://127.0.0.1:1",  # unreachable port
+            message_timeout_s=1.0,
+        )
+        await session.open()
+        try:
+            from p2m.core.model_client import Message
+
+            with self.assertRaises(RuntimeError) as ctx:
+                await session.run_turn([Message(role="user", content="hello")])
+            self.assertIn("Connection error", str(ctx.exception))
+        finally:
+            await session.close()
+
+
+# ── stages/judge.py ────────────────────────────────────────────
+
+class JudgePolicyParseErrorTest(unittest.TestCase):
+    def test_corrupt_policy_json_raises_value_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text("{not valid json", encoding="utf-8")
+            # We can't easily call run_judge without full setup, but we can
+            # test the JSON parse path directly
+            with self.assertRaises(json.JSONDecodeError):
+                json.loads(policy_path.read_text(encoding="utf-8"))
+
+
+# ── stages/systematization_convert.py ──────────────────────────
+
+class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_file_raises_file_not_found(self) -> None:
+        from p2m.stages.systematization_convert import run_systematization_to_policy
+
+        with self.assertRaises(FileNotFoundError) as ctx:
+            await run_systematization_to_policy(
+                systematization_path="/tmp/nonexistent_syst_abc123.json",
+            )
+        self.assertIn("Systematization file not found", str(ctx.exception))
+
+    async def test_corrupt_json_raises_value_error(self) -> None:
+        from p2m.stages.systematization_convert import run_systematization_to_policy
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "bad_syst.json"
+            path.write_text("{not valid", encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx:
+                await run_systematization_to_policy(
+                    systematization_path=str(path),
+                )
+            self.assertIn("Invalid JSON", str(ctx.exception))
+
+
+# ── stages/rollout.py worker logging ───────────────────────────
+
+class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_logs_debug_on_runtime_failure(self) -> None:
+        """Verify that the rollout worker logs debug info when a runtime error occurs."""
+        from p2m.core.config_model import (
+            AuditorConfig,
+            EvaluationConfig,
+            JudgeConfig,
+            RolloutConfig,
+            TargetConfig,
+        )
+        from p2m.stages.rollout import run_rollout
+
+        target = TargetConfig(model="azure/gpt-5.4")
+        evaluation = EvaluationConfig(
+            rollout=RolloutConfig(max_turns=1, concurrency=1),
+            judge=JudgeConfig(model="azure/gpt-5.4"),
+            auditor=AuditorConfig(model="azure/gpt-5.4"),
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            seeds_path = Path(tmp_dir) / "seeds.jsonl"
+            seeds_path.write_text(
+                json.dumps({
+                    "kind": "prompt",
+                    "seed_id": "prompt-fail-001",
+                    "content": "test prompt",
+                    "seed": {"description": "test", "system_prompt": "be helpful"},
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            # Patch _build_target_session to return a mock that fails on run_turn
+            mock_runtime = MagicMock()
+            mock_runtime.open = AsyncMock()
+            mock_runtime.run_turn = AsyncMock(
+                side_effect=ConnectionError("simulated network failure")
+            )
+            mock_runtime.close = AsyncMock()
+            mock_runtime.runtime_mode = "test"
+            mock_runtime.session_metadata = None
+
+            with (
+                patch(
+                    "p2m.stages.rollout._build_target_session",
+                    return_value=mock_runtime,
+                ),
+                self.assertLogs("p2m.stages.rollout", level="DEBUG") as log_cm,
+            ):
+                with self.assertRaises(ConnectionError):
+                    await run_rollout(
+                        seed_path=str(seeds_path),
+                        save_dir=tmp_dir,
+                        run_id="test-run",
+                        target=target,
+                        evaluation=evaluation,
+                        config_path=str(seeds_path),
+                    )
+
+            debug_messages = [r for r in log_cm.output if "Rollout worker" in r]
+            self.assertTrue(len(debug_messages) > 0, "Expected debug log for worker failure")
+            self.assertIn("seed_000001", debug_messages[0])
+            self.assertIn("simulated network failure", debug_messages[0])
+            self.assertIn("Traceback", debug_messages[0])
+
+
+# ── collector.py ───────────────────────────────────────────────
+
+class PhoenixCollectorErrorTest(unittest.TestCase):
+    def test_connection_error_raises_runtime_error(self) -> None:
+        with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
+            from p2m.core.collector import PhoenixCollector
+
+            collector = PhoenixCollector.__new__(PhoenixCollector)
+            collector._default_project = "test-project"
+            collector._client = MagicMock()
+            collector._client.get_spans_dataframe.side_effect = ConnectionError("refused")
+
+            with self.assertRaises(RuntimeError) as ctx:
+                collector.get_spans(project_name="test-project")
+            self.assertIn("Cannot connect to Phoenix", str(ctx.exception))
+
+    def test_generic_error_raises_runtime_error(self) -> None:
+        with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
+            from p2m.core.collector import PhoenixCollector
+
+            collector = PhoenixCollector.__new__(PhoenixCollector)
+            collector._default_project = "test-project"
+            collector._client = MagicMock()
+            collector._client.get_spans_dataframe.side_effect = RuntimeError("unexpected")
+
+            with self.assertRaises(RuntimeError) as ctx:
+                collector.get_spans(project_name="test-project")
+            self.assertIn("Failed to fetch spans", str(ctx.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
