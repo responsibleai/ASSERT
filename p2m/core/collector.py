@@ -150,12 +150,27 @@ class PhoenixCollector:
         if name is None:
             raise ValueError("project_name required")
 
-        df: pd.DataFrame = self._client.get_spans_dataframe(
-            project_name=name,
-            start_time=start_time,
-            end_time=end_time,
-        )
+        try:
+            df: pd.DataFrame = self._client.get_spans_dataframe(
+                project_name=name,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        except ConnectionError as exc:
+            raise RuntimeError(
+                f"Cannot connect to Phoenix at {self._client._base_url if hasattr(self._client, '_base_url') else 'unknown'} "
+                f"for project '{name}': {exc}"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to fetch spans from Phoenix for project '{name}': {type(exc).__name__}: {exc}"
+            ) from exc
         if trace_ids:
+            if "context.trace_id" not in df.columns:
+                raise RuntimeError(
+                    "Phoenix DataFrame missing 'context.trace_id' column. "
+                    f"Available columns: {list(df.columns)}"
+                )
             df = df[df["context.trace_id"].isin(trace_ids)]
 
         return _dataframe_to_otel_spans(df)
