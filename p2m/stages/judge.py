@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from p2m.core.judge import (
     infer_judge_status,
     run_transcript_judge as run_llm_judge,
 )
+from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from p2m.viewer_read_model import build_run_viewer_artifacts
 
@@ -88,7 +90,12 @@ async def run_judge(
     resolved_policy_path = resolve_path(policy_path)
     if not resolved_policy_path.exists():
         raise ValueError(f"Policy file not found: {policy_path}")
-    policy_raw = json.loads(resolved_policy_path.read_text(encoding="utf-8"))
+    try:
+        policy_raw = json.loads(resolved_policy_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid JSON in policy file {resolved_policy_path}: {exc}"
+        ) from exc
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
@@ -163,7 +170,24 @@ async def run_judge(
                 "output_index": output_index,
                 "score_row": await score_row(row),
             }
+        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+            raise
+        except (json.JSONDecodeError, ValueError) as exc:
+            seed_id = row.get("seed_id", "?")
+            log.debug(
+                "Judge worker parse/validation error for seed %s: %s\n%s",
+                seed_id, exc, traceback.format_exc(),
+            )
+            return {
+                "output_index": output_index,
+                "error": exc,
+            }
         except Exception as exc:
+            seed_id = row.get("seed_id", "?")
+            log.debug(
+                "Judge worker failed for seed %s: %s\n%s",
+                seed_id, exc, traceback.format_exc(),
+            )
             return {
                 "output_index": output_index,
                 "error": exc,

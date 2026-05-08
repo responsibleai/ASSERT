@@ -118,7 +118,10 @@ async def run_policy(
     )
     policy_json = response.parsed
     if not isinstance(policy_json, dict):
-        raise ValueError("policy generation returned non-JSON output")
+        raise ValueError(
+            f"policy generation returned non-JSON output (model: {model}). "
+            f"Raw text (first 500 chars): {(response.text or '')[:500]}"
+        )
 
     save_path.mkdir(parents=True, exist_ok=True)
     policy_path = save_path / "policy.json"
