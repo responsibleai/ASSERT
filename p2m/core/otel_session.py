@@ -118,9 +118,20 @@ class OTelTracedSession:
         sys.stdout = io.StringIO()
         try:
             mod = importlib.import_module(module_path)
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                f"Could not import module '{module_path}' from callable ref "
+                f"'{self._callable_ref}'. Is the package installed? ({exc})"
+            ) from exc
         finally:
             sys.stdout = _orig_stdout
-        self._callable = getattr(mod, func_name)
+        try:
+            self._callable = getattr(mod, func_name)
+        except AttributeError as exc:
+            raise ValueError(
+                f"Module '{module_path}' has no attribute '{func_name}'. "
+                f"Check your callable reference '{self._callable_ref}'."
+            ) from exc
         sig = inspect.signature(self._callable)
         self._supports_history = "history" in sig.parameters
         self._session_id = uuid.uuid4().hex[:12]

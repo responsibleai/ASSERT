@@ -454,8 +454,20 @@ class CallableSession:
 
     async def open(self) -> None:
         module_path, func_name = self._callable_ref.rsplit(":", 1)
-        mod = importlib.import_module(module_path)
-        self._callable = getattr(mod, func_name)
+        try:
+            mod = importlib.import_module(module_path)
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                f"Could not import module '{module_path}' from callable ref "
+                f"'{self._callable_ref}'. Is the package installed? ({exc})"
+            ) from exc
+        try:
+            self._callable = getattr(mod, func_name)
+        except AttributeError as exc:
+            raise ValueError(
+                f"Module '{module_path}' has no attribute '{func_name}'. "
+                f"Check your callable reference '{self._callable_ref}'."
+            ) from exc
         sig = inspect.signature(self._callable)
         self._supports_history = "history" in sig.parameters
 
@@ -604,6 +616,8 @@ class HTTPEndpointSession:
             self._session = None
 
     async def run_turn(self, messages: list[Message]) -> TurnResult:
+        import aiohttp
+
         user_text = ""
         for msg in reversed(messages):
             if msg.role == "user":
@@ -618,14 +632,23 @@ class HTTPEndpointSession:
 
         payload = {"message": user_text, "history": history}
 
-        async with self._session.post(
-            self._endpoint,
-            json=payload,
-            headers=self._headers,
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-            response_text = data.get("response", "")
+        try:
+            async with self._session.post(
+                self._endpoint,
+                json=payload,
+                headers=self._headers,
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                response_text = data.get("response", "")
+        except aiohttp.ClientResponseError as exc:
+            raise RuntimeError(
+                f"HTTP endpoint {self._endpoint} returned status {exc.status}: {exc.message}"
+            ) from exc
+        except aiohttp.ClientError as exc:
+            raise RuntimeError(
+                f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
+            ) from exc
 
         interaction_messages = [
             {"role": "user", "content": user_text},
