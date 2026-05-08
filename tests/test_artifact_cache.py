@@ -243,6 +243,75 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertNotIn("MISSING", persisted_ref.get("artifact_dir", ""))
             self.assertNotIn("MISSING", persisted_ref.get("metadata_path", ""))
 
+    def test_activate_latest_handles_metadata_missing_primary_output_key(self) -> None:
+        """Regression for Copilot review (round 4).
+
+        ``_metadata_output_paths`` previously returned only the keys explicitly
+        listed in ``metadata['files']``. If the primary output key (e.g.
+        ``"policy"``) was missing from a corrupt or legacy metadata file,
+        ``activate_latest_artifacts`` would raise ``KeyError`` while indexing
+        ``output_paths[next(iter(_OUTPUT_FILES[stage_name]))]``. The merged
+        path map must always include every expected key so recovery never
+        crashes on partial metadata.
+        """
+
+        import json as _json
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = self._finalize_policy(ctx, raw_cfg)
+
+            metadata_path = plan.artifact_dir / "artifact.json"
+            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["files"] = {
+                key: value
+                for key, value in metadata.get("files", {}).items()
+                if key != "policy"
+            }
+            metadata_path.write_text(_json.dumps(metadata), encoding="utf-8")
+
+            recovery_ctx = self._ctx(root)
+            activate_latest_artifacts(recovery_ctx)
+
+            recovered = recovery_ctx.get("artifact_versions", {}).get("policy")
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["version"], plan.version)
+            self.assertTrue(Path(recovery_ctx["policy_path"]).exists())
+
+    def test_activate_latest_skips_when_canonical_primary_output_missing(self) -> None:
+        """Regression for Copilot review (round 4).
+
+        When a metadata file omits the primary output key, the tightened
+        ``_metadata_outputs_exist`` must verify the canonical default file
+        is present on disk before the artifact is treated as intact, so a
+        corrupt artifact missing its primary output cannot be activated.
+        """
+
+        import json as _json
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = self._finalize_policy(ctx, raw_cfg)
+
+            metadata_path = plan.artifact_dir / "artifact.json"
+            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["files"] = {
+                key: value
+                for key, value in metadata.get("files", {}).items()
+                if key != "policy"
+            }
+            metadata_path.write_text(_json.dumps(metadata), encoding="utf-8")
+            (plan.artifact_dir / "policy.json").unlink()
+
+            recovery_ctx = self._ctx(root)
+            activate_latest_artifacts(recovery_ctx)
+
+            self.assertNotIn("policy", recovery_ctx.get("artifact_versions", {}))
+
     def test_load_json_object_ignores_corrupt_json_gracefully(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             corrupt = Path(tmp_dir) / "latest.json"

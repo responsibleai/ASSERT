@@ -149,7 +149,7 @@ def prepare_artifact_plan(
     stage_root = suite_root / ARTIFACTS_DIR / stage_name
 
     if not forced:
-        match = _latest_matching_metadata(stage_root, fingerprint.input_hash)
+        match = _latest_matching_metadata(stage_name, stage_root, fingerprint.input_hash)
         if match is not None:
             version, metadata = match
             artifact_dir = stage_root / version
@@ -270,7 +270,7 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
             else resolved_metadata_path
         )
         metadata = _load_json_object(metadata_path)
-        if metadata and _metadata_outputs_exist(artifact_dir, metadata):
+        if metadata and _metadata_outputs_exist(stage_name, artifact_dir, metadata):
             output_paths = _metadata_output_paths(stage_name, artifact_dir, metadata)
             # If the original ref's path entries pointed at locations that no
             # longer exist, rebuild the ref with the resolved on-disk paths so
@@ -300,7 +300,7 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
             refresh_compatibility_files(ctx, stage_name, output_paths)
             continue
 
-        recovery = _recover_latest_valid_version(stage_root)
+        recovery = _recover_latest_valid_version(stage_name, stage_root)
         if recovery is None:
             print(
                 f"[artifact-cache] warning: latest.json references missing or "
@@ -610,7 +610,9 @@ def _normalize_value(value: Any) -> Any:
     return str(value)
 
 
-def _latest_matching_metadata(stage_root: Path, input_hash: str) -> tuple[str, dict[str, Any]] | None:
+def _latest_matching_metadata(
+    stage_name: str, stage_root: Path, input_hash: str
+) -> tuple[str, dict[str, Any]] | None:
     matches: list[tuple[str, dict[str, Any]]] = []
     for version_dir in _iter_version_dirs(stage_root):
         metadata = _load_json_object(version_dir / ARTIFACT_METADATA_FILE)
@@ -618,19 +620,20 @@ def _latest_matching_metadata(stage_root: Path, input_hash: str) -> tuple[str, d
             continue
         hashes = metadata.get("hashes")
         if isinstance(hashes, dict) and hashes.get("input_hash") == input_hash:
-            if _metadata_outputs_exist(version_dir, metadata):
+            if _metadata_outputs_exist(stage_name, version_dir, metadata):
                 matches.append((version_dir.name, metadata))
     return matches[-1] if matches else None
 
 
 def _recover_latest_valid_version(
+    stage_name: str,
     stage_root: Path,
 ) -> tuple[str, Path, dict[str, Any]] | None:
     """Return the most recent intact version dir for a stage, if any."""
 
     for version_dir in reversed(_iter_version_dirs(stage_root)):
         metadata = _load_json_object(version_dir / ARTIFACT_METADATA_FILE)
-        if metadata and _metadata_outputs_exist(version_dir, metadata):
+        if metadata and _metadata_outputs_exist(stage_name, version_dir, metadata):
             return version_dir.name, version_dir, metadata
     return None
 
@@ -648,12 +651,23 @@ def _is_safe_artifact_basename(filename: Any) -> bool:
     return True
 
 
-def _metadata_outputs_exist(version_dir: Path, metadata: dict[str, Any]) -> bool:
-    files = metadata.get("files")
-    if not isinstance(files, dict):
+def _metadata_outputs_exist(
+    stage_name: str, version_dir: Path, metadata: dict[str, Any]
+) -> bool:
+    """Return True iff every expected output file for ``stage_name`` exists.
+
+    Uses the merged path map from :func:`_metadata_output_paths` so a partial
+    or missing ``metadata['files']`` cannot trick the cache into activating a
+    half-written artifact (or one that is missing the primary output file).
+    """
+
+    output_paths = _metadata_output_paths(stage_name, version_dir, metadata)
+    expected_keys = _OUTPUT_FILES.get(stage_name, {}).keys()
+    if not expected_keys:
         return False
-    for filename in files.values():
-        if not _is_safe_artifact_basename(filename) or not (version_dir / filename).exists():
+    for key in expected_keys:
+        path = output_paths.get(key)
+        if path is None or not path.exists():
             return False
     return True
 
@@ -733,14 +747,29 @@ def _metadata_output_paths(
     artifact_dir: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Path]:
+    """Return on-disk paths for every expected output of ``stage_name``.
+
+    Always populates the full keyset from :data:`_OUTPUT_FILES` so callers can
+    safely index ``output_paths[<primary_key>]`` even when a partial or
+    legacy ``metadata['files']`` is missing entries. Filenames provided by
+    metadata override the canonical defaults so artifacts written under
+    older schemas continue to resolve correctly.
+    """
+
+    paths: dict[str, Path] = dict(_output_paths(stage_name, artifact_dir))
     files = metadata.get("files")
-    if not isinstance(files, dict):
-        return _output_paths(stage_name, artifact_dir)
-    paths: dict[str, Path] = {}
-    for key, filename in files.items():
-        if isinstance(key, str) and isinstance(filename, str):
+    if isinstance(files, dict):
+        for key, filename in files.items():
+            if not isinstance(key, str):
+                continue
+            if not _is_safe_artifact_basename(filename):
+                # Skip entries that would let a tampered artifact.json point at
+                # files outside the version directory (absolute paths, parent
+                # segments, embedded separators). The canonical default from
+                # ``_output_paths`` remains in place for this key.
+                continue
             paths[key] = artifact_dir / filename
-    return paths or _output_paths(stage_name, artifact_dir)
+    return paths
 
 
 def _file_hashes(output_paths: dict[str, Path]) -> dict[str, str]:
