@@ -277,6 +277,11 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
 
 class PhoenixCollectorErrorTest(unittest.TestCase):
     def test_connection_error_raises_runtime_error(self) -> None:
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas not installed")
+
         with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
             from p2m.core.collector import PhoenixCollector
 
@@ -290,6 +295,11 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
             self.assertIn("Cannot connect to Phoenix", str(ctx.exception))
 
     def test_generic_error_raises_runtime_error(self) -> None:
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas not installed")
+
         with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
             from p2m.core.collector import PhoenixCollector
 
