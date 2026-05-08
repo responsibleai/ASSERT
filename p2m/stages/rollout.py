@@ -688,6 +688,10 @@ async def _run_auditor_target_loop(
                 raise
             except Exception as exc:
                 last_error = str(exc)
+                log.debug(
+                    "Auditor call failed for seed %s turn %d attempt %d: %s\n%s",
+                    seed_id, turn_index, attempt, exc, traceback.format_exc(),
+                )
                 if attempt < 2:
                     auditor_messages.append(
                         Message(role="system", content=_AUDITOR_RETRY_GUIDANCE)
@@ -998,7 +1002,21 @@ async def run_rollout(
             else:
                 raise ValueError(f"unsupported seed kind: {kind}")
             return {"output_index": output_index, "transcript_row": transcript.to_dict()}
+        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+            raise
+        except (ValueError, KeyError) as exc:
+            seed_id = seed_row.get("seed_id", "?")
+            log.debug(
+                "Rollout worker config/validation error for seed %s: %s\n%s",
+                seed_id, exc, traceback.format_exc(),
+            )
+            return {"output_index": output_index, "error": exc}
         except Exception as exc:
+            seed_id = seed_row.get("seed_id", "?")
+            log.debug(
+                "Rollout worker failed for seed %s: %s\n%s",
+                seed_id, exc, traceback.format_exc(),
+            )
             return {"output_index": output_index, "error": exc}
 
     semaphore = asyncio.Semaphore(max(1, min(rollout.concurrency, len(pending_seeds) or 1)))

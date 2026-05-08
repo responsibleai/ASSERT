@@ -144,7 +144,13 @@ async def run_systematization(
     if not isinstance(payload, dict) or not payload:
         if not response.text:
             raise ValueError("systematization returned no structured systematization")
-        payload = json.loads(response.text)
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"systematization model returned unparseable output: {exc}. "
+                f"Raw text (first 500 chars): {response.text[:500]}"
+            ) from exc
 
     parsed = SystematizationResponse.model_validate(payload)
     _validate_systematization(parsed.systematization)
