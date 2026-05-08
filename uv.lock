@@ -3856,6 +3856,42 @@ wheels = [
 ]
 
 [[package]]
+name = "openinference-instrumentation-crewai"
+version = "0.1.17"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/7d/a33692382a2a82e963dad548811522a0fce64d497be895db1ce2ad121325/openinference_instrumentation_crewai-0.1.17.tar.gz", hash = "sha256:a978c93ff2a8122f9d35ddc00c58bdb9092f771718b35a96682175947a8e001b", size = 12246, upload-time = "2025-12-04T19:58:41.745Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/e9/8b7e170491a930bd7c680d48bccfb0c611d822f971130694324325b9bc8b/openinference_instrumentation_crewai-0.1.17-py3-none-any.whl", hash = "sha256:072b740dd3e0aa512054426808d80ba8bf8626e75149f0fb1ff35848501dd752", size = 13758, upload-time = "2025-12-04T19:58:38.593Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-dspy"
+version = "0.1.19"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1f/6a/c336e4298b99732f11e184cbc1f8067d9dcc40dd93056e9c756584cb515b/openinference_instrumentation_dspy-0.1.19.tar.gz", hash = "sha256:2d2bcc6a3c664a0c97232933cbfcaf1e580f870324bc0cb77fead4956c935006", size = 19253, upload-time = "2025-03-14T23:54:20.734Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/e5/65d83efaeebe4edd724b4328efa18c40a0c8f63a77e3f73c28780905788f/openinference_instrumentation_dspy-0.1.19-py3-none-any.whl", hash = "sha256:f05b5a2449793d603a83ac690071aa6864c318233b85d1b3f7560c25b3289ab5", size = 13334, upload-time = "2025-03-14T23:54:06.669Z" },
+]
+
+[[package]]
 name = "openinference-instrumentation-langchain"
 version = "0.1.63"
 source = { registry = "https://pypi.org/simple" }
@@ -3870,6 +3906,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bf/ed/a752b9827f3d49c49580417103c05ee41defe9242a13e50bde06e71146b4/openinference_instrumentation_langchain-0.1.63.tar.gz", hash = "sha256:fcfd010f9c2577cc78c2dbace7000c0855ee24ec0d2891c99f4df51072596def", size = 75540, upload-time = "2026-04-22T00:39:28.473Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/c2/3068ef467e0918d61c74fdfecd30a0cd44384a80d39046c957d5ff8e1611/openinference_instrumentation_langchain-0.1.63-py3-none-any.whl", hash = "sha256:c67f4c3e3a3848dfbb7f1c79fbe83f9501ebb7c6e297f624d719061cfc487162", size = 24746, upload-time = "2026-04-22T00:39:27.431Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-litellm"
+version = "0.1.30"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-sdk" },
+    { name = "setuptools" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/76/09c2c17c9b2d1315b0f106fdae2a11627cbbc82db54cbe28d06d6f0c687d/openinference_instrumentation_litellm-0.1.30.tar.gz", hash = "sha256:ef374d2bdd291ab812cfb03c065e811d8b0587dc0a9e0b050a990cfc158abeb2", size = 88828, upload-time = "2026-03-24T18:23:28.509Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/f0/6579a931a888c37f5a3ef88a9277565c4aea0ed4c67aaea65d2cfe775a6f/openinference_instrumentation_litellm-0.1.30-py3-none-any.whl", hash = "sha256:5f6ed221551e8000b390583cfe00e4463a71fb94d8ab4afac120ac21cdcf0f71", size = 16674, upload-time = "2026-03-24T18:23:26.349Z" },
 ]
 
 [[package]]
@@ -4243,7 +4297,11 @@ all = [
     { name = "numpy" },
     { name = "openai" },
     { name = "openai-agents" },
+    { name = "openinference-instrumentation-crewai" },
+    { name = "openinference-instrumentation-dspy" },
     { name = "openinference-instrumentation-langchain" },
+    { name = "openinference-instrumentation-litellm" },
+    { name = "openinference-instrumentation-openai" },
     { name = "openpyxl" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -4283,6 +4341,10 @@ examples = [
     { name = "llama-index-core" },
     { name = "llama-index-llms-openai" },
     { name = "openai-agents" },
+    { name = "openinference-instrumentation-crewai" },
+    { name = "openinference-instrumentation-dspy" },
+    { name = "openinference-instrumentation-litellm" },
+    { name = "openinference-instrumentation-openai" },
     { name = "pydantic-ai" },
     { name = "smolagents" },
 ]
@@ -4334,7 +4396,11 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'regression'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'analysis'", specifier = ">=1.30.0" },
     { name = "openai-agents", marker = "extra == 'examples'", specifier = ">=0.14.5" },
+    { name = "openinference-instrumentation-crewai", marker = "extra == 'examples'", specifier = ">=0.1.17,<0.1.18" },
+    { name = "openinference-instrumentation-dspy", marker = "extra == 'examples'", specifier = ">=0.1.19,<0.1.20" },
     { name = "openinference-instrumentation-langchain", marker = "extra == 'otel'", specifier = ">=0.1.62" },
+    { name = "openinference-instrumentation-litellm", marker = "extra == 'examples'", specifier = ">=0.1.30" },
+    { name = "openinference-instrumentation-openai", marker = "extra == 'examples'", specifier = ">=0.1.45" },
     { name = "openpyxl", marker = "extra == 'analysis'", specifier = ">=3.1.5" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.39.0" },
