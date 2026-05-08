@@ -115,7 +115,14 @@ async def run_systematization_to_policy(
     data_path = Path(systematization_path).expanduser()
     if not data_path.is_absolute():
         data_path = BASE_DIR / data_path
-    data = json.loads(data_path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Systematization file not found: {data_path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid JSON in systematization file {data_path}: {exc}"
+        ) from exc
     concept = str(data.get("concept") or "").strip()
     if not concept:
         raise ValueError("systematization_convert requires systematization.json to include concept")

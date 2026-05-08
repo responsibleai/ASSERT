@@ -87,7 +87,14 @@ def require(condition: bool, message: str) -> None:
 
 def load_config(cfg_path: Path) -> dict[str, Any]:
     """Load one YAML config file and require a mapping at the top level."""
-    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ConfigError(f"Config file not found: {cfg_path}") from None
+    except PermissionError as exc:
+        raise ConfigError(f"Permission denied reading config file: {cfg_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Invalid YAML in config file {cfg_path}: {exc}") from exc
     require(isinstance(data, dict), "Top-level YAML must be a mapping")
     return data
 

@@ -96,7 +96,12 @@ def parse_otel_traces(
 
 def _parse_otlp_json(path: Path) -> list[OTelSpan]:
     """Parse OTLP JSON export format."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"OTLP trace file not found: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Malformed JSON in OTLP trace file {path}: {exc}") from exc
 
     spans: list[OTelSpan] = []
     for resource_span in data.get("resourceSpans", []):

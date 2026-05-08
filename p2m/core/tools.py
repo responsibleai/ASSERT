@@ -76,7 +76,12 @@ def build_target_tools(item_tools: List[Dict[str, Any]]) -> list[dict[str, Any]]
 
 def load_toolset_file(path: str | Path) -> list[dict[str, Any]]:
     resolved = Path(path).expanduser()
-    data = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Toolset file not found: {resolved}") from None
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in toolset file {resolved}: {exc}") from exc
     if isinstance(data, dict) and "tools" in data:
         data = data["tools"]
     if not isinstance(data, list):
