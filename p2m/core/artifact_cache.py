@@ -250,18 +250,48 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
             continue
         stage_root = suite_root / ARTIFACTS_DIR / stage_name
         fallback_artifact_dir = stage_root / version
-        artifact_dir = _resolve_ref_path(suite_root, ref.get("artifact_dir"))
-        if artifact_dir is None or not artifact_dir.exists():
-            artifact_dir = fallback_artifact_dir
-        metadata_path = _resolve_ref_path(
+        resolved_artifact_dir = _resolve_ref_path(suite_root, ref.get("artifact_dir"))
+        artifact_dir_fallback_used = (
+            resolved_artifact_dir is None or not resolved_artifact_dir.exists()
+        )
+        artifact_dir = (
+            fallback_artifact_dir if artifact_dir_fallback_used else resolved_artifact_dir
+        )
+        resolved_metadata_path = _resolve_ref_path(
             suite_root,
             ref.get("metadata_path") or ref.get("relative_metadata_path"),
         )
-        if metadata_path is None or not metadata_path.exists():
-            metadata_path = artifact_dir / ARTIFACT_METADATA_FILE
+        metadata_path_fallback_used = (
+            resolved_metadata_path is None or not resolved_metadata_path.exists()
+        )
+        metadata_path = (
+            artifact_dir / ARTIFACT_METADATA_FILE
+            if metadata_path_fallback_used
+            else resolved_metadata_path
+        )
         metadata = _load_json_object(metadata_path)
         if metadata and _metadata_outputs_exist(artifact_dir, metadata):
             output_paths = _metadata_output_paths(stage_name, artifact_dir, metadata)
+            # If the original ref's path entries pointed at locations that no
+            # longer exist, rebuild the ref with the resolved on-disk paths so
+            # downstream manifest writes and update_latest don't propagate the
+            # stale references any further.
+            if artifact_dir_fallback_used or metadata_path_fallback_used:
+                ref = _ref_from_metadata(
+                    ctx,
+                    stage_name=stage_name,
+                    version=version,
+                    artifact_dir=artifact_dir,
+                    metadata=metadata,
+                    primary_path=output_paths[next(iter(_OUTPUT_FILES[stage_name]))],
+                )
+                update_latest(ctx, stage_name, ref)
+                print(
+                    f"[artifact-cache] warning: latest.json {stage_name} entry "
+                    f"referenced missing paths; rebuilt ref pointing at the "
+                    f"current on-disk location of version {version}.",
+                    file=sys.stderr,
+                )
             ctx.setdefault("artifact_versions", {})[stage_name] = ref
             ctx[_CONTEXT_DIR_KEYS[stage_name]] = str(artifact_dir)
             for output_key, context_key in _CONTEXT_PATH_KEYS[stage_name].items():

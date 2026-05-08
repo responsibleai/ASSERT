@@ -201,6 +201,48 @@ class ArtifactCacheTest(unittest.TestCase):
             activate_latest_artifacts(recovery_ctx)
             self.assertNotIn("policy", recovery_ctx.get("artifact_versions", {}))
 
+    def test_activate_latest_rebuilds_ref_when_recorded_paths_are_stale(self) -> None:
+        """Regression for Copilot review #001 (round 2).
+
+        When latest.json's ref points at an artifact_dir/metadata_path that no
+        longer exists but the version directory itself is intact at the
+        canonical location, ``activate_latest_artifacts`` must rebuild the ref
+        using the resolved on-disk paths and persist the corrected ref through
+        ``update_latest`` instead of silently propagating the stale paths into
+        downstream manifests.
+        """
+
+        import json as _json
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            plan = self._finalize_policy(ctx, raw_cfg)
+
+            suite_root = Path(ctx["suite_root"])
+            latest_path = suite_root / "latest.json"
+            latest = _json.loads(latest_path.read_text(encoding="utf-8"))
+            policy_ref = latest["artifacts"]["policy"]
+            policy_ref["artifact_dir"] = "artifacts/policy/MISSING"
+            policy_ref["metadata_path"] = "artifacts/policy/MISSING/artifact.json"
+            latest_path.write_text(_json.dumps(latest), encoding="utf-8")
+
+            recovery_ctx = self._ctx(root)
+            activate_latest_artifacts(recovery_ctx)
+
+            recovered = recovery_ctx.get("artifact_versions", {}).get("policy")
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["version"], plan.version)
+            self.assertNotIn("MISSING", recovered.get("artifact_dir", ""))
+            self.assertNotIn("MISSING", recovered.get("metadata_path", ""))
+            # The corrected ref must also be persisted to latest.json so the
+            # next run does not have to re-recover.
+            persisted = _json.loads(latest_path.read_text(encoding="utf-8"))
+            persisted_ref = persisted["artifacts"]["policy"]
+            self.assertNotIn("MISSING", persisted_ref.get("artifact_dir", ""))
+            self.assertNotIn("MISSING", persisted_ref.get("metadata_path", ""))
+
     def test_load_json_object_ignores_corrupt_json_gracefully(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             corrupt = Path(tmp_dir) / "latest.json"

@@ -263,48 +263,6 @@ class ViewerServerArtifactsTest(unittest.TestCase):
 
             self.assertEqual(prompt_rows[0]["factors"]["behavior"], "versioned behavior")
 
-    def test_seed_artifact_path_rejects_parent_directory_segments(self) -> None:
-        """Regression for Copilot review #004.
-
-        A tampered or corrupted ``manifest.json`` must not be able to escape
-        the suite directory by including ``..`` segments in the seed artifact
-        path. The helper should reject the path and the loader must fall back
-        to the suite-level ``seeds.jsonl``.
-        """
-
-        from p2m.viewer_read_model import _manifest_relative_path, _seed_artifact_path
-
-        with TemporaryDirectory() as tmp_dir:
-            suite_dir = Path(tmp_dir) / "suite-a"
-            suite_dir.mkdir(parents=True)
-
-            self.assertIsNone(_manifest_relative_path(suite_dir, "../../etc/passwd"))
-            self.assertIsNone(_manifest_relative_path(suite_dir, "artifacts/../../escape"))
-            self.assertEqual(
-                _manifest_relative_path(suite_dir, "artifacts/seeds/v0001/seeds.jsonl"),
-                suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl",
-            )
-
-            malicious_manifest = {
-                "artifact_versions": {
-                    "seeds": {"version": "v0001", "path": "../../etc/passwd"}
-                }
-            }
-            self.assertEqual(
-                _seed_artifact_path(suite_dir, malicious_manifest),
-                suite_dir / "seeds.jsonl",
-            )
-
-            safe_manifest = {
-                "artifact_versions": {
-                    "seeds": {"version": "v0001", "path": "artifacts/seeds/v0001/seeds.jsonl"}
-                }
-            }
-            self.assertEqual(
-                _seed_artifact_path(suite_dir, safe_manifest),
-                suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl",
-            )
-
     def test_build_viewer_read_model_rejects_duplicate_transcript_keys(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -1785,6 +1743,46 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
             malicious_manifest = {
                 "artifact_versions": {
                     "seeds": {"version": "v0001", "path": "../../etc/passwd"}
+                }
+            }
+            self.assertEqual(
+                _seed_artifact_path(suite_dir, malicious_manifest),
+                suite_dir / "seeds.jsonl",
+            )
+
+            safe_manifest = {
+                "artifact_versions": {
+                    "seeds": {"version": "v0001", "path": "artifacts/seeds/v0001/seeds.jsonl"}
+                }
+            }
+            self.assertEqual(
+                _seed_artifact_path(suite_dir, safe_manifest),
+                suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl",
+            )
+
+    def test_seed_artifact_path_rejects_absolute_paths(self) -> None:
+        """Regression for Copilot review #003 (round 2).
+
+        A tampered manifest that supplies an absolute seed path must be
+        ignored — otherwise the absolute branch silently bypasses the
+        relative ``..`` defense and reads from anywhere on disk.
+        """
+
+        from p2m.viewer_read_model import _seed_artifact_path
+
+        with TemporaryDirectory() as tmp_dir:
+            suite_dir = Path(tmp_dir) / "suite-a"
+            suite_dir.mkdir(parents=True)
+
+            absolute_target = Path(tmp_dir) / "outside.jsonl"
+            absolute_target.write_text("{}\n", encoding="utf-8")
+
+            malicious_manifest = {
+                "artifact_versions": {
+                    "seeds": {
+                        "version": "v0001",
+                        "path": str(absolute_target),
+                    }
                 }
             }
             self.assertEqual(

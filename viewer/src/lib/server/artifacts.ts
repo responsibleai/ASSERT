@@ -198,7 +198,13 @@ function manifestRelativePath(baseDir: string, rawPath: string): string | null {
 
 function manifestArtifactPath(suiteDir: string, rawPath: unknown): string | null {
 	if (typeof rawPath !== 'string' || rawPath.length === 0) return null;
-	if (path.isAbsolute(rawPath)) return rawPath;
+	if (path.isAbsolute(rawPath)) {
+		// A tampered or corrupted manifest.json must not be able to redirect
+		// viewer reads outside the suite directory via an absolute path,
+		// which would otherwise bypass the relative-path '..' defense.
+		console.warn(`[viewer] refusing absolute manifest artifact path: ${rawPath}`);
+		return null;
+	}
 	return manifestRelativePath(suiteDir, rawPath);
 }
 

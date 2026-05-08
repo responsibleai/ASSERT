@@ -79,12 +79,20 @@ def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Pat
         if isinstance(seeds, dict):
             raw_path = seeds.get("path") or seeds.get("relative_path")
             if isinstance(raw_path, str) and raw_path:
-                path = Path(raw_path)
-                if path.is_absolute():
-                    return path
-                resolved = _manifest_relative_path(suite_dir, raw_path)
-                if resolved is not None:
-                    return resolved
+                if Path(raw_path).is_absolute():
+                    # A tampered or corrupted manifest.json must not be able
+                    # to redirect viewer reads outside the suite directory
+                    # via an absolute path, which would bypass the relative
+                    # '..' defense in _manifest_relative_path.
+                    print(
+                        f"[viewer-read-model] warning: refusing absolute "
+                        f"manifest artifact path: {raw_path!r}",
+                        file=sys.stderr,
+                    )
+                else:
+                    resolved = _manifest_relative_path(suite_dir, raw_path)
+                    if resolved is not None:
+                        return resolved
     return suite_dir / "seeds.jsonl"
 
 
