@@ -48,3 +48,6 @@ p2m-experiments/
 # Build artifacts
 *.egg-info/
 p2m_policy.*
+
+# Internal Copilot CLI instructions (per-repo, never committed)
+.github/instructions/preview-boundary.instructions.md
