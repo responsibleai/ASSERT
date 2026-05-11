@@ -118,15 +118,26 @@ def _resolve_path(
     cfg_dir: Path | None = None,
     use_artifacts_root: bool = False,
 ) -> str:
-    """Resolve one path against artifacts and config roots."""
+    """Resolve one path against artifacts and config roots.
+
+    Validates that relative paths do not escape their expected root directory
+    via traversal sequences.
+    """
     candidate = Path(path).expanduser()
     if candidate.is_absolute():
+        # Absolute paths are explicitly specified by the user; allow them.
+        # The _validate_identifier and _require_within checks on suite_root/run_root
+        # already protect against path traversal in identifiers.
         return str(candidate.resolve())
     artifact_relative = _strip_artifact_root_prefix(candidate, artifacts_root)
     if artifact_relative is not None:
-        return str((artifacts_root / artifact_relative).resolve())
+        resolved = (artifacts_root / artifact_relative).resolve()
+        _require_within(resolved, artifacts_root, f"artifact path '{path}'")
+        return str(resolved)
     primary_root = artifacts_root if use_artifacts_root or cfg_dir is None else cfg_dir
-    return str((primary_root / candidate).resolve())
+    resolved = (primary_root / candidate).resolve()
+    _require_within(resolved, primary_root, f"resolved path '{path}'")
+    return str(resolved)
 
 
 def _validate_pipeline_stages(

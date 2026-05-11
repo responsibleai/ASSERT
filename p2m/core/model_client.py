@@ -301,11 +301,16 @@ def summarize_response(response: ModelResponse) -> dict[str, Any]:
 
 
 def build_llm_call_trace(response: ModelResponse, *, source: str) -> dict[str, Any]:
-    """Build an artifact-safe owned LLM call trace."""
+    """Build an artifact-safe owned LLM call trace.
+
+    Sanitizes request payloads to prevent credential leakage in artifact files.
+    """
+    from p2m.core.security import sanitize_payload
+
     return {
         "source": source,
         "api_mode": response.api_mode or "",
-        "request": to_jsonable(response.request_payload or {}),
+        "request": sanitize_payload(to_jsonable(response.request_payload or {})),
         "response": to_jsonable(response.raw),
         "derived": summarize_response(response),
     }

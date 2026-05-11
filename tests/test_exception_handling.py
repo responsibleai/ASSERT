@@ -151,12 +151,16 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         except ImportError:
             self.skipTest("aiohttp not installed")
 
+        import os
+        from unittest.mock import patch as env_patch
+
         from p2m.core.session import HTTPEndpointSession
 
-        session = HTTPEndpointSession(
-            endpoint="http://127.0.0.1:59123",  # closed high port
-            message_timeout_s=1.0,
-        )
+        with env_patch.dict(os.environ, {"P2M_ALLOW_PRIVATE_ENDPOINTS": "1"}):
+            session = HTTPEndpointSession(
+                endpoint="http://127.0.0.1:59123",  # closed high port
+                message_timeout_s=1.0,
+            )
         await session.open()
         try:
             from p2m.core.model_client import Message

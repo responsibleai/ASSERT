@@ -453,6 +453,9 @@ class CallableSession:
         return "callable"
 
     async def open(self) -> None:
+        from p2m.core.security import validate_callable_ref
+
+        validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
         try:
             mod = importlib.import_module(module_path)
@@ -589,6 +592,9 @@ class HTTPEndpointSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
     ) -> None:
+        from p2m.core.security import validate_endpoint_url
+
+        validate_endpoint_url(endpoint)
         self._endpoint = endpoint
         self._headers = headers or {}
         self._system_prompt = system_prompt
@@ -674,6 +680,9 @@ class ExternalSession:
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
     ) -> None:
+        from p2m.core.security import validate_module_ref
+
+        validate_module_ref(connector_ref, config_path=config_path)
         connector_cls = _discover_connector_class(load_tool_module(connector_ref, config_path=config_path))
         self._startup_timeout_s = startup_timeout_s
         self._message_timeout_s = message_timeout_s

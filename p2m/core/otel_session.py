@@ -110,6 +110,9 @@ class OTelTracedSession:
         import io
         import sys
 
+        from p2m.core.security import validate_callable_ref
+
+        validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
         # Suppress Phoenix/OTel banner output during module import.
         # Phoenix's register(verbose=True) prints a multi-line banner to
