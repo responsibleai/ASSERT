@@ -615,6 +615,69 @@ class TestOTelTracedSession(unittest.TestCase):
         finally:
             del sys.modules["_test_otel_target"]
 
+    def test_project_name_sets_env_var(self):
+        """project_name should set PHOENIX_PROJECT_NAME before module import."""
+        from p2m.core.otel_session import OTelTracedSession
+
+        import os
+        import sys
+        import types
+
+        captured_env = {}
+        mod = types.ModuleType("_test_otel_projname")
+        _original_init = mod.__dict__.get("__init__")
+
+        # Record the env var value at module import time
+        captured_env["at_import"] = os.environ.get("PHOENIX_PROJECT_NAME")
+        mod.target = lambda msg: "ok"
+
+        # We need the env capture to happen at import time.
+        # Create a fresh module that captures env on import.
+        code = (
+            "import os\n"
+            "CAPTURED_PROJECT = os.environ.get('PHOENIX_PROJECT_NAME')\n"
+            "def target(msg): return 'ok'\n"
+        )
+        mod = types.ModuleType("_test_otel_projname")
+        exec(code, mod.__dict__)
+        # Don't register yet — we'll let open() do the import
+
+        # Remove from sys.modules so open() triggers a fresh import
+        sys.modules.pop("_test_otel_projname", None)
+
+        # Write a temp module file so importlib can find it
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        modpath = os.path.join(tmpdir, "_test_otel_projname.py")
+        with open(modpath, "w") as f:
+            f.write(code)
+
+        sys.path.insert(0, tmpdir)
+        try:
+            original_val = os.environ.get("PHOENIX_PROJECT_NAME")
+            session = OTelTracedSession(
+                callable_ref="_test_otel_projname:target",
+                project_name="my-test-project",
+            )
+
+            async def _run():
+                await session.open()
+                await session.close()
+
+            asyncio.run(_run())
+
+            # Verify the module captured the env var at import time
+            imported = sys.modules["_test_otel_projname"]
+            self.assertEqual(imported.CAPTURED_PROJECT, "my-test-project")
+
+            # Verify env var is restored after open()
+            self.assertEqual(os.environ.get("PHOENIX_PROJECT_NAME"), original_val)
+        finally:
+            sys.path.remove(tmpdir)
+            sys.modules.pop("_test_otel_projname", None)
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_run_turn_with_history(self):
         """OTelTracedSession should detect and pass history parameter."""
         from p2m.core.otel_session import OTelTracedSession
