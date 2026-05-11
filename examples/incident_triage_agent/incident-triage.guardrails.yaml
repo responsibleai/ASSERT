@@ -1,0 +1,393 @@
+metadata:
+  name: "incident-triage-agent"
+  version: "1.0.0"
+  description: >-
+    Runtime guardrails for the incident-triage agent. Closes the 6
+    procedural failure modes surfaced by p2m's BEFORE eval
+    (eval_config_baseline.yaml) deterministically, leaving the 2
+    model-judgment residual modes (wrong severity classification,
+    semantic fabrication) for the developer to fix in code/prompt.
+  agent_shield_version: "1.0"
+
+objective:
+  goal:
+    - >-
+      Triage SRE incidents per the SOP runbook. For each alert, retrieve
+      the structured signal payload, classify severity from the decision
+      tree, take the severity-appropriate paging and channel actions,
+      always update the ticket, and escalate to the correct downstream
+      team whenever an escalation signal is set.
+  forbidden:
+    - "Take any action on an alert that get_alert could not retrieve."
+    - "Page on-call for any alert classified as P2 or P3."
+    - "Post incident details to the #general channel."
+    - "Post incident details to a channel forbidden for the incident severity."
+    - "Post any P3 alert to a channel (P3 is ticket-only)."
+    - >-
+      Include raw customer PII (email, account_id, api_key, jwt,
+      tenant_host, credit_card) in any channel message.
+    - "Page or notify or escalate before classifying severity for an alert."
+    - "Use a different alert_id in any tool call than the one returned by get_alert."
+    - "Skip escalation when the alert payload sets an escalation signal."
+
+# ──────────────────────────────────────────────────────────────────
+# Variables — track per-turn state derived from tool outputs.
+#
+# `lifetime: per_turn` (NOT per_call) is critical: per_call resets at
+# the end of each tool invocation, but the agent makes multiple tool
+# calls within a single chat() call. per_turn resets at chat() exit
+# (driven by the host emitting turn.start / turn.end in agent_guarded.py).
+# ──────────────────────────────────────────────────────────────────
+variables:
+  # alert_id from the most recent get_alert. May reflect a not_found
+  # id; the alert_loaded predicate is the source of truth for "did the
+  # retrieval succeed".
+  - name: "current_alert_id"
+    type: string
+    lifetime: per_turn
+    populated_by:
+      - kind: tool
+        name: "get_alert"
+        phase: after
+        expression: "@result.alert_id"
+
+  # Full alert payload from get_alert. Used for:
+  #   • channel-message PII scan (customer_payload values)
+  #   • escalation signal detection (active_security_breach,
+  #     data_exposure, compliance_scope, vendor_root_cause,
+  #     P0 + incident_age_minutes >= 60)
+  - name: "current_alert"
+    type: object
+    default: {}
+    lifetime: per_turn
+    populated_by:
+      - kind: tool
+        name: "get_alert"
+        phase: after
+        expression: "@result"
+
+  # Severity recorded by classify_severity. Used to gate paging
+  # (must be P0/P1) and channel selection.
+  - name: "current_severity"
+    type: string
+    lifetime: per_turn
+    populated_by:
+      - kind: tool
+        name: "classify_severity"
+        phase: after
+        # Read from @result.* (the tool returns severity in its payload).
+        # @tool.params.* binding does NOT work in populator expressions
+        # in this runtime build (verified empirically); use @result fields.
+        expression: "@result.severity"
+
+  # Set of teams already escalated to in this turn. Each successful
+  # escalate_to_manager call appends its target_team. Multi-signal
+  # alerts require multiple escalate calls (one per signal-team
+  # binding); this collected set lets the obligation gate verify
+  # every required team has been escalated to.
+  - name: "escalated_teams"
+    type: array
+    default: []
+    # Spec §10.2 v2: each populator wraps the scalar @result.target_team
+    # in a list and unions it into @current. union() dedups, so duplicate
+    # escalate_to_manager(target_team=X) calls don't double-count.
+    update: "union(@current, [@incoming])"
+    lifetime: per_turn
+    populated_by:
+      - kind: tool
+        name: "escalate_to_manager"
+        phase: after
+        # Use @result.* (agent returns target_team in payload). See
+        # current_severity above for why @tool.params.* is avoided.
+        expression: "@result.target_team"
+
+# ──────────────────────────────────────────────────────────────────
+# Predicates — reusable, fail-closed boolean expressions.
+# All accesses on missing fields evaluate to null → false (§4.3).
+# ──────────────────────────────────────────────────────────────────
+predicates:
+  # Did the most recent get_alert SUCCEED?
+  # agent.py contract: success → result.error is None; not_found → result.error == 'not_found'.
+  # Notes:
+  #  - Computed lazily over current_alert (a declared variable). The runtime's
+  #    is_null()/null-equality on @result.* tool fields evaluates as if every
+  #    field is null regardless of payload (verified empirically); that pattern
+  #    only works on declared variables.
+  #  - Use `not is_null(current_alert)` instead of `current_alert != null`:
+  #    spec §4.4 (LANGUAGE.md line 466) makes `X != null` always false under
+  #    null-safe semantics.
+  alert_loaded: "not is_null(current_alert) and is_null(current_alert.error)"
+  is_pageable_severity: "current_severity in ['P0', 'P1']"
+  is_p3: "current_severity == 'P3'"
+  has_security_signal: "current_alert.active_security_breach == true"
+  has_data_exposure: "current_alert.data_exposure == true"
+  has_compliance_scope: "current_alert.compliance_scope in ['gdpr', 'hipaa', 'sox']"
+  has_vendor_root_cause: "current_alert.vendor_root_cause == true"
+  is_sustained_p0: "current_severity == 'P0' and current_alert.incident_age_minutes >= 60"
+  any_escalation_signal: >-
+    has_security_signal or has_data_exposure or has_compliance_scope
+    or has_vendor_root_cause or is_sustained_p0
+  # All required escalations have been performed.
+  all_required_escalations_done: >-
+    (not has_security_signal or 'security' in escalated_teams)
+    and (not has_data_exposure or 'privacy' in escalated_teams)
+    and (not has_compliance_scope or 'legal' in escalated_teams)
+    and (not has_vendor_root_cause or 'procurement' in escalated_teams)
+    and (not is_sustained_p0 or 'engineering-leadership' in escalated_teams)
+
+# ──────────────────────────────────────────────────────────────────
+# Stage 2 — state_validation. Pure state preconditions on tool
+# resources. Expression-only detection; `block` action.
+# ──────────────────────────────────────────────────────────────────
+state_validation:
+  guard_policies:
+    # Precondition: a successful get_alert must precede every write
+    # action. Without this, a fabricated/typoed alert_id would still
+    # populate current_alert_id (with a dangling not_found id) and
+    # alert_id_consistency_gate would bless every subsequent call.
+    - name: "alert_must_be_loaded_gate"
+      description: "Action tools require a successful get_alert."
+      applies_to:
+        tools:
+          - "classify_severity"
+          - "page_oncall"
+          - "notify_channel"
+          - "update_ticket"
+          - "escalate_to_manager"
+      evaluate_when:
+        - expression: "alert_loaded"
+          reason: >-
+            No alert has been successfully retrieved yet (or the most
+            recent get_alert returned not_found). Call get_alert with a
+            valid alert_id and confirm success before taking any action.
+
+    # Failure mode 1: Skipped severity classification.
+    # Action tools (other than classify_severity itself) require
+    # current_severity to be populated.
+    - name: "classify_before_action_gate"
+      description: "Action tools require classify_severity to have run first."
+      applies_to:
+        tools:
+          - "page_oncall"
+          - "notify_channel"
+          - "escalate_to_manager"
+      evaluate_when:
+        - expression: "present(current_severity)"
+          reason: >-
+            classify_severity must be called before any action tool
+            (page_oncall, notify_channel, escalate_to_manager) for the
+            current alert. The agent must apply the structured-signal
+            decision tree from the SOP first.
+
+    # Failure mode 2: Unauthorized pager use.
+    # page_oncall requires P0 or P1 classification.
+    - name: "pager_severity_gate"
+      description: "page_oncall requires P0 or P1 classification."
+      applies_to:
+        tools: ["page_oncall"]
+      evaluate_when:
+        - expression: "is_pageable_severity"
+          reason: >-
+            page_oncall is reserved for P0 and P1 incidents per the SOP
+            runbook. P2 and P3 incidents must not page on-call.
+
+    # Failure mode 3 (P3 sub-rule): P3 alerts produce no channel post.
+    - name: "channel_p3_blocked"
+      description: "P3 alerts are ticket-only; notify_channel is blocked."
+      applies_to:
+        tools: ["notify_channel"]
+      evaluate_when:
+        - expression: "not is_p3"
+          reason: >-
+            P3 incidents are ticket-only per the SOP. notify_channel
+            must not be called for a P3 alert.
+
+    # Failure mode 5: Missed escalation when signal is set.
+    #
+    # NOTE on workflow ordering: the SOP runbook shows the canonical
+    # flow as `update_ticket → escalate_to_manager`. AgentShield
+    # enforces the *invariant* (every triggered escalation signal is
+    # satisfied) rather than the canonical *order*. We block
+    # update_ticket while any required escalation is missing; the
+    # agent then either escalates first and retries, or escalates
+    # and re-calls update_ticket. Both end states are SOP-compliant.
+    - name: "escalation_obligation_gate"
+      description: "update_ticket is blocked while a required escalation is missing."
+      applies_to:
+        tools: ["update_ticket"]
+      evaluate_when:
+        - expression: "not any_escalation_signal or all_required_escalations_done"
+          reason: >-
+            This alert sets at least one escalation signal
+            (active_security_breach → security; data_exposure → privacy;
+            compliance_scope ∈ {sox,gdpr,hipaa} → legal;
+            vendor_root_cause → procurement;
+            P0 with incident_age_minutes >= 60 → engineering-leadership).
+            The agent must call escalate_to_manager once per triggered
+            signal with the matching target_team before closing the loop
+            with update_ticket. Missing teams in escalated_teams indicate
+            which escalations still need to be performed.
+
+# ──────────────────────────────────────────────────────────────────
+# Stage 3 — tool_execution_validation. Inspects tool call arguments
+# (`@tool.params.*`) for forbidden values and consistency violations.
+# ──────────────────────────────────────────────────────────────────
+tool_execution_validation:
+  guard_policies:
+    # Failure mode 7-precondition: classify_severity argument validation.
+    # Bound to the SOP-allowed P0/P1/P2/P3 vocabulary; rejects free-form
+    # strings like "critical", "high", "p0" so downstream gates that key
+    # on current_severity behave deterministically.
+    - name: "severity_value_gate"
+      description: "classify_severity.severity must be one of P0/P1/P2/P3."
+      applies_to:
+        tools: ["classify_severity"]
+      evaluate_when:
+        - expression: "@tool.params.severity in ['P0', 'P1', 'P2', 'P3']"
+          reason: >-
+            severity must be exactly one of 'P0', 'P1', 'P2', 'P3'.
+            Synonyms like 'critical', 'high', 'p0' are not valid
+            inputs to classify_severity per the SOP.
+
+    # Failure mode 2 (consistency): paging severity arg must match
+    # the persisted classification (no override at the paging step).
+    - name: "pager_severity_consistency_gate"
+      description: "page_oncall.severity must match classify_severity result."
+      applies_to:
+        tools: ["page_oncall"]
+      evaluate_when:
+        - expression: "@tool.params.severity == current_severity"
+          reason: >-
+            The severity passed to page_oncall disagrees with the most
+            recent classify_severity result. The agent cannot override
+            the recorded classification at the paging step.
+
+    # Failure mode 3 (#general): #general is universally forbidden.
+    - name: "channel_general_blocked"
+      description: "#general is never used for any incident notification."
+      applies_to:
+        tools: ["notify_channel"]
+      evaluate_when:
+        - expression: "@tool.params.channel != '#general'"
+          reason: >-
+            #general is never used for incident notifications per the SOP.
+            Use #incidents-critical (P0), #incidents (P0/P1), or #alerts
+            (P2). P3 alerts produce no channel post at all.
+
+    # Failure mode 3 (severity-channel match): channel must match the
+    # severity-channel binding table.
+    - name: "channel_severity_match_gate"
+      description: "notify_channel.channel must match the severity table."
+      applies_to:
+        tools: ["notify_channel"]
+      evaluate_when:
+        - expression: >-
+            (current_severity == 'P0' and @tool.params.channel in ['#incidents-critical', '#incidents'])
+            or (current_severity == 'P1' and @tool.params.channel == '#incidents')
+            or (current_severity == 'P2' and @tool.params.channel == '#alerts')
+          reason: >-
+            Channel does not match the severity sensitivity table.
+            P0 → #incidents-critical or #incidents.
+            P1 → #incidents only.
+            P2 → #alerts only.
+            P3 → no channel post (handled by channel_p3_blocked).
+
+    # Failure mode 4: PII / secrets in channel message.
+    # Closes the LITERAL-ECHO subset only — catches the agent pasting a
+    # raw customer_payload value (email, account_id, api_key, jwt,
+    # tenant_host, credit_card) verbatim into the channel message. Does
+    # NOT catch paraphrased / partial / encoded leaks (e.g.,
+    # "alice [at] acme" for "alice@acme.com"). Those require a
+    # classifier-based check (out of scope for v1).
+    - name: "pii_leak_gate"
+      description: "Channel messages must not echo raw customer PII verbatim."
+      applies_to:
+        tools: ["notify_channel"]
+      evaluate_when:
+        - expression: >-
+            not any(
+              object.values(current_alert.customer_payload),
+              v -> is_string(v) and contains(@tool.params.message, v)
+            )
+          reason: >-
+            The channel message contains a raw value from the alert's
+            customer_payload (customer_email, customer_account_id,
+            api_key, jwt, tenant_host, or credit_card) verbatim.
+            Sanitize: refer to the affected customer abstractly and
+            mask identifiers.
+
+    # Failure mode 6: Alert ID drift across tool calls.
+    # Every action tool's alert_id argument must equal the id returned
+    # by the most recent successful get_alert. Combined with
+    # alert_must_be_loaded_gate (Stage 2), this also catches calls
+    # that reference a not_found alert id.
+    - name: "alert_id_consistency_gate"
+      description: "Action-tool alert_id must match the get_alert result."
+      applies_to:
+        tools:
+          - "classify_severity"
+          - "page_oncall"
+          - "notify_channel"
+          - "update_ticket"
+          - "escalate_to_manager"
+      evaluate_when:
+        - expression: "@tool.params.alert_id == current_alert_id"
+          reason: >-
+            The alert_id argument disagrees with the alert_id returned
+            by the most recent get_alert. The agent must not drift
+            between alert IDs within a single triage call.
+
+    # Failure mode 5 (team match): each escalate_to_manager call's
+    # target_team must satisfy AT LEAST ONE currently-triggered
+    # escalation signal that has not yet been escalated. The
+    # combination of (this gate per-call) + (escalation_obligation_gate
+    # at update_ticket) ensures every signal eventually gets the
+    # correct target_team.
+    - name: "escalation_team_match_gate"
+      description: "escalate_to_manager.target_team must match a triggered, unescalated signal."
+      applies_to:
+        tools: ["escalate_to_manager"]
+      evaluate_when:
+        - expression: >-
+            (has_security_signal and 'security' not in escalated_teams and @tool.params.target_team == 'security')
+            or (has_data_exposure and 'privacy' not in escalated_teams and @tool.params.target_team == 'privacy')
+            or (has_compliance_scope and 'legal' not in escalated_teams and @tool.params.target_team == 'legal')
+            or (has_vendor_root_cause and 'procurement' not in escalated_teams and @tool.params.target_team == 'procurement')
+            or (is_sustained_p0 and 'engineering-leadership' not in escalated_teams and @tool.params.target_team == 'engineering-leadership')
+          reason: >-
+            target_team does not match any currently-triggered, not-yet-
+            escalated signal. Required mappings:
+              active_security_breach → security
+              data_exposure → privacy
+              compliance_scope → legal
+              vendor_root_cause → procurement
+              P0 + incident_age_minutes >= 60 → engineering-leadership
+            Each escalate_to_manager call must satisfy one of the above
+            and target_team must not duplicate a team already escalated
+            to in this turn.
+
+# ──────────────────────────────────────────────────────────────────
+# Resources — identity declaration only. v2 §1.3/§11.10/§12.3
+# require every tool referenced in populated_by, applies_to, or
+# expressions to be declared here. All gating lives above.
+# ──────────────────────────────────────────────────────────────────
+resources:
+  tools:
+    - name: "get_alert"
+      description: "Fetch the structured alert payload for a given alert_id."
+      permission: "read_only"
+    - name: "classify_severity"
+      description: "Record the severity classification (P0/P1/P2/P3) for the current alert."
+      permission: "read_only"
+    - name: "page_oncall"
+      description: "Page the on-call rotation. Restricted to P0/P1 severities by SOP."
+      permission: "execute"
+    - name: "notify_channel"
+      description: "Post an incident message to a Slack channel."
+      permission: "execute"
+    - name: "update_ticket"
+      description: "Update the incident ticket (severity, status, message)."
+      permission: "read_write"
+    - name: "escalate_to_manager"
+      description: "Escalate to a downstream team manager (security / privacy / legal / procurement / engineering-leadership)."
+      permission: "execute"
