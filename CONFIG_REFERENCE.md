@@ -184,6 +184,7 @@ Accepted keys:
   - `trace` — mapping. Optional. Use with callable targets that emit OpenTelemetry spans.
     - `backend` — string. Default: `phoenix`.
     - `group_by` — string. Customer preview supports `session.id`.
+    - `project_name` — string. Optional. Routes spans to a named Phoenix project instead of `"default"`. Sets `PHOENIX_PROJECT_NAME` before importing the target module.
   - `tools` — mapping. Optional. Allowed only when `target.model` is set.
     - `module` — string. Use a Python tool backend module.
     - `toolset` — string. Use a toolset file.
@@ -206,6 +207,7 @@ pipeline:
       trace:
         backend: phoenix
         group_by: session.id
+        project_name: travel-planner-eval
     auditor:
       model:
         name: azure/gpt-5.4-mini
