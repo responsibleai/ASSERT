@@ -24,8 +24,11 @@ to fix in code or prompt.
     semantic fabrication / ungrounded synthesis.
   p2m's policy stage expands this into a behavior taxonomy; the seeds
   stage generates adversarial test cases against it.
-- **`agent.py`** — the **baseline** agent (no guardrails). LangChain +
-  Azure `gpt-5.4-mini` + 6 mock tools driven by `fixtures/incidents.json`.
+- **`agent.py`** — the **baseline** agent (no guardrails). Direct
+  LiteLLM tool-calling loop against Azure `gpt-5.4-mini`, with 6 mock
+  tools driven by `fixtures/incidents.json`. No framework dependency
+  (no LangChain) — keeps the demo legible and the AgentShield wrap
+  surgical.
 - **`agent_guarded.py`** — the **guarded** agent. Same logic, wrapped
   with the AgentShield Python SDK 0.13.0 loading
   `incident-triage.guardrails.yaml`. Approval gates are simulated by a
