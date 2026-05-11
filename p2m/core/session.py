@@ -607,6 +607,7 @@ class HTTPEndpointSession:
                 "aiohttp is required for HTTPEndpointSession. "
                 "Install it with: pip install aiohttp"
             )
+        self._aiohttp = aiohttp
         timeout = aiohttp.ClientTimeout(total=self._timeout_s or 60)
         self._session = aiohttp.ClientSession(timeout=timeout)
 
@@ -616,7 +617,7 @@ class HTTPEndpointSession:
             self._session = None
 
     async def run_turn(self, messages: list[Message]) -> TurnResult:
-        import aiohttp
+        aiohttp = self._aiohttp
 
         user_text = ""
         for msg in reversed(messages):

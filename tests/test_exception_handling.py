@@ -154,7 +154,7 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         from p2m.core.session import HTTPEndpointSession
 
         session = HTTPEndpointSession(
-            endpoint="http://127.0.0.1:1",  # unreachable port
+            endpoint="http://127.0.0.1:59123",  # closed high port
             message_timeout_s=1.0,
         )
         await session.open()
