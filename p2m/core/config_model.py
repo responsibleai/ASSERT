@@ -93,8 +93,10 @@ VALID_TRACE_GROUP_BY = ("session.id",)
 class TraceConfig:
     backend: str = "phoenix"
     group_by: str = "session.id"
+    project_name: str | None = None
 
     def __post_init__(self) -> None:
+        self.project_name = _normalize_optional_string(self.project_name)
         if self.group_by not in VALID_TRACE_GROUP_BY:
             raise ValueError(
                 f"trace.group_by must be 'session.id'. "

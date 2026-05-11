@@ -69,6 +69,7 @@ class OTelTracedSession:
         exporter: TraceExporter | None = None,
         collector: SpanCollector | None = None,
         group_by: str = "session.id",
+        project_name: str | None = None,
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
         max_events_per_turn: int = 50,
@@ -77,6 +78,7 @@ class OTelTracedSession:
         self._callable_ref = callable_ref
         self._collector = collector
         self._group_by = group_by
+        self._project_name = project_name
         self._system_prompt = system_prompt
         self._message_timeout_s = message_timeout_s
         self._max_events_per_turn = max_events_per_turn
@@ -108,9 +110,21 @@ class OTelTracedSession:
 
     async def open(self) -> None:
         import io
+        import os
         import sys
 
         module_path, func_name = self._callable_ref.rsplit(":", 1)
+
+        # Set Phoenix project name before importing the target module.
+        # Phoenix's register() reads PHOENIX_PROJECT_NAME from the
+        # environment when no explicit project_name is passed. By setting
+        # it here we route spans to a named project without interfering
+        # with the target's register() call or the set-once TracerProvider
+        # guard.
+        _prev_project_name = os.environ.get("PHOENIX_PROJECT_NAME")
+        if self._project_name:
+            os.environ["PHOENIX_PROJECT_NAME"] = self._project_name
+
         # Suppress Phoenix/OTel banner output during module import.
         # Phoenix's register(verbose=True) prints a multi-line banner to
         # stdout when the target module calls register() at import time.
@@ -120,6 +134,12 @@ class OTelTracedSession:
             mod = importlib.import_module(module_path)
         finally:
             sys.stdout = _orig_stdout
+            # Restore original env var state to avoid side effects.
+            if self._project_name:
+                if _prev_project_name is None:
+                    os.environ.pop("PHOENIX_PROJECT_NAME", None)
+                else:
+                    os.environ["PHOENIX_PROJECT_NAME"] = _prev_project_name
         self._callable = getattr(mod, func_name)
         sig = inspect.signature(self._callable)
         self._supports_history = "history" in sig.parameters
