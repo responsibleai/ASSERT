@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from p2m.core.io import write_json, row_behavior
+
+log = logging.getLogger(__name__)
 
 VIEWER_READ_MODEL_SCHEMA_VERSION = 1
 VIEWER_READ_MODEL_GENERATOR_VERSION = "viewer-read-model-v1"
@@ -63,17 +65,15 @@ def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
 
     parts = [part for part in raw_path.replace("\\", "/").split("/") if part and part != "."]
     if not parts:
-        print(
-            f"[viewer-read-model] warning: refusing manifest path that "
-            f"normalizes to no segments: {raw_path!r}",
-            file=sys.stderr,
+        log.warning(
+            "Refusing manifest path that normalizes to no segments: %r",
+            raw_path,
         )
         return None
     if any(part == ".." for part in parts):
-        print(
-            f"[viewer-read-model] warning: refusing manifest path with parent "
-            f"segments: {raw_path!r}",
-            file=sys.stderr,
+        log.warning(
+            "Refusing manifest path with parent segments: %r",
+            raw_path,
         )
         return None
     return base_dir.joinpath(*parts)
@@ -89,14 +89,9 @@ def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Pat
             raw_path = seeds.get("path") or seeds.get("relative_path")
             if isinstance(raw_path, str) and raw_path:
                 if Path(raw_path).is_absolute():
-                    # A tampered or corrupted manifest.json must not be able
-                    # to redirect viewer reads outside the suite directory
-                    # via an absolute path, which would bypass the relative
-                    # '..' defense in _manifest_relative_path.
-                    print(
-                        f"[viewer-read-model] warning: refusing absolute "
-                        f"manifest artifact path: {raw_path!r}",
-                        file=sys.stderr,
+                    log.warning(
+                        "Refusing absolute manifest artifact path: %r",
+                        raw_path,
                     )
                 else:
                     resolved = _manifest_relative_path(suite_dir, raw_path)

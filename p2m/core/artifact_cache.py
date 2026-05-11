@@ -35,7 +35,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -313,11 +312,11 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
                     primary_path=output_paths[next(iter(_OUTPUT_FILES[stage_name]))],
                 )
                 update_latest(ctx, stage_name, ref)
-                print(
-                    f"[artifact-cache] warning: latest.json {stage_name} entry "
-                    f"referenced missing paths; rebuilt ref pointing at the "
-                    f"current on-disk location of version {version}.",
-                    file=sys.stderr,
+                log.warning(
+                    "latest.json %s entry referenced missing paths; rebuilt "
+                    "ref pointing at the current on-disk location of version %s.",
+                    stage_name,
+                    version,
                 )
             ctx.setdefault("artifact_versions", {})[stage_name] = ref
             ctx[_CONTEXT_DIR_KEYS[stage_name]] = str(artifact_dir)
@@ -329,11 +328,11 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
 
         recovery = _recover_latest_valid_version(stage_name, stage_root)
         if recovery is None:
-            print(
-                f"[artifact-cache] warning: latest.json references missing or "
-                f"incomplete {stage_name} artifact {version}; no valid prior "
-                f"version was found.",
-                file=sys.stderr,
+            log.warning(
+                "latest.json references missing or incomplete %s artifact %s; "
+                "no valid prior version was found.",
+                stage_name,
+                version,
             )
             continue
         recovered_version, recovered_dir, recovered_metadata = recovery
@@ -357,10 +356,11 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
                 ctx[context_key] = str(recovered_outputs[output_key])
         refresh_compatibility_files(ctx, stage_name, recovered_outputs)
         update_latest(ctx, stage_name, recovered_ref)
-        print(
-            f"[artifact-cache] warning: latest.json {stage_name} entry was "
-            f"missing or incomplete; recovered to version {recovered_version}.",
-            file=sys.stderr,
+        log.warning(
+            "latest.json %s entry was missing or incomplete; "
+            "recovered to version %s.",
+            stage_name,
+            recovered_version,
         )
 
 
@@ -918,10 +918,9 @@ def _resolve_ref_path(suite_root: Path, raw_path: Any) -> Path | None:
         try:
             resolved_path.relative_to(suite_root_resolved)
         except ValueError:
-            print(
-                f"[artifact-cache] warning: refusing to resolve absolute cache reference "
-                f"outside suite root: {raw_path!r}",
-                file=sys.stderr,
+            log.warning(
+                "Refusing to resolve absolute cache reference outside suite root: %r",
+                raw_path,
             )
             return None
         return resolved_path
@@ -930,10 +929,9 @@ def _resolve_ref_path(suite_root: Path, raw_path: Any) -> Path | None:
         # Defense in depth: a tampered or corrupted latest.json must not be
         # able to point activate_latest_artifacts at a location outside the
         # suite root.
-        print(
-            f"[artifact-cache] warning: refusing to resolve cache reference "
-            f"with parent-directory segments: {raw_path!r}",
-            file=sys.stderr,
+        log.warning(
+            "Refusing to resolve cache reference with parent-directory segments: %r",
+            raw_path,
         )
         return None
     return suite_root.joinpath(*parts)
@@ -1005,18 +1003,12 @@ def _load_json_object(path: Path) -> dict[str, Any] | None:
     except FileNotFoundError:
         return None
     except OSError as exc:
-        print(
-            f"[artifact-cache] warning: failed to read {path}: {exc}",
-            file=sys.stderr,
-        )
+        log.warning("Failed to read %s: %s", path, exc)
         return None
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        print(
-            f"[artifact-cache] warning: ignoring corrupt JSON at {path}: {exc}",
-            file=sys.stderr,
-        )
+        log.warning("Ignoring corrupt JSON at %s: %s", path, exc)
         return None
     if not isinstance(payload, dict):
         return None
