@@ -1,0 +1,150 @@
+# Science Regression Gate — paired t-test on canonical efficacy metrics.
+#
+# Runs the pipeline at the PR's base + head SHAs against both golden risk
+# specs (safety + quality), computes 6 canonical science-efficacy metrics
+# plus 4 auxiliary aggregates, runs paired statistical tests, and gates
+# the PR with Holm-Bonferroni-corrected significance over the canonical
+# metrics. Auxiliaries are reported but advisory.
+#
+# Phased rollout
+# --------------
+# Phase 1 (this PR): `continue-on-error: true` on the gate job so we can
+# observe noise + tune MDEs without blocking PRs. Flip to required after
+# 10 PRs / 2 weeks at <5% noisy WARN/BLOCK rate.
+# Phase 2 (engineer follow-up): drop `continue-on-error`.
+#
+# Sample sizes via PR labels:
+#   seeds:50    — quick iteration (~6 min per commit)
+#   seeds:100   — default
+#   seeds:200   — pre-release
+#   seeds:500   — nightly / calibration
+#
+# Triggers on any PR touching pipeline code, prompts, or the regression
+# harness itself.
+
+name: Science Regression Gate
+
+on:
+  pull_request:
+    paths:
+      - 'p2m/**'
+      - 'prompts/**'
+      - 'scripts/regression_*.py'
+      - 'tests/regression/**'
+      - '.github/workflows/science.yml'
+
+concurrency:
+  group: science-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+  AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
+  AZURE_API_VERSION: "2024-12-01-preview"
+  # Long-context judge required — gpt-5.4-nano/mini fail mechanically on
+  # realistic agent transcripts (>10 turns) by not returning the required
+  # verdict schema. See user note 2026-05-09.
+  P2M_JUDGE_DEPLOYMENT: "gpt-5.4"
+
+jobs:
+  unit-regression-modules:
+    name: "Tier 1: regression metric/decision unit tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install deps
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+      - name: Run regression module unit tests
+        run: pytest tests/test_regression_metrics.py tests/test_regression_decision.py -x -q
+
+  science-gate:
+    name: "Science: paired t-test gate"
+    needs: unit-regression-modules
+    # Phase 1: advisory. Flip to false (or remove) once noise is calibrated.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for baseline/treatment diff
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install deps
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+
+      - name: Detect seed budget from PR labels
+        id: seeds
+        run: |
+          SEEDS=100
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
+          for label in $LABELS; do
+            case $label in
+              seeds:*) SEEDS="${label#seeds:}" ;;
+            esac
+          done
+          echo "count=$SEEDS" >> "$GITHUB_OUTPUT"
+          echo "Using $SEEDS seeds per spec"
+
+      - name: Compute cache key
+        id: cache_key
+        # Cache baseline runs by (base sha, judge model, seed count, script
+        # hash, configs hash). Same-base PRs reuse the baseline; only
+        # treatment is re-run.
+        run: |
+          SCRIPT_HASH=$(sha256sum scripts/regression_test.py scripts/regression_metrics.py scripts/regression_decision.py | sha256sum | cut -c1-16)
+          CFG_HASH=$(sha256sum tests/regression/config_*.yaml | sha256sum | cut -c1-16)
+          KEY="science-baseline-${{ github.event.pull_request.base.sha }}-${{ env.P2M_JUDGE_DEPLOYMENT }}-${{ steps.seeds.outputs.count }}-${SCRIPT_HASH}-${CFG_HASH}"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached baseline runs
+        id: baseline_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: artifacts/regression-runs
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Run regression gate
+        id: gate
+        run: |
+          python scripts/regression_test.py \
+            --baseline "${{ github.event.pull_request.base.sha }}" \
+            --treatment "${{ github.sha }}" \
+            --seeds "${{ steps.seeds.outputs.count }}" \
+            --judge-model "azure/${{ env.P2M_JUDGE_DEPLOYMENT }}" \
+            --artifacts-dir artifacts/regression
+
+      - name: Save baseline runs to cache
+        if: always() && steps.baseline_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/regression-runs
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Post results to PR summary
+        if: always()
+        run: |
+          REPORT_MD="artifacts/regression/regression_report.md"
+          if [ -f "$REPORT_MD" ]; then
+            cat "$REPORT_MD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 🧪 Regression Gate" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ No report generated — pipeline may have failed before reaching the gate." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-results
+          path: artifacts/regression/
+          retention-days: 14

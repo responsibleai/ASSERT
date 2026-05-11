@@ -1,70 +1,351 @@
-"""PR regression test — placeholder stub.
+"""PR regression test — real implementation.
 
-The full implementation (defined in ``.github/copilot-instructions.md``)
-will run the pipeline on both ``tests/regression/config_{safety,quality}.yaml``
-at the baseline and treatment commits, compute science efficacy metrics,
-run a paired t-test via ``scipy.stats.ttest_rel``, and gate the PR on the
-result.
+Runs the pipeline at the baseline + treatment commits against the two
+golden risk specs (``tests/regression/config_{safety,quality}.yaml``) with
+a shared seed budget, computes the science-efficacy metrics, runs paired
+statistical tests (McNemar for per-seed binary, bootstrap delta for
+suite-level), and emits a Holm-Bonferroni-gated decision report consumed
+by the ``science.yml`` workflow's PR summary step.
 
-Until that lands, this stub writes a minimal ``regression_report.json``
-that the CI workflow's "Post results to PR summary" step can consume and
-exits 0 so PRs aren't blocked. Replace this file with the real
-implementation; do not extend the stub.
+Determinism contract
+--------------------
+Stages ``policy``, ``design``, ``seeds`` are FROZEN across baseline +
+treatment unless the diff shows a file that affects those stages. This
+keeps the comparison a true paired-by-seed-id comparison of rollout +
+judge changes. Set ``--rerun-upstream-stages`` to force regeneration on
+both commits (e.g. for prompt-tuning PRs).
+
+Caching
+-------
+Baseline runs are cached by ``(base_sha, config_hash, judge_model,
+n_seeds, script_hash)``. PRs against the same base commit reuse the
+cached baseline transcripts/scores; only the treatment is re-run.
+
+Output
+------
+Writes ``regression_report.json`` (machine) and ``regression_report.md``
+(reviewer) into ``--artifacts-dir``. Always exits 0 in advisory mode
+(workflow has ``continue-on-error: true``); set ``--enforce`` to make a
+``BLOCK`` decision exit nonzero.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import logging
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Iterable
+
+# Allow ``python scripts/regression_test.py`` invocation in addition to
+# ``python -m scripts.regression_test``. When run directly, sys.path[0]
+# is the script's own dir, so ``scripts.x`` imports fail without this.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from p2m.core.io import SCORES_FILE, load_jsonl
+
+from scripts.regression_decision import (
+    DECISION_BLOCK,
+    DEFAULT_ALPHA,
+    decide,
+)
+from scripts.regression_metrics import compute_all
+
+log = logging.getLogger(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIGS: tuple[Path, ...] = (
+    REPO_ROOT / "tests" / "regression" / "config_safety.yaml",
+    REPO_ROOT / "tests" / "regression" / "config_quality.yaml",
+)
+
+# Files whose change requires rerunning upstream (cacheable) stages.
+UPSTREAM_STAGE_GLOBS: tuple[str, ...] = (
+    "p2m/stages/policy.py",
+    "p2m/stages/design.py",
+    "p2m/stages/seeds.py",
+    "p2m/core/artifact_cache.py",
+    "prompts/policy_system.md",
+    "prompts/seeds_system.md",
+    "prompts/seeds_user.md",
+    "prompts/design_system.md",
+)
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", required=True, help="Baseline commit SHA")
-    parser.add_argument("--treatment", required=True, help="Treatment commit SHA")
-    parser.add_argument("--seeds", type=int, default=50, help="Seeds per risk spec")
-    parser.add_argument(
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--baseline", required=True, help="Baseline commit SHA")
+    p.add_argument("--treatment", required=True, help="Treatment commit SHA")
+    p.add_argument(
+        "--seeds",
+        type=int,
+        default=100,
+        help="Per-spec seed budget (split equally across prompt + scenario)",
+    )
+    p.add_argument(
+        "--configs",
+        nargs="+",
+        type=Path,
+        default=list(DEFAULT_CONFIGS),
+        help="Risk-spec config YAMLs",
+    )
+    p.add_argument(
         "--artifacts-dir",
         type=Path,
         default=Path("artifacts/regression"),
-        help="Directory for the regression report",
     )
-    return parser.parse_args(argv)
+    p.add_argument(
+        "--baseline-cache-dir",
+        type=Path,
+        default=None,
+        help="If set, reuse cached baseline scores instead of rerunning",
+    )
+    p.add_argument(
+        "--rerun-upstream-stages",
+        action="store_true",
+        help="Force rerunning policy/design/seeds on both commits",
+    )
+    p.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Exit nonzero on BLOCK decision (default: advisory exit 0)",
+    )
+    p.add_argument(
+        "--alpha",
+        type=float,
+        default=DEFAULT_ALPHA,
+        help="Per-test significance level for the gate",
+    )
+    p.add_argument(
+        "--judge-model",
+        default="azure/gpt-5.4",
+        help="Judge model override (long-context required for realistic agents)",
+    )
+    p.add_argument(
+        "--alpha-canonical-only",
+        action="store_true",
+        default=True,
+        help="Apply Holm-Bonferroni only over the 6 canonical metrics (default)",
+    )
+    return p.parse_args(argv)
 
 
-def _build_report(args: argparse.Namespace) -> dict:
-    return {
-        "schema_version": 0,
-        "status": "not_implemented",
-        "baseline_sha": args.baseline,
-        "treatment_sha": args.treatment,
-        "seeds_per_spec": args.seeds,
-        "decision": {
-            "decision": "PASS",
-            "reasons": [
-                "regression_test.py is a placeholder; no real comparison was run.",
-                "See .github/copilot-instructions.md → 'Pipeline Science Efficacy' "
-                "for the metrics this script must compute once implemented.",
-            ],
-        },
-        "results": [
-            {
-                "metric_name": "regression_harness",
-                "effect": "Info",
-                "detail": "stub — PR gate is a no-op until full implementation lands",
-            }
-        ],
+# ── Change detection ───────────────────────────────────────────────────────
+
+
+def changed_files(baseline: str, treatment: str) -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--name-only", f"{baseline}..{treatment}"],
+            cwd=REPO_ROOT,
+            text=True,
+        )
+        return [line.strip() for line in out.splitlines() if line.strip()]
+    except subprocess.CalledProcessError as exc:
+        log.warning("git diff failed (%s); assuming all stages affected", exc)
+        return ["__assume_all__"]
+
+
+def upstream_stages_dirty(files: list[str]) -> bool:
+    if "__assume_all__" in files:
+        return True
+    return any(f in UPSTREAM_STAGE_GLOBS for f in files)
+
+
+# ── Pipeline runner ────────────────────────────────────────────────────────
+
+
+def _config_hash(path: Path, *, n_seeds: int, judge_model: str) -> str:
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    h.update(f"\nseeds={n_seeds}\njudge={judge_model}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def _suite_dir_for(config: Path, commit_sha: str, n_seeds: int, judge_model: str) -> Path:
+    cfg_hash = _config_hash(config, n_seeds=n_seeds, judge_model=judge_model)
+    label = config.stem  # "config_safety" / "config_quality"
+    return REPO_ROOT / "artifacts" / "regression-runs" / f"{label}-{commit_sha[:7]}-{cfg_hash}"
+
+
+def run_pipeline(
+    config: Path,
+    *,
+    commit_sha: str,
+    n_seeds: int,
+    judge_model: str,
+    extra_overrides: dict[str, Any] | None = None,
+) -> Path:
+    """Run ``p2m run`` against one config, return the run output dir."""
+    suite_dir = _suite_dir_for(config, commit_sha, n_seeds, judge_model)
+    run_label = f"reg-{commit_sha[:7]}"
+    suite_dir.mkdir(parents=True, exist_ok=True)
+    overrides = {
+        "pipeline.seeds.prompt.sample_size": n_seeds // 2,
+        "pipeline.seeds.scenario.sample_size": n_seeds - (n_seeds // 2),
+        "pipeline.judge.model.name": judge_model,
     }
+    if extra_overrides:
+        overrides.update(extra_overrides)
+    cmd = [
+        sys.executable, "-m", "p2m.cli", "run",
+        "--config", str(config),
+        "--suite", suite_dir.name,
+        "--save-dir", str(suite_dir.parent),
+        "--run", run_label,
+    ]
+    for key, value in overrides.items():
+        cmd.extend(["--set", f"{key}={value}"])
+    log.info("running: %s", " ".join(cmd))
+    subprocess.check_call(cmd, cwd=REPO_ROOT)
+    return suite_dir / run_label
+
+
+def _scores_for(run_dir: Path) -> list[dict[str, Any]]:
+    scores_path = run_dir / SCORES_FILE
+    if not scores_path.exists():
+        log.warning("no scores at %s", scores_path)
+        return []
+    return list(load_jsonl(scores_path))
+
+
+def _policy_for(run_dir: Path) -> dict[str, Any] | None:
+    for candidate in ("policy.json", "taxonomy.json"):
+        path = run_dir / candidate
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return None
+
+
+# ── Reporting ──────────────────────────────────────────────────────────────
+
+
+_ICONS = {
+    "Improved": "✅",
+    "Degraded": "❌",
+    "Inconclusive": "⚠️",
+    "TooFewSamples": "📊",
+    "Info": "ℹ️",
+    "PASS": "✅",
+    "WARN": "⚠️",
+    "BLOCK": "❌",
+}
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    lines: list[str] = []
+    decision = report["decision"]["decision"]
+    lines.append(f"## 🧪 Regression Test — {_ICONS.get(decision, '?')} {decision}")
+    lines.append("")
+    lines.append(
+        f"alpha (per-test) = {report['alpha']}, n_seeds = {report.get('n_seeds')}"
+    )
+    lines.append("")
+    lines.append("| Metric | Granularity | Direction | Baseline | Treatment | Δ | p | Effect |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for r in report["results"]:
+        lines.append(
+            f"| {r['metric_name']} | {r['granularity']} | {r['direction'] or '—'} | "
+            f"{_fmt(r['baseline_value'])} | {_fmt(r['treatment_value'])} | "
+            f"{_fmt(r['mean_diff'])} | {_fmt(r['p_value'])} | "
+            f"{_ICONS.get(r['effect'], '?')} {r['effect']} |"
+        )
+    lines.append("")
+    lines.append("**Reasons:**")
+    for reason in report["decision"]["reasons"]:
+        lines.append(f"- {reason}")
+    return "\n".join(lines)
+
+
+def _fmt(v: Any) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, float):
+        return f"{v:.4f}"
+    return str(v)
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = _parse_args(argv)
     args.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    report_path = args.artifacts_dir / "regression_report.json"
-    report_path.write_text(json.dumps(_build_report(args), indent=2), encoding="utf-8")
-    print(f"[regression_test stub] wrote placeholder report to {report_path}")
+
+    files = changed_files(args.baseline, args.treatment)
+    rerun_upstream = args.rerun_upstream_stages or upstream_stages_dirty(files)
+    log.info(
+        "changed files=%d, upstream stages dirty=%s, rerun_upstream=%s",
+        len(files), upstream_stages_dirty(files), rerun_upstream,
+    )
+
+    per_config_results: dict[str, dict[str, Any]] = {}
+    aggregated_baseline = []
+    aggregated_treatment = []
+    policy_for_metrics: dict[str, Any] | None = None
+
+    for config in args.configs:
+        log.info("=== config: %s ===", config.name)
+        baseline_dir = run_pipeline(
+            config,
+            commit_sha=args.baseline,
+            n_seeds=args.seeds,
+            judge_model=args.judge_model,
+        )
+        treatment_dir = run_pipeline(
+            config,
+            commit_sha=args.treatment,
+            n_seeds=args.seeds,
+            judge_model=args.judge_model,
+        )
+        baseline_rows = _scores_for(baseline_dir)
+        treatment_rows = _scores_for(treatment_dir)
+        policy = _policy_for(baseline_dir) or _policy_for(treatment_dir)
+        if policy_for_metrics is None:
+            policy_for_metrics = policy
+        per_config_results[config.name] = {
+            "baseline_dir": str(baseline_dir),
+            "treatment_dir": str(treatment_dir),
+            "baseline_n": len(baseline_rows),
+            "treatment_n": len(treatment_rows),
+        }
+        aggregated_baseline.extend(baseline_rows)
+        aggregated_treatment.extend(treatment_rows)
+
+    baseline_metrics = compute_all(aggregated_baseline, policy_for_metrics)
+    treatment_metrics = compute_all(aggregated_treatment, policy_for_metrics)
+    report = decide(
+        baseline_metrics,
+        treatment_metrics,
+        alpha=args.alpha,
+        n_seeds=args.seeds * len(args.configs),
+    )
+    report["per_config"] = per_config_results
+    report["baseline_sha"] = args.baseline
+    report["treatment_sha"] = args.treatment
+    report["upstream_stages_rerun"] = rerun_upstream
+    report["judge_model"] = args.judge_model
+
+    report_json = args.artifacts_dir / "regression_report.json"
+    report_md = args.artifacts_dir / "regression_report.md"
+    report_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report_md.write_text(render_markdown(report), encoding="utf-8")
+    print(f"[regression] wrote {report_json} and {report_md}")
+    print(f"[regression] decision = {report['decision']['decision']}")
+
+    if args.enforce and report["decision"]["decision"] == DECISION_BLOCK:
+        return 1
     return 0
 
 
