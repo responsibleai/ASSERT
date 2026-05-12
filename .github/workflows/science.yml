@@ -81,7 +81,7 @@ jobs:
       - name: Install deps
         run: |
           pip install uv
-          uv pip install --system -e ".[dev]"
+          uv pip install --system -e ".[all,dev]"
 
       - name: Detect seed budget from PR labels
         id: seeds
