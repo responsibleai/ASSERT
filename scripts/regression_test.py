@@ -205,6 +205,7 @@ def ensure_worktree(commit_sha: str) -> Path:
     wt = _worktree_path_for(commit_sha)
     if wt.exists():
         log.info("reusing worktree at %s", wt)
+        _apply_seed_diagnostic(wt)
         return wt
     wt.parent.mkdir(parents=True, exist_ok=True)
     log.info("creating worktree for %s at %s", commit_sha[:7], wt)
@@ -212,7 +213,47 @@ def ensure_worktree(commit_sha: str) -> Path:
         ["git", "worktree", "add", "--detach", str(wt), commit_sha],
         cwd=REPO_ROOT,
     )
+    _apply_seed_diagnostic(wt)
     return wt
+
+
+def _apply_seed_diagnostic(worktree: Path) -> None:
+    """Patch the worktree's ``p2m/stages/seeds.py`` to print response details
+    on the ``invalid seeds payload`` failure path.
+
+    Diagnostic-only — applied to both baseline and treatment worktrees so
+    we can see what Azure actually returned when scenario seed gen fails.
+    """
+    target = worktree / "p2m" / "stages" / "seeds.py"
+    if not target.exists():
+        return
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if "[DEBUG SEEDS-FAIL]" in text:
+        return
+    sentinel = (
+        '        if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):\n'
+        '            raise ValueError(f"{kind} seed generation returned invalid seeds payload")\n'
+    )
+    if sentinel not in text:
+        log.warning("seed diagnostic sentinel not found in %s; skipping patch", target)
+        return
+    replacement = (
+        '        if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):\n'
+        '            print(f"\\n[DEBUG SEEDS-FAIL] kind={kind} behavior={behavior_name}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] finish_reason={response.finish_reason}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] status={response.status}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] incomplete={response.incomplete_details}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] usage={response.usage}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] text_len={len(response.text or \'\')}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] text[:1500]={(response.text or \'\')[:1500]!r}", flush=True)\n'
+        '            print(f"[DEBUG SEEDS-FAIL] parsed_type={type(payload).__name__}", flush=True)\n'
+        '            raise ValueError(f"{kind} seed generation returned invalid seeds payload")\n'
+    )
+    target.write_text(text.replace(sentinel, replacement, 1), encoding="utf-8")
+    log.info("applied seed diagnostic to %s", target)
 
 
 def remove_worktree(commit_sha: str) -> None:
