@@ -170,7 +170,41 @@ async def run_judge(
                 "output_index": output_index,
                 "score_row": await score_row(row),
             }
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+        except LLMInputError as exc:
+            # Judge-side input refusal (e.g. Azure content filter rejecting
+            # a transcript whose adversarial content the judge LLM can't
+            # process). This is per-seed data, not a global pipeline
+            # problem: a different transcript will judge cleanly. Record a
+            # filter_skipped score row so the seed isn't lost and the
+            # stage can move on. Mirrors the target_input_refused and
+            # auditor_input_refused handling in rollout.
+            seed_id = row.get("seed_id", "?")
+            log.warning(
+                "Judge content-filter refusal for seed %s: %s",
+                seed_id, exc,
+            )
+            factors = row_factors(row)
+            score_row_filter_skipped = {
+                "kind": row.get("kind", ""),
+                "seed_id": seed_id,
+                "concept": row.get("concept", ""),
+                "judge_model": judge_model,
+                "target": row.get("target", ""),
+                "auditor_model": row.get("auditor_model", ""),
+                "judge_status": "filter_skipped",
+                "judge_error": f"judge_input_refused: {exc}",
+                "verdict": {},
+            }
+            if factors:
+                score_row_filter_skipped["factors"] = factors
+            return {
+                "output_index": output_index,
+                "score_row": score_row_filter_skipped,
+            }
+        except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+            # Auth/rate-limit/provider-5xx errors are global pipeline
+            # problems, not seed-specific. Propagate so the runner can
+            # surface a clean message and fail the stage fast.
             raise
         except (json.JSONDecodeError, ValueError) as exc:
             seed_id = row.get("seed_id", "?")
