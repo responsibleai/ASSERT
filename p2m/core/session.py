@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -23,6 +25,37 @@ from p2m.core.model_client import (
 )
 from p2m.core.tool_backend import load_tool_module
 from p2m.core.tools import build_target_tools
+
+_log = logging.getLogger(__name__)
+
+# Regex patterns for common credential formats in plain text
+_CREDENTIAL_PATTERNS = re.compile(
+    r"("
+    # Bearer/Basic tokens
+    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
+    r"|Basic\s+[A-Za-z0-9+/]+=*"
+    # Common API key formats (sk-..., key-..., etc.)
+    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
+    # Generic long hex/base64 secrets following key-like prefixes
+    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
+    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
+    r")",
+    re.IGNORECASE,
+)
+
+_RESPONSE_REDACTED = "[REDACTED]"
+
+
+def _sanitize_response_text(text: str) -> str:
+    """Redact credential-like patterns from response text before persisting."""
+    if not text:
+        return text
+    sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
+    if sanitized != text:
+        _log.warning(
+            "Credential-like patterns detected and redacted from HTTP endpoint response"
+        )
+    return sanitized
 
 
 # ── Adapter types and helpers ──────────────────────────────────
@@ -656,6 +689,9 @@ class HTTPEndpointSession:
             raise RuntimeError(
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc
+
+        # Sanitize response text to prevent credential leakage into artifacts
+        response_text = _sanitize_response_text(response_text)
 
         interaction_messages = [
             {"role": "user", "content": user_text},
