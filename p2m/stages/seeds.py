@@ -739,6 +739,14 @@ async def _generate_records(
             )
             payload = response.parsed
             if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):
+                print(f"\n[DEBUG SEEDS-FAIL] kind={kind} behavior={behavior_name}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] finish_reason={response.finish_reason}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] status={response.status}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] incomplete={response.incomplete_details}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] usage={response.usage}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] text_len={len(response.text or '')}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] text[:1500]={(response.text or '')[:1500]!r}", flush=True)
+                print(f"[DEBUG SEEDS-FAIL] parsed_type={type(payload).__name__}", flush=True)
                 raise ValueError(f"{kind} seed generation returned invalid seeds payload")
 
             returned_seeds = payload["seeds"]
