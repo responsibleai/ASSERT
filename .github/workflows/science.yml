@@ -83,6 +83,30 @@ jobs:
           pip install uv
           uv pip install --system -e ".[all,dev]"
 
+      - name: Start Phoenix collector
+        # Run a real Phoenix server so localhost:4317 (OTLP gRPC) accepts the
+        # spans emitted by examples.travel_planner_langgraph.auto_trace —
+        # the same import path users run in production. Without this, every
+        # span emit retries gRPC export forever and BatchSpanExporter survives
+        # asyncio loop teardown ("Event loop is closed" RuntimeError noise).
+        # Crucially, this preserves judge fidelity: the OTel-traced session
+        # piggybacks on Phoenix's TracerProvider so the judge sees per-turn
+        # span / tool / LLM-call detail exactly as in production.
+        run: |
+          mkdir -p artifacts/phoenix
+          nohup phoenix serve > artifacts/phoenix/phoenix.log 2>&1 &
+          echo "Phoenix PID: $!"
+          for i in $(seq 1 60); do
+            if nc -z localhost 4317 && nc -z localhost 6006; then
+              echo "Phoenix ready after ${i}s (gRPC :4317, UI :6006)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Phoenix did not bind ports in 60s. Logs:"
+          cat artifacts/phoenix/phoenix.log || true
+          exit 1
+
       - name: Detect seed budget from PR labels
         id: seeds
         run: |
@@ -149,3 +173,11 @@ jobs:
           name: regression-results
           path: artifacts/regression/
           retention-days: 14
+
+      - name: Upload Phoenix collector log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoenix-log
+          path: artifacts/phoenix/
+          retention-days: 7

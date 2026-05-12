@@ -33,11 +33,10 @@ pipeline:
   rollout:
     concurrency: 2
     target:
-      # CI uses agent:chat_sync (no Phoenix OTLP exporter at localhost:4317).
-      # auto_trace:chat_sync registers Phoenix instrumentation which retries
-      # gRPC export to localhost:4317 forever and trips asyncio teardown.
-      # Judge dimensions score messages + tool calls, not internal node spans.
-      callable: examples.travel_planner_langgraph.agent:chat_sync
+      callable: examples.travel_planner_langgraph.auto_trace:chat_sync
+      trace:
+        backend: phoenix
+        group_by: session.id
     auditor:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 6
