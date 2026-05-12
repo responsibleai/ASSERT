@@ -1048,6 +1048,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(row["seed_id"] for row in final_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
+        """When a per-seed worker raises beyond the error tolerance, partial
+        successes still get persisted to transcripts.jsonl and the failing
+        seed is recorded with stop_reason="runtime_error". The stage then
+        aborts because the error ratio exceeds the threshold (default 10%).
+        """
         seed_rows = [
             {"kind": "prompt", "seed": {"description": "successful prompt"}},
             {"kind": "prompt", "seed": {"description": "failing prompt"}},
@@ -1103,6 +1108,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["seed_id"] for row in interim_rows], ["seed_000001"])
 
                 release_failure.set()
+                # 50% error rate (1 of 2) exceeds the default 10% threshold,
+                # so the stage still aborts. The new behavior is that the
+                # failing seed gets a runtime_error transcript before the
+                # stage raises, so the file has 2 rows instead of 1.
                 with self.assertRaisesRegex(RuntimeError, "boom"):
                     await rollout_task
 
@@ -1111,7 +1120,14 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
+        # Both seeds now have transcripts: seed_1 succeeded, seed_2 has a
+        # synthesized runtime_error transcript carrying the error message.
+        self.assertEqual(
+            sorted(row["seed_id"] for row in final_rows),
+            ["seed_000001", "seed_000002"],
+        )
+        failed_row = next(r for r in final_rows if r["seed_id"] == "seed_000002")
+        self.assertEqual(failed_row["stop_reason"], "runtime_error")
 
     async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated transcripts.jsonl causes completed seeds to be skipped."""
@@ -1561,6 +1577,85 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                     save_dir=str(out_dir),
                     run_id="run-provider-error",
                 )
+
+    async def test_run_rollout_tolerates_below_threshold_errors(self) -> None:
+        """Per-seed errors below the 10% threshold are recorded but do not abort.
+
+        This is the generic per-seed isolation: one bad LangGraph internal
+        task escape, one runtime error from a target's own LLM call, etc.,
+        produces a synthesized transcript with stop_reason='runtime_error'
+        and the batch keeps going. Only triggers an abort when the error
+        rate exceeds the configured threshold.
+        """
+        # 20 seeds, 1 fails -> 5% error rate, well under the 10% default.
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(20)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            seed_id = str(kwargs["seed"]["seed_id"])
+            if seed_id == "seed_000005":
+                # Simulates a LangGraph internal task escape: arbitrary
+                # non-classified exception bubbling up from inside the
+                # callable target's own LLM call.
+                raise RuntimeError("LangGraph internal task crashed")
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": seed_id, "stop_reason": "completed"}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-below-threshold",
+                )
+
+            transcript_rows = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        # Batch completed (no stage abort).
+        self.assertEqual(result["new_count"], 20)
+        # All 20 transcripts present, including the synthesized one for the
+        # failed seed.
+        self.assertEqual(len(transcript_rows), 20)
+
+        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        failed = by_seed["seed_000005"]
+        self.assertEqual(failed["stop_reason"], "runtime_error")
+        error_events = [
+            event for event in failed["events"]
+            if event["edit"]["type"] == "add_message"
+            and "[ROLLOUT WORKER ERROR" in event["edit"]["message"].get("content", "")
+        ]
+        self.assertEqual(len(error_events), 1)
+        self.assertIn("LangGraph internal task crashed", error_events[0]["edit"]["message"]["content"])
+
+        # The other 19 seeds completed cleanly.
+        for sid in (f"seed_00000{i + 1}" for i in range(9)):
+            if sid == "seed_000005":
+                continue
+            self.assertEqual(by_seed[sid]["stop_reason"], "completed")
 
 
 if __name__ == "__main__":

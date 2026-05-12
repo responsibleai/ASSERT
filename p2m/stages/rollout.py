@@ -7,6 +7,7 @@ from dataclasses import asdict
 import hashlib
 import json as json_module
 import logging
+import os
 import re
 import traceback
 import uuid
@@ -1035,8 +1036,57 @@ async def run_rollout(
         if str(seed.get("seed_id", "")) not in completed_seed_ids
     ]
 
+    def _synthesize_error_transcript(
+        seed_row: dict[str, Any],
+        exc: Exception,
+        stop_reason: str,
+    ) -> dict[str, Any]:
+        """Build a minimal transcript dict capturing an unrecoverable per-seed error.
+
+        Mirrors the shape of a successful transcript so judge / metrics / viewer
+        downstream consumers see a uniform record per seed regardless of whether
+        the rollout succeeded. The transcript has a single system event with the
+        error text and the supplied stop_reason; no LLM calls are recorded.
+        """
+        target_label = (
+            str(target.model.name) if target.model
+            else (target.connector or target.callable or target.endpoint or "")
+        )
+        metadata = TranscriptMetadata(
+            kind=str(seed_row.get("kind") or ""),
+            seed_id=str(seed_row.get("seed_id") or ""),
+            concept=str(seed_row.get("concept") or ""),
+            target=target_label,
+            auditor_model=(
+                str(evaluation.auditor.model.name)
+                if evaluation and evaluation.auditor and evaluation.auditor.model
+                else ""
+            ),
+            factors=row_factors(seed_row),
+        )
+        transcript = Transcript(metadata=metadata)
+        transcript.add_event(TranscriptEvent(
+            view=["system", "combined"],
+            actor="system",
+            edit=AddMessageEdit(
+                message=TranscriptMessage(
+                    role="system",
+                    content=f"[ROLLOUT WORKER ERROR: {type(exc).__name__}: {exc}]",
+                ),
+            ),
+        ))
+        transcript.stop_reason = stop_reason
+        return transcript.to_dict()
+
     async def _worker(seed: tuple[int, dict[str, Any]]) -> dict[str, Any]:
-        """Wrap single-seed rollout so concurrent execution keeps errors structured."""
+        """Wrap single-seed rollout so concurrent execution keeps errors structured.
+
+        Generic isolation: any exception from a per-seed rollout (other than
+        the global error classes that should fail the whole stage) is recorded
+        as a transcript with stop_reason="runtime_error" so one bad seed never
+        kills the batch. Global errors (LLMAuthError, LLMRateLimitError,
+        LLMProviderError) still propagate to the stage-level handler.
+        """
         output_index, seed_row = seed
         try:
             kind = seed_row["kind"]
@@ -1061,22 +1111,30 @@ async def run_rollout(
             else:
                 raise ValueError(f"unsupported seed kind: {kind}")
             return {"output_index": output_index, "transcript_row": transcript.to_dict()}
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+        except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+            # Global pipeline problems (auth, rate-limit cliff, provider 5xx).
+            # Not seed-specific. Fail the stage fast so the runner can surface
+            # a clean message.
             raise
-        except (ValueError, KeyError) as exc:
+        except Exception as exc:  # noqa: BLE001
+            # Any other per-seed failure (config/validation issues, LangGraph
+            # internal task escapes, target runtime errors that propagated
+            # past the inner handlers, etc.) becomes a recorded transcript
+            # with stop_reason="runtime_error". The seed is preserved and
+            # the batch continues. If too many seeds fail this way, the
+            # outer gather loop's threshold check still aborts the stage.
             seed_id = seed_row.get("seed_id", "?")
             log.debug(
-                "Rollout worker config/validation error for seed %s: %s\n%s",
+                "Rollout worker error for seed %s: %s\n%s",
                 seed_id, exc, traceback.format_exc(),
             )
-            return {"output_index": output_index, "error": exc}
-        except Exception as exc:
-            seed_id = seed_row.get("seed_id", "?")
-            log.debug(
-                "Rollout worker failed for seed %s: %s\n%s",
-                seed_id, exc, traceback.format_exc(),
-            )
-            return {"output_index": output_index, "error": exc}
+            return {
+                "output_index": output_index,
+                "transcript_row": _synthesize_error_transcript(
+                    seed_row, exc, "runtime_error",
+                ),
+                "error": exc,
+            }
 
     semaphore = asyncio.Semaphore(max(1, min(rollout.concurrency, len(pending_seeds) or 1)))
 
@@ -1086,6 +1144,27 @@ async def run_rollout(
 
     tasks = [asyncio.create_task(_guard(seed)) for seed in pending_seeds]
     total = len(tasks)
+    # Per-seed error tolerance: rollout treats per-seed failures as data,
+    # not as stage-fatal events. The stage aborts only if more than
+    # ROLLOUT_ERROR_FAIL_RATIO of seeds fail (default 10%). This lets one
+    # bad LangGraph internal escape, target_error, or runtime_error land
+    # cleanly without throwing away the rest of a 1k-seed run, while a
+    # systemic problem (deployment misconfigured, every seed errors) still
+    # surfaces as a stage failure. Tunable via P2M_ROLLOUT_ERROR_FAIL_RATIO
+    # env override for ops-debug scenarios.
+    ROLLOUT_ERROR_FAIL_RATIO_DEFAULT = 0.10
+    fail_ratio = ROLLOUT_ERROR_FAIL_RATIO_DEFAULT
+    fail_ratio_env = os.environ.get("P2M_ROLLOUT_ERROR_FAIL_RATIO")
+    if fail_ratio_env:
+        try:
+            parsed = float(fail_ratio_env)
+            if 0.0 <= parsed <= 1.0:
+                fail_ratio = parsed
+        except ValueError:
+            log.warning(
+                "P2M_ROLLOUT_ERROR_FAIL_RATIO=%r is not a float in [0, 1]; ignoring",
+                fail_ratio_env,
+            )
     results = []
     errors: list[Exception] = []
     for completed_task in asyncio.as_completed(tasks):
@@ -1099,7 +1178,7 @@ async def run_rollout(
         # record a transcript with stop_reason="target_error" instead of
         # propagating. This is correct for transient mid-turn failures,
         # but when every turn fails (e.g. deployment doesn't exist) the
-        # transcript is garbage and should surface as a rollout error.
+        # transcript is garbage and should count toward the error ratio.
         if error is None and transcript_row is not None:
             if transcript_row.get("stop_reason") == "target_error":
                 error = RuntimeError(
@@ -1132,7 +1211,17 @@ async def run_rollout(
             log.warning(msg)
 
     if errors:
-        raise errors[0]
+        error_ratio = len(errors) / max(1, total)
+        if error_ratio > fail_ratio:
+            log.error(
+                "[rollout] %d of %d seeds errored (%.1f%% > %.1f%% threshold); aborting stage",
+                len(errors), total, 100 * error_ratio, 100 * fail_ratio,
+            )
+            raise errors[0]
+        log.warning(
+            "[rollout] %d of %d seeds errored (%.1f%% <= %.1f%% threshold); continuing",
+            len(errors), total, 100 * error_ratio, 100 * fail_ratio,
+        )
     build_run_viewer_artifacts(out_dir)
 
     return {
