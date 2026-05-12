@@ -311,10 +311,19 @@ def _render_config(
     # Models — judge first
     pipeline.setdefault("judge", {}).setdefault("model", {})["name"] = judge_model
 
-    # Upstream stages: policy, both seed generators, auditor
+    # Upstream stages: policy, both seed generators, auditor.
+    # Seed generation must have enough max_tokens for the full batch:
+    # at sample_size=200 + behavior_count=5, each call produces ~20–40
+    # seeds with rich descriptions. The project default
+    # (DEFAULT_GENERATION_MAX_TOKENS=3000) truncates these, leaving an
+    # incomplete JSON that fails to parse → "invalid seeds payload".
     pipeline.setdefault("policy", {}).setdefault("model", {})["name"] = upstream_model
-    seeds_cfg.setdefault("prompt", {}).setdefault("model", {})["name"] = upstream_model
-    seeds_cfg.setdefault("scenario", {}).setdefault("model", {})["name"] = upstream_model
+    prompt_model = seeds_cfg.setdefault("prompt", {}).setdefault("model", {})
+    prompt_model["name"] = upstream_model
+    prompt_model["max_tokens"] = 16000
+    scenario_model = seeds_cfg.setdefault("scenario", {}).setdefault("model", {})
+    scenario_model["name"] = upstream_model
+    scenario_model["max_tokens"] = 16000
     rollout = pipeline.setdefault("rollout", {})
     rollout.setdefault("auditor", {}).setdefault("model", {})["name"] = upstream_model
 
