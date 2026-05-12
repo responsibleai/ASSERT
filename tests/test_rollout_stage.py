@@ -1410,6 +1410,119 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 f"{completed_id} should have completed cleanly",
             )
 
+    async def test_run_rollout_isolates_auditor_input_refusal_to_one_seed(self) -> None:
+        """One auditor_input_refused seed must not abort the rest of the batch.
+
+        Mirrors the May 12 PR #44 mix-1k failure: at scenario 853 of 1000
+        the auditor's adversarial prompt tripped Azure Prompt Shields'
+        jailbreak detector (the default auditor system prompt is
+        jailbreak-shaped by design - Aaron flagged this in the May 12
+        standup and worked around it in PR #45 with a tame variant). The
+        stage aborted because the auditor catch in _run_auditor_target_loop
+        re-raised LLMInputError. The fix routes auditor-side input errors
+        into a recorded transcript event with stop_reason=auditor_input_refused.
+        """
+        seed_rows = [
+            {
+                "kind": "scenario",
+                "seed": {
+                    "title": f"Title {i}",
+                    "description": f"scenario seed {i}",
+                },
+            }
+            for i in range(5)
+        ]
+        auditor_calls: list[str] = []
+
+        async def fake_generate(model, messages, options):
+            del options
+            # Identify which seed we're auditing by inspecting the auditor
+            # system prompt, which embeds the seed description verbatim.
+            description_marker = ""
+            for msg in messages:
+                content = msg.content if hasattr(msg, "content") else msg.get("content", "")
+                if "scenario seed" in content:
+                    description_marker = content
+                    break
+            auditor_calls.append(description_marker[:120])
+            if "scenario seed 2" in description_marker:
+                raise LLMInputError(
+                    "Bad request: AzureException BadRequestError - Invalid "
+                    "prompt: your prompt was flagged as potentially "
+                    "violating our usage policy (Prompt Shields jailbreak)"
+                )
+            return ModelResponse(text="Where should I go?", model=str(model))
+
+        class FakeHostedSession:
+            runtime_mode = "hosted"
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def run_turn(self, messages):
+                user_text = ""
+                for msg in reversed(messages):
+                    if msg.role == "user":
+                        user_text = msg.text
+                        break
+                return TurnResult(
+                    text="OK.",
+                    state_messages=list(messages) + [Message(role="assistant", content="OK.")],
+                    interaction_messages=[
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": "OK."},
+                    ],
+                    raw={"response": {"content": "OK."}},
+                )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch("p2m.stages.rollout.generate", new=fake_generate),
+                patch("p2m.stages.rollout._build_target_session", return_value=FakeHostedSession()),
+            ):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4-mini"),
+                        rollout=RolloutConfig(max_turns=1, concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-auditor-refusal",
+                )
+
+            transcript_rows = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        # All 5 scenarios reached the auditor (no fail-fast on seed 3).
+        self.assertEqual(len(auditor_calls), 5)
+        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(result["new_count"], 5)
+
+        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        refused = by_seed["seed_000003"]
+        self.assertEqual(refused["stop_reason"], "auditor_input_refused")
+        refusal_events = [
+            event for event in refused["events"]
+            if event["edit"]["type"] == "add_message"
+            and "[AUDITOR INPUT REFUSED:" in event["edit"]["message"].get("content", "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+
     async def test_run_rollout_still_fails_fast_on_provider_5xx(self) -> None:
         """LLMProviderError (Azure 5xx) is global, not seed-specific.
 

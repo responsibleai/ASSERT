@@ -700,10 +700,32 @@ async def _run_auditor_target_loop(
                 auditor_messages = [m for m in auditor_messages if m.content != _AUDITOR_RETRY_GUIDANCE]
                 auditor_messages.append(auditor_response.message)
                 break
-            except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
-                # Transport/auth/rate-limit errors should propagate to the
-                # runner's top-level handler — not be treated as bad auditor
-                # output.  The runner presents these with clean messages.
+            except LLMInputError as exc:
+                # Auditor-side input refusal (e.g. Azure Prompt Shields
+                # rejecting the auditor's adversarial prompt as a suspected
+                # jailbreak attempt - the default auditor system prompt is
+                # jailbreak-shaped by design and reliably trips Prompt
+                # Shields on a small fraction of seeds). This is per-seed
+                # data, not a global pipeline error: a different seed will
+                # lead the auditor down a different path and complete
+                # normally. Record the refusal in the transcript and stop
+                # the conversation cleanly so the worker can move on.
+                transcript.add_event(TranscriptEvent(
+                    view=["system", "combined"],
+                    actor="system",
+                    edit=AddMessageEdit(
+                        message=TranscriptMessage(
+                            role="system",
+                            content=f"[AUDITOR INPUT REFUSED: {exc}]",
+                        ),
+                    ),
+                ))
+                stop_reason = "auditor_input_refused"
+                break
+            except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+                # Auth/rate-limit/provider-5xx errors are global pipeline
+                # problems, not seed-specific. Propagate so the runner can
+                # surface a clean message and fail the stage fast.
                 raise
             except Exception as exc:
                 last_error = str(exc)
