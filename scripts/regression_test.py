@@ -178,6 +178,47 @@ def _suite_dir_for(config: Path, commit_sha: str, n_seeds: int, judge_model: str
     return REPO_ROOT / "artifacts" / "regression-runs" / f"{label}-{commit_sha[:7]}-{cfg_hash}"
 
 
+def _worktree_path_for(commit_sha: str) -> Path:
+    return REPO_ROOT / ".regression-worktrees" / commit_sha[:12]
+
+
+def ensure_worktree(commit_sha: str) -> Path:
+    """Create (or reuse) a git worktree pinned at ``commit_sha``.
+
+    Worktrees let baseline + treatment runs use the actual file tree of
+    each commit (including ``p2m/`` source, ``prompts/``, configs) without
+    mutating the main checkout. Without this, both runs would share the
+    treatment's source code and the comparison would be a trivial no-op.
+    """
+    wt = _worktree_path_for(commit_sha)
+    if wt.exists():
+        log.info("reusing worktree at %s", wt)
+        return wt
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    log.info("creating worktree for %s at %s", commit_sha[:7], wt)
+    subprocess.check_call(
+        ["git", "worktree", "add", "--detach", str(wt), commit_sha],
+        cwd=REPO_ROOT,
+    )
+    return wt
+
+
+def remove_worktree(commit_sha: str) -> None:
+    wt = _worktree_path_for(commit_sha)
+    if not wt.exists():
+        return
+    try:
+        subprocess.check_call(
+            ["git", "worktree", "remove", "--force", str(wt)],
+            cwd=REPO_ROOT,
+        )
+    except subprocess.CalledProcessError:
+        # Best-effort: prune dangling state if removal fails.
+        log.warning("worktree remove failed for %s; falling back to rmtree", wt)
+        shutil.rmtree(wt, ignore_errors=True)
+        subprocess.call(["git", "worktree", "prune"], cwd=REPO_ROOT)
+
+
 def run_pipeline(
     config: Path,
     *,
@@ -186,8 +227,17 @@ def run_pipeline(
     judge_model: str,
     extra_overrides: dict[str, Any] | None = None,
 ) -> Path:
-    """Run ``p2m run`` against one config, return the run output dir."""
+    """Run ``p2m run`` against one config from a worktree at ``commit_sha``.
+
+    Outputs land in ``REPO_ROOT/artifacts/regression-runs/`` (always under
+    the main checkout), so they survive worktree teardown and the cache
+    layer in ``science.yml`` can pick them up by ``--save-dir``.
+    """
     suite_dir = _suite_dir_for(config, commit_sha, n_seeds, judge_model)
+    if (suite_dir / f"reg-{commit_sha[:7]}" / SCORES_FILE).exists():
+        log.info("scores already exist for %s — skipping rerun", commit_sha[:7])
+        return suite_dir / f"reg-{commit_sha[:7]}"
+
     run_label = f"reg-{commit_sha[:7]}"
     suite_dir.mkdir(parents=True, exist_ok=True)
     overrides = {
@@ -197,17 +247,34 @@ def run_pipeline(
     }
     if extra_overrides:
         overrides.update(extra_overrides)
+
+    worktree = ensure_worktree(commit_sha)
+    # The config path may live in either the main checkout or the
+    # worktree. Resolve it relative to the worktree so we're always
+    # using the version of the config at ``commit_sha``.
+    rel = config.resolve().relative_to(REPO_ROOT)
+    config_in_wt = worktree / rel
+
     cmd = [
         sys.executable, "-m", "p2m.cli", "run",
-        "--config", str(config),
+        "--config", str(config_in_wt),
         "--suite", suite_dir.name,
         "--save-dir", str(suite_dir.parent),
         "--run", run_label,
     ]
     for key, value in overrides.items():
         cmd.extend(["--set", f"{key}={value}"])
-    log.info("running: %s", " ".join(cmd))
-    subprocess.check_call(cmd, cwd=REPO_ROOT)
+    # Prepend the worktree to PYTHONPATH so ``import p2m`` resolves to
+    # the worktree's source (and ``BASE_DIR`` -> worktree's prompts/),
+    # NOT the editable-install pointing at the main checkout. Without
+    # this, baseline + treatment runs would import the same source code.
+    env = os.environ.copy()
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(worktree) + (os.pathsep + existing_pp if existing_pp else "")
+    )
+    log.info("running: %s (cwd=%s, PYTHONPATH=%s)", " ".join(cmd), worktree, worktree)
+    subprocess.check_call(cmd, cwd=worktree, env=env)
     return suite_dir / run_label
 
 
@@ -291,37 +358,44 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     per_config_results: dict[str, dict[str, Any]] = {}
-    aggregated_baseline = []
-    aggregated_treatment = []
+    aggregated_baseline: list[dict[str, Any]] = []
+    aggregated_treatment: list[dict[str, Any]] = []
     policy_for_metrics: dict[str, Any] | None = None
+    worktrees_created: set[str] = set()
 
-    for config in args.configs:
-        log.info("=== config: %s ===", config.name)
-        baseline_dir = run_pipeline(
-            config,
-            commit_sha=args.baseline,
-            n_seeds=args.seeds,
-            judge_model=args.judge_model,
-        )
-        treatment_dir = run_pipeline(
-            config,
-            commit_sha=args.treatment,
-            n_seeds=args.seeds,
-            judge_model=args.judge_model,
-        )
-        baseline_rows = _scores_for(baseline_dir)
-        treatment_rows = _scores_for(treatment_dir)
-        policy = _policy_for(baseline_dir) or _policy_for(treatment_dir)
-        if policy_for_metrics is None:
-            policy_for_metrics = policy
-        per_config_results[config.name] = {
-            "baseline_dir": str(baseline_dir),
-            "treatment_dir": str(treatment_dir),
-            "baseline_n": len(baseline_rows),
-            "treatment_n": len(treatment_rows),
-        }
-        aggregated_baseline.extend(baseline_rows)
-        aggregated_treatment.extend(treatment_rows)
+    try:
+        for config in args.configs:
+            log.info("=== config: %s ===", config.name)
+            worktrees_created.add(args.baseline)
+            baseline_dir = run_pipeline(
+                config,
+                commit_sha=args.baseline,
+                n_seeds=args.seeds,
+                judge_model=args.judge_model,
+            )
+            worktrees_created.add(args.treatment)
+            treatment_dir = run_pipeline(
+                config,
+                commit_sha=args.treatment,
+                n_seeds=args.seeds,
+                judge_model=args.judge_model,
+            )
+            baseline_rows = _scores_for(baseline_dir)
+            treatment_rows = _scores_for(treatment_dir)
+            policy = _policy_for(baseline_dir) or _policy_for(treatment_dir)
+            if policy_for_metrics is None:
+                policy_for_metrics = policy
+            per_config_results[config.name] = {
+                "baseline_dir": str(baseline_dir),
+                "treatment_dir": str(treatment_dir),
+                "baseline_n": len(baseline_rows),
+                "treatment_n": len(treatment_rows),
+            }
+            aggregated_baseline.extend(baseline_rows)
+            aggregated_treatment.extend(treatment_rows)
+    finally:
+        for sha in worktrees_created:
+            remove_worktree(sha)
 
     baseline_metrics = compute_all(aggregated_baseline, policy_for_metrics)
     treatment_metrics = compute_all(aggregated_treatment, policy_for_metrics)
