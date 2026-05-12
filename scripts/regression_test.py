@@ -42,6 +42,8 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
+import yaml
+
 # Allow ``python scripts/regression_test.py`` invocation in addition to
 # ``python -m scripts.regression_test``. When run directly, sys.path[0]
 # is the script's own dir, so ``scripts.x`` imports fail without this.
@@ -213,10 +215,40 @@ def remove_worktree(commit_sha: str) -> None:
             cwd=REPO_ROOT,
         )
     except subprocess.CalledProcessError:
-        # Best-effort: prune dangling state if removal fails.
         log.warning("worktree remove failed for %s; falling back to rmtree", wt)
         shutil.rmtree(wt, ignore_errors=True)
         subprocess.call(["git", "worktree", "prune"], cwd=REPO_ROOT)
+
+
+def _render_config(
+    source: Path,
+    *,
+    suite_name: str,
+    run_label: str,
+    n_seeds: int,
+    judge_model: str,
+    target_dir: Path,
+) -> Path:
+    """Materialise a per-run YAML with the requested overrides.
+
+    The CLI only accepts ``--config``; sample sizes, judge model, and
+    output location (suite/run) all come from the YAML body. We mutate
+    a copy and write it inside ``target_dir`` (typically the worktree)
+    so the run is fully self-contained.
+    """
+    cfg = yaml.safe_load(source.read_text(encoding="utf-8"))
+    cfg["suite"] = suite_name
+    cfg["run"] = run_label
+    seeds_cfg = cfg.setdefault("pipeline", {}).setdefault("seeds", {})
+    half = n_seeds // 2
+    seeds_cfg.setdefault("prompt", {})["sample_size"] = half
+    seeds_cfg.setdefault("scenario", {})["sample_size"] = n_seeds - half
+    judge = cfg["pipeline"].setdefault("judge", {}).setdefault("model", {})
+    judge["name"] = judge_model
+    target_dir.mkdir(parents=True, exist_ok=True)
+    out = target_dir / f"_regression_{source.stem}_{run_label}.yaml"
+    out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    return out
 
 
 def run_pipeline(
@@ -229,41 +261,39 @@ def run_pipeline(
 ) -> Path:
     """Run ``p2m run`` against one config from a worktree at ``commit_sha``.
 
-    Outputs land in ``REPO_ROOT/artifacts/regression-runs/`` (always under
-    the main checkout), so they survive worktree teardown and the cache
-    layer in ``science.yml`` can pick them up by ``--save-dir``.
+    Pipeline outputs land in ``<worktree>/artifacts/results/<suite>/<run>/``;
+    we copy the run dir to ``REPO_ROOT/artifacts/regression-runs/`` so they
+    survive worktree teardown and the workflow's actions/cache step can
+    persist them across PR runs.
     """
     suite_dir = _suite_dir_for(config, commit_sha, n_seeds, judge_model)
-    if (suite_dir / f"reg-{commit_sha[:7]}" / SCORES_FILE).exists():
-        log.info("scores already exist for %s — skipping rerun", commit_sha[:7])
-        return suite_dir / f"reg-{commit_sha[:7]}"
-
     run_label = f"reg-{commit_sha[:7]}"
+    final_run_dir = suite_dir / run_label
+    if (final_run_dir / SCORES_FILE).exists():
+        log.info("scores already exist for %s — skipping rerun", commit_sha[:7])
+        return final_run_dir
+
     suite_dir.mkdir(parents=True, exist_ok=True)
-    overrides = {
-        "pipeline.seeds.prompt.sample_size": n_seeds // 2,
-        "pipeline.seeds.scenario.sample_size": n_seeds - (n_seeds // 2),
-        "pipeline.judge.model.name": judge_model,
-    }
     if extra_overrides:
-        overrides.update(extra_overrides)
+        log.warning("extra_overrides not yet wired through temp YAML: %s", extra_overrides)
 
     worktree = ensure_worktree(commit_sha)
-    # The config path may live in either the main checkout or the
-    # worktree. Resolve it relative to the worktree so we're always
-    # using the version of the config at ``commit_sha``.
     rel = config.resolve().relative_to(REPO_ROOT)
     config_in_wt = worktree / rel
+    suite_name = suite_dir.name  # unique per (config, commit, hash) tuple
+    rendered = _render_config(
+        config_in_wt,
+        suite_name=suite_name,
+        run_label=run_label,
+        n_seeds=n_seeds,
+        judge_model=judge_model,
+        target_dir=worktree,
+    )
 
     cmd = [
         sys.executable, "-m", "p2m.cli", "run",
-        "--config", str(config_in_wt),
-        "--suite", suite_dir.name,
-        "--save-dir", str(suite_dir.parent),
-        "--run", run_label,
+        "--config", str(rendered),
     ]
-    for key, value in overrides.items():
-        cmd.extend(["--set", f"{key}={value}"])
     # Prepend the worktree to PYTHONPATH so ``import p2m`` resolves to
     # the worktree's source (and ``BASE_DIR`` -> worktree's prompts/),
     # NOT the editable-install pointing at the main checkout. Without
@@ -275,7 +305,20 @@ def run_pipeline(
     )
     log.info("running: %s (cwd=%s, PYTHONPATH=%s)", " ".join(cmd), worktree, worktree)
     subprocess.check_call(cmd, cwd=worktree, env=env)
-    return suite_dir / run_label
+
+    # Copy the worktree's result dir into REPO_ROOT so it survives teardown
+    # and the workflow cache layer can persist it.
+    src_run_dir = worktree / "artifacts" / "results" / suite_name / run_label
+    if not src_run_dir.exists():
+        raise RuntimeError(
+            f"pipeline did not write expected run dir at {src_run_dir}"
+        )
+    if final_run_dir.exists():
+        shutil.rmtree(final_run_dir)
+    final_run_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_run_dir, final_run_dir)
+    log.info("copied %s -> %s", src_run_dir, final_run_dir)
+    return final_run_dir
 
 
 def _scores_for(run_dir: Path) -> list[dict[str, Any]]:
