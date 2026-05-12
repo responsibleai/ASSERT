@@ -135,6 +135,7 @@ class SeedsResponseSchemaTest(unittest.TestCase):
     def test_schema_omits_min_items_by_default(self) -> None:
         schema = seeds_response_schema()
         self.assertNotIn("minItems", schema["properties"]["seeds"])
+        self.assertEqual(schema["properties"]["seeds"]["maxItems"], 2000)
 
     def test_schema_pins_min_items_when_count_supplied(self) -> None:
         schema = seeds_response_schema(min_items=27)
@@ -145,6 +146,16 @@ class SeedsResponseSchemaTest(unittest.TestCase):
         for value in (0, -1):
             schema = seeds_response_schema(min_items=value)
             self.assertNotIn("minItems", schema["properties"]["seeds"])
+
+    def test_schema_pins_both_bounds_when_min_and_max_match(self) -> None:
+        schema = seeds_response_schema(min_items=500, max_items=500)
+        self.assertEqual(schema["properties"]["seeds"]["minItems"], 500)
+        self.assertEqual(schema["properties"]["seeds"]["maxItems"], 500)
+
+    def test_schema_ignores_non_positive_max_items(self) -> None:
+        for value in (0, -1):
+            schema = seeds_response_schema(max_items=value)
+            self.assertEqual(schema["properties"]["seeds"]["maxItems"], 2000)
 
 
 class LabelEntrySchemaTest(unittest.TestCase):
