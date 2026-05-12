@@ -15,6 +15,7 @@ from p2m.core.model_client import (
     Message,
     ModelResponse,
     ToolCall,
+    _classify_llm_error,
     build_llm_call_trace,
     generate,
     generate_with_tools,
@@ -512,15 +513,35 @@ class CallableSession:
                 for msg in messages
                 if msg.role in ("user", "assistant")
             ]
-            raw_result = await invoke_callable(
-                self._callable, user_text, history=history,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text, history=history,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                # The user callable typically makes its own LLM calls
+                # (LangGraph, agent frameworks, raw litellm) which bypass
+                # our generate()/_with_retries wrapper, so provider errors
+                # bubble up unclassified. Re-raise them as the right p2m
+                # error class (LLMInputError for content-filter / 400s,
+                # LLMRateLimitError for 429s, LLMProviderError for 5xx,
+                # LLMAuthError for 401/403) so the rollout stage's per-seed
+                # isolation paths can do their job.
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
         else:
-            raw_result = await invoke_callable(
-                self._callable, user_text,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
 
         result = self._normalize_callable_result(raw_result)
 
