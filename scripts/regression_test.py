@@ -287,7 +287,10 @@ def run_pipeline(
         run_label=run_label,
         n_seeds=n_seeds,
         judge_model=judge_model,
-        target_dir=worktree,
+        # Sibling files (concept markdown, etc.) are resolved relative
+        # to the YAML's parent dir, so emit the temp config alongside
+        # the source.
+        target_dir=config_in_wt.parent,
     )
 
     cmd = [
