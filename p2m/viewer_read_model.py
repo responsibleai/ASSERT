@@ -14,8 +14,8 @@ from p2m.core.io import write_json, row_behavior
 
 log = logging.getLogger(__name__)
 
-VIEWER_READ_MODEL_SCHEMA_VERSION = 2
-VIEWER_READ_MODEL_GENERATOR_VERSION = "viewer-read-model-v2"
+VIEWER_READ_MODEL_SCHEMA_VERSION = 3
+VIEWER_READ_MODEL_GENERATOR_VERSION = "viewer-read-model-v3"
 VIEWER_CACHE_DIR = ".viewer"
 
 VIEWER_RUN_MANIFEST_FILE = "viewer_run_manifest.json"
@@ -262,9 +262,13 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
     """Materialize transcript events into viewer messages with turn labels.
 
     Turn semantics: only the auditor (user) and the target (assistant) emit
-    "turns". A target turn is one block of one or more consecutive assistant
-    messages — sub-agent handoffs and tool calls do not start a new turn.
-    System messages, tool messages, and tool-call edits never get a turn label.
+    "turns". A target turn = one block of consecutive assistant emissions
+    *plus* any tool calls or tool results issued during that block. Tool
+    messages inherit the surrounding assistant turn — they never get their
+    own turn number, but they DO carry the assistant's turn label so the
+    viewer can group them under the right turn.
+
+    System messages and ``set_system_message`` edits never get a turn label.
     """
     messages: list[dict[str, Any]] = []
     judge_turn = 0
@@ -293,13 +297,13 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
                 continue
 
             message_judge_turn: int | None
-            if kind == "set_system_message" or role in {"system", "tool"}:
+            if kind == "set_system_message" or role == "system":
                 message_judge_turn = None
             elif role == "user":
                 judge_turn += 1
                 message_judge_turn = judge_turn
                 last_principal_role = "user"
-            elif role == "assistant":
+            elif role in {"assistant", "tool"}:
                 if last_principal_role != "assistant":
                     judge_turn += 1
                 message_judge_turn = judge_turn
@@ -330,13 +334,16 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
         tool_name = edit.get("tool_name")
         if not isinstance(tool_name, str):
             continue
+        if last_principal_role != "assistant":
+            judge_turn += 1
+            last_principal_role = "assistant"
         messages.append(
             {
                 "id": message_id,
                 "role": "tool",
                 "content": "",
                 "type": "tool_call",
-                "judgeTurn": None,
+                "judgeTurn": judge_turn,
                 "tool_call_id": edit.get("tool_call_id"),
                 "function": tool_name,
                 "arguments": edit.get("tool_args") if isinstance(edit.get("tool_args"), dict) else {},

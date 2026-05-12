@@ -22,13 +22,14 @@ function normalizeInteractionMessages(messages: InteractionMessage[]): Interacti
 		const role = normalizeMessageRole(message.role);
 		let nextJudgeTurn: number | null;
 		const isToolCall = message.type === 'tool_call';
-		if (role === 'system' || role === 'tool' || isToolCall) {
+		if (role === 'system') {
 			nextJudgeTurn = null;
 		} else if (role === 'user') {
 			judgeTurn += 1;
 			nextJudgeTurn = judgeTurn;
 			lastPrincipalRole = 'user';
 		} else {
+			// assistant, tool, or tool_call: belongs to the surrounding assistant turn.
 			if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
 			nextJudgeTurn = judgeTurn;
 			lastPrincipalRole = 'assistant';

@@ -87,9 +87,11 @@ class MaterializeTargetMessagesTurnSemanticsTest(unittest.TestCase):
         self.assertEqual(turns, [None, 1, 2, 2, 2, 3, 4])
         self.assertEqual(_count_target_conversation_messages(transcript), 4)
 
-    def test_tool_calls_and_tool_messages_are_not_turns(self) -> None:
-        # tool_call edits and tool-role messages between two assistants should
-        # NOT split the assistant chain, and should themselves be unlabeled.
+    def test_tool_calls_and_tool_messages_inherit_assistant_turn(self) -> None:
+        # tool_call edits and tool-role messages between two assistants must
+        # NOT split the assistant chain, and they SHOULD inherit the
+        # surrounding assistant turn label so the viewer can group them
+        # under the right turn.
         transcript = {
             "events": [
                 _msg("user", "hi"),
@@ -106,9 +108,40 @@ class MaterializeTargetMessagesTurnSemanticsTest(unittest.TestCase):
             [
                 ("user", 1),
                 ("assistant", 2),
-                ("tool", None),
-                ("tool", None),
+                ("tool", 2),
+                ("tool", 2),
                 ("assistant", 2),
+            ],
+        )
+        self.assertEqual(_count_target_conversation_messages(transcript), 2)
+
+    def test_tools_before_assistant_text_inherit_upcoming_target_turn(self) -> None:
+        # Regression test for the screenshot bug: tool calls/results that
+        # arrive immediately after an auditor user message — but BEFORE
+        # the target's assistant text — must be labeled with the target's
+        # upcoming turn (auditor=11 -> tools=12, assistant=12), not the
+        # auditor's just-finished turn (would have been 11 across the board).
+        transcript = {
+            "events": [
+                _msg("user", "what is the cheapest hotel?"),
+                _tool_call("search_flights", {"to": "YHZ"}),
+                _tool_call("search_hotels", {"city": "Halifax"}),
+                _msg("tool", "search_flights result"),
+                _msg("tool", "search_hotels result"),
+                _msg("assistant", "Here is the cheapest option..."),
+            ]
+        }
+        messages = _materialize_target_messages(transcript)
+        turns = [(m["role"], m["type"], m["judgeTurn"]) for m in messages]
+        self.assertEqual(
+            turns,
+            [
+                ("user", "message", 1),
+                ("tool", "tool_call", 2),
+                ("tool", "tool_call", 2),
+                ("tool", "message", 2),
+                ("tool", "message", 2),
+                ("assistant", "message", 2),
             ],
         )
         self.assertEqual(_count_target_conversation_messages(transcript), 2)

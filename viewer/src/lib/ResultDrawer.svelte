@@ -338,16 +338,19 @@
 
 	function fallbackTurnLabel(messages: InteractionMessage[], messageIndex: number): number {
 		// Mirrors the materializer: only auditor (user) and target (assistant)
-		// emit turns; consecutive assistant emissions collapse into one turn.
+		// emit turns. Tool calls and tool messages inherit the surrounding
+		// assistant turn — they don't get their own number, but they DO show
+		// the assistant's turn label so the viewer can group them under it.
 		let count = 0;
 		let lastPrincipalRole: 'user' | 'assistant' | null = null;
 		for (let i = 0; i <= messageIndex; i += 1) {
 			const message = messages[i];
-			if (message.role === 'system' || message.role === 'tool' || message.type === 'tool_call') continue;
+			if (message.role === 'system') continue;
 			if (message.role === 'user') {
 				count += 1;
 				lastPrincipalRole = 'user';
-			} else if (message.role === 'assistant') {
+			} else {
+				// assistant, tool, or tool_call: same turn as the surrounding assistant block.
 				if (lastPrincipalRole !== 'assistant') count += 1;
 				lastPrincipalRole = 'assistant';
 			}

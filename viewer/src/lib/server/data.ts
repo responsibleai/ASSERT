@@ -340,13 +340,13 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 			if (typeof role !== 'string' || typeof content !== 'string') continue;
 
 			let messageJudgeTurn: number | null;
-			if (kind === 'set_system_message' || role === 'system' || role === 'tool') {
+			if (kind === 'set_system_message' || role === 'system') {
 				messageJudgeTurn = null;
 			} else if (role === 'user') {
 				judgeTurn += 1;
 				messageJudgeTurn = judgeTurn;
 				lastPrincipalRole = 'user';
-			} else if (role === 'assistant') {
+			} else if (role === 'assistant' || role === 'tool') {
 				if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
 				messageJudgeTurn = judgeTurn;
 				lastPrincipalRole = 'assistant';
@@ -385,12 +385,14 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 				: undefined;
 		const toolResult = (edit as Record<string, unknown>).tool_result;
 		if (typeof toolName !== 'string') continue;
+		if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
+		lastPrincipalRole = 'assistant';
 		messages.push({
 			id,
 			role: 'tool',
 			content: formatToolCallContent(toolName, toolArgs, toolResult),
 			type: 'tool_call',
-			judgeTurn: null,
+			judgeTurn,
 			tool_call_id: toolCallId,
 			function: toolName,
 			arguments: toolArgs,

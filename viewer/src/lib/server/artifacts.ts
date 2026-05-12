@@ -20,8 +20,8 @@ export const SUITE_METADATA_FILE = 'suite.json';
 export const SUITE_POLICY_FILE = 'policy.json';
 export const SUITE_SYSTEMATIZATION_FILE = 'systematization.json';
 export const SUITE_ARTIFACTS_DIR = 'artifacts';
-export const VIEWER_READ_MODEL_SCHEMA_VERSION = 2;
-export const VIEWER_READ_MODEL_GENERATOR_VERSION = 'viewer-read-model-v2';
+export const VIEWER_READ_MODEL_SCHEMA_VERSION = 3;
+export const VIEWER_READ_MODEL_GENERATOR_VERSION = 'viewer-read-model-v3';
 
 const SAFE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
