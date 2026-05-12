@@ -156,14 +156,37 @@ SEED_SCHEMA_WITH_TOOLS: dict[str, Any] = {
 }
 
 
-def seeds_response_schema(tool_source: str = TOOL_SOURCE_RUNTIME) -> dict[str, Any]:
-    """Full response schema wrapping seeds in a ``{"seeds": [...]}`` envelope."""
+def seeds_response_schema(
+    tool_source: str = TOOL_SOURCE_RUNTIME,
+    min_items: int | None = None,
+    max_items: int | None = None,
+) -> dict[str, Any]:
+    """Full response schema wrapping seeds in a ``{"seeds": [...]}`` envelope.
+
+    When ``min_items`` is provided, the schema requires the model to return at
+    least that many seeds. Without this lower bound, gpt-5.4-mini frequently
+    returns N-1 items for batches larger than ~10, since the schema previously
+    allowed 0-2000 items regardless of the prompt's stated count.
+
+    When ``max_items`` is provided, it overrides the default 2000 ceiling so
+    callers can pin both bounds to the exact target count. Pinning both bounds
+    keeps the schema symmetric with the prompt's stated count and prevents the
+    model from over-generating in the (unlikely) inverse failure mode.
+    """
     item_schema = SEED_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_SEED else SEED_SCHEMA
+    resolved_max = max_items if (max_items is not None and max_items > 0) else 2000
+    seeds_schema: dict[str, Any] = {
+        "type": "array",
+        "maxItems": resolved_max,
+        "items": item_schema,
+    }
+    if min_items is not None and min_items > 0:
+        seeds_schema["minItems"] = min_items
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "seeds": {"type": "array", "maxItems": 2000, "items": item_schema},
+            "seeds": seeds_schema,
         },
         "required": ["seeds"],
     }
@@ -623,7 +646,6 @@ async def _generate_records(
         raise ValueError("seed generation concurrency must be > 0")
 
     design_data = design or {}
-    schema = seeds_response_schema(tool_source)
     seed_id_prefix = SEED_ID_PREFIX[kind]
     concept_name = policy.get("concept", {}).get("name", "concept")
 
@@ -648,12 +670,15 @@ async def _generate_records(
         )
         slug = slugify(str(job.behavior.get("name") or ""))
         behavior_name = str(job.behavior.get("name") or "")
+        job_schema = seeds_response_schema(
+            tool_source, min_items=job.count, max_items=job.count
+        )
 
         response = await generate_structured(
             model,
             prompt,
             schema_name=f"{kind}_seeds",
-            json_schema=schema,
+            json_schema=job_schema,
             options=GenerateOptions(
                 temperature=temperature, max_tokens=max_tokens,
                 reasoning_effort=reasoning_effort, timeout_s=timeout_s,
