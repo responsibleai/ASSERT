@@ -26,6 +26,7 @@ name: Science Regression Gate
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'p2m/**'
       - 'prompts/**'
