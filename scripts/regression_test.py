@@ -134,6 +134,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Judge model override (long-context required for realistic agents)",
     )
     p.add_argument(
+        "--upstream-model",
+        default="azure/gpt-5.4",
+        help=(
+            "Override the model used for policy + seeds + auditor stages. "
+            "Defaults to gpt-5.4: configs ship with gpt-5.4-mini for cost, "
+            "but adversarial scenario seed schemas trip its content filter "
+            "/ structured-output handling, dropping payloads silently."
+        ),
+    )
+    p.add_argument(
         "--alpha-canonical-only",
         action="store_true",
         default=True,
@@ -227,24 +237,46 @@ def _render_config(
     run_label: str,
     n_seeds: int,
     judge_model: str,
+    upstream_model: str,
     target_dir: Path,
 ) -> Path:
     """Materialise a per-run YAML with the requested overrides.
 
-    The CLI only accepts ``--config``; sample sizes, judge model, and
-    output location (suite/run) all come from the YAML body. We mutate
-    a copy and write it inside ``target_dir`` (typically the worktree)
-    so the run is fully self-contained.
+    The CLI only accepts ``--config``; sample sizes, models, and output
+    location (suite/run) all come from the YAML body. We mutate a copy
+    and write it inside ``target_dir`` (typically the worktree's
+    ``tests/regression/``) so sibling concept markdown is found and the
+    run is fully self-contained.
+
+    ``upstream_model`` overrides the model used for policy + seed
+    generation + auditor (per-stage). The default ``gpt-5.4-mini`` in
+    the source configs has been observed to crash on adversarial
+    scenario seed schemas (returns null/empty parsed payloads — likely
+    content-filter rejection). Bumping all upstream stages to the
+    long-context judge avoids the failure at modest cost.
     """
     cfg = yaml.safe_load(source.read_text(encoding="utf-8"))
     cfg["suite"] = suite_name
     cfg["run"] = run_label
-    seeds_cfg = cfg.setdefault("pipeline", {}).setdefault("seeds", {})
+
+    pipeline = cfg.setdefault("pipeline", {})
+
+    # Sample sizes
+    seeds_cfg = pipeline.setdefault("seeds", {})
     half = n_seeds // 2
     seeds_cfg.setdefault("prompt", {})["sample_size"] = half
     seeds_cfg.setdefault("scenario", {})["sample_size"] = n_seeds - half
-    judge = cfg["pipeline"].setdefault("judge", {}).setdefault("model", {})
-    judge["name"] = judge_model
+
+    # Models — judge first
+    pipeline.setdefault("judge", {}).setdefault("model", {})["name"] = judge_model
+
+    # Upstream stages: policy, both seed generators, auditor
+    pipeline.setdefault("policy", {}).setdefault("model", {})["name"] = upstream_model
+    seeds_cfg.setdefault("prompt", {}).setdefault("model", {})["name"] = upstream_model
+    seeds_cfg.setdefault("scenario", {}).setdefault("model", {})["name"] = upstream_model
+    rollout = pipeline.setdefault("rollout", {})
+    rollout.setdefault("auditor", {}).setdefault("model", {})["name"] = upstream_model
+
     target_dir.mkdir(parents=True, exist_ok=True)
     out = target_dir / f"_regression_{source.stem}_{run_label}.yaml"
     out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
@@ -257,6 +289,7 @@ def run_pipeline(
     commit_sha: str,
     n_seeds: int,
     judge_model: str,
+    upstream_model: str,
     extra_overrides: dict[str, Any] | None = None,
 ) -> Path:
     """Run ``p2m run`` against one config from a worktree at ``commit_sha``.
@@ -287,6 +320,7 @@ def run_pipeline(
         run_label=run_label,
         n_seeds=n_seeds,
         judge_model=judge_model,
+        upstream_model=upstream_model,
         # Sibling files (concept markdown, etc.) are resolved relative
         # to the YAML's parent dir, so emit the temp config alongside
         # the source.
@@ -418,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
                 commit_sha=args.baseline,
                 n_seeds=args.seeds,
                 judge_model=args.judge_model,
+                upstream_model=args.upstream_model,
             )
             worktrees_created.add(args.treatment)
             treatment_dir = run_pipeline(
@@ -425,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                 commit_sha=args.treatment,
                 n_seeds=args.seeds,
                 judge_model=args.judge_model,
+                upstream_model=args.upstream_model,
             )
             baseline_rows = _scores_for(baseline_dir)
             treatment_rows = _scores_for(treatment_dir)
@@ -456,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     report["treatment_sha"] = args.treatment
     report["upstream_stages_rerun"] = rerun_upstream
     report["judge_model"] = args.judge_model
+    report["upstream_model"] = args.upstream_model
 
     report_json = args.artifacts_dir / "regression_report.json"
     report_md = args.artifacts_dir / "regression_report.md"
