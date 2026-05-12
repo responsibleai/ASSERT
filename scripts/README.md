@@ -15,6 +15,36 @@ uv run p2m run --config examples/pipes/health_assistant.yaml
 
 Use `uv run p2m --help` for CLI options.
 
+## `benchmark.py`
+
+Drives the full pipeline at a chosen `(seeds, concurrency)` point so you
+can probe how throughput, latency, and rate-limit pressure scale. Each
+invocation materializes a per-run working directory under
+`artifacts/benchmark/<run_id>/`, applies overrides on top of
+`examples/benchmark/eval_config.yaml`, calls `run_pipeline()` directly,
+and appends a single summary row (timestamp, seeds, concurrency,
+behavior_count, exit_code, wall_time, rate-limit cooldowns, scenarios
+scored, judge dimension rates) to `artifacts/benchmark/results.csv`.
+
+The base config is scenario-only by design — the rollout/judge
+concurrency knob is what this benchmark exists to exercise, and
+multi-turn scenarios are the heavier shape that makes that knob bite.
+`pipeline.policy.behavior_count` auto-scales with `--seeds` (~10 seeds
+per behavior, clamped to `[6, 50]`); pass `--behaviors` to override.
+
+```bash
+source .env
+uv run python scripts/benchmark.py --seeds 100  --concurrency 10
+uv run python scripts/benchmark.py --seeds 500  --concurrency 25
+uv run python scripts/benchmark.py --seeds 1000 --concurrency 50
+uv run python scripts/benchmark.py --seeds 5000 --concurrency 100
+```
+
+Successive runs accumulate in `artifacts/benchmark/results.csv` so you
+can compare them at a glance. Pass `--no-csv` to skip the row when
+spot-checking. Pass `--run-id <name>` to use a fixed run id (useful for
+re-running with the same parameters after a code change).
+
 ## `turn_checkpoint_judge.py`
 
 This script re-judges transcript prefixes from one completed run at fixed rollout-turn checkpoints. It reads `<run>/transcripts.jsonl`, `<run>/config.yaml`, and the suite `policy.json`, then writes checkpoint artifacts under `<run>/checkpoint_judge/` by default: `checkpoint_scores.jsonl`, `checkpoint_metrics.json`, and `<dimension>_by_turn.svg`.
