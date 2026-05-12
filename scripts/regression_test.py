@@ -326,6 +326,9 @@ def _render_config(
     scenario_model["max_tokens"] = 16000
     rollout = pipeline.setdefault("rollout", {})
     rollout.setdefault("auditor", {}).setdefault("model", {})["name"] = upstream_model
+    # Bump rollout concurrency so seeds=200 finishes in workflow timeout.
+    # qualevalexpeus has generous Azure quota for these deployments.
+    rollout["concurrency"] = max(int(rollout.get("concurrency", 2) or 2), 10)
 
     target_dir.mkdir(parents=True, exist_ok=True)
     out = target_dir / f"_regression_{source.stem}_{run_label}.yaml"
