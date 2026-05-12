@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 from p2m.core.config_model import AuditorConfig, EvaluationConfig, JudgeConfig, RolloutConfig, TargetConfig, ToolsConfig
 from p2m.core.io import load_seeds
-from p2m.core.model_client import Message, ModelResponse
+from p2m.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from p2m.core.session import TurnResult
-from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, run_rollout
+from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, _run_prompt_seed, run_rollout
 from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
@@ -1261,6 +1261,193 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             ["seed_000001", "seed_000002", "seed_000003"],
         )
         self.assertNotIn("parent_seed_id", canonical_rows[2])
+
+    async def test_run_prompt_seed_records_target_input_refusal(self) -> None:
+        """Target-side LLMInputError is recorded as a transcript event, not raised.
+
+        Without this, one Azure content-filter refusal kills the entire batch
+        even though 499 other adversarial prompts completed successfully.
+        """
+        from p2m.core.session import HostedSession
+
+        async def fake_run_turn(self_inner, messages):
+            raise LLMInputError(
+                "Bad request: AzureException BadRequestError - Invalid prompt: "
+                "your prompt was flagged as potentially violating our usage policy."
+            )
+
+        async def fake_open(self_inner):
+            return None
+
+        async def fake_close(self_inner):
+            return None
+
+        seed_row = {
+            "kind": "prompt",
+            "seed_id": "seed_000001",
+            "seed": {"description": "adversarial prompt the target refuses"},
+        }
+
+        with (
+            patch.object(HostedSession, "open", new=fake_open),
+            patch.object(HostedSession, "close", new=fake_close),
+            patch.object(HostedSession, "run_turn", new=fake_run_turn),
+        ):
+            transcript = await _run_prompt_seed(
+                seed=seed_row,
+                target=TargetConfig(model="azure/gpt-5.4-mini"),
+                rollout=RolloutConfig(max_turns=1, concurrency=1),
+                max_tokens=1000,
+                config_path=None,
+            )
+
+        self.assertEqual(transcript.stop_reason, "target_input_refused")
+        refusal_events = [
+            event for event in transcript.events
+            if event.edit.type == "add_message"
+            and "[TARGET INPUT REFUSED:" in (event.edit.message.content or "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+        self.assertIn("flagged as potentially violating", refusal_events[0].edit.message.content)
+
+    async def test_run_rollout_isolates_target_input_refusal_to_one_seed(self) -> None:
+        """One target_input_refused seed must not abort the rest of the batch.
+
+        Mirrors the May 11 overnight scale-500 failure: seed 501 of 502 hit
+        Azure content filter, and the whole rollout stage failed because the
+        worker re-raised LLMInputError. The fix routes target-side input errors
+        into the per-seed transcript instead of propagating.
+        """
+        from p2m.core.session import HostedSession
+
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(5)
+        ]
+        run_turn_calls: list[str] = []
+
+        async def fake_run_turn(self_inner, messages):
+            # The seed_id is encoded in the call_label on the session
+            # (target:seed_000001 etc); decode by index from the user message.
+            user_text = next(
+                (m.text or "" for m in messages if m.role == "user"),
+                "",
+            )
+            run_turn_calls.append(user_text)
+            if "prompt 2" in user_text:
+                raise LLMInputError(
+                    "Bad request: AzureException BadRequestError - "
+                    "prompt flagged as potentially violating our usage policy"
+                )
+            return TurnResult(
+                text="OK",
+                state_messages=list(messages) + [Message(role="assistant", content="OK")],
+                interaction_messages=[
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": "OK"},
+                ],
+                raw={"response": {"content": "OK"}},
+            )
+
+        async def fake_open(self_inner):
+            return None
+
+        async def fake_close(self_inner):
+            return None
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(HostedSession, "open", new=fake_open),
+                patch.object(HostedSession, "close", new=fake_close),
+                patch.object(HostedSession, "run_turn", new=fake_run_turn),
+            ):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-refusal-isolation",
+                )
+
+            transcript_rows = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        # All 5 seeds attempted at the runtime layer (no fail-fast).
+        self.assertEqual(len(run_turn_calls), 5)
+        # All 5 transcripts written. The refused one carries the new
+        # target_input_refused stop_reason; the others carry "completed".
+        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(result["new_count"], 5)
+
+        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        refused = by_seed["seed_000003"]
+        self.assertEqual(refused["stop_reason"], "target_input_refused")
+        refusal_events = [
+            event for event in refused["events"]
+            if event["edit"]["type"] == "add_message"
+            and "[TARGET INPUT REFUSED:" in event["edit"]["message"].get("content", "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+
+        for completed_id in ("seed_000001", "seed_000002", "seed_000004", "seed_000005"):
+            self.assertEqual(
+                by_seed[completed_id]["stop_reason"],
+                "completed",
+                f"{completed_id} should have completed cleanly",
+            )
+
+    async def test_run_rollout_still_fails_fast_on_provider_5xx(self) -> None:
+        """LLMProviderError (Azure 5xx) is global, not seed-specific.
+
+        Verifies the fix didn't accidentally swallow auth/rate-limit/5xx
+        errors that should still abort the stage.
+        """
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(3)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            raise LLMProviderError("Azure 503 ServiceUnavailable")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
+                self.assertRaises(LLMProviderError),
+            ):
+                await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-provider-error",
+                )
 
 
 if __name__ == "__main__":

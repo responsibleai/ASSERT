@@ -611,6 +611,25 @@ async def _run_prompt_seed(
         )
 
     if runtime_error is not None:
+        # Target-side LLMInputError (e.g. Azure content filter rejecting an
+        # adversarial prompt) is intrinsic to this seed's data, not a global
+        # pipeline problem. Record it as a transcript event so judge/metrics
+        # can see the refusal, and continue with the next seed. Other
+        # classified LLM errors (auth, rate-limit, provider 5xx) and arbitrary
+        # runtime exceptions still propagate to the worker error path.
+        if isinstance(runtime_error, LLMInputError):
+            transcript.add_event(TranscriptEvent(
+                view=["target", "combined"],
+                actor="system",
+                edit=AddMessageEdit(
+                    message=TranscriptMessage(
+                        role="system",
+                        content=f"[TARGET INPUT REFUSED: {runtime_error}]",
+                    ),
+                ),
+            ))
+            transcript.stop_reason = "target_input_refused"
+            return transcript
         raise runtime_error
     if runtime_result is None:
         raise RuntimeError("Prompt rollout did not produce a runtime result.")
@@ -772,11 +791,29 @@ async def _run_auditor_target_loop(
                 log.warning(
                     f"Target response truncated (finish_reason=length) at turn {turn_index + 1}/{max_turns}"
                 )
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
-            # LLM-level errors (rate limit, auth, bad request, provider 5xx)
-            # should propagate to the runner's top-level handler instead of
-            # being buried in the transcript as a target_error.  The runner
-            # presents these with clean, actionable messages.
+        except LLMInputError as exc:
+            # Target-side input refusal (e.g. Azure content filter rejecting
+            # an adversarial prompt) is intrinsic to this seed's data, not a
+            # global pipeline problem. Record it like an ordinary target_error
+            # so judge/metrics can see the refusal, and let the worker keep
+            # going on the next seed.
+            transcript.add_event(TranscriptEvent(
+                view=["target", "combined"],
+                actor="system",
+                edit=AddMessageEdit(
+                    message=TranscriptMessage(
+                        role="system",
+                        content=f"[TARGET INPUT REFUSED: {exc}]",
+                    ),
+                ),
+            ))
+            auditor_messages.append(Message(role="user", content=f"<target_error>{exc}</target_error>"))
+            stop_reason = "target_input_refused"
+            break
+        except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+            # Auth/rate-limit/provider-5xx errors are global pipeline
+            # problems, not seed-specific. Propagate so the runner can
+            # surface a clean message and fail the stage fast.
             raise
         except Exception as exc:
             tb = traceback.format_exc()
