@@ -239,5 +239,100 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.reasoning, "internal reasoning")
 
 
+class NormalizeUsageTest(unittest.TestCase):
+    """Verify cache-hit token accounting across the OpenAI/Azure and Anthropic shapes."""
+
+    def test_extracts_openai_chat_cached_tokens(self) -> None:
+        # Chat Completions (OpenAI/Azure) puts cache hits under
+        # prompt_tokens_details.cached_tokens.
+        usage = model_client._normalize_usage({
+            "prompt_tokens": 5000,
+            "completion_tokens": 200,
+            "total_tokens": 5200,
+            "prompt_tokens_details": {"cached_tokens": 4096},
+        })
+        assert usage is not None
+        self.assertEqual(usage.prompt_tokens, 5000)
+        self.assertEqual(usage.completion_tokens, 200)
+        self.assertEqual(usage.total_tokens, 5200)
+        self.assertEqual(usage.cached_input_tokens, 4096)
+        self.assertIsNone(usage.cache_creation_input_tokens)
+
+    def test_extracts_openai_responses_cached_tokens(self) -> None:
+        # Responses API uses input_tokens_details.cached_tokens instead.
+        usage = model_client._normalize_usage({
+            "input_tokens": 3000,
+            "output_tokens": 150,
+            "total_tokens": 3150,
+            "input_tokens_details": {"cached_tokens": 2048},
+        })
+        assert usage is not None
+        self.assertEqual(usage.cached_input_tokens, 2048)
+
+    def test_extracts_anthropic_cache_tokens(self) -> None:
+        # Anthropic surfaces both read and creation counts at the top level.
+        usage = model_client._normalize_usage({
+            "prompt_tokens": 5000,
+            "completion_tokens": 200,
+            "total_tokens": 5200,
+            "cache_read_input_tokens": 4096,
+            "cache_creation_input_tokens": 800,
+        })
+        assert usage is not None
+        self.assertEqual(usage.cached_input_tokens, 4096)
+        self.assertEqual(usage.cache_creation_input_tokens, 800)
+
+    def test_anthropic_top_level_takes_precedence_over_details(self) -> None:
+        # If both shapes are present (rare but possible via litellm
+        # provider-translation glue) the explicit top-level field wins.
+        usage = model_client._normalize_usage({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110,
+            "cache_read_input_tokens": 64,
+            "prompt_tokens_details": {"cached_tokens": 32},
+        })
+        assert usage is not None
+        self.assertEqual(usage.cached_input_tokens, 64)
+
+    def test_no_cache_metadata_leaves_fields_none(self) -> None:
+        usage = model_client._normalize_usage({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110,
+        })
+        assert usage is not None
+        self.assertIsNone(usage.cached_input_tokens)
+        self.assertIsNone(usage.cache_creation_input_tokens)
+
+    def test_summarize_response_surfaces_cache_when_present(self) -> None:
+        response = model_client.ModelResponse(
+            text="ok",
+            finish_reason="stop",
+            usage=model_client.UsageStats(
+                prompt_tokens=5000,
+                completion_tokens=200,
+                total_tokens=5200,
+                cached_input_tokens=4096,
+            ),
+        )
+        summary = model_client.summarize_response(response)
+        self.assertEqual(summary["usage"]["cached_input_tokens"], 4096)
+
+    def test_summarize_response_omits_cache_when_zero(self) -> None:
+        response = model_client.ModelResponse(
+            text="ok",
+            finish_reason="stop",
+            usage=model_client.UsageStats(
+                prompt_tokens=5000,
+                completion_tokens=200,
+                total_tokens=5200,
+                cached_input_tokens=0,
+            ),
+        )
+        summary = model_client.summarize_response(response)
+        self.assertNotIn("cached_input_tokens", summary["usage"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -91,11 +91,24 @@ class Message:
 
 @dataclass(slots=True)
 class UsageStats:
-    """Normalized token accounting."""
+    """Normalized token accounting.
+
+    ``cached_input_tokens`` is the count of input tokens served from the
+    provider's prompt cache (a subset of ``prompt_tokens``). It surfaces
+    OpenAI/Azure ``prompt_tokens_details.cached_tokens`` and
+    Anthropic ``cache_read_input_tokens`` under one field so callers can
+    measure prefix-cache effectiveness without branching on the provider.
+
+    ``cache_creation_input_tokens`` is Anthropic's "wrote new entries to
+    the cache" counter; it has no OpenAI/Azure equivalent because their
+    cache is implicit and free to write.
+    """
 
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
     raw: Any = None
 
 
@@ -288,11 +301,18 @@ def summarize_response(response: ModelResponse) -> dict[str, Any]:
     if response.tool_calls:
         payload["tool_calls"] = [tool_call.to_openai_dict() for tool_call in response.tool_calls]
     if response.usage:
-        payload["usage"] = {
+        usage_payload: dict[str, Any] = {
             "input_tokens": response.usage.prompt_tokens,
             "output_tokens": response.usage.completion_tokens,
             "total_tokens": response.usage.total_tokens,
         }
+        if response.usage.cached_input_tokens:
+            usage_payload["cached_input_tokens"] = response.usage.cached_input_tokens
+        if response.usage.cache_creation_input_tokens:
+            usage_payload["cache_creation_input_tokens"] = (
+                response.usage.cache_creation_input_tokens
+            )
+        payload["usage"] = usage_payload
     if response.model:
         payload["model"] = response.model
     if response.response_id:
@@ -522,10 +542,28 @@ def _normalize_usage(raw_usage: Any) -> UsageStats | None:
     total = _coerce_int(_get_value(raw_usage, "total_tokens"))
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
+
+    # Prompt-cache accounting. OpenAI/Azure expose cached prompt tokens
+    # under {prompt,input}_tokens_details.cached_tokens (Chat Completions
+    # vs Responses API). Anthropic exposes them as top-level
+    # cache_read_input_tokens / cache_creation_input_tokens. LiteLLM
+    # passes both shapes through unchanged.
+    cached_input = _coerce_int(_get_value(raw_usage, "cache_read_input_tokens"))
+    if cached_input is None:
+        prompt_details = (
+            _get_value(raw_usage, "prompt_tokens_details")
+            or _get_value(raw_usage, "input_tokens_details")
+        )
+        if prompt_details is not None:
+            cached_input = _coerce_int(_get_value(prompt_details, "cached_tokens"))
+    cache_creation = _coerce_int(_get_value(raw_usage, "cache_creation_input_tokens"))
+
     return UsageStats(
         prompt_tokens=prompt,
         completion_tokens=completion,
         total_tokens=total,
+        cached_input_tokens=cached_input,
+        cache_creation_input_tokens=cache_creation,
         raw=raw_usage,
     )
 
@@ -601,6 +639,8 @@ def _log_response(label: str, model: str, response: "ModelResponse", elapsed: fl
     usage = response.usage
     if usage and usage.prompt_tokens is not None:
         tokens = f"{usage.prompt_tokens}+{usage.completion_tokens or 0} tokens"
+        if usage.cached_input_tokens:
+            tokens = f"{tokens} ({usage.cached_input_tokens} cached)"
     else:
         tokens = "? tokens"
     parts = [f"model={model}"]
