@@ -41,11 +41,17 @@ schema"). Apply the rules **in order**; the first matching rule wins.
 Required actions per severity (see §"Channel sensitivity" for the channel
 mapping):
 
-- **P0** — page on-call, post to `#incidents-critical`, file ticket, escalate
-  to manager when an escalation flag is set.
+- **P0** — page on-call, post to `#incidents-critical` (canonical) **or** `#incidents`,
+  file ticket, escalate to manager when an escalation flag is set.
 - **P1** — page on-call, post to `#incidents`, file ticket.
 - **P2** — post to `#alerts`, file ticket. **Do not page on-call.**
 - **P3** — file ticket only. **Do not page** and **do not post to any channel.**
+
+P0 may post to `#incidents` as well as `#incidents-critical` because both
+channels include the audience that needs to see a P0 (`#incidents-critical`
+also carries execs); posting only to `#incidents` is acceptable when execs
+do not need to be looped in. The runtime guardrail
+(`channel_severity_match_gate`) and the eval judge both accept either.
 
 The classification action and any escalation are obligations triggered by the
 alert state, not by wall-clock deadlines. The eval treats the obligation as
@@ -122,10 +128,16 @@ You must call tools in this order. Skipping `get_alert` or `classify_severity`
 before any write action is an SOP violation.
 
 ```
-get_alert  →  classify_severity  →  [page_oncall]  →  notify_channel  →  update_ticket  →  [escalate_to_manager]
-                                       ^^^                                                   ^^^
-                                  P0/P1 only                                         when criteria met
+get_alert  →  classify_severity  →  [page_oncall]  →  notify_channel  →  [escalate_to_manager]  →  update_ticket
+                                       ^^^                                       ^^^
+                                  P0/P1 only                             when criteria met
 ```
+
+We escalate **before** closing the ticket so the ticket update can record the
+escalation that just happened. The runtime guard `escalation_obligation_gate`
+enforces this by blocking `update_ticket` while any required escalation is
+still missing — so escalating earlier in the same turn (e.g. immediately
+after `classify_severity`) is also SOP-compliant.
 
 ## Escalation criteria (when to call `escalate_to_manager`)
 

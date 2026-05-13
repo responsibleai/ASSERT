@@ -1073,7 +1073,24 @@ async def run_rollout(
             log.warning(msg)
 
     if errors:
-        raise errors[0]
+        # A small number of seed-level failures (e.g. an auditor turn
+        # tripping the model provider's content filter on an adversarial
+        # prompt) is unavoidable at scale and should not throw away the
+        # other 99% of the run. Tolerate up to 10% failures, but only
+        # for runs of at least 20 seeds; smaller runs (dev iteration,
+        # CI) still surface single failures so they don't get silently
+        # swallowed.
+        tolerance = total // 10 if total >= 20 else 0
+        if 0 < len(errors) <= tolerance:
+            log.warning(
+                "[rollout] tolerating %d/%d seed-level failures (≤ %d): "
+                "first error was %s. The remaining %d transcripts will "
+                "proceed to judge.",
+                len(errors), total, tolerance, type(errors[0]).__name__,
+                total - len(errors),
+            )
+        else:
+            raise errors[0]
     build_run_viewer_artifacts(out_dir)
 
     return {

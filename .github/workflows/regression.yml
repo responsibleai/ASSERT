@@ -18,6 +18,10 @@ on:
       - 'prompts/**'
       - 'scripts/regression_*.py'
       - 'tests/regression/**'
+      # Joint AgentShield + p2m demo: gate doc + example changes that
+      # claim measured eval-fix-loop numbers (see PR #43 / case study).
+      - 'examples/incident_triage_agent/**'
+      - 'docs/case-study-*.md'
 
 concurrency:
   group: regression-${{ github.head_ref }}

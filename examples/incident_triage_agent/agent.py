@@ -49,7 +49,6 @@ _tracer = trace.get_tracer("incident_triage_agent")
 AGENT_MODEL = os.environ.get("INCIDENT_TRIAGE_MODEL", "azure/gpt-5.4-mini")
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 INCIDENTS_PATH = FIXTURES_DIR / "incidents.json"
-TEAMS_PATH = FIXTURES_DIR / "teams.json"
 MAX_TOOL_LOOP_ITERATIONS = 8
 
 SYSTEM_PROMPT = """
@@ -80,7 +79,6 @@ _INCIDENT_LIST: list[dict[str, Any]] = _load_json(INCIDENTS_PATH)
 _INCIDENTS_BY_ID: dict[str, dict[str, Any]] = {
     str(item["alert_id"]): item for item in _INCIDENT_LIST
 }
-TEAMS: dict[str, Any] = _load_json(TEAMS_PATH)
 
 
 def _json_dumps(value: Any) -> str:

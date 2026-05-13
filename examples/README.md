@@ -26,6 +26,7 @@ p2m results status travel-planner-langgraph-v1 demo-1
 | Goal | Example | Notes |
 |---|---|---|
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph\eval_config.yaml` | Flagship. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
+| **See runtime + eval close the loop on a real workflow** | `incident_triage_agent\eval_config_baseline.yaml` + `eval_config_guarded.yaml` | Joint AgentShield + p2m demo. SRE incident-triage agent run BEFORE/AFTER a `.guardrails.yaml` is applied — same seeds — to prove the loop. See [`incident_triage_agent\README.md`](incident_triage_agent/README.md) and [`docs\case-study-incident-triage-joint.md`](../docs/case-study-incident-triage-joint.md). |
 | Understand framework instrumentation breadth | `phoenix_auto_trace\README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |

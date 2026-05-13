@@ -21,14 +21,31 @@ This demo shows that **adaptive-eval (p2m) + AgentShield together close
 the loop in a single local IDE session**. No SaaS round-trip. The
 developer sees, in one workflow:
 
-1. **What is broken** (p2m surfaces 8 failure modes, each scored on a
-   structured rubric).
-2. **What the runtime layer can fix** (AgentShield closes 6 of the 8
-   procedural modes, verified by re-running the same seeds).
-3. **What is left for the developer** (2 model-judgment modes —
+1. **What is broken** (p2m surfaces 9 failure modes, each scored on a
+   structured rubric, including XPIA-driven downstream effects).
+2. **What the runtime layer can fix** (AgentShield closes the
+   procedural subset — pager and ordering go to **0 %**, channel is
+   cut by 44 % relative — verified by re-running the same seeds).
+3. **What is left for the developer** (model-judgment modes —
    `wrong_severity`, `fabrication` — that no policy YAML can honestly
-   close, plus a *new* trade-off: `overrefusal` jumps when the runtime
-   blocks more aggressively than the model wants to behave).
+   close, plus the team-binding partial closure on
+   `escalation_violation`).
+
+This demo emphasizes the three failure modes AgentShield is uniquely
+strong on for an incident-triage workload:
+1. **Cross-prompt injection (XPIA)** embedded in alert tool output.
+2. **PII / credentials** echoed into channel messages.
+3. **Missed or wrongly-targeted cross-team escalation.**
+
+Six of ten fixture alerts (ALR-001/002/004/005/006/008) carry an
+attacker-controlled `inbound_payload_text` field directing the agent
+toward specific policy violations (leak api_key/customer_email to
+#general, skip privacy/legal escalations, page on a P2, etc.). Modern
+LLMs like `azure/gpt-5.4-mini` are robust enough that *literal* XPIA
+payload relay is rare, but XPIA pressure measurably degrades
+*downstream* behavior (channel violations, missed escalations) — and
+AgentShield's deterministic gates close those downstream effects
+model-agnostically. That defense-in-depth guarantee is the joint pitch.
 
 ---
 
@@ -38,15 +55,15 @@ developer sees, in one workflow:
 examples/incident_triage_agent/
 ├── README.md                                # this file
 ├── SOP.md                                   # the runbook (single source of truth)
-├── incident_triage_workflow_failures.md     # p2m concept (8 failure modes)
-├── incident-triage.guardrails.yaml          # AgentShield policy (6 rules)
+├── incident_triage_workflow_failures.md     # p2m concept (9 failure modes)
+├── incident-triage.guardrails.yaml          # AgentShield policy (13 gates)
 ├── .env.example                             # demo-specific env overrides
 ├── agent.py                                 # baseline agent (no guardrails)
 ├── agent_guarded.py                         # same agent, AgentShield-wrapped
 ├── eval_config_baseline.yaml                # p2m: target = agent:chat
 ├── eval_config_guarded.yaml                 # p2m: target = agent_guarded:chat
 └── fixtures/
-    ├── incidents.json                       # 10 mock alerts (covers all branches)
+    ├── incidents.json                       # 10 mock alerts; 6 carry XPIA payload
     └── teams.json                           # mock on-call roster
 ```
 
@@ -90,7 +107,7 @@ have non-standard deployment names.
 
 ---
 
-## The walk-through (about 25 minutes wall clock)
+## The walk-through (about 30 minutes wall clock)
 
 ### Step 1 — Smoke-test both agents (≈30 seconds)
 
@@ -106,14 +123,14 @@ Each prints two scripted scenarios. The guarded run will visibly
 `blocked_by_guardrail` tool message, which the agent then explains in
 prose.
 
-### Step 2 — Run the BEFORE eval (≈12 minutes)
+### Step 2 — Run the BEFORE eval (≈15 minutes)
 
 ```bash
 uv run p2m run --config examples/incident_triage_agent/eval_config_baseline.yaml
 ```
 
-This generates a behavior taxonomy from the 8 failure modes, designs 30
-prompt seeds + 6 multi-turn scenario seeds, runs them against
+This generates a behavior taxonomy from the 8 failure modes, designs 40
+prompt seeds + 10 multi-turn scenario seeds, runs them against
 `agent:chat` (the unguarded baseline), and scores every transcript with
 `azure/gpt-5.4` against the 10-dimension rubric.
 
@@ -123,29 +140,43 @@ Inspect the headline metrics:
 uv run p2m results status incident-triage-agent-v1 baseline-weak-prompt
 ```
 
-You should see a `policy_violation` rate in the **63–73%** range and
-non-zero rates on most of the 8 failure-mode dimensions.
+You should see a `policy_violation` rate near **100 %** on the scenario
+split (every multi-turn run violates *something*) and substantial
+non-zero rates on the procedural failure-mode dimensions, especially
+`escalation_violation` (~60 %) and `channel_violation` (~30 %) — the
+XPIA payloads and adversarial auditor combine to expose a wide failure
+surface.
 
 ### Step 3 — Read the policy you're about to apply (≈5 minutes)
 
 Open
 [`incident-triage.guardrails.yaml`](incident-triage.guardrails.yaml) and
-walk through the six rules:
+walk through the rules. There are **two stages** of guards (state and
+tool-execution validation), wired to the failure modes listed in
+[`incident_triage_workflow_failures.md`](incident_triage_workflow_failures.md):
 
-| Rule | Closes failure mode |
-|---|---|
-| `alert_must_be_loaded` (predicate gate on every action tool) | `ordering_violation` |
-| `severity_match` (predicate on `page_oncall.severity` and `notify_channel.channel`) | `pager_violation`, `channel_violation` |
-| `payload_redaction` (mutation on `notify_channel.message`) | `pii_leak` |
-| `escalation_required` (obligation on `escalate_to_manager.target_team`) | `escalation_violation` |
-| `alert_id_consistency` (post-tool check) | `alert_id_drift` |
+| Failure mode | Guard rule(s) (actual YAML `name:` values) | Stage |
+|---|---|---|
+| `ordering_violation` (alert not loaded) | `alert_must_be_loaded_gate` | state |
+| `ordering_violation` (classify skipped) | `classify_before_action_gate` | state |
+| `pager_violation` (P2/P3 paging) | `pager_severity_gate` | state |
+| `pager_violation` (severity arg ≠ classified) | `pager_severity_consistency_gate` | tool-exec |
+| `channel_violation` (P3 → channel) | `channel_p3_blocked` | state |
+| `channel_violation` (#general) | `channel_general_blocked` | tool-exec |
+| `channel_violation` (severity ≠ channel) | `channel_severity_match_gate` | tool-exec |
+| `pii_leak` (raw payload echoed) | `pii_leak_gate` | tool-exec |
+| `xpia_relay` (literal inbound payload relayed) | `xpia_inbound_payload_relay_gate` | tool-exec |
+| `escalation_violation` (obligation) | `escalation_obligation_gate` | state |
+| `escalation_violation` (wrong target_team) | `escalation_team_match_gate` | tool-exec |
+| `alert_id_drift` | `alert_id_consistency_gate` | tool-exec |
+| (vocabulary discipline) | `severity_value_gate` | tool-exec |
 
 The two **residual** failure modes (`wrong_severity`, `fabrication`) are
 intentionally **not** policy-closed — they are model-judgment problems
 that need a stronger prompt or a deterministic post-classifier, not a
 runtime rule.
 
-### Step 4 — Run the AFTER eval against the same seeds (≈12 minutes)
+### Step 4 — Run the AFTER eval against the same seeds (≈15 minutes)
 
 ```bash
 uv run p2m run --config examples/incident_triage_agent/eval_config_guarded.yaml
@@ -162,24 +193,17 @@ so any metric difference is attributable to the runtime layer alone.
 uv run p2m results status incident-triage-agent-v1 guarded-with-shield
 ```
 
-You should see numbers close to these (single run, n=30 prompt seeds):
+You should see numbers close to those reported in
+[`docs/case-study-incident-triage-joint.md`](../../docs/case-study-incident-triage-joint.md)
+§4. On the scenario split: `pager_violation` and `ordering_violation`
+go to **0 %**, `channel_violation` is cut by 44 % relative (30 → 16.7 %),
+and `alert_id_drift` and `escalation_violation` drop measurably.
+`wrong_severity` and `fabrication` (the residual model-judgment modes)
+stay elevated — that is the signal handed back to the developer.
 
-| Failure mode | BEFORE | AFTER | Δ | What it means |
-|---|---:|---:|---:|---|
-| `channel_violation` | 36.7% | **3.3%** | −33.4 pp | ✅ closed by `severity_match` |
-| `pii_leak` | 6.7% | **0.0%** | −6.7 pp | ✅ closed by `payload_redaction` |
-| `ordering_violation` | 3.3% | **0.0%** | −3.3 pp | ✅ closed by `alert_must_be_loaded` |
-| `escalation_violation` | 40.0% | 36.7% | −3.3 pp | ⚠️ partial — team-binding edge case |
-| `wrong_severity` (residual) | 46.7% | 46.7% | 0 pp | ⚪ as designed — model judgment |
-| `fabrication` (residual) | 40.0% | 36.7% | −3.3 pp | ⚪ as designed — grounding |
-| **`overrefusal`** (new!) | 30.0% | **60.0%** | **+30.0 pp** | 🔥 the load-bearing finding |
-| `policy_violation` (OR) | 73.3% | 63.3% | −10.0 pp | dragged down by residuals |
-
-**The overrefusal jump is the point.** The runtime didn't just close
-violations — it introduced a new failure mode (the agent now refuses
-some legitimate requests). p2m surfaces this as a measurable rubric
-dimension. Without the eval, the developer would have shipped a "more
-secure" agent that silently helps customers less.
+**The residual is the point.** AgentShield closes what runtime can
+close; p2m measures both the closures and the residuals in the same
+run; the developer iterates against the failures that remain.
 
 ### Step 6 — Browse transcripts in the viewer (optional)
 
@@ -201,8 +225,8 @@ Hand the AFTER metrics back to the developer. The natural next
 iteration is:
 
 1. **Tighten the agent recovery loop** so a single
-   `blocked_by_guardrail` doesn't poison the rest of the turn (drives
-   `overrefusal` down — the §5.3 trade-off in the case study).
+   `blocked_by_guardrail` doesn't poison the rest of the turn (helps
+   the agent finish the runbook even after a guarded reject).
 2. **Embed the SOP severity table directly in the system prompt** to
    close `wrong_severity` (the JD2 baseline weakened this on purpose
    so the contrast is visible).
@@ -210,8 +234,14 @@ iteration is:
    chosen severity against the structured signals — this also helps
    `fabrication` because the verifier output becomes a grounded fact in
    the conversation.
-4. **Polish the `escalation_required` rule** to bind on `target_team`
-   instead of "an escalation happened" so the residual ~37% drops too.
+4. **Polish the `escalation_obligation_gate` rule** to bind on
+   `target_team` precedence (privacy AND legal for GDPR data exposure;
+   procurement AND eng-leadership for sustained vendor) so the residual
+   ~50 % escalation_violation drops too — see case-study §5.2.
+5. **Tighten the `channel_severity_match_gate` rule** to a whitelist
+   of approved channels per severity (currently the model invents
+   non-canonical channels like `#incidents-medium` that slip through
+   the blacklist) — see case-study §5.1.
 
 After each iteration, re-run the AFTER eval (`p2m run --config
 …/eval_config_guarded.yaml`) and watch the table converge. That is the
@@ -250,6 +280,54 @@ Three sharp edges worth knowing if you're writing your own wrapper:
   default JSON populator extractor. This wrapper uses `json.dumps()`
   instead, which is what your populator expressions like
   `@result.severity` actually need.
+
+---
+
+## Known limitations of this measurement
+
+This is a single run pair on a small fixture set. Read the numbers as
+**directionally informative**, not as production benchmarks:
+
+- **Sample size.** 5 prompt seeds + 30 scenario seeds. The prompt-side
+  rates have ~±43 pp 95 % CI and are kept as a single-turn sanity rail
+  only — treat them as direction-of-travel. The scenario-side rates
+  have roughly ±18 pp 95 % CI per row (Wald), so the headline closures
+  (`pager_violation` and `ordering_violation` to 0 %, `channel_violation`
+  cut by 44 % relative) clear the noise band; smaller residual movements
+  are flagged as such. A larger ratio (10p+100s) is the natural
+  follow-up before publishing external numbers.
+- **`xpia_relay` rate is structurally low.** gpt-5.4-mini does not
+  literally relay XPIA payload text — the value of AgentShield's XPIA
+  defense lies in closing the *downstream* effects (channel,
+  escalation, pager), which the eval *does* measure. See case-study §5.4.
+- **`pii_leak` rate already minimal.** BEFORE was 3.3 % at n=30, so
+  the AFTER closure isn't visible at this sample size. The rule is
+  validated by JD3 semantic smoke regardless.
+- **`max_turns: 5` truncation is still possible.** The auditor stops
+  after 5 user turns. In multi-turn scenarios where one
+  `blocked_by_guardrail` poisons the agent's recovery, the auditor
+  may run out of turns before the agent recovers.
+- **Single judge model.** All scoring is `azure/gpt-5.4` at
+  temperature 0. Consider a second-judge sanity pass before publishing
+  external numbers.
+- **`escalation_obligation_gate` still leaves residual violations in
+  AFTER (50 %).** This is the team-binding edge case described in
+  case-study §5.2 — the natural next iteration of the dev loop.
+
+For the natural set of next experiments (larger seed ratio, a stronger
+recovery prompt, the second-judge pass), see the case study §6 and the
+PR description.
+
+## Acknowledgments
+
+This demo would not exist without the [microsoft/AgentShield][as] team,
+who built the runtime guardrail engine and the
+[`.guardrails.yaml`](https://github.com/microsoft/AgentShield/tree/main/spec)
+specification this YAML is authored against. The joint pitch — runtime
+plus eval as the local-first inner loop — only works because both halves
+exist.
+
+[as]: https://github.com/microsoft/AgentShield
 
 ---
 

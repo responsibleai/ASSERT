@@ -1113,6 +1113,111 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
 
+    async def test_run_rollout_tolerates_one_pct_failures_when_total_is_large(self) -> None:
+        """Total >= 20 and ≤10% failures: log warning, continue to judge.
+
+        Mirrors the real production scenario where one auditor turn out
+        of ~100 trips Azure's content filter on an adversarial seed.
+        """
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt-{i:03d}"}}
+            for i in range(20)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            seed_id = str(kwargs["seed"]["seed_id"])
+            # Fail exactly one of 20 (5% — under 10% threshold).
+            if seed_id == "seed_000010":
+                raise RuntimeError("content_filter_blocked")
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": seed_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed
+            ):
+                # Should NOT raise — the single failure is tolerated.
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=4),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-rollout-tolerated",
+                )
+
+            self.assertEqual(result["count"], 20)
+            transcripts = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(len(transcripts), 19)
+            self.assertNotIn(
+                "seed_000010",
+                {row["seed_id"] for row in transcripts},
+            )
+
+    async def test_run_rollout_raises_when_failures_exceed_tolerance(self) -> None:
+        """Total >= 20 with > 10% failures still raises: real outage."""
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt-{i:03d}"}}
+            for i in range(20)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            # Fail 5/20 = 25% — over 10% threshold (tolerance is 2).
+            seed_id = str(kwargs["seed"]["seed_id"])
+            if seed_id in {f"seed_{i:06d}" for i in range(5)}:
+                raise RuntimeError("deployment_not_found")
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"kind": "prompt", "seed_id": seed_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "deployment_not_found"
+                ):
+                    await run_rollout(
+                        seed_path=str(seed_path),
+                        target=TargetConfig(model="azure/gpt-5.4"),
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="azure/gpt-5.4"),
+                            rollout=RolloutConfig(concurrency=4),
+                        ),
+                        save_dir=str(out_dir),
+                        run_id="run-rollout-fatal",
+                    )
+
     async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated transcripts.jsonl causes completed seeds to be skipped."""
         seed_rows = [
