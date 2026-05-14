@@ -20,7 +20,7 @@ from p2m.core.judge import (
     infer_judge_status,
     run_transcript_judge as run_llm_judge,
 )
-from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
+from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from p2m.viewer_read_model import build_run_viewer_artifacts
 
@@ -170,6 +170,21 @@ async def run_judge(
                 "output_index": output_index,
                 "score_row": await score_row(row),
             }
+        except LLMContentFilterError as exc:
+            # Adversarial-eval workloads routinely send transcripts the
+            # judge's content filter will reject (XPIA payloads, PII
+            # leakage examples, security-attack scenarios). Treat these
+            # as soft per-row failures so the tolerance logic below can
+            # decide whether the run is still publishable.
+            seed_id = row.get("seed_id", "?")
+            log.debug(
+                "Judge worker hit provider content filter for seed %s: %s",
+                seed_id, exc,
+            )
+            return {
+                "output_index": output_index,
+                "error": exc,
+            }
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
             raise
         except (json.JSONDecodeError, ValueError) as exc:
@@ -265,7 +280,26 @@ async def run_judge(
     # current scores.jsonl, even when a row failed and we are about to raise.
     build_run_viewer_artifacts(out_dir)
     if errors:
-        raise errors[0]
+        # Adversarial-eval workloads will routinely trip the judge model's
+        # provider-side content filter (e.g. Azure's "potentially high-risk
+        # cyber activity" check on XPIA/PII transcripts). A small number of
+        # such rejections should not throw away the other 99% of the run.
+        # Mirror rollout.py: tolerate up to 10% judge-row failures, but only
+        # for runs of at least 20 transcripts; smaller runs (dev iteration,
+        # CI) still surface single failures so they don't get silently
+        # swallowed.
+        total_pending = len(pending)
+        tolerance = total_pending // 10 if total_pending >= 20 else 0
+        if 0 < len(errors) <= tolerance:
+            log.warning(
+                "[judge] tolerating %d/%d row-level failures (<= %d): "
+                "first error was %s. The remaining %d scores will proceed "
+                "to metrics.",
+                len(errors), total_pending, tolerance, type(errors[0]).__name__,
+                written_rows,
+            )
+        else:
+            raise errors[0]
 
     judge_failures = sum(
         1 for row in load_jsonl(scores_path) if infer_judge_status(row) != "ok"

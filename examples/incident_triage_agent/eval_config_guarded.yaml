@@ -134,24 +134,26 @@ pipeline:
       max_tokens: 4000
 
   seeds:
-    # Re-balanced to 5 prompts + 30 scenarios so a full BEFORE+AFTER
-    # cycle finishes in roughly 25 minutes (vs ~70 min at 10p+100s).
-    # 30 scenarios at 4-way concurrency takes ~7 min for rollout +
-    # ~4 min for judge per run; the prompt rail adds another ~2 min.
-    # Statistical envelope: 30 scenarios → ±18pp 95% CI per per-mode
-    # rate (Wald). That's noisy on small effects but plenty to read
-    # the headline AgentShield closures we care about (channel,
-    # PII-relay, XPIA-relay, escalation, alert-id), which all move
-    # by 25-100pp BEFORE→AFTER.
+    # Re-balanced to 200 prompts + 200 scenarios for stats power.
+    # At rollout.concurrency=24 a full BEFORE+AFTER cycle finishes in
+    # roughly 80 minutes (vs ~25 min at 5p+30s).
+    # Statistical envelope: 200 scenarios → ~±7pp 95% CI per per-mode
+    # rate (Wald). That's tight enough to publish small effects (single-
+    # digit pp closures) and to detect residual drift on the model-
+    # judgment dimensions (wrong_severity, fabrication).
     prompt:
-      sample_size: 5
+      sample_size: 200
     scenario:
-      sample_size: 30
+      sample_size: 200
 
   rollout:
-    # 4 keeps wall time bounded; the chat tools are local mocks and
-    # the only real contention is the Azure deployment.
-    concurrency: 4
+    # 24-way concurrency keeps wall time bounded for 200 prompt + 200
+    # scenario seeds. Chat tools are local mocks; the only real
+    # contention is the Azure deployment (gpt-5.4-mini for the agent,
+    # gpt-5.4 for auditor and judge). rollout.py tolerates up to 10%
+    # seed-level failures so a transient content-filter trip does not
+    # throw away the run.
+    concurrency: 24
     target:
       callable: examples.incident_triage_agent.agent_guarded:chat
       trace:

@@ -39,7 +39,7 @@ from p2m.core.io import (
     row_factors,
 )
 from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
-from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
+from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.session import (
     CallableSession,
     ExternalSession,
@@ -1002,6 +1002,18 @@ async def run_rollout(
             else:
                 raise ValueError(f"unsupported seed kind: {kind}")
             return {"output_index": output_index, "transcript_row": transcript.to_dict()}
+        except LLMContentFilterError as exc:
+            # Adversarial-eval seeds (XPIA, PII, security attacks) can
+            # legitimately trip the auditor or target model's content
+            # filter. Treat these as soft per-seed failures so the
+            # tolerance logic below can decide whether the run is still
+            # publishable, instead of aborting the entire run.
+            seed_id = seed_row.get("seed_id", "?")
+            log.debug(
+                "Rollout worker hit provider content filter for seed %s: %s",
+                seed_id, exc,
+            )
+            return {"output_index": output_index, "error": exc}
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
             raise
         except (ValueError, KeyError) as exc:

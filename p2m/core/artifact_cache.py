@@ -711,7 +711,24 @@ def _stage_config_descriptor(
     if stage_name in {"design", "seeds"}:
         descriptor["factors"] = ctx.get("factors")
     if stage_name == "seeds":
-        descriptor["target"] = _normalize_value(ctx.get("target"))
+        # Seeds prompts only consume a narrow slice of the target spec
+        # (model, system_prompt, tools, connector). The callable / endpoint
+        # / kind do NOT affect seed content. Including them in the cache
+        # key forces unnecessary seed regeneration when an A/B run pair
+        # only changes target.callable (e.g. baseline vs guarded wrapper)
+        # — and worse, breaks apples-to-apples comparison because the
+        # second run gets a different LLM-generated seed mix.
+        target = ctx.get("target")
+        if target is None:
+            descriptor["target"] = None
+        else:
+            seed_relevant = {
+                "model": getattr(target, "model", None),
+                "system_prompt": getattr(target, "system_prompt", None),
+                "tools": getattr(target, "tools", None),
+                "connector": getattr(target, "connector", None),
+            }
+            descriptor["target"] = _normalize_value(seed_relevant)
     return descriptor
 
 
