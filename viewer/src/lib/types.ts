@@ -164,6 +164,7 @@ export interface InteractionMessage {
 	tool_call_id?: string;
 	function?: string;
 	arguments?: Record<string, unknown>;
+	agent?: string | null;
 	raw?: Record<string, unknown>;
 }
 
@@ -377,6 +378,7 @@ export interface AuditTranscriptMessage {
 	tool_call_id?: string;
 	function?: string;
 	arguments?: Record<string, unknown>;
+	agent?: string | null;
 	raw?: Record<string, unknown>;
 }
 

@@ -337,7 +337,25 @@
 	}
 
 	function fallbackTurnLabel(messages: InteractionMessage[], messageIndex: number): number {
-		return messages.slice(0, messageIndex + 1).filter((message) => message.role !== 'system').length;
+		// Mirrors the materializer: only auditor (user) and target (assistant)
+		// emit turns. Tool calls and tool messages inherit the surrounding
+		// assistant turn — they don't get their own number, but they DO show
+		// the assistant's turn label so the viewer can group them under it.
+		let count = 0;
+		let lastPrincipalRole: 'user' | 'assistant' | null = null;
+		for (let i = 0; i <= messageIndex; i += 1) {
+			const message = messages[i];
+			if (message.role === 'system') continue;
+			if (message.role === 'user') {
+				count += 1;
+				lastPrincipalRole = 'user';
+			} else {
+				// assistant, tool, or tool_call: same turn as the surrounding assistant block.
+				if (lastPrincipalRole !== 'assistant') count += 1;
+				lastPrincipalRole = 'assistant';
+			}
+		}
+		return count;
 	}
 
 	function revealMessageCard(el: HTMLElement) {
@@ -605,7 +623,11 @@
 	}
 
 	function conversationTurnCount(messages: InteractionMessage[]): number {
-		return messages.filter((message) => message.role !== 'system').length;
+		const turns = new Set<number>();
+		for (const message of messages) {
+			if (typeof message.judgeTurn === 'number') turns.add(message.judgeTurn);
+		}
+		return turns.size;
 	}
 
 	function visibleNodeJudgments(nodeJudgments: NodeJudgment[]): NodeJudgment[] {
@@ -674,6 +696,56 @@
 			? visibleNodeJudgments(activeVerdict.node_judgments as NodeJudgment[])
 			: []
 	);
+	const firstMessageIdByTurn = $derived.by(() => {
+		const map = new Map<number, string>();
+		for (const message of item.messages) {
+			if (typeof message.judgeTurn !== 'number' || !message.id) continue;
+			if (!map.has(message.judgeTurn)) map.set(message.judgeTurn, message.id);
+		}
+		return map;
+	});
+	const agentTimeline = $derived.by(() => {
+		const segments: { agent: string; messageId: string }[] = [];
+		let prevAgent: string | null = null;
+		for (const message of item.messages) {
+			if (message.role !== 'assistant') continue;
+			const agent = typeof message.agent === 'string' ? message.agent.trim() : '';
+			if (!agent || agent === prevAgent) continue;
+			if (message.id) segments.push({ agent, messageId: message.id });
+			prevAgent = agent;
+		}
+		return segments;
+	});
+	const agentByMessageId = $derived.by(() => {
+		const map = new Map<string, string>();
+		let prevAgent: string | null = null;
+		for (const message of item.messages) {
+			if (message.role !== 'assistant') continue;
+			const agent = typeof message.agent === 'string' ? message.agent.trim() : '';
+			if (!agent) {
+				prevAgent = null;
+				continue;
+			}
+			if (agent !== prevAgent && message.id) map.set(message.id, agent);
+			prevAgent = agent;
+		}
+		return map;
+	});
+
+	function turnAnchorId(turnLabel: number | null, messageId: string | null | undefined): string | undefined {
+		if (turnLabel == null || !messageId) return undefined;
+		const firstId = firstMessageIdByTurn.get(turnLabel);
+		return firstId === messageId ? `drawer-turn-${turnLabel}` : undefined;
+	}
+
+	function scrollToMessageAnchor(messageId: string) {
+		const anchorId = messageAnchorId(messageId);
+		const el = anchorId ? document.getElementById(anchorId) : null;
+		if (!el) return;
+		revealMessageCard(el);
+		applyMessageHighlight(null, messageId, null);
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -973,6 +1045,24 @@
 			<h3 class="mb-4 text-[24px] font-semibold text-text">
 				Conversation · {conversationTurnCount(item.messages)} turns
 			</h3>
+			{#if agentTimeline.length >= 2}
+				<div class="mb-4 flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-surface-2/40 px-3 py-2 text-[11px] text-text-muted">
+					<span class="font-semibold uppercase tracking-wide text-text-muted/80">Agents</span>
+					{#each agentTimeline as segment, segmentIndex}
+						{#if segmentIndex > 0}
+							<span aria-hidden="true" class="text-text-muted/50">→</span>
+						{/if}
+						<button
+							type="button"
+							class="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text hover:bg-surface-2 transition-colors"
+							title="Jump to first message from {segment.agent}"
+							onclick={() => scrollToMessageAnchor(segment.messageId)}
+						>
+							{segment.agent}
+						</button>
+					{/each}
+				</div>
+			{/if}
 			<div class="space-y-3">
 				{#each item.messages as message, messageIndex}
 					{@const turnLabel = message.role === 'system' ? null : (message.judgeTurn ?? fallbackTurnLabel(item.messages, messageIndex))}
@@ -1042,13 +1132,17 @@
 							</div>
 						</div>
 					{:else if message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0}
+						{@const assistantAgentBadge = message.id ? agentByMessageId.get(message.id) : undefined}
 						{#each message.tool_calls as toolCall, toolCallIndex}
 							{@const toolCallLlmCall = getMessageLlmCall(message, { toolCallIndex })}
 							{@const toolCallDebug = getMessageDebugView(message, { toolCallIndex })}
 							{@const toolCallBodyKey = messagePanelKey(message, messageIndex, `tool-call-${toolCallIndex}`)}
 							<div
 								class="flex gap-3 flex-row-reverse"
-								id={toolCallIndex === 0 && turnLabel != null ? `drawer-turn-${turnLabel}` : undefined}
+								id={toolCallIndex === 0
+									? (turnAnchorId(turnLabel, message.id) ?? messageAnchorId(message.id))
+									: undefined}
+								data-message-id={toolCallIndex === 0 ? message.id : undefined}
 								data-tool-call-anchor={toolCallAnchorId(message.id, toolCall.id)}
 								data-message-body-key={toolCallBodyKey}
 							>
@@ -1063,6 +1157,12 @@
 										<svg class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150 {hasExpandedBody(toolCallBodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
 										<span class="text-xs font-semibold text-purple-400">Tool Call</span>
 										<span class="text-xs font-mono text-text-muted">{toolCall.function}</span>
+										{#if toolCallIndex === 0 && assistantAgentBadge}
+											<span
+												class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+												title="Sub-agent that produced this assistant turn"
+											>{assistantAgentBadge}</span>
+										{/if}
 										{#if toolCallLlmCall}
 											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">llm</span>
 										{:else if toolCallDebug}
@@ -1102,7 +1202,8 @@
 					{:else if isToolCall}
 						<div
 							class="flex gap-3 flex-row-reverse"
-							id={turnLabel != null ? `drawer-turn-${turnLabel}` : undefined}
+							id={turnAnchorId(turnLabel, message.id) ?? messageAnchorId(message.id)}
+							data-message-id={message.id}
 							data-message-body-key={bodyKey}
 						>
 							<div class="flex-shrink-0 mt-1">
@@ -1157,7 +1258,12 @@
 							</div>
 						</div>
 					{:else}
-						<div id={turnLabel != null ? `drawer-turn-${turnLabel}` : messageAnchorId(message.id)} class="flex gap-3 {isUser ? '' : 'flex-row-reverse'} transition-all duration-300">
+						{@const regularAgentBadge = !isUser && message.id ? agentByMessageId.get(message.id) : undefined}
+						<div
+							id={turnAnchorId(turnLabel, message.id) ?? messageAnchorId(message.id)}
+							data-message-id={message.id}
+							class="flex gap-3 {isUser ? '' : 'flex-row-reverse'} transition-all duration-300"
+						>
 							<div class="flex-shrink-0 mt-1">
 								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold {isUser ? 'bg-interactive/15 text-interactive' : 'bg-surface-2 text-text-muted'}">
 									{isUser ? (item.kind === 'prompt' ? 'U' : 'A') : 'T'}
@@ -1166,6 +1272,12 @@
 							<div class="{isUser ? 'max-w-[85%]' : 'w-[85%]'} rounded-lg {isUser ? 'bg-interactive/8' : 'bg-surface-2'} {isHighlighted ? 'ring-2 ring-interactive bg-interactive/12' : ''} overflow-hidden">
 								<div class="flex items-center gap-2 px-4 pt-3 pb-1.5">
 									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Auditor') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									{#if regularAgentBadge}
+										<span
+											class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+											title="Sub-agent that produced this assistant turn"
+										>{regularAgentBadge}</span>
+									{/if}
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
 									{/if}
