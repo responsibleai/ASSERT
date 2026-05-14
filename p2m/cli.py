@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import os
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,10 +28,7 @@ DEFAULT_PLOTS_DIR = ROOT / "plots"
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
     "max_content_width": 100,
-    # NOTE: auto_envvar_prefix allows environment variables like P2M_CONFIG to
-    # override CLI options. Set P2M_NO_AUTO_ENV=1 to disable this behavior if
-    # running in an untrusted environment where env vars may be attacker-controlled.
-    "auto_envvar_prefix": "P2M" if not os.environ.get("P2M_NO_AUTO_ENV", "").lower() in ("1", "true", "yes") else None,
+    "auto_envvar_prefix": "P2M",
 }
 
 DEFAULT_COMPARE_METRIC = "policy_violation"

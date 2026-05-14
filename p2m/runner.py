@@ -43,15 +43,9 @@ from p2m.core.model_client import (
     LLMProviderError,
     LLMRateLimitError,
 )
-from p2m.core.security import should_load_dotenv, validate_dotenv_location
 from p2m.stages import STAGES
 
-if should_load_dotenv():
-    validate_dotenv_location()
-    load_dotenv()
-else:
-    log = logging.getLogger(__name__)
-    log.debug("Dotenv loading disabled via P2M_NO_DOTENV")
+load_dotenv()
 
 log = logging.getLogger(__name__)
 

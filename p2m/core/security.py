@@ -12,7 +12,6 @@ import os
 import re
 import socket
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -20,15 +19,7 @@ from urllib.parse import urlparse
 log = logging.getLogger(__name__)
 
 
-# Custom warning class for security-related warnings
-class P2MSecurityWarning(UserWarning):
-    """Warning issued for potentially dangerous operations in p2m."""
-    pass
-
 # ── Module import validation ───────────────────────────────────
-
-# Environment variable to bypass callable validation (opt-in to trust)
-_TRUST_CALLABLE_ENV = "P2M_TRUST_CALLABLE"
 
 # Patterns that are never allowed in module references
 _DANGEROUS_MODULE_PATTERNS = re.compile(
@@ -36,16 +27,10 @@ _DANGEROUS_MODULE_PATTERNS = re.compile(
 )
 
 
-def is_callable_trusted() -> bool:
-    """Check if the user has opted into trusting callable imports."""
-    return os.environ.get(_TRUST_CALLABLE_ENV, "").lower() in ("1", "true", "yes")
-
-
 def validate_callable_ref(callable_ref: str, *, config_path: Path | None = None) -> None:
     """Validate a callable reference before dynamic import.
 
-    Raises ValueError if the reference looks dangerous.
-    Emits a warning if trust mode is not explicitly enabled.
+    Raises ValueError if the reference is malformed or contains disallowed path segments.
     """
     if not callable_ref or ":" not in callable_ref:
         raise ValueError(
@@ -62,16 +47,6 @@ def validate_callable_ref(callable_ref: str, *, config_path: Path | None = None)
     if _DANGEROUS_MODULE_PATTERNS.search(module_path):
         raise ValueError(
             f"Callable reference '{callable_ref}' contains a disallowed path segment"
-        )
-
-    # Warn if trust mode is not explicitly enabled
-    if not is_callable_trusted():
-        warnings.warn(
-            f"Dynamic import of '{module_path}' from callable ref '{callable_ref}'. "
-            f"Set {_TRUST_CALLABLE_ENV}=1 to suppress this warning. "
-            f"Only use callable targets from sources you trust.",
-            P2MSecurityWarning,
-            stacklevel=3,
         )
 
 
@@ -300,37 +275,3 @@ def sanitize_payload(payload: Any, *, depth: int = 0, max_depth: int = 10) -> An
         return payload
     return payload
 
-
-# ── Dotenv validation ──────────────────────────────────────────
-
-def validate_dotenv_location(*, config_path: Path | None = None) -> bool:
-    """Validate that .env file is in the expected project root.
-
-    Returns True if safe, emits a warning and returns False if suspicious.
-    """
-    cwd = Path.cwd().resolve()
-    dotenv_path = cwd / ".env"
-
-    if not dotenv_path.exists():
-        return True  # No .env to worry about
-
-    # Check if config_path is provided and .env is in a different directory
-    if config_path is not None:
-        config_dir = config_path.parent.resolve()
-        if cwd != config_dir:
-            # .env is being loaded from cwd but config is elsewhere
-            warnings.warn(
-                f"Loading .env from working directory '{cwd}' which differs from "
-                f"config directory '{config_dir}'. Ensure this .env file is trusted. "
-                f"Set P2M_NO_DOTENV=1 to disable automatic .env loading.",
-                P2MSecurityWarning,
-                stacklevel=2,
-            )
-            return False
-
-    return True
-
-
-def should_load_dotenv() -> bool:
-    """Check if dotenv loading is enabled."""
-    return os.environ.get("P2M_NO_DOTENV", "").lower() not in ("1", "true", "yes")
