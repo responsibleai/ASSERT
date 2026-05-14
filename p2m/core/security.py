@@ -148,6 +148,7 @@ _BLOCKED_IP_RANGES = [
     ipaddress.ip_network("172.16.0.0/12"),     # Private
     ipaddress.ip_network("192.168.0.0/16"),    # Private
     ipaddress.ip_network("169.254.0.0/16"),    # Link-local / cloud metadata
+    ipaddress.ip_network("168.63.129.16/32"),  # Azure Wireserver / platform IMDS
     ipaddress.ip_network("::1/128"),           # IPv6 loopback
     ipaddress.ip_network("fc00::/7"),          # IPv6 private
     ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
@@ -157,6 +158,7 @@ _BLOCKED_HOSTNAMES = {
     "metadata.google.internal",
     "metadata.google.com",
     "169.254.169.254",
+    "168.63.129.16",
     "metadata",
 }
 
