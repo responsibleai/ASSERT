@@ -297,49 +297,56 @@ def _prepare_run_dir(
 
 
 def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
-    """Pull headline numbers from the run's metrics.json if it exists.
+    """Pull headline outcome numbers from the run's score/seed artifacts.
 
     Returns empty values rather than failing — a non-zero exit code from
     the pipeline is the authoritative success signal.
+
+    Note: outcome metrics are computed from ``scores.jsonl`` (via
+    :func:`p2m.results.load_run_summary`) and the seed count comes from
+    ``<suite>/seeds.jsonl`` (via :func:`p2m.results.count_seed_kinds`).
+    The runner's ``metrics.json`` is now token-usage telemetry only and
+    no longer carries scenario/seed outcome counts.
     """
-    metrics_path = (
-        REPO_ROOT
-        / "artifacts"
-        / "results"
-        / suite_id
-        / run_id
-        / "metrics.json"
-    )
+    # Imported lazily so this script keeps working in environments where
+    # the package isn't fully installed (e.g. running via ``python
+    # scripts/benchmark.py`` without ``uv run``).
+    from p2m.results import count_seed_kinds, load_run_summary
+
+    results_root = REPO_ROOT / "artifacts" / "results" / suite_id
+    run_dir = results_root / run_id
+
     summary: dict[str, Any] = {
         "scenario_seeds_generated": "",
         "scenarios_scored": "",
         "policy_violation_true_rate": "",
         "overrefusal_true_rate": "",
     }
-    if not metrics_path.exists():
-        return summary
-    try:
-        data = json.loads(metrics_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return summary
 
-    scenario_metrics = data.get("scenario_metrics") or data.get("scenario") or {}
-    if isinstance(scenario_metrics, dict):
-        summary["scenarios_scored"] = scenario_metrics.get("count", "")
-        dims = scenario_metrics.get("dimensions") or scenario_metrics.get("by_dimension") or {}
-        if isinstance(dims, dict):
-            pv = dims.get("policy_violation") or {}
-            if isinstance(pv, dict):
-                summary["policy_violation_true_rate"] = pv.get("true_rate", "")
-            ov = dims.get("overrefusal") or {}
-            if isinstance(ov, dict):
-                summary["overrefusal_true_rate"] = ov.get("true_rate", "")
+    seeds_path = results_root / "seeds.jsonl"
+    if seeds_path.exists():
+        try:
+            _, scenario_count = count_seed_kinds(seeds_path)
+            summary["scenario_seeds_generated"] = scenario_count
+        except (OSError, json.JSONDecodeError):
+            pass
 
-    seed_summary = data.get("seed_metrics") or data.get("seeds") or {}
-    if isinstance(seed_summary, dict):
-        summary["scenario_seeds_generated"] = seed_summary.get(
-            "scenario_count", seed_summary.get("count", "")
-        )
+    if run_dir.exists():
+        try:
+            run_summary = load_run_summary(run_dir)
+        except Exception:  # noqa: BLE001 - never let a summary failure abort the CSV append
+            run_summary = None
+        scenario_metrics = (run_summary or {}).get("scenario_metrics")
+        if isinstance(scenario_metrics, dict):
+            scored = scenario_metrics.get("scored_total")
+            if isinstance(scored, int):
+                summary["scenarios_scored"] = scored
+            pv = scenario_metrics.get("policy_violation_rate")
+            if isinstance(pv, (int, float)):
+                summary["policy_violation_true_rate"] = pv
+            ov = scenario_metrics.get("overrefusal_rate")
+            if isinstance(ov, (int, float)):
+                summary["overrefusal_true_rate"] = ov
 
     return summary
 

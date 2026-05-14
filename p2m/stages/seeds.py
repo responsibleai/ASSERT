@@ -1028,5 +1028,11 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "total": result.get("saved_count", 0),
             "prompts": result.get("prompt_count", 0),
             "scenarios": result.get("scenario_count", 0),
+            # Surfaced so the runner can skip finalize_artifact_plan when
+            # any batch failed: a partial seeds.jsonl must not be cached
+            # as a complete artifact (a future cache hit would silently
+            # reuse the smaller-than-requested file). The runner gates
+            # cacheable finalization on this value.
+            "errored_count": int(result.get("errored_count", 0) or 0),
         },
     }

@@ -533,13 +533,35 @@ def run_pipeline(
         try:
             with track_usage() as usage_acc:
                 stage_result = asyncio.run(module.run(ctx, raw_cfg)) or {}
+            stage_errored_count = int(
+                ((stage_result or {}).get("_summary") or {}).get("errored_count", 0) or 0
+            )
             if (
                 cache_supported
                 and module.SCOPE == "suite"
                 and is_cacheable_stage(stage_name)
                 and stage_name in artifact_plans
             ):
-                finalize_artifact_plan(ctx, artifact_plans[stage_name])
+                if stage_errored_count > 0:
+                    # Per-row resilience let the stage finish with a
+                    # smaller-than-requested output. Skipping
+                    # finalize_artifact_plan means the partial output
+                    # remains in the version directory for inspection
+                    # but no artifact.json sidecar is written, so
+                    # _latest_matching_metadata will not match this dir
+                    # on a future run with the same input hash. Without
+                    # this gate, a partial seeds.jsonl / transcripts.jsonl
+                    # / scores.jsonl would silently masquerade as a
+                    # complete artifact and be reused forever.
+                    log.warning(
+                        "[%s] Stage produced a partial result (%d batch failure(s)); "
+                        "skipping artifact-cache finalization. Output is in the version "
+                        "directory for inspection but will NOT be reused on the next run. "
+                        "Re-run to fill the gap.",
+                        stage_name, stage_errored_count,
+                    )
+                else:
+                    finalize_artifact_plan(ctx, artifact_plans[stage_name])
             ok = True
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
             # Classified LLM errors already carry a clean, actionable message.

@@ -1288,5 +1288,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
             "target_model": target_model,
+            # Surfaced so the runner can skip finalize_artifact_plan when
+            # any per-row error occurred. A partial transcripts.jsonl
+            # must not be tagged as a complete cacheable artifact ΓÇö a
+            # future cache hit would silently reuse the smaller file.
+            "errored_count": int(result.get("errored_count", 0) or 0),
         },
     }
