@@ -373,7 +373,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
         self.assertTrue(all(set(row) == {"behavior"} for row in assignments or []))
 
     def test_generation_jobs_one_job_per_tuple(self) -> None:
-        """Each covering-array tuple gets its own job."""
+        """Each covering-array tuple gets one job when its count fits inside
+        MAX_SEEDS_PER_BATCH (here count == 1). Tuples whose count exceeds
+        the cap are split into multiple jobs (covered by
+        ``test_generation_jobs_split_when_per_tuple_count_exceeds_cap``)."""
         policy = _make_policy()
         design = _make_design_with_behavior(2)
         jobs, assignments = build_generation_jobs(
@@ -386,7 +389,9 @@ class BuildGenerationJobsTest(unittest.TestCase):
         self.assertTrue(all(job.count == 1 for job in jobs))
 
     def test_generation_jobs_budget_allocation_divmod(self) -> None:
-        """Budget spreads evenly with remainder going to first tuples."""
+        """Budget spreads evenly with remainder going to first tuples.
+        Counts here (2 or 3) all fit inside MAX_SEEDS_PER_BATCH so each
+        tuple still produces exactly one job."""
         policy = _make_policy()
         design = _make_design_with_behavior(2)
         ca = build_covering_array(design, random.Random(42), axes=("behavior",) + FACTOR_NAMES)
@@ -449,6 +454,61 @@ class BuildGenerationJobsTest(unittest.TestCase):
             self.assertIn("behavior", job.tuple_spec)
             for factor_name in FACTOR_NAMES:
                 self.assertIn(factor_name, job.tuple_spec)
+
+    def test_generation_jobs_split_when_per_tuple_count_exceeds_cap(self) -> None:
+        """When a covering-array tuple's budget exceeds MAX_SEEDS_PER_BATCH,
+        the tuple produces multiple jobs whose counts are each ≤ the cap and
+        whose start_index slots remain contiguous within the tuple."""
+        from p2m.stages.seeds import MAX_SEEDS_PER_BATCH
+
+        policy = _make_policy()
+        design = _make_design_with_behavior(2)
+        ca = build_covering_array(
+            design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
+        )
+        num_tuples = len(ca)
+        per_tuple = MAX_SEEDS_PER_BATCH * 3 + 2
+        sample_size = num_tuples * per_tuple
+        jobs, _ = build_generation_jobs(
+            policy=policy,
+            design=design,
+            sample_size=sample_size,
+            rng=random.Random(42),
+        )
+
+        self.assertEqual(sum(job.count for job in jobs), sample_size)
+        self.assertTrue(all(job.count <= MAX_SEEDS_PER_BATCH for job in jobs))
+
+        expected_jobs_per_tuple = (
+            per_tuple + MAX_SEEDS_PER_BATCH - 1
+        ) // MAX_SEEDS_PER_BATCH
+        self.assertEqual(len(jobs), num_tuples * expected_jobs_per_tuple)
+
+        running = 0
+        for job in jobs:
+            self.assertEqual(job.start_index, running)
+            running += job.count
+
+    def test_generation_jobs_no_split_when_count_within_cap(self) -> None:
+        """When per-tuple count fits inside MAX_SEEDS_PER_BATCH, each tuple
+        still produces exactly one job (covers the small-batch case)."""
+        from p2m.stages.seeds import MAX_SEEDS_PER_BATCH
+
+        policy = _make_policy()
+        design = _make_design_with_behavior(2)
+        ca = build_covering_array(
+            design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
+        )
+        num_tuples = len(ca)
+        sample_size = num_tuples * MAX_SEEDS_PER_BATCH
+        jobs, _ = build_generation_jobs(
+            policy=policy,
+            design=design,
+            sample_size=sample_size,
+            rng=random.Random(42),
+        )
+        self.assertEqual(len(jobs), num_tuples)
+        self.assertTrue(all(job.count == MAX_SEEDS_PER_BATCH for job in jobs))
 
 
 class BuildPolicyNodeFactorTest(unittest.TestCase):

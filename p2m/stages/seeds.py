@@ -48,6 +48,18 @@ SEEDS_FILE = "seeds.jsonl"
 SCOPE = "suite"
 SUITE_OUTPUT = SEEDS_FILE
 
+# Cap on the number of seeds requested per LLM call. Each scenario seed
+# carries a system prompt, opening message, and factor metadata
+# (≈300-500 output tokens), so a batch of 15 routinely overflows the
+# default 3000-token max_tokens budget and the response truncates mid-JSON.
+# Splitting the per-tuple budget into chunks of MAX_SEEDS_PER_BATCH keeps
+# every batch comfortably inside the budget, lifts effective concurrency
+# (more, smaller jobs run in parallel), and lets per-batch failures lose
+# fewer seeds at a time. Empirically observed at sample_size=1000 with
+# 67 covering-array tuples (≈15 seeds per tuple): 65/67 batches truncated
+# without this cap, only 30 valid seeds survived.
+MAX_SEEDS_PER_BATCH = 5
+
 TOOL_SOURCE_RUNTIME = "runtime"
 TOOL_SOURCE_PER_SEED = "per_seed"
 
@@ -589,15 +601,25 @@ def build_generation_jobs(
         for _ in range(count):
             all_assignments.append(dict(row))
 
-        jobs.append(
-            SeedJob(
-                order=len(jobs),
-                behavior=behavior_entry,
-                count=count,
-                start_index=next_index,
-                tuple_spec=spec,
+        # Split the per-tuple budget into chunks ≤ MAX_SEEDS_PER_BATCH so
+        # each LLM call stays inside the default max_tokens budget. Each
+        # chunk becomes its own SeedJob with a contiguous start_index slot
+        # so generated seed IDs remain stable and unique within the tuple.
+        chunk_offset = 0
+        remaining = count
+        while remaining > 0:
+            chunk = min(MAX_SEEDS_PER_BATCH, remaining)
+            jobs.append(
+                SeedJob(
+                    order=len(jobs),
+                    behavior=behavior_entry,
+                    count=chunk,
+                    start_index=next_index + chunk_offset,
+                    tuple_spec=spec,
+                )
             )
-        )
+            chunk_offset += chunk
+            remaining -= chunk
         next_index += count
 
     return jobs, all_assignments or None
