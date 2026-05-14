@@ -334,5 +334,123 @@ class NormalizeUsageTest(unittest.TestCase):
         self.assertNotIn("cached_input_tokens", summary["usage"])
 
 
+class UsageAccumulatorTest(unittest.TestCase):
+    """Track token usage across many ``generate*`` calls inside one scope."""
+
+    def test_add_aggregates_totals_and_per_model(self) -> None:
+        acc = model_client.UsageAccumulator()
+        acc.add(
+            model_client.UsageStats(
+                prompt_tokens=100,
+                completion_tokens=50,
+                total_tokens=150,
+                cached_input_tokens=20,
+            ),
+            model="azure/gpt-5.4-mini",
+        )
+        acc.add(
+            model_client.UsageStats(
+                prompt_tokens=200,
+                completion_tokens=80,
+                total_tokens=280,
+                cached_input_tokens=80,
+            ),
+            model="azure/gpt-5.4-mini",
+        )
+        self.assertEqual(acc.calls, 2)
+        self.assertEqual(acc.input_tokens, 300)
+        self.assertEqual(acc.output_tokens, 130)
+        self.assertEqual(acc.cached_input_tokens, 100)
+        self.assertAlmostEqual(acc.cache_hit_rate(), 100 / 300)
+        per_model = acc.per_model["azure/gpt-5.4-mini"]
+        self.assertEqual(per_model["calls"], 2)
+        self.assertEqual(per_model["input_tokens"], 300)
+        self.assertEqual(per_model["cached_input_tokens"], 100)
+
+    def test_add_handles_none_usage_silently(self) -> None:
+        acc = model_client.UsageAccumulator()
+        acc.add(None, model="azure/gpt-5.4-mini")
+        self.assertEqual(acc.calls, 0)
+        self.assertEqual(acc.input_tokens, 0)
+
+    def test_cache_hit_rate_is_zero_when_no_input_tokens(self) -> None:
+        acc = model_client.UsageAccumulator()
+        self.assertEqual(acc.cache_hit_rate(), 0.0)
+
+    def test_to_dict_is_json_serializable(self) -> None:
+        import json
+
+        acc = model_client.UsageAccumulator()
+        acc.add(
+            model_client.UsageStats(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+            model="azure/gpt-5.4-mini",
+        )
+        encoded = json.dumps(acc.to_dict())
+        decoded = json.loads(encoded)
+        self.assertEqual(decoded["calls"], 1)
+        self.assertEqual(decoded["per_model"]["azure/gpt-5.4-mini"]["calls"], 1)
+
+
+class TrackUsageTest(unittest.IsolatedAsyncioTestCase):
+    """``track_usage`` collects every ``generate*`` call inside the block."""
+
+    async def test_track_usage_collects_concurrent_generate_calls(self) -> None:
+        async def fake_acompletion(**kwargs):
+            return {
+                "id": "r",
+                "model": kwargs["model"],
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1024,
+                    "completion_tokens": 32,
+                    "total_tokens": 1056,
+                    "prompt_tokens_details": {"cached_tokens": 512},
+                },
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            with model_client.track_usage() as usage:
+                import asyncio
+
+                await asyncio.gather(
+                    model_client.generate("azure/gpt-5.4-mini", "hi"),
+                    model_client.generate("azure/gpt-5.4-mini", "hi"),
+                    model_client.generate("azure/gpt-5.4-mini", "hi"),
+                )
+        self.assertEqual(usage.calls, 3)
+        self.assertEqual(usage.input_tokens, 3 * 1024)
+        self.assertEqual(usage.output_tokens, 3 * 32)
+        self.assertEqual(usage.cached_input_tokens, 3 * 512)
+        self.assertIn("azure/gpt-5.4-mini", usage.per_model)
+
+    async def test_record_usage_outside_scope_is_a_noop(self) -> None:
+        # Should not raise even when no accumulator is active.
+        model_client._record_usage(
+            model_client.UsageStats(prompt_tokens=10, completion_tokens=5),
+            model="azure/gpt-5.4-mini",
+        )
+
+    async def test_nested_scopes_isolate_accumulators(self) -> None:
+        usage_outer = model_client.UsageStats(prompt_tokens=100, completion_tokens=10)
+        usage_inner = model_client.UsageStats(prompt_tokens=200, completion_tokens=20)
+        with model_client.track_usage() as outer:
+            model_client._record_usage(usage_outer, model="m")
+            with model_client.track_usage() as inner:
+                model_client._record_usage(usage_inner, model="m")
+            model_client._record_usage(usage_outer, model="m")
+        self.assertEqual(inner.calls, 1)
+        self.assertEqual(inner.input_tokens, 200)
+        self.assertEqual(outer.calls, 2)
+        self.assertEqual(outer.input_tokens, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

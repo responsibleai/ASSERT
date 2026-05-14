@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import importlib
 import json
 import logging
 import random
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +112,104 @@ class UsageStats:
     cached_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     raw: Any = None
+
+
+@dataclass(slots=True)
+class UsageAccumulator:
+    """Aggregate token usage and call counts across many ``generate*`` calls.
+
+    Created by :func:`track_usage` and populated by the model client itself, so
+    callers don't have to thread per-call usage objects through their code.
+    Per-model breakdowns are tracked under ``per_model`` so a single stage that
+    invokes more than one model (e.g. seeds + design) can be inspected later.
+    """
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    per_model: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def add(self, usage: UsageStats | None, *, model: str | None = None) -> None:
+        """Fold one call's normalized usage into this accumulator."""
+        if usage is None:
+            return
+        self.calls += 1
+        ipt = int(usage.prompt_tokens or 0)
+        opt = int(usage.completion_tokens or 0)
+        cit = int(usage.cached_input_tokens or 0)
+        cct = int(usage.cache_creation_input_tokens or 0)
+        self.input_tokens += ipt
+        self.output_tokens += opt
+        self.cached_input_tokens += cit
+        self.cache_creation_input_tokens += cct
+        key = model or "?"
+        bucket = self.per_model.setdefault(
+            key,
+            {
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        )
+        bucket["calls"] += 1
+        bucket["input_tokens"] += ipt
+        bucket["output_tokens"] += opt
+        bucket["cached_input_tokens"] += cit
+        bucket["cache_creation_input_tokens"] += cct
+
+    def cache_hit_rate(self) -> float:
+        """Return cached_input_tokens / input_tokens, or 0.0 when no input tokens."""
+        if self.input_tokens <= 0:
+            return 0.0
+        return self.cached_input_tokens / self.input_tokens
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable snapshot of this accumulator."""
+        return {
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "cache_creation_input_tokens": self.cache_creation_input_tokens,
+            "cache_hit_rate": self.cache_hit_rate(),
+            "per_model": dict(self.per_model),
+        }
+
+
+_USAGE_ACCUMULATOR: contextvars.ContextVar[UsageAccumulator | None] = contextvars.ContextVar(
+    "_p2m_usage_accumulator",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def track_usage() -> Iterator[UsageAccumulator]:
+    """Capture token usage from every ``generate*`` call within the block.
+
+    Uses a ``ContextVar`` so that ``asyncio.run(...)`` blocks invoked inside the
+    ``with`` statement inherit the accumulator and concurrent tasks all add into
+    the same object. The accumulator only sees calls made on the same ``async``
+    stack (or the same thread) — independent threads or coroutines that are
+    started in a fresh context will not contribute.
+    """
+    accumulator = UsageAccumulator()
+    token = _USAGE_ACCUMULATOR.set(accumulator)
+    try:
+        yield accumulator
+    finally:
+        _USAGE_ACCUMULATOR.reset(token)
+
+
+def _record_usage(usage: UsageStats | None, *, model: str | None) -> None:
+    """Push one normalized usage payload into the active accumulator, if any."""
+    accumulator = _USAGE_ACCUMULATOR.get()
+    if accumulator is None:
+        return
+    accumulator.add(usage, model=model)
 
 
 @dataclass(slots=True)
@@ -658,11 +758,13 @@ __all__ = [
     "summarize_response",
     "ToolCall",
     "ToolCallLike",
+    "UsageAccumulator",
     "UsageStats",
     "generate",
     "generate_structured",
     "generate_with_tools",
     "to_jsonable",
+    "track_usage",
     "LLMAuthError",
     "LLMInputError",
     "LLMRateLimitError",
@@ -981,6 +1083,7 @@ async def generate(
         request_payload=payload,
     )
     _log_response("generate", model, result, time.monotonic() - t0, api_mode=api_mode)
+    _record_usage(result.usage, model=model)
     return result
 
 
@@ -1040,6 +1143,7 @@ async def generate_structured(
         request_payload=payload,
     )
     _log_response("generate_structured", model, result, time.monotonic() - t0, api_mode=api_mode, schema=schema_name)
+    _record_usage(result.usage, model=model)
     return result
 
 
@@ -1073,4 +1177,5 @@ async def generate_with_tools(
         request_payload=payload,
     )
     _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
+    _record_usage(result.usage, model=model)
     return result

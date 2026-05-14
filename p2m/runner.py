@@ -42,6 +42,8 @@ from p2m.core.model_client import (
     LLMInputError,
     LLMProviderError,
     LLMRateLimitError,
+    UsageAccumulator,
+    track_usage,
 )
 from p2m.stages import STAGES
 
@@ -221,10 +223,88 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         log.info(f"{tag} Starting...")
 
 
-def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] | None) -> None:
+def _format_token_count(value: int) -> str:
+    """Compact human-friendly token count (e.g. '12.5K', '8')."""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return str(value)
+
+
+def _format_usage_line(usage: UsageAccumulator | None) -> str:
+    """Render a compact ' | N calls · IN→OUT tok · X% cached' suffix."""
+    if usage is None or usage.calls == 0:
+        return ""
+    parts = [
+        f"{usage.calls} call{'s' if usage.calls != 1 else ''}",
+        f"{_format_token_count(usage.input_tokens)} in / "
+        f"{_format_token_count(usage.output_tokens)} out",
+    ]
+    if usage.input_tokens > 0:
+        pct = 100.0 * usage.cached_input_tokens / usage.input_tokens
+        parts.append(f"{pct:.1f}% cached")
+    return " | " + " · ".join(parts)
+
+
+def _build_run_metrics(
+    stage_usage: dict[str, dict[str, Any]],
+    total_elapsed: float,
+) -> dict[str, Any]:
+    """Aggregate per-stage usage into the metrics.json payload."""
+    totals = {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    per_model: dict[str, dict[str, int]] = {}
+    for stage_payload in stage_usage.values():
+        totals["calls"] += stage_payload.get("calls", 0)
+        totals["input_tokens"] += stage_payload.get("input_tokens", 0)
+        totals["output_tokens"] += stage_payload.get("output_tokens", 0)
+        totals["cached_input_tokens"] += stage_payload.get("cached_input_tokens", 0)
+        totals["cache_creation_input_tokens"] += stage_payload.get(
+            "cache_creation_input_tokens", 0
+        )
+        for model, model_stats in (stage_payload.get("per_model") or {}).items():
+            bucket = per_model.setdefault(
+                model,
+                {
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+            )
+            for key, value in model_stats.items():
+                bucket[key] = bucket.get(key, 0) + value
+    totals["cache_hit_rate"] = (
+        totals["cached_input_tokens"] / totals["input_tokens"]
+        if totals["input_tokens"] > 0
+        else 0.0
+    )
+    return {
+        "schema_version": 1,
+        "elapsed_s": round(total_elapsed, 3),
+        "stages": stage_usage,
+        "per_model": per_model,
+        "totals": totals,
+    }
+
+
+def _print_stage_done(
+    stage_name: str,
+    elapsed: float,
+    summary: dict[str, Any] | None,
+    usage: UsageAccumulator | None = None,
+) -> None:
     """Print a human-readable stage completion summary."""
     tag = f"[{stage_name}]"
     s = summary or {}
+    suffix = _format_usage_line(usage)
     if stage_name == "policy":
         count = s.get("behavior_count") or s.get("sub_risk_count", 0)
         names = s.get("behavior_names") or s.get("sub_risk_names") or []
@@ -232,18 +312,18 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            log.info(f"{tag} \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s)")
+            log.info(f"{tag} \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s){suffix}")
         else:
-            log.info(f"{tag} \u2713 Generated policy ({elapsed:.1f}s)")
+            log.info(f"{tag} \u2713 Generated policy ({elapsed:.1f}s){suffix}")
     elif stage_name == "design":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
             sizes_text = ", ".join(
                 f"{name}={size}" for name, size in factor_sizes.items()
             )
-            log.info(f"{tag} \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s)")
+            log.info(f"{tag} \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s){suffix}")
         else:
-            log.info(f"{tag} \u2713 Designed coverage grid ({elapsed:.1f}s)")
+            log.info(f"{tag} \u2713 Designed coverage grid ({elapsed:.1f}s){suffix}")
     elif stage_name == "seeds":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
@@ -254,7 +334,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
         if scenarios:
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
-        log.info(f"{tag} \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s)")
+        log.info(f"{tag} \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s){suffix}")
     elif stage_name == "rollout":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
@@ -265,7 +345,7 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        log.info(f"{tag} \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s)")
+        log.info(f"{tag} \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s){suffix}")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -282,9 +362,9 @@ def _print_stage_done(stage_name: str, elapsed: float, summary: dict[str, Any] |
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        log.info(f"{tag} \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s)")
+        log.info(f"{tag} \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s){suffix}")
     else:
-        log.info(f"{tag} \u2713 Done ({elapsed:.1f}s)")
+        log.info(f"{tag} \u2713 Done ({elapsed:.1f}s){suffix}")
 
 
 def run_pipeline(
@@ -433,6 +513,7 @@ def run_pipeline(
             shutil.copy2(config_path, run_root / "config.yaml")
     failed_stage: str | None = None
     pipeline_start = time.monotonic()
+    stage_usage: dict[str, dict[str, Any]] = {}
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -448,8 +529,10 @@ def run_pipeline(
         # --force-stage, possibly via cascade). Stages that don't read
         # _stage_forced ignore it.
         ctx["_stage_forced"] = stage_name in requested_force_stages
+        usage_acc: UsageAccumulator | None = None
         try:
-            stage_result = asyncio.run(module.run(ctx, raw_cfg)) or {}
+            with track_usage() as usage_acc:
+                stage_result = asyncio.run(module.run(ctx, raw_cfg)) or {}
             if (
                 cache_supported
                 and module.SCOPE == "suite"
@@ -483,8 +566,12 @@ def run_pipeline(
             discard_artifact_plan(ctx, artifact_plans[stage_name])
 
         elapsed = time.monotonic() - stage_start
+        if usage_acc is not None and usage_acc.calls > 0:
+            stage_payload = usage_acc.to_dict()
+            stage_payload["elapsed_s"] = round(elapsed, 3)
+            stage_usage[stage_name] = stage_payload
         if ok:
-            _print_stage_done(stage_name, elapsed, stage_result.get("_summary"))
+            _print_stage_done(stage_name, elapsed, stage_result.get("_summary"), usage_acc)
         else:
             log.error(f"[{stage_name}] \u2717 Failed ({elapsed:.1f}s)")
 
@@ -502,6 +589,26 @@ def run_pipeline(
             break
 
     total_elapsed = time.monotonic() - pipeline_start
+    metrics_written = False
+    if run_root is not None and stage_usage:
+        try:
+            metrics_path = run_root / "metrics.json"
+            payload = _build_run_metrics(stage_usage, total_elapsed)
+            write_json(metrics_path, payload)
+            metrics_written = True
+            totals = payload["totals"]
+            if totals["calls"]:
+                cache_pct = 100.0 * totals["cache_hit_rate"]
+                log.info(
+                    "Token usage: "
+                    f"{totals['calls']} calls · "
+                    f"{_format_token_count(totals['input_tokens'])} in / "
+                    f"{_format_token_count(totals['output_tokens'])} out · "
+                    f"{cache_pct:.1f}% cached"
+                )
+        except Exception:  # noqa: BLE001
+            log.debug("Failed to write metrics.json", exc_info=True)
+
     if failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
@@ -510,7 +617,7 @@ def run_pipeline(
             metrics_path = run_root / "metrics.json"
             if scores_path.exists():
                 log.info(f"  Scores:  {scores_path}")
-            if metrics_path.exists():
+            if metrics_path.exists() or metrics_written:
                 log.info(f"  Metrics: {metrics_path}")
             log.info(f"  Run dir: {run_root}")
             suite_id = ctx.get('suite_id', '')
