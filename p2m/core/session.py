@@ -26,7 +26,7 @@ from p2m.core.model_client import (
 from p2m.core.tool_backend import load_tool_module
 from p2m.core.tools import build_target_tools
 
-_log = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # Regex patterns for common credential formats in plain text
 _CREDENTIAL_PATTERNS = re.compile(
@@ -52,7 +52,7 @@ def _sanitize_response_text(text: str) -> str:
         return text
     sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
     if sanitized != text:
-        _log.warning(
+        log.warning(
             "Credential-like patterns detected and redacted from HTTP endpoint response"
         )
     return sanitized
