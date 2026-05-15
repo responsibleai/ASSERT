@@ -49,7 +49,10 @@ def _load_module_from_file(module_ref: str, path: Path) -> Any:
 
 
 @contextlib.contextmanager
-def _temporary_sys_path(path: Path):
+def _temporary_sys_path(path: Path, *, config_path: Path | None = None):
+    from p2m.core.security import validate_sys_path_addition
+
+    validate_sys_path_addition(path, config_path=config_path)
     sys.path.insert(0, str(path))
     try:
         yield
@@ -76,12 +79,18 @@ def _module_classes(module: Any) -> list[type[Any]]:
 
 
 def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any:
+    from p2m.core.security import validate_module_ref
+
+    validate_module_ref(module_ref, config_path=config_path)
+
     direct_path = Path(module_ref).expanduser()
     if _is_direct_module_path(module_ref):
         if not direct_path.is_absolute() and config_path is not None:
             direct_path = (config_path.parent / direct_path).resolve()
         if not direct_path.exists():
             raise ValueError(f"Tool module path does not exist: {direct_path}")
+        # Validate direct path is within workspace
+        _validate_module_file_path(direct_path, config_path=config_path)
         return _load_module_from_file(module_ref, direct_path)
 
     try:
@@ -92,7 +101,7 @@ def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any
         attempted = ["1. Python path (sys.path)"]
         for label, root in _search_roots(config_path):
             attempted.append(f"{len(attempted) + 1}. {label}: {root}")
-            with _temporary_sys_path(root):
+            with _temporary_sys_path(root, config_path=config_path):
                 try:
                     return importlib.import_module(module_ref)
                 except ModuleNotFoundError as retry_exc:
@@ -107,6 +116,33 @@ def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any
             f"Searched:\n  {searched}\n"
             "Hint: ensure the module exists and add __init__.py when importing a package.",
         ) from exc
+
+
+def _validate_module_file_path(path: Path, *, config_path: Path | None = None) -> None:
+    """Validate that a direct module file path is within the workspace."""
+    resolved = path.resolve()
+    cwd = Path.cwd().resolve()
+
+    # Allow paths within cwd
+    try:
+        resolved.relative_to(cwd)
+        return
+    except ValueError:
+        pass
+
+    # Allow paths within config directory
+    if config_path is not None:
+        config_dir = config_path.parent.resolve()
+        try:
+            resolved.relative_to(config_dir)
+            return
+        except ValueError:
+            pass
+
+    raise ValueError(
+        f"Tool module path '{resolved}' is outside the workspace. "
+        f"Only paths within the working directory or config directory are allowed."
+    )
 
 
 def _matches_scenario_ctor(cls: type[Any]) -> bool:
