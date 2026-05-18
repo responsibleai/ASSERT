@@ -72,6 +72,15 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
     to the default executor via asyncio.to_thread; one of those workers
     is stuck in a syscall-style wait. Without the bounded teardown,
     executor.shutdown(wait=True) would block forever.
+
+    Scope note: this test only verifies the in-process behavior of
+    ``run_stage_coro`` (the function returns and the next stage can
+    proceed). It releases the hung worker in ``finally`` so pytest can
+    tear down cleanly, which means it does NOT exercise interpreter
+    shutdown. The separate
+    ``test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked``
+    regression test below covers that gap by spawning a fresh subprocess
+    that leaks a worker and asserting the subprocess still exits.
     """
     release = threading.Event()
 
@@ -131,6 +140,95 @@ def test_run_stage_coro_clean_shutdown_logs_no_warning(
     assert not any(
         "Stage cleanup exceeded" in r.message for r in caplog.records
     ), "clean shutdown should not emit a cleanup warning"
+
+
+def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
+    tmp_path: Path,
+) -> None:
+    """Regression test for the actual deadlock class: even when a worker
+    is leaked and never released, a Python subprocess that called
+    ``run_stage_coro`` must still be able to exit.
+
+    The in-process headline test above only asserts that
+    ``run_stage_coro`` returns — it then sets ``release.set()`` in
+    ``finally`` to let pytest tear down. That hides the more dangerous
+    failure mode: Python's interpreter shutdown joins live non-daemon
+    threads in *two* places (``concurrent.futures._python_exit`` AND
+    ``threading._shutdown`` via ``_shutdown_locks``). If
+    ``_detach_executor_from_atexit`` only detaches from
+    ``_threads_queues``, ``threading._shutdown`` still blocks waiting
+    for the leaked worker forever, hanging the whole process.
+
+    This test spawns a fresh ``sys.executable`` subprocess that leaks a
+    worker via ``run_stage_coro``, prints a sentinel, and then exits.
+    If the dual-detach is correct, the subprocess exits within the
+    timeout. If not, ``subprocess.run`` raises ``TimeoutExpired``.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        '''
+        import asyncio
+        import threading
+        from p2m.core.runtime_safety import run_stage_coro
+
+        never_released = threading.Event()
+
+        def _hang_forever() -> None:
+            # Mimic an unclosed httpx finalizer wedged on a closed loop:
+            # a blocking wait that will never complete.
+            never_released.wait()  # set() is never called
+
+        async def _coro() -> str:
+            # Fire-and-forget: don't await the executor future. This
+            # leaks the worker thread by design.
+            asyncio.get_running_loop().run_in_executor(None, _hang_forever)
+            await asyncio.sleep(0.01)
+            return "main-done"
+
+        result = run_stage_coro(_coro(), cleanup_timeout_s=0.5)
+        print("RESULT=" + result, flush=True)
+        print("EXIT-SENTINEL", flush=True)
+        '''
+    )
+    script_path = tmp_path / "leaked_worker_subprocess_probe.py"
+    script_path.write_text(script, encoding="utf-8")
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=15.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (
+            exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
+        )
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (
+            exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+        )
+        pytest.fail(
+            f"Subprocess hung at interpreter shutdown (timeout={exc.timeout}s).\n"
+            f"This means the worker-thread detach is incomplete: "
+            f"threading._shutdown is still joining the leaked worker.\n"
+            f"--- subprocess stdout ---\n{stdout}\n"
+            f"--- subprocess stderr ---\n{stderr}"
+        )
+
+    assert "EXIT-SENTINEL" in proc.stdout, (
+        f"subprocess did not reach the exit sentinel — it may have crashed "
+        f"before run_stage_coro returned.\n"
+        f"--- stdout ---\n{proc.stdout}\n"
+        f"--- stderr ---\n{proc.stderr}"
+    )
+    assert proc.returncode == 0, (
+        f"subprocess exited with rc={proc.returncode}\n"
+        f"--- stdout ---\n{proc.stdout}\n"
+        f"--- stderr ---\n{proc.stderr}"
+    )
 
 
 # ---------------------------------------------------------------------------

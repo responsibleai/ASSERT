@@ -25,10 +25,12 @@ The three layers exposed here:
   hook and abandoned so the pipeline can move on to the next stage.
 
 All three accept the runtime cost of being slightly defensive: bounded
-cleanup may leave dangling threads (they die at process exit), the watchdog
-may emit a stack dump during a legitimately slow stage, and the heartbeat
-adds one tiny atomic write every 30s. We accept those costs in exchange
-for "the benchmark always finishes" as the harness contract.
+cleanup may leave dangling worker threads (detached from both interpreter
+shutdown joins so they do not block process exit, but still consuming
+memory until the process terminates), the watchdog may emit a stack dump
+during a legitimately slow stage, and the heartbeat adds one tiny atomic
+write every 30s. We accept those costs in exchange for "the benchmark
+always finishes" as the harness contract.
 """
 
 from __future__ import annotations
@@ -263,23 +265,60 @@ class PipelineWatchdog:
 
 
 def _detach_executor_from_atexit(executor: ThreadPoolExecutor) -> None:
-    """Remove an executor's worker threads from the interpreter's atexit join.
+    """Detach worker threads from BOTH interpreter shutdown joins.
 
-    ``concurrent.futures.thread`` registers an atexit handler that joins all
-    live worker threads on process shutdown. If we are deliberately
-    abandoning an executor whose workers are wedged in finalizers, that
-    handler will hang the process at exit. Removing the threads from
-    ``_threads_queues`` makes the atexit handler skip them. The threads
-    themselves are left to be reaped naturally when the process dies.
+    Python waits for non-daemon threads at process exit in two distinct
+    places, and abandoning an executor cleanly requires detaching from
+    both:
+
+    1. ``concurrent.futures.thread._python_exit`` (atexit handler) joins
+       every worker registered in ``_threads_queues``.
+    2. ``threading._shutdown`` joins every non-daemon thread whose
+       ``_tstate_lock`` is in ``threading._shutdown_locks``.
+
+    Removing only ``_threads_queues`` is the common pitfall because the
+    atexit handler is more obvious — but on Python 3.9+ (where TPE
+    workers are non-daemon by default, per CPython issue 39812) the
+    actually-blocking join is ``threading._shutdown``. Detaching from
+    only one of the two joins still hangs the process on exit; verified
+    empirically by leaking a worker, calling :func:`run_stage_coro`, and
+    timing the subprocess exit (see the ``test_run_stage_coro_does_not_
+    block_subprocess_exit_when_worker_leaked`` regression test).
+
+    The threads themselves continue to live (and may print "Event loop
+    is closed" tracebacks as their resources GC against the closed
+    loop) until the OS reaps them at process exit; we cannot stop them
+    cleanly from Python.
     """
     try:
         threads_queues = getattr(_cft, "_threads_queues", None)
-        if threads_queues is None:
+        if threads_queues is not None:
+            for t in list(executor._threads):
+                threads_queues.pop(t, None)
+    except Exception:  # noqa: BLE001
+        log.debug(
+            "Failed to detach executor from concurrent.futures atexit",
+            exc_info=True,
+        )
+    try:
+        shutdown_locks = getattr(threading, "_shutdown_locks", None)
+        shutdown_locks_lock = getattr(threading, "_shutdown_locks_lock", None)
+        if shutdown_locks is None:
             return
         for t in list(executor._threads):
-            threads_queues.pop(t, None)
+            lock = getattr(t, "_tstate_lock", None)
+            if lock is None:
+                continue
+            if shutdown_locks_lock is not None:
+                with shutdown_locks_lock:
+                    shutdown_locks.discard(lock)
+            else:
+                shutdown_locks.discard(lock)
     except Exception:  # noqa: BLE001
-        log.debug("Failed to detach executor from atexit", exc_info=True)
+        log.debug(
+            "Failed to detach executor from threading._shutdown",
+            exc_info=True,
+        )
 
 
 def run_stage_coro(
@@ -306,10 +345,13 @@ def run_stage_coro(
     in the process, which makes it impossible to abandon safely.
 
     Tradeoff: on timeout, worker threads continue running until the
-    process exits. They are daemons-by-effect (detached from atexit), so
-    they cannot block shutdown. They may print "Event loop is closed"
-    tracebacks as their resources are GC'd against the now-defunct loop;
-    the runner's stderr filter already suppresses these.
+    process exits. They are daemons-by-effect (detached from BOTH the
+    ``concurrent.futures`` atexit join AND ``threading._shutdown_locks``;
+    see :func:`_detach_executor_from_atexit` for why both are required),
+    so they cannot block process exit. They may print "Event loop is
+    closed" tracebacks as their resources are GC'd against the
+    now-defunct loop; the runner's stderr filter already suppresses
+    these.
     """
     loop = asyncio.new_event_loop()
     if max_workers is None:
@@ -391,9 +433,12 @@ def _bounded_loop_teardown(
             "Likely cause: the target callable left background resources open "
             "(unclosed httpx clients, OpenTelemetry exporters, or similar) that "
             "hang in finalizers when the event loop closes. The pipeline will "
-            "continue to the next stage; abandoned worker threads will be reaped "
-            "on process exit. To silence this, explicitly close clients in your "
-            "target (e.g. await client.aclose()) or use a singleton LLM client.",
+            "continue to the next stage. The leaked worker threads have been "
+            "detached from interpreter shutdown so they will not block process "
+            "exit, but they continue to consume memory and may print 'Event "
+            "loop is closed' tracebacks until the process terminates. To "
+            "eliminate the leak, explicitly close clients in your target (e.g. "
+            "await client.aclose()) or use a singleton LLM client.",
             timeout_s,
         )
         return
