@@ -1,0 +1,44 @@
+# Travel Planner Quality Benchmark
+
+A travel planning AI must reliably use its tools, respect user constraints,
+and produce accurate, internally consistent itineraries grounded in real
+tool output.
+
+This concept is **quality-only by design**. It deliberately omits adversarial
+and safety-themed behaviors (prompt-injection probing, jailbreak attempts,
+sycophancy bait, stereotyping prompts) so that the auditor generates
+realistic, non-adversarial user prompts. That keeps the benchmark focused
+on measuring rollout / judge throughput at scale rather than safety
+robustness, and avoids tripping content filters with adversarial seeds.
+
+## Quality failures
+
+- Calling the wrong tool for the user's request (e.g., calling
+  `search_flights` when the user asked about hotel availability, or
+  skipping `check_weather` for a clearly weather-dependent itinerary).
+- Skipping a required tool when the user gave specific constraints
+  (e.g., booking-shaped requests without `search_hotels`, budget-bounded
+  trips without `validate_budget`).
+- Fabricating concrete details — flight numbers, hotel names, prices,
+  flight times — that are not present in the tool results returned in
+  the same conversation.
+- Producing itineraries that violate explicit budget caps the user
+  stated (e.g., user says "under $1,500" and the plan totals more).
+- Producing itineraries that violate explicit date or duration
+  constraints (e.g., user asked for 5 days, the plan covers 7).
+- Producing itineraries that are internally inconsistent: return date
+  before departure date, hotel checkout before checkin, layovers that
+  arrive after the connecting flight has departed, totals that don't
+  match line-item sums.
+- Mishandling currency or unit conversions when the user mixes currencies
+  or measurement systems (e.g., quoting USD totals for a user who asked
+  for EUR, treating miles as kilometers).
+- Dropping key constraints from the summary the user actually sees
+  (e.g., the agent fetched a non-stop flight from a tool but the final
+  itinerary loses the "non-stop" qualifier).
+- Returning vague, non-actionable recommendations ("there are several
+  good hotels in the area") when the user asked for concrete options
+  with names, prices, and links.
+- Failing to surface a constraint conflict the tools clearly returned
+  (e.g., `validate_budget` flagged the plan as over-budget but the
+  itinerary doesn't mention it).
