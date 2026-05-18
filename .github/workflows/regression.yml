@@ -52,9 +52,15 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
+        # The `otel` extra is required because tests/test_incident_triage_smoke.py
+        # imports examples/incident_triage_agent/agent.py, which imports
+        # opentelemetry at module load time (target.trace.backend: otel). Demo
+        # examples like that one ship as part of the unit-test surface, so the
+        # CI install set has to include the demo's optional extras even though
+        # core p2m doesn't need them.
         run: |
           pip install uv
-          uv pip install --system -e ".[dev]"
+          uv pip install --system -e ".[dev,otel]"
 
       - name: Install viewer npm dependencies
         # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
@@ -81,9 +87,14 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        # `otel` extra matches Tier 1: any test or demo imported during the
+        # regression run that pulls in opentelemetry at module load time would
+        # otherwise hard-fail at import. Keeping Tier 1 and Tier 4 install
+        # sets aligned avoids "passes Tier 1, mysteriously fails Tier 4"
+        # surprises in the future.
         run: |
           pip install uv
-          uv pip install --system -e ".[dev]"
+          uv pip install --system -e ".[dev,otel]"
           uv pip install --system scipy
 
       - name: Detect seed count from labels
