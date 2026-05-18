@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 from p2m.core.model_client import (
     LLMProviderError,
     LLMRateLimitError,
+    _DECAY_AFTER_SUCCESSES,
+    _DEFAULT_COOLDOWN_S,
     _extract_retry_after,
     _ModelRateLimiter,
     _with_retries,
@@ -97,11 +99,75 @@ class ModelRateLimiterTest(unittest.IsolatedAsyncioTestCase):
         # Base should not have changed
         self.assertEqual(self.limiter._base_cooldown["model-a"], base_after_first)
 
-    async def test_report_success_resets_escalation(self) -> None:
+    async def test_report_success_does_not_reset_base_on_first_success(self) -> None:
+        """Sticky escalation: a single success after a 429 must NOT revert the base.
+
+        This is the key fix for the oscillation pattern at high concurrency:
+        when 19 sibling tasks wake from a coordinated cooldown and 18 succeed,
+        the *first* success used to instantly pop the escalated base. The next
+        429 then re-escalated from the default, never climbing past 2x default.
+        """
         await self.limiter.report_rate_limit("model-a")
-        self.assertIn("model-a", self.limiter._base_cooldown)
+        escalated = self.limiter._base_cooldown["model-a"]
+        self.assertGreater(escalated, _DEFAULT_COOLDOWN_S)
+        self.limiter.report_success("model-a")
+        # Base must still be elevated; only the success-streak counter advanced.
+        self.assertEqual(self.limiter._base_cooldown["model-a"], escalated)
+        self.assertEqual(self.limiter._consecutive_successes["model-a"], 1)
+
+    async def test_report_success_decays_base_after_threshold(self) -> None:
+        """After _DECAY_AFTER_SUCCESSES clean calls, the base halves."""
+        # Escalate twice: default(2) → 4 → 8.
+        await self.limiter.report_rate_limit("model-a")
+        self.limiter._cooldown_until["model-a"] = time.monotonic() - 1
+        await self.limiter.report_rate_limit("model-a")
+        escalated = self.limiter._base_cooldown["model-a"]
+        self.assertEqual(escalated, _DEFAULT_COOLDOWN_S * 4)
+
+        for _ in range(_DECAY_AFTER_SUCCESSES - 1):
+            self.limiter.report_success("model-a")
+        # Still elevated until the Kth success.
+        self.assertEqual(self.limiter._base_cooldown["model-a"], escalated)
+
+        self.limiter.report_success("model-a")
+        # Halved.
+        self.assertEqual(
+            self.limiter._base_cooldown["model-a"], escalated / 2,
+        )
+        # Counter reset so the *next* halving requires another K successes.
+        self.assertEqual(self.limiter._consecutive_successes["model-a"], 0)
+
+    async def test_report_success_decay_floors_at_default_and_drops_entry(self) -> None:
+        """Decay below _DEFAULT_COOLDOWN_S clears the per-model base entry.
+
+        Dropping the entry means the next 429 escalates from the default
+        again (default * 2), which is the desired starting state.
+        """
+        await self.limiter.report_rate_limit("model-a")  # 2 → 4
+        # Decay 4 → 2 (floored at default → entry cleared).
+        for _ in range(_DECAY_AFTER_SUCCESSES):
+            self.limiter.report_success("model-a")
+        self.assertNotIn("model-a", self.limiter._base_cooldown)
+        # Counter reset on decay.
+        self.assertEqual(self.limiter._consecutive_successes.get("model-a", 0), 0)
+
+    async def test_report_rate_limit_resets_consecutive_success_counter(self) -> None:
+        """Any 429 must invalidate the streak so we don't decay mid-storm."""
+        await self.limiter.report_rate_limit("model-a")
+        for _ in range(_DECAY_AFTER_SUCCESSES - 1):
+            self.limiter.report_success("model-a")
+        self.assertEqual(
+            self.limiter._consecutive_successes["model-a"], _DECAY_AFTER_SUCCESSES - 1,
+        )
+        self.limiter._cooldown_until["model-a"] = time.monotonic() - 1
+        await self.limiter.report_rate_limit("model-a")
+        self.assertEqual(self.limiter._consecutive_successes["model-a"], 0)
+
+    async def test_report_success_is_noop_when_never_escalated(self) -> None:
+        """A model that has never seen a 429 is left alone."""
         self.limiter.report_success("model-a")
         self.assertNotIn("model-a", self.limiter._base_cooldown)
+        self.assertNotIn("model-a", self.limiter._consecutive_successes)
 
     async def test_models_are_independent(self) -> None:
         await self.limiter.report_rate_limit("model-a")

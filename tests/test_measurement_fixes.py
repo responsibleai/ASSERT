@@ -911,6 +911,112 @@ class MeasurementFixesTest(unittest.TestCase):
             self.assertNotIn("target_runtime_mode", score_row)
             self.assertNotIn("metadata", score_row)
 
+    def test_run_judge_isolates_input_refusal_to_one_seed(self) -> None:
+        """A judge-side LLMInputError on one transcript must not abort the
+        stage. The refused row is recorded with ``judge_status='filter_skipped'``
+        so the seed isn't lost and the stage can move on. Mirrors the
+        target-side / auditor-side refusal handling in rollout. (Absorbed
+        from PR #44 commit dcaa91f — was previously only available as a
+        benchmark monkey-patch in scripts/benchmark.py.)
+        """
+        from p2m.core.model_client import LLMInputError
+
+        attempt_calls: list[str] = []
+
+        async def fake_run_judge_attempts(
+            *args: object, **kwargs: object,
+        ) -> tuple[list[dict[str, object]], list[str], int]:
+            user_msg = kwargs.get("user_msg")
+            if user_msg is None and len(args) >= 4:
+                user_msg = args[3]
+            text = ""
+            if user_msg is not None:
+                content = getattr(user_msg, "content", "")
+                if isinstance(content, str):
+                    text = content
+            attempt_calls.append(text[:120])
+            if "REFUSE-ME" in text:
+                raise LLMInputError(
+                    "Bad request: AzureException BadRequestError - "
+                    "transcript flagged as potentially violating our usage policy"
+                )
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "justification": "safe [1]",
+                        "dimension_justifications": {
+                            "policy_violation": "safe [1]",
+                            "overrefusal": "safe [1]",
+                        },
+                        "node_judgments": [],
+                        "highlights": '1. <cite id="1" description="Greeting">Hello</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            policy_path = Path(tmp_dir) / "policy.json"
+            policy_path.write_text(
+                json.dumps({"concept": {"name": "concept", "definition": "def"}, "behaviors": []}),
+                encoding="utf-8",
+            )
+            with transcripts_path.open("w", encoding="utf-8") as handle:
+                for sid, body in (("seed-ok", "Hello"), ("seed-refused", "Hello REFUSE-ME"), ("seed-ok-2", "Hello")):
+                    meta = TranscriptMetadata(
+                        kind="prompt",
+                        seed_id=sid,
+                        concept="concept",
+                        target="target",
+                        factors={"behavior": "test"},
+                        auditor_model="auditor",
+                    )
+                    transcript = Transcript(metadata=meta)
+                    transcript.add_event(
+                        TranscriptEvent(
+                            view=["target", "combined"],
+                            actor="target",
+                            edit=AddMessageEdit(message=Message(role="assistant", content=body)),
+                        )
+                    )
+                    handle.write(json.dumps(transcript.to_dict(), ensure_ascii=False) + "\n")
+
+            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+                result = asyncio.run(
+                    run_judge(
+                        transcripts_path=str(transcripts_path),
+                        policy_path=str(policy_path),
+                        save_dir=tmp_dir,
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="judge"),
+                            rollout=RolloutConfig(concurrency=1),
+                        ),
+                    )
+                )
+
+            score_rows = [
+                json.loads(line)
+                for line in (Path(tmp_dir) / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(len(attempt_calls), 3)
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(len(score_rows), 3)
+
+        by_seed = {row["seed_id"]: row for row in score_rows}
+        refused = by_seed["seed-refused"]
+        self.assertEqual(refused["judge_status"], "filter_skipped")
+        self.assertIn("judge_input_refused", refused["judge_error"])
+        self.assertEqual(refused["verdict"], {})
+        for ok_seed in ("seed-ok", "seed-ok-2"):
+            self.assertEqual(by_seed[ok_seed]["judge_status"], "ok")
+
     def _make_minimal_transcripts(self, transcripts_path: Path, seed_ids: list[str]) -> None:
         with transcripts_path.open("w", encoding="utf-8") as handle:
             for sid in seed_ids:

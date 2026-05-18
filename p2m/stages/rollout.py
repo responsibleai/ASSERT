@@ -7,6 +7,7 @@ from dataclasses import asdict
 import hashlib
 import json as json_module
 import logging
+import os
 import re
 import traceback
 import uuid
@@ -611,6 +612,27 @@ async def _run_prompt_seed(
         )
 
     if runtime_error is not None:
+        # Target-side LLMInputError (e.g. Azure content filter rejecting an
+        # adversarial prompt) is intrinsic to this seed's data, not a global
+        # pipeline problem. Record it as a transcript event so judge/metrics
+        # can see the refusal, and continue with the next seed. Other
+        # classified LLM errors (auth, rate-limit, provider 5xx) and
+        # arbitrary runtime exceptions still propagate to the worker error
+        # path. (Absorbed from PR #44 commit 82cf339 — was previously only
+        # tolerated as a benchmark monkey-patch in scripts/benchmark.py.)
+        if isinstance(runtime_error, LLMInputError):
+            transcript.add_event(TranscriptEvent(
+                view=["target", "combined"],
+                actor="system",
+                edit=AddMessageEdit(
+                    message=TranscriptMessage(
+                        role="system",
+                        content=f"[TARGET INPUT REFUSED: {runtime_error}]",
+                    ),
+                ),
+            ))
+            transcript.stop_reason = "target_input_refused"
+            return transcript
         raise runtime_error
     if runtime_result is None:
         raise RuntimeError("Prompt rollout did not produce a runtime result.")
@@ -681,10 +703,33 @@ async def _run_auditor_target_loop(
                 auditor_messages = [m for m in auditor_messages if m.content != _AUDITOR_RETRY_GUIDANCE]
                 auditor_messages.append(auditor_response.message)
                 break
-            except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
-                # Transport/auth/rate-limit errors should propagate to the
-                # runner's top-level handler — not be treated as bad auditor
-                # output.  The runner presents these with clean messages.
+            except LLMInputError as exc:
+                # Auditor-side input refusal: the auditor's adversarial
+                # prompt itself tripped the provider's content filter /
+                # Prompt Shields jailbreak detector. The default auditor
+                # system prompt is jailbreak-shaped by design and reliably
+                # trips Prompt Shields on a small fraction of seeds. This
+                # is per-seed data, not a global pipeline error: a different
+                # seed will lead the auditor down a different path and
+                # complete normally. Record the refusal in the transcript
+                # and stop the conversation cleanly so the worker can move
+                # on. (Absorbed from PR #44 commit f265154.)
+                transcript.add_event(TranscriptEvent(
+                    view=["system", "combined"],
+                    actor="system",
+                    edit=AddMessageEdit(
+                        message=TranscriptMessage(
+                            role="system",
+                            content=f"[AUDITOR INPUT REFUSED: {exc}]",
+                        ),
+                    ),
+                ))
+                stop_reason = "auditor_input_refused"
+                break
+            except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+                # Auth/rate-limit/provider-5xx errors are global pipeline
+                # problems, not seed-specific. Propagate so the runner can
+                # surface a clean message and fail the stage fast.
                 raise
             except Exception as exc:
                 last_error = str(exc)
@@ -772,11 +817,30 @@ async def _run_auditor_target_loop(
                 log.warning(
                     f"Target response truncated (finish_reason=length) at turn {turn_index + 1}/{max_turns}"
                 )
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
-            # LLM-level errors (rate limit, auth, bad request, provider 5xx)
-            # should propagate to the runner's top-level handler instead of
-            # being buried in the transcript as a target_error.  The runner
-            # presents these with clean, actionable messages.
+        except LLMInputError as exc:
+            # Target-side input refusal mid-conversation (e.g. Azure content
+            # filter rejecting one of the auditor's adversarial follow-ups).
+            # Same intrinsic-to-this-seed reasoning as in _run_prompt_seed:
+            # record the refusal in the transcript, end the conversation
+            # cleanly with stop_reason='target_input_refused', and let the
+            # worker move on to the next seed. (Absorbed from PR #44
+            # commit 82cf339.)
+            transcript.add_event(TranscriptEvent(
+                view=["target", "combined"],
+                actor="system",
+                edit=AddMessageEdit(
+                    message=TranscriptMessage(
+                        role="system",
+                        content=f"[TARGET INPUT REFUSED: {exc}]",
+                    ),
+                ),
+            ))
+            stop_reason = "target_input_refused"
+            break
+        except (LLMAuthError, LLMRateLimitError, LLMProviderError):
+            # Auth/rate-limit/provider-5xx errors are global pipeline
+            # problems, not seed-specific. Propagate so the runner can
+            # surface a clean message and fail the stage fast.
             raise
         except Exception as exc:
             tb = traceback.format_exc()
@@ -977,7 +1041,16 @@ async def run_rollout(
     ]
 
     async def _worker(seed: tuple[int, dict[str, Any]]) -> dict[str, Any]:
-        """Wrap single-seed rollout so concurrent execution keeps errors structured."""
+        """Wrap single-seed rollout so concurrent execution keeps errors structured.
+
+        Auth errors fail the stage immediately — they're never transient
+        and continuing only burns tokens. Rate-limit, provider, and
+        input errors after the per-call retry budget is exhausted are
+        treated as per-row failures: the seed is recorded with an
+        ``error`` field and the stage continues. Without this, a single
+        unrecoverable LLM call would discard all the transcripts that
+        the other concurrent rollouts have already produced.
+        """
         output_index, seed_row = seed
         try:
             kind = seed_row["kind"]
@@ -1002,8 +1075,15 @@ async def run_rollout(
             else:
                 raise ValueError(f"unsupported seed kind: {kind}")
             return {"output_index": output_index, "transcript_row": transcript.to_dict()}
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+        except LLMAuthError:
             raise
+        except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
+            seed_id = seed_row.get("seed_id", "?")
+            log.warning(
+                "Rollout call exhausted retries for seed %s (%s): %s",
+                seed_id, type(exc).__name__, exc,
+            )
+            return {"output_index": output_index, "error": exc}
         except (ValueError, KeyError) as exc:
             seed_id = seed_row.get("seed_id", "?")
             log.debug(
@@ -1029,6 +1109,8 @@ async def run_rollout(
     total = len(tasks)
     results = []
     errors: list[Exception] = []
+    successful_results = 0
+    target_error_count = 0
     for completed_task in asyncio.as_completed(tasks):
         result = await completed_task
         results.append(result)
@@ -1038,14 +1120,19 @@ async def run_rollout(
         error = result.get("error")
         # Scenario rollouts catch target exceptions mid-conversation and
         # record a transcript with stop_reason="target_error" instead of
-        # propagating. This is correct for transient mid-turn failures,
-        # but when every turn fails (e.g. deployment doesn't exist) the
-        # transcript is garbage and should surface as a rollout error.
+        # propagating. The transcript is still on disk so the user can
+        # inspect what happened, but the rollout produced no useful
+        # output, so we count it as a soft failure (counts toward the
+        # "did anything succeed?" check below) without converting it
+        # into a stage-fatal error. If a single target call crashes
+        # mid-conversation we tolerate it; if every target call crashes
+        # (e.g. deployment doesn't exist) the all-failed check below
+        # still fires and surfaces the issue.
         if error is None and transcript_row is not None:
             if transcript_row.get("stop_reason") == "target_error":
-                error = RuntimeError(
-                    f"scenario {transcript_row.get('seed_id', '?')} ended with target_error"
-                )
+                target_error_count += 1
+            else:
+                successful_results += 1
         if error is not None:
             errors.append(error)
         done = len(results)
@@ -1072,8 +1159,75 @@ async def run_rollout(
         else:
             log.warning(msg)
 
+    # Per-row failures should not kill the stage as long as *some* rows
+    # produced useful transcripts. The errors are visible in the
+    # per-seed progress lines above and are summarised in errored_count
+    # below. The stage only fails outright when nothing succeeded
+    # (no useful transcripts in this run AND no cached transcripts from
+    # a prior run) — that means the failure is systemic (auth, config,
+    # broken target) rather than per-row.
+    if successful_results == 0 and not completed_seed_ids:
+        if errors:
+            log.error(
+                "Rollout stage failed: all %d seed(s) errored and no prior transcripts were cached",
+                len(errors),
+            )
+            raise errors[0]
+        if target_error_count:
+            log.error(
+                "Rollout stage failed: all %d transcript(s) ended with stop_reason=target_error "
+                "and no prior transcripts were cached",
+                target_error_count,
+            )
+            raise RuntimeError(
+                f"all {target_error_count} rollout(s) ended with target_error — "
+                "the target raised an exception on every attempt"
+            )
+
+    # Untyped errors (ones we couldn't synthesize a transcript for) are
+    # more concerning than typed refusals (target_input_refused,
+    # auditor_input_refused, target_error) because they indicate the
+    # worker hit an unrecognised failure mode. At scale, a half-failed run
+    # with a few successful transcripts is more likely a systemic problem
+    # (deployment misconfigured, target broken, validation bug) than
+    # per-seed bad luck — failing loudly here surfaces it instead of
+    # quietly producing a thin artifact. The default threshold of 10% is
+    # tunable via the P2M_ROLLOUT_ERROR_FAIL_RATIO env var for ops
+    # scenarios. Typed refusals are NOT counted toward the ratio.
+    # (Inspired by PR #44 commit 15332c8 — adopted scoped to untyped
+    # errors only, instead of #44's blanket runtime_error catch-all.)
+    try:
+        error_fail_ratio = float(
+            os.environ.get("P2M_ROLLOUT_ERROR_FAIL_RATIO", "0.10")
+        )
+    except ValueError:
+        log.warning(
+            "Invalid P2M_ROLLOUT_ERROR_FAIL_RATIO=%r; falling back to 0.10",
+            os.environ.get("P2M_ROLLOUT_ERROR_FAIL_RATIO"),
+        )
+        error_fail_ratio = 0.10
+    if errors and pending_seeds:
+        actual_ratio = len(errors) / len(pending_seeds)
+        if actual_ratio > error_fail_ratio:
+            log.error(
+                "Rollout stage failed: %d/%d (%.1f%%) new seeds errored, "
+                "exceeding the failure threshold of %.1f%% "
+                "(set P2M_ROLLOUT_ERROR_FAIL_RATIO to override)",
+                len(errors), len(pending_seeds),
+                actual_ratio * 100, error_fail_ratio * 100,
+            )
+            raise errors[0]
     if errors:
-        raise errors[0]
+        log.warning(
+            "Rollout stage completed with %d seed failure(s) out of %d new seeds; see transcripts.jsonl for details",
+            len(errors), len(pending_seeds),
+        )
+    if target_error_count:
+        log.warning(
+            "Rollout stage produced %d transcript(s) with stop_reason=target_error; "
+            "the target raised an exception mid-conversation",
+            target_error_count,
+        )
     build_run_viewer_artifacts(out_dir)
 
     return {
@@ -1082,6 +1236,11 @@ async def run_rollout(
         "count": len(completed_seed_ids) + len(results),
         "new_count": len(results),
         "cached_count": len(completed_seed_ids),
+        # Surfaced for the runner / benchmark CSV / metrics so the user
+        # can see how many seeds the next re-run will need to retry,
+        # and how often the target failed mid-conversation.
+        "errored_count": len(errors),
+        "target_error_count": target_error_count,
     }
 
 
@@ -1129,5 +1288,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
             "target_model": target_model,
+            # Surfaced so the runner can skip finalize_artifact_plan when
+            # any per-row error occurred. A partial transcripts.jsonl
+            # must not be tagged as a complete cacheable artifact -- a
+            # future cache hit would silently reuse the smaller file.
+            "errored_count": int(result.get("errored_count", 0) or 0),
         },
     }

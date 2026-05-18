@@ -17,6 +17,7 @@ from p2m.core.model_client import (
     Message,
     ModelResponse,
     ToolCall,
+    _classify_llm_error,
     build_llm_call_trace,
     generate,
     generate_with_tools,
@@ -548,15 +549,41 @@ class CallableSession:
                 for msg in messages
                 if msg.role in ("user", "assistant")
             ]
-            raw_result = await invoke_callable(
-                self._callable, user_text, history=history,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text, history=history,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                # User callables (LangGraph agents, framework wrappers, raw
+                # litellm callers) make their own provider calls and bypass
+                # ``generate()`` / ``_with_retries``. Provider errors therefore
+                # bubble up here as raw litellm exceptions
+                # (BadRequestError, ContentPolicyViolationError,
+                # RateLimitError, ...) rather than the typed ``LLM*Error``
+                # classes the rollout stage's per-seed isolation paths key
+                # off. Re-raise via ``_classify_llm_error`` so a target-side
+                # content-filter rejection lands as ``LLMInputError`` and gets
+                # routed into ``stop_reason='target_input_refused'`` instead
+                # of aborting the whole batch. Errors the classifier doesn't
+                # recognise (user agent crashes, ValueError from misconfigured
+                # tools) propagate untouched so they don't get smuggled into
+                # one of the four LLM error classes.
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
         else:
-            raw_result = await invoke_callable(
-                self._callable, user_text,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
 
         result = self._normalize_callable_result(raw_result)
 

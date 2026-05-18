@@ -446,6 +446,92 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertTrue((design_root / "v0001" / "design.json").exists())
             self.assertFalse((design_root / "v0002").exists())
 
+    def test_partial_seeds_skips_artifact_finalization(self) -> None:
+        """Regression for Jake's review on the absorb of PR #44.
+
+        ``_generate_records`` now tolerates per-batch failures and
+        returns a partial ``seeds.jsonl`` plus ``errored_count > 0``.
+        Before this fix, the runner finalized the cacheable artifact
+        anyway: it wrote ``artifact.json`` next to the partial
+        seeds.jsonl, updated ``latest.json``, and a future run with the
+        same input hash would silently reuse the smaller-than-requested
+        file. This test pins the gate at runner.py: when ``_summary``
+        carries a non-zero ``errored_count``, ``finalize_artifact_plan``
+        must be skipped so the next run regenerates from scratch.
+        """
+
+        modules = self._modules([])
+
+        async def partial_seeds(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+            Path(ctx["seeds_path"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(ctx["seeds_path"]).write_text(
+                '{"kind":"prompt","seed_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                encoding="utf-8",
+            )
+            return {
+                "seeds_path": ctx["seeds_path"],
+                "_summary": {
+                    "total": 1,
+                    "prompts": 1,
+                    "scenarios": 0,
+                    "errored_count": 1,
+                },
+            }
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            seen: list[str] = []
+
+            modules_run1 = self._modules(seen)
+            modules_run1["seeds"] = SimpleNamespace(
+                SCOPE="suite", SUITE_OUTPUT="seeds.jsonl", run=partial_seeds
+            )
+            with (
+                patch("p2m.runner._load_context", return_value=self._ctx(root)),
+                patch("p2m.runner.STAGES", modules_run1),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(self._ctx(root)["config_path"]))
+
+            # Stage exited cleanly; pipeline considers the run successful
+            # because partial-but-some-output is the resilience contract.
+            self.assertEqual(code, 0)
+            seeds_root = root / "results" / "suite-a" / "artifacts" / "seeds"
+
+            # The partial seeds.jsonl is preserved in the version dir for
+            # inspection -- we don't throw it away just because some
+            # batches failed.
+            self.assertTrue((seeds_root / "v0001" / "seeds.jsonl").exists())
+
+            # But the artifact.json sidecar must NOT exist: without it,
+            # _latest_matching_metadata skips this dir on the next run.
+            self.assertFalse((seeds_root / "v0001" / "artifact.json").exists())
+
+            # And latest.json must not point at this version (would be
+            # caught by activate_latest_artifacts on a follow-up run).
+            latest_path = root / "results" / "suite-a" / "latest.json"
+            if latest_path.exists():
+                latest = json.loads(latest_path.read_text(encoding="utf-8"))
+                self.assertNotIn("seeds", latest.get("artifacts", {}))
+
+            # Re-run with identical inputs but a fully-successful seeds
+            # stage. The runner must NOT reuse the partial v0001 -- it
+            # must allocate a fresh version (v0002 in our case, since
+            # v0001 still occupies the slot on disk) and call seeds again.
+            seen.clear()
+            modules_run2 = self._modules(seen)
+            with (
+                patch("p2m.runner._load_context", return_value=self._ctx(root)),
+                patch("p2m.runner.STAGES", modules_run2),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(self._ctx(root)["config_path"]))
+
+            self.assertEqual(code, 0)
+            self.assertIn("seeds", seen)
+            self.assertTrue((seeds_root / "v0002" / "seeds.jsonl").exists())
+            self.assertTrue((seeds_root / "v0002" / "artifact.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

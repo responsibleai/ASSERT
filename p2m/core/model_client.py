@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import importlib
 import json
 import logging
 import random
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -91,12 +93,123 @@ class Message:
 
 @dataclass(slots=True)
 class UsageStats:
-    """Normalized token accounting."""
+    """Normalized token accounting.
+
+    ``cached_input_tokens`` is the count of input tokens served from the
+    provider's prompt cache (a subset of ``prompt_tokens``). It surfaces
+    OpenAI/Azure ``prompt_tokens_details.cached_tokens`` and
+    Anthropic ``cache_read_input_tokens`` under one field so callers can
+    measure prefix-cache effectiveness without branching on the provider.
+
+    ``cache_creation_input_tokens`` is Anthropic's "wrote new entries to
+    the cache" counter; it has no OpenAI/Azure equivalent because their
+    cache is implicit and free to write.
+    """
 
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
     raw: Any = None
+
+
+@dataclass(slots=True)
+class UsageAccumulator:
+    """Aggregate token usage and call counts across many ``generate*`` calls.
+
+    Created by :func:`track_usage` and populated by the model client itself, so
+    callers don't have to thread per-call usage objects through their code.
+    Per-model breakdowns are tracked under ``per_model`` so a single stage that
+    invokes more than one model (e.g. seeds + design) can be inspected later.
+    """
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    per_model: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def add(self, usage: UsageStats | None, *, model: str | None = None) -> None:
+        """Fold one call's normalized usage into this accumulator."""
+        if usage is None:
+            return
+        self.calls += 1
+        ipt = int(usage.prompt_tokens or 0)
+        opt = int(usage.completion_tokens or 0)
+        cit = int(usage.cached_input_tokens or 0)
+        cct = int(usage.cache_creation_input_tokens or 0)
+        self.input_tokens += ipt
+        self.output_tokens += opt
+        self.cached_input_tokens += cit
+        self.cache_creation_input_tokens += cct
+        key = model or "?"
+        bucket = self.per_model.setdefault(
+            key,
+            {
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        )
+        bucket["calls"] += 1
+        bucket["input_tokens"] += ipt
+        bucket["output_tokens"] += opt
+        bucket["cached_input_tokens"] += cit
+        bucket["cache_creation_input_tokens"] += cct
+
+    def cache_hit_rate(self) -> float:
+        """Return cached_input_tokens / input_tokens, or 0.0 when no input tokens."""
+        if self.input_tokens <= 0:
+            return 0.0
+        return self.cached_input_tokens / self.input_tokens
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable snapshot of this accumulator."""
+        return {
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "cache_creation_input_tokens": self.cache_creation_input_tokens,
+            "cache_hit_rate": self.cache_hit_rate(),
+            "per_model": dict(self.per_model),
+        }
+
+
+_USAGE_ACCUMULATOR: contextvars.ContextVar[UsageAccumulator | None] = contextvars.ContextVar(
+    "_p2m_usage_accumulator",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def track_usage() -> Iterator[UsageAccumulator]:
+    """Capture token usage from every ``generate*`` call within the block.
+
+    Uses a ``ContextVar`` so that ``asyncio.run(...)`` blocks invoked inside the
+    ``with`` statement inherit the accumulator and concurrent tasks all add into
+    the same object. The accumulator only sees calls made on the same ``async``
+    stack (or the same thread) — independent threads or coroutines that are
+    started in a fresh context will not contribute.
+    """
+    accumulator = UsageAccumulator()
+    token = _USAGE_ACCUMULATOR.set(accumulator)
+    try:
+        yield accumulator
+    finally:
+        _USAGE_ACCUMULATOR.reset(token)
+
+
+def _record_usage(usage: UsageStats | None, *, model: str | None) -> None:
+    """Push one normalized usage payload into the active accumulator, if any."""
+    accumulator = _USAGE_ACCUMULATOR.get()
+    if accumulator is None:
+        return
+    accumulator.add(usage, model=model)
 
 
 @dataclass(slots=True)
@@ -288,11 +401,18 @@ def summarize_response(response: ModelResponse) -> dict[str, Any]:
     if response.tool_calls:
         payload["tool_calls"] = [tool_call.to_openai_dict() for tool_call in response.tool_calls]
     if response.usage:
-        payload["usage"] = {
+        usage_payload: dict[str, Any] = {
             "input_tokens": response.usage.prompt_tokens,
             "output_tokens": response.usage.completion_tokens,
             "total_tokens": response.usage.total_tokens,
         }
+        if response.usage.cached_input_tokens:
+            usage_payload["cached_input_tokens"] = response.usage.cached_input_tokens
+        if response.usage.cache_creation_input_tokens:
+            usage_payload["cache_creation_input_tokens"] = (
+                response.usage.cache_creation_input_tokens
+            )
+        payload["usage"] = usage_payload
     if response.model:
         payload["model"] = response.model
     if response.response_id:
@@ -527,10 +647,28 @@ def _normalize_usage(raw_usage: Any) -> UsageStats | None:
     total = _coerce_int(_get_value(raw_usage, "total_tokens"))
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
+
+    # Prompt-cache accounting. OpenAI/Azure expose cached prompt tokens
+    # under {prompt,input}_tokens_details.cached_tokens (Chat Completions
+    # vs Responses API). Anthropic exposes them as top-level
+    # cache_read_input_tokens / cache_creation_input_tokens. LiteLLM
+    # passes both shapes through unchanged.
+    cached_input = _coerce_int(_get_value(raw_usage, "cache_read_input_tokens"))
+    if cached_input is None:
+        prompt_details = (
+            _get_value(raw_usage, "prompt_tokens_details")
+            or _get_value(raw_usage, "input_tokens_details")
+        )
+        if prompt_details is not None:
+            cached_input = _coerce_int(_get_value(prompt_details, "cached_tokens"))
+    cache_creation = _coerce_int(_get_value(raw_usage, "cache_creation_input_tokens"))
+
     return UsageStats(
         prompt_tokens=prompt,
         completion_tokens=completion,
         total_tokens=total,
+        cached_input_tokens=cached_input,
+        cache_creation_input_tokens=cache_creation,
         raw=raw_usage,
     )
 
@@ -606,6 +744,8 @@ def _log_response(label: str, model: str, response: "ModelResponse", elapsed: fl
     usage = response.usage
     if usage and usage.prompt_tokens is not None:
         tokens = f"{usage.prompt_tokens}+{usage.completion_tokens or 0} tokens"
+        if usage.cached_input_tokens:
+            tokens = f"{tokens} ({usage.cached_input_tokens} cached)"
     else:
         tokens = "? tokens"
     parts = [f"model={model}"]
@@ -623,11 +763,13 @@ __all__ = [
     "summarize_response",
     "ToolCall",
     "ToolCallLike",
+    "UsageAccumulator",
     "UsageStats",
     "generate",
     "generate_structured",
     "generate_with_tools",
     "to_jsonable",
+    "track_usage",
     "LLMAuthError",
     "LLMInputError",
     "LLMRateLimitError",
@@ -641,6 +783,13 @@ _MAX_RETRIES = 5
 _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 120.0
 _DEFAULT_COOLDOWN_S = 2.0
+# Number of consecutive successful calls (per model) required before
+# halving the escalated base cooldown back toward _DEFAULT_COOLDOWN_S.
+# Higher values are more conservative — the limiter "remembers" past
+# saturation longer, which avoids the oscillation pattern where a single
+# success after a 429 storm reverts the base to the default and we
+# immediately re-escalate on the next burst.
+_DECAY_AFTER_SUCCESSES = 10
 
 
 def _extract_retry_after(exc: Exception) -> float | None:
@@ -678,12 +827,22 @@ class _ModelRateLimiter:
     cooldown was too short.  Concurrent 429s that arrive while a cooldown
     is already active are from in-flight requests sent before the cooldown
     was set, so they just extend the existing cooldown without escalating.
-    On any successful call, the escalation level resets.
+
+    Decay logic: an escalated base does **not** revert to the default on
+    a single successful call.  Instead, ``report_success`` counts
+    consecutive successes per model and only halves the base after
+    ``_DECAY_AFTER_SUCCESSES`` clean calls in a row, with a floor at
+    ``_DEFAULT_COOLDOWN_S``.  This prevents the "amnesia" pattern where
+    one success between bursts wipes out everything we learned about how
+    saturated the deployment is — without it, the base oscillates
+    between default and 2x default forever instead of climbing to a
+    sustainable rate.  Any 429 resets the counter.
     """
 
     def __init__(self) -> None:
         self._cooldown_until: dict[str, float] = {}
         self._base_cooldown: dict[str, float] = {}
+        self._consecutive_successes: dict[str, int] = {}
         self._lock: asyncio.Lock | None = None
 
     def _get_lock(self) -> asyncio.Lock:
@@ -728,29 +887,65 @@ class _ModelRateLimiter:
                 wait_s = min(retry_after, _MAX_BACKOFF_S)
                 self._base_cooldown[model] = wait_s
                 is_new = True
+                source = "Retry-After"
             elif current_until <= now:
                 # Cooldown expired and we still got 429 → escalate base.
                 wait_s = min(base * 2, _MAX_BACKOFF_S)
                 self._base_cooldown[model] = wait_s
                 is_new = True
+                source = "escalation"
             else:
                 # Active cooldown — concurrent in-flight request, don't
                 # escalate.  Just extend if needed using current base.
                 wait_s = base
                 is_new = False
+                source = "active"
 
             new_until = now + wait_s
             if new_until > current_until:
                 self._cooldown_until[model] = new_until
                 if is_new:
                     log.warning(
-                        "Rate limiter: model %s cooled down for %.1fs", model, wait_s,
+                        "Rate limiter: model %s cooled down for %.1fs (%s)",
+                        model, wait_s, source,
                     )
+            # Any 429 — escalation, server-directed, or absorbed in-flight —
+            # invalidates the run of clean successes used to decay the base.
+            self._consecutive_successes[model] = 0
             return is_new
 
     def report_success(self, model: str) -> None:
-        """Reset escalation state after a successful call."""
-        self._base_cooldown.pop(model, None)
+        """Decay the escalated base cooldown after sustained success.
+
+        The base is only halved once ``_DECAY_AFTER_SUCCESSES`` consecutive
+        successful calls accumulate without an intervening 429, and the
+        result is floored at ``_DEFAULT_COOLDOWN_S``.  Models that have
+        never been escalated are no-ops.
+        """
+        # Nothing to decay if we never escalated above the default.
+        current = self._base_cooldown.get(model)
+        if current is None or current <= _DEFAULT_COOLDOWN_S:
+            # Keep the counter clean so a future escalation starts fresh.
+            self._consecutive_successes.pop(model, None)
+            return
+
+        n = self._consecutive_successes.get(model, 0) + 1
+        if n < _DECAY_AFTER_SUCCESSES:
+            self._consecutive_successes[model] = n
+            return
+
+        new_base = max(current / 2, _DEFAULT_COOLDOWN_S)
+        if new_base <= _DEFAULT_COOLDOWN_S:
+            # Fully decayed back to default — drop the entry so the next
+            # 429 escalates from _DEFAULT_COOLDOWN_S * 2 like the first.
+            self._base_cooldown.pop(model, None)
+        else:
+            self._base_cooldown[model] = new_base
+        self._consecutive_successes[model] = 0
+        log.info(
+            "Rate limiter: model %s base cooldown decayed %.1fs → %.1fs after %d successes",
+            model, current, new_base, _DECAY_AFTER_SUCCESSES,
+        )
 
 
 _rate_limiter = _ModelRateLimiter()
@@ -765,10 +960,37 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
     non-rate-limit retryable errors (e.g. 5xx); for 429s the
     coordinated cooldown (with jitter) is the sole wait mechanism,
     preventing the stampede-at-expiry pattern.
+
+    Retry budget is tracked **per error class against this task only**:
+    waiting through another task's cooldown does *not* consume any of
+    this task's retry budget. This matters at high concurrency, where
+    the previous "every iteration counts" model would burn a request's
+    entire budget on cooldowns set by other tasks before it ever got a
+    real chance to call the API.
     """
     tag = f" [{label}]" if label else ""
     last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES + 1):
+    own_429s = 0
+    own_5xx = 0
+    # Hard ceiling on total iterations to guarantee termination even
+    # if other tasks keep refreshing the cooldown indefinitely. With
+    # _MAX_RETRIES=5 this allows up to 24 cooldown waits without ever
+    # making a real attempt before bailing out — far more headroom than
+    # any sane scenario needs.
+    safety_iterations_cap = (_MAX_RETRIES + 1) * 4
+    iterations = 0
+    while True:
+        iterations += 1
+        if iterations > safety_iterations_cap:
+            log.error(
+                "%s%s exceeded safety iteration cap (%d) in retry loop; giving up",
+                model, tag, safety_iterations_cap,
+            )
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError(
+                f"_with_retries safety cap exceeded for {model} without ever observing a call result"
+            )
         await _rate_limiter.wait_if_cooled(model)
         try:
             result = await call_fn()
@@ -776,37 +998,51 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
             return result
         except Exception as exc:
             classified = _classify_llm_error(exc)
-            if attempt < _MAX_RETRIES and isinstance(classified, (LLMRateLimitError, LLMProviderError)):
-                last_exc = classified
-                if isinstance(classified, LLMRateLimitError):
-                    retry_after = _extract_retry_after(exc)
-                    is_new = await _rate_limiter.report_rate_limit(model, retry_after)
-                    if is_new:
+            last_exc = classified
+            if isinstance(classified, LLMRateLimitError):
+                own_429s += 1
+                attempts_used = own_429s
+                attempts_total = _MAX_RETRIES + 1
+                if own_429s > _MAX_RETRIES:
+                    raise classified from exc
+                retry_after = _extract_retry_after(exc)
+                is_new = await _rate_limiter.report_rate_limit(model, retry_after)
+                if is_new:
+                    if retry_after is not None:
                         log.warning(
-                            "%s%s (attempt %d/%d), waiting for coordinated cooldown: %s",
-                            model, tag, attempt + 1, _MAX_RETRIES + 1, classified,
+                            "%s%s (attempt %d/%d), honoring server Retry-After=%.1fs: %s",
+                            model, tag, attempts_used, attempts_total, retry_after, classified,
                         )
                     else:
-                        log.debug(
-                            "%s%s (attempt %d/%d), in-flight 429 during active cooldown",
-                            model, tag, attempt + 1, _MAX_RETRIES + 1,
+                        log.warning(
+                            "%s%s (attempt %d/%d), waiting for coordinated cooldown: %s",
+                            model, tag, attempts_used, attempts_total, classified,
                         )
-                    # Skip individual backoff — the coordinated cooldown
-                    # (checked at loop top) handles the wait with jitter.
-                    continue
+                else:
+                    log.debug(
+                        "%s%s (attempt %d/%d), in-flight 429 during active cooldown",
+                        model, tag, attempts_used, attempts_total,
+                    )
+                # Skip individual backoff — the coordinated cooldown
+                # (checked at loop top) handles the wait with jitter.
+                continue
+            if isinstance(classified, LLMProviderError):
+                own_5xx += 1
+                attempts_used = own_5xx
+                attempts_total = _MAX_RETRIES + 1
+                if own_5xx > _MAX_RETRIES:
+                    raise classified from exc
                 # Non-rate-limit retryable error (5xx): individual backoff.
-                backoff = min(_INITIAL_BACKOFF_S * (2 ** attempt), _MAX_BACKOFF_S)
+                backoff = min(_INITIAL_BACKOFF_S * (2 ** (own_5xx - 1)), _MAX_BACKOFF_S)
                 jitter = random.uniform(0, backoff * 0.5)
                 wait_s = backoff + jitter
                 log.warning(
                     "%s%s (attempt %d/%d), retrying in %.1fs: %s",
-                    model, tag, attempt + 1, _MAX_RETRIES + 1, wait_s, classified,
+                    model, tag, attempts_used, attempts_total, wait_s, classified,
                 )
                 await asyncio.sleep(wait_s)
                 continue
             raise classified from exc
-    assert last_exc is not None
-    raise last_exc
 
 
 async def generate(
@@ -852,6 +1088,7 @@ async def generate(
         request_payload=payload,
     )
     _log_response("generate", model, result, time.monotonic() - t0, api_mode=api_mode)
+    _record_usage(result.usage, model=model)
     return result
 
 
@@ -911,6 +1148,7 @@ async def generate_structured(
         request_payload=payload,
     )
     _log_response("generate_structured", model, result, time.monotonic() - t0, api_mode=api_mode, schema=schema_name)
+    _record_usage(result.usage, model=model)
     return result
 
 
@@ -944,4 +1182,5 @@ async def generate_with_tools(
         request_payload=payload,
     )
     _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
+    _record_usage(result.usage, model=model)
     return result

@@ -163,15 +163,67 @@ async def run_judge(
         return score_row
 
     async def worker(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
-        """Wrap row scoring so concurrent execution returns structured errors."""
+        """Wrap row scoring so concurrent execution returns structured errors.
+
+        Auth errors fail the stage immediately — they're never transient
+        and continuing only burns tokens. Rate-limit, provider, and
+        input errors after the per-call retry budget is exhausted are
+        treated as per-row failures: the seed is recorded with an
+        ``error`` field and the stage continues. Without this, a single
+        unrecoverable judge call would discard all the work the other
+        concurrent calls have already finished.
+        """
         output_index, row = item
         try:
             return {
                 "output_index": output_index,
                 "score_row": await score_row(row),
             }
-        except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError):
+        except LLMAuthError:
             raise
+        except LLMInputError as exc:
+            # Judge-side input refusal (e.g. Azure content filter rejecting
+            # a transcript whose adversarial content the judge LLM can't
+            # process). This is per-seed data, not a global pipeline
+            # problem: a different transcript will judge cleanly. Record a
+            # filter_skipped score row so the seed isn't lost and the
+            # stage can move on. Mirrors the target_input_refused and
+            # auditor_input_refused handling in rollout. (Absorbed from
+            # PR #44 commit dcaa91f — was previously only available as a
+            # benchmark monkey-patch in scripts/benchmark.py.)
+            seed_id = row.get("seed_id", "?")
+            log.warning(
+                "Judge content-filter refusal for seed %s: %s",
+                seed_id, exc,
+            )
+            factors = row_factors(row)
+            score_row_filter_skipped: dict[str, Any] = {
+                "kind": row.get("kind", ""),
+                "seed_id": seed_id,
+                "concept": row.get("concept", ""),
+                "judge_model": judge_model,
+                "target": row.get("target", ""),
+                "auditor_model": row.get("auditor_model", ""),
+                "judge_status": "filter_skipped",
+                "judge_error": f"judge_input_refused: {exc}",
+                "verdict": {},
+            }
+            if factors:
+                score_row_filter_skipped["factors"] = factors
+            return {
+                "output_index": output_index,
+                "score_row": score_row_filter_skipped,
+            }
+        except (LLMRateLimitError, LLMProviderError) as exc:
+            seed_id = row.get("seed_id", "?")
+            log.warning(
+                "Judge call exhausted retries for seed %s (%s): %s",
+                seed_id, type(exc).__name__, exc,
+            )
+            return {
+                "output_index": output_index,
+                "error": exc,
+            }
         except (json.JSONDecodeError, ValueError) as exc:
             seed_id = row.get("seed_id", "?")
             log.debug(
@@ -264,8 +316,25 @@ async def run_judge(
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
     build_run_viewer_artifacts(out_dir)
-    if errors:
+
+    # Per-row failures should not kill the stage as long as *some* rows
+    # succeeded. The errors are surfaced via judge_failures in the
+    # returned summary and as judge_status != "ok" in scores.jsonl, so
+    # downstream consumers (metrics, viewer, CSV) can present them
+    # without losing the rows that did succeed. The stage only fails
+    # outright when no rows succeeded at all, which means the failure
+    # is systemic (auth, config) rather than per-row.
+    if errors and written_rows == 0 and not completed_keys:
+        log.error(
+            "Judge stage failed: all %d row(s) errored and no prior scores were cached",
+            len(errors),
+        )
         raise errors[0]
+    if errors:
+        log.warning(
+            "Judge stage completed with %d row failure(s) out of %d new rows; see scores.jsonl for details",
+            len(errors), len(pending),
+        )
 
     judge_failures = sum(
         1 for row in load_jsonl(scores_path) if infer_judge_status(row) != "ok"
@@ -276,6 +345,12 @@ async def run_judge(
         "new_count": written_rows,
         "cached_count": len(completed_keys),
         "judge_failures": judge_failures,
+        # Errored rows are NOT written to scores.jsonl so that re-running
+        # the stage will pick them up via the existing resume logic and
+        # re-attempt them. We surface the count here for the runner /
+        # benchmark CSV / metrics so the user can see how many seeds
+        # the next run will need to retry.
+        "errored_count": len(errors),
     }
 
 
@@ -309,5 +384,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
             "failures": result.get("judge_failures", 0),
+            # Surfaced so the runner can skip finalize_artifact_plan when
+            # any per-row error occurred. A partial scores.jsonl must
+            # not be tagged as a complete cacheable artifact -- a future
+            # cache hit would silently reuse the smaller file.
+            "errored_count": int(result.get("errored_count", 0) or 0),
         },
     }
