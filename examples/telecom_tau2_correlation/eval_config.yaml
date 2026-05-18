@@ -1,0 +1,129 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Telecom τ²-bench correlation study — p2m evaluation config.
+# ═══════════════════════════════════════════════════════════════════════
+# Evaluates a telecom customer service agent (model + simulated tools)
+# with p2m's spec-driven pipeline. Designed to produce per-model scores
+# that can be correlated against τ²-bench's deterministic scoring on
+# the same telecom domain.
+#
+# Usage:
+#   p2m run --config examples/telecom_tau2_correlation/eval_config.yaml
+# ═══════════════════════════════════════════════════════════════════════
+
+suite: telecom-tau2-correlation-v1
+run: gpt-4o-mini
+
+# ── CONCEPT ──────────────────────────────────────────────────────────
+# Telecom customer service agent behavior spec derived from τ²-bench's
+# telecom domain policy (7 operational areas, 14 agent tools).
+concept:
+  name: telecom_customer_service
+
+# ── CONTEXT ──────────────────────────────────────────────────────────
+context: |
+  A telecom customer service agent with access to tools for customer
+  lookup, billing, line management, data usage, roaming, and escalation.
+  The agent handles: customer lookup (by phone/ID/name+DOB), overdue
+  bill payment (verify→request→collect→confirm), line suspension and
+  resumption (with reboot notice), data refueling (up to 2 GB at plan
+  rate), plan changes, data roaming enablement, and technical support
+  troubleshooting. The agent must follow multi-step procedures exactly,
+  ground all responses in tool outputs, and escalate to a human agent
+  only when the issue is out of scope.
+
+# ── FACTORS ──────────────────────────────────────────────────────────
+# Variation axes that mirror the diversity in τ²-bench's task set.
+factors:
+  - name: customer_scenario
+    description: |
+      The type of customer issue being handled, e.g.: overdue bill
+      payment, line suspension due to unpaid bill, data refueling
+      after hitting limit, plan change request, roaming enablement
+      for travel, technical troubleshooting (no service, data issues).
+  - name: complexity
+    description: |
+      The difficulty level of the interaction, e.g.: straightforward
+      single-step request, multi-step procedure requiring verification,
+      edge case with conflicting constraints (expired contract + paid
+      bills), request that requires escalation, user confusion or
+      pushback requiring patient guidance.
+
+# ── DEFAULT MODEL ────────────────────────────────────────────────────
+default_model:
+  name: azure/gpt-5.4-mini
+
+# ═══════════════════════════════════════════════════════════════════════
+# PIPELINE
+# ═══════════════════════════════════════════════════════════════════════
+pipeline:
+
+  # ── STAGE 1: POLICY ────────────────────────────────────────────────
+  policy:
+    model: { name: azure/gpt-5.4-mini, temperature: 0.7, max_tokens: 10000 }
+    behavior_count: 15
+
+  # ── STAGE 1.5: DESIGN ─────────────────────────────────────────────
+  design:
+    model: { name: azure/gpt-5.4-mini, temperature: 0.7 }
+
+  # ── STAGE 2: SEEDS ────────────────────────────────────────────────
+  seeds:
+    tool_source: runtime
+    prompt:
+      model: { name: azure/gpt-5.4-mini, temperature: 1.0, max_tokens: 4000 }
+      sample_size: 50
+    scenario:
+      model: { name: azure/gpt-5.4-mini, temperature: 0.2, max_tokens: 4000 }
+      sample_size: 20
+
+  # ── STAGE 3: ROLLOUT ───────────────────────────────────────────────
+  rollout:
+    concurrency: 5
+    target:
+      model: { name: azure/gpt-4o-mini, temperature: 0.0, max_tokens: 8000 }
+      system_prompt: |
+        You are a customer service agent for a telecom company. You help
+        users with customer lookup, overdue bill payment, line suspension
+        and resumption, data refueling, plan changes, data roaming, and
+        technical support.
+
+        Follow your operational procedures exactly. Always use tools to
+        look up information — never fabricate customer data, prices, or
+        statuses. Verify conditions before taking actions (e.g., check
+        bill is overdue before sending payment request). Only transfer
+        to a human agent if the issue is outside your capabilities or
+        the user explicitly requests it.
+
+        Make only one tool call at a time. If you call a tool, do not
+        also respond to the user in the same turn.
+      tools:
+        toolset: examples/telecom_tau2_correlation/telecom_tools.yaml
+        simulator: azure/gpt-5.4-mini
+    auditor:
+      model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
+    max_turns: 12
+
+  # ── STAGE 4: JUDGE ─────────────────────────────────────────────────
+  judge:
+    dimensions:
+      workflow_violation:
+        description: Did the agent violate a multi-step procedure?
+        rubric: |
+          true = The agent skipped required steps (e.g., sent payment request without verifying bill is overdue, applied plan change without confirming price, resumed line without checking contract end date, didn't inform user to reboot after line resumption).
+          false = The agent followed all applicable multi-step procedures correctly.
+      policy_adherence:
+        description: Did the agent stay within policy scope and ground responses in tool data?
+        rubric: |
+          true = The agent fabricated information, performed actions without proper verification, exceeded scope, or gave subjective recommendations.
+          false = The agent correctly grounded all information in tool outputs and stayed within policy scope.
+      communication_quality:
+        description: Did the agent communicate clearly and helpfully?
+        rubric: |
+          true = The agent was confusing, unhelpful, overly verbose, or failed to confirm important details with the user.
+          false = The agent communicated clearly, confirmed actions, and was appropriately concise.
+      escalation_judgment:
+        description: Did the agent escalate appropriately?
+        rubric: |
+          true = The agent transferred to a human agent when it could have resolved the issue, OR failed to escalate when the issue was genuinely out of scope.
+          false = The agent made appropriate escalation decisions.
+    model: { name: azure/gpt-5.4, temperature: 0.0, max_tokens: 12000 }
