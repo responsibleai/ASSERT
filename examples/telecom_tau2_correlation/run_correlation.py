@@ -97,8 +97,14 @@ def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
             "--save-to", save_name,
         ]
         result = run_cmd(cmd, dry_run=dry_run)
-        # tau2 saves to data/tau2/simulations/<save_name>.json (relative to cwd)
-        output_path = Path("data/tau2/simulations") / f"{save_name}.json"
+        # tau2 saves to {DATA_DIR}/simulations/<save_name>.json where DATA_DIR
+        # is the tau2 package's data directory (typically <tau3-bench>/data/).
+        try:
+            from tau2.utils.utils import DATA_DIR
+            output_path = Path(DATA_DIR) / "simulations" / f"{save_name}.json"
+        except ImportError:
+            # Fallback: assume tau2 data dir is relative to cwd
+            output_path = Path("data") / "simulations" / f"{save_name}.json"
         outputs[model] = output_path
         if result and result.returncode != 0:
             logger.warning("tau2 failed for %s, skipping", model)
