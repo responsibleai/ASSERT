@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -15,6 +17,7 @@ from p2m.core.model_client import (
     Message,
     ModelResponse,
     ToolCall,
+    _classify_llm_error,
     build_llm_call_trace,
     generate,
     generate_with_tools,
@@ -23,6 +26,37 @@ from p2m.core.model_client import (
 )
 from p2m.core.tool_backend import load_tool_module
 from p2m.core.tools import build_target_tools
+
+log = logging.getLogger(__name__)
+
+# Regex patterns for common credential formats in plain text
+_CREDENTIAL_PATTERNS = re.compile(
+    r"("
+    # Bearer/Basic tokens
+    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
+    r"|Basic\s+[A-Za-z0-9+/]+=*"
+    # Common API key formats (sk-..., key-..., etc.)
+    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
+    # Generic long hex/base64 secrets following key-like prefixes
+    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
+    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
+    r")",
+    re.IGNORECASE,
+)
+
+_RESPONSE_REDACTED = "[REDACTED]"
+
+
+def _sanitize_response_text(text: str) -> str:
+    """Redact credential-like patterns from response text before persisting."""
+    if not text:
+        return text
+    sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
+    if sanitized != text:
+        log.warning(
+            "Credential-like patterns detected and redacted from HTTP endpoint response"
+        )
+    return sanitized
 
 
 # ── Adapter types and helpers ──────────────────────────────────
@@ -453,6 +487,9 @@ class CallableSession:
         return "callable"
 
     async def open(self) -> None:
+        from p2m.core.security import validate_callable_ref
+
+        validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
         try:
             mod = importlib.import_module(module_path)
@@ -512,15 +549,41 @@ class CallableSession:
                 for msg in messages
                 if msg.role in ("user", "assistant")
             ]
-            raw_result = await invoke_callable(
-                self._callable, user_text, history=history,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text, history=history,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                # User callables (LangGraph agents, framework wrappers, raw
+                # litellm callers) make their own provider calls and bypass
+                # ``generate()`` / ``_with_retries``. Provider errors therefore
+                # bubble up here as raw litellm exceptions
+                # (BadRequestError, ContentPolicyViolationError,
+                # RateLimitError, ...) rather than the typed ``LLM*Error``
+                # classes the rollout stage's per-seed isolation paths key
+                # off. Re-raise via ``_classify_llm_error`` so a target-side
+                # content-filter rejection lands as ``LLMInputError`` and gets
+                # routed into ``stop_reason='target_input_refused'`` instead
+                # of aborting the whole batch. Errors the classifier doesn't
+                # recognise (user agent crashes, ValueError from misconfigured
+                # tools) propagate untouched so they don't get smuggled into
+                # one of the four LLM error classes.
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
         else:
-            raw_result = await invoke_callable(
-                self._callable, user_text,
-                timeout_s=self._message_timeout_s,
-            )
+            try:
+                raw_result = await invoke_callable(
+                    self._callable, user_text,
+                    timeout_s=self._message_timeout_s,
+                )
+            except Exception as exc:
+                classified = _classify_llm_error(exc)
+                if classified is exc:
+                    raise
+                raise classified from exc
 
         result = self._normalize_callable_result(raw_result)
 
@@ -589,6 +652,9 @@ class HTTPEndpointSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
     ) -> None:
+        from p2m.core.security import validate_endpoint_url
+
+        validate_endpoint_url(endpoint)
         self._endpoint = endpoint
         self._headers = headers or {}
         self._system_prompt = system_prompt
@@ -651,6 +717,9 @@ class HTTPEndpointSession:
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc
 
+        # Sanitize response text to prevent credential leakage into artifacts
+        response_text = _sanitize_response_text(response_text)
+
         interaction_messages = [
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": response_text},
@@ -674,6 +743,9 @@ class ExternalSession:
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
     ) -> None:
+        from p2m.core.security import validate_module_ref
+
+        validate_module_ref(connector_ref, config_path=config_path)
         connector_cls = _discover_connector_class(load_tool_module(connector_ref, config_path=config_path))
         self._startup_timeout_s = startup_timeout_s
         self._message_timeout_s = message_timeout_s

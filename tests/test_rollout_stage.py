@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,9 +8,9 @@ from unittest.mock import patch
 
 from p2m.core.config_model import AuditorConfig, EvaluationConfig, JudgeConfig, RolloutConfig, TargetConfig, ToolsConfig
 from p2m.core.io import load_seeds
-from p2m.core.model_client import Message, ModelResponse
+from p2m.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from p2m.core.session import TurnResult
-from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, run_rollout
+from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, _run_prompt_seed, run_rollout
 from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
@@ -1048,6 +1049,22 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(row["seed_id"] for row in final_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
+        """A per-row worker failure no longer kills the stage outright.
+
+        With the resilience fix in place, the rollout stage tolerates
+        per-row failures so long as at least one seed produced a useful
+        transcript and the failure rate is below the configured
+        threshold. The successful transcript stays on disk and the
+        stage returns with ``errored_count`` reflecting the failure.
+        Re-running the same suite picks up the failed seed via the
+        existing resume logic (it never made it into transcripts.jsonl).
+
+        The ``P2M_ROLLOUT_ERROR_FAIL_RATIO`` override is needed because
+        a 2-seed test where 1 seed fails has a 50% error rate, which
+        exceeds the 10% production default. The override keeps the test
+        focused on the soft-fail contract; the ratio threshold itself
+        is covered by a dedicated test below.
+        """
         seed_rows = [
             {"kind": "prompt", "seed": {"description": "successful prompt"}},
             {"kind": "prompt", "seed": {"description": "failing prompt"}},
@@ -1076,7 +1093,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             transcripts_path = out_dir / "transcripts.jsonl"
             seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch.dict(os.environ, {"P2M_ROLLOUT_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
+                 patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 rollout_task = asyncio.create_task(
                     run_rollout(
                         seed_path=str(seed_path),
@@ -1103,8 +1121,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["seed_id"] for row in interim_rows], ["seed_000001"])
 
                 release_failure.set()
-                with self.assertRaisesRegex(RuntimeError, "boom"):
-                    await rollout_task
+                result = await rollout_task
 
             final_rows = [
                 json.loads(line)
@@ -1112,6 +1129,42 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             ]
 
         self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
+        self.assertEqual(result["errored_count"], 1)
+        self.assertEqual(result["new_count"], 2)
+        self.assertEqual(result["target_error_count"], 0)
+
+    async def test_run_rollout_fails_when_all_seeds_error_and_no_cache(self) -> None:
+        """If every seed errors and nothing was previously cached, the
+        stage still fails — that's a systemic problem (auth, config,
+        broken target) rather than per-row noise, and silently
+        completing would be misleading.
+        """
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": "first failing prompt"}},
+            {"kind": "prompt", "seed": {"description": "second failing prompt"}},
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            raise RuntimeError("boom")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+
+            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    await run_rollout(
+                        seed_path=str(seed_path),
+                        target=TargetConfig(model="azure/gpt-5.4"),
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="azure/gpt-5.4"),
+                            rollout=RolloutConfig(concurrency=2),
+                        ),
+                        save_dir=str(out_dir),
+                        run_id="run-rollout",
+                    )
 
     async def test_run_rollout_tolerates_one_pct_failures_when_total_is_large(self) -> None:
         """Total >= 20 and ≤10% failures: log warning, continue to judge.
@@ -1366,6 +1419,356 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             ["seed_000001", "seed_000002", "seed_000003"],
         )
         self.assertNotIn("parent_seed_id", canonical_rows[2])
+
+    # ------------------------------------------------------------------
+    # Per-row refusal isolation (absorbed from PR #44)
+    # ------------------------------------------------------------------
+
+    async def test_run_prompt_seed_records_target_input_refusal(self) -> None:
+        """Target-side LLMInputError is recorded as a transcript event, not raised.
+
+        Without this, one Azure content-filter refusal kills the entire
+        batch even though hundreds of other adversarial prompts completed
+        successfully. Absorbed from PR #44 commit 82cf339.
+        """
+        from p2m.core.session import HostedSession
+
+        async def fake_run_turn(self_inner, messages):
+            raise LLMInputError(
+                "Bad request: AzureException BadRequestError - Invalid prompt: "
+                "your prompt was flagged as potentially violating our usage policy."
+            )
+
+        async def fake_open(self_inner):
+            return None
+
+        async def fake_close(self_inner):
+            return None
+
+        seed_row = {
+            "kind": "prompt",
+            "seed_id": "seed_000001",
+            "seed": {"description": "adversarial prompt the target refuses"},
+        }
+
+        with (
+            patch.object(HostedSession, "open", new=fake_open),
+            patch.object(HostedSession, "close", new=fake_close),
+            patch.object(HostedSession, "run_turn", new=fake_run_turn),
+        ):
+            transcript = await _run_prompt_seed(
+                seed=seed_row,
+                target=TargetConfig(model="azure/gpt-5.4-mini"),
+                rollout=RolloutConfig(max_turns=1, concurrency=1),
+                max_tokens=1000,
+                config_path=None,
+            )
+
+        self.assertEqual(transcript.stop_reason, "target_input_refused")
+        refusal_events = [
+            event for event in transcript.events
+            if event.edit.type == "add_message"
+            and "[TARGET INPUT REFUSED:" in (event.edit.message.content or "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+        self.assertIn(
+            "flagged as potentially violating",
+            refusal_events[0].edit.message.content,
+        )
+
+    async def test_run_rollout_isolates_target_input_refusal_to_one_seed(self) -> None:
+        """One target_input_refused seed must not abort the rest of the batch.
+
+        End-to-end check that the target-side refusal handling produces
+        a transcript per seed and that the batch returns successfully.
+        Absorbed from PR #44 commit 82cf339.
+        """
+        from p2m.core.session import HostedSession
+
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(5)
+        ]
+        run_turn_calls: list[str] = []
+
+        async def fake_run_turn(self_inner, messages):
+            user_text = next(
+                (m.text or "" for m in messages if m.role == "user"),
+                "",
+            )
+            run_turn_calls.append(user_text)
+            if "prompt 2" in user_text:
+                raise LLMInputError(
+                    "Bad request: AzureException BadRequestError - "
+                    "prompt flagged as potentially violating our usage policy"
+                )
+            return TurnResult(
+                text="OK",
+                state_messages=list(messages) + [Message(role="assistant", content="OK")],
+                interaction_messages=[
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": "OK"},
+                ],
+                raw={"response": {"content": "OK"}},
+            )
+
+        async def fake_open(self_inner):
+            return None
+
+        async def fake_close(self_inner):
+            return None
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(HostedSession, "open", new=fake_open),
+                patch.object(HostedSession, "close", new=fake_close),
+                patch.object(HostedSession, "run_turn", new=fake_run_turn),
+            ):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-refusal-isolation",
+                )
+
+            transcript_rows = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(len(run_turn_calls), 5)
+        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(result["new_count"], 5)
+
+        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        refused = by_seed["seed_000003"]
+        self.assertEqual(refused["stop_reason"], "target_input_refused")
+        refusal_events = [
+            event for event in refused["events"]
+            if event["edit"]["type"] == "add_message"
+            and "[TARGET INPUT REFUSED:" in event["edit"]["message"].get("content", "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+
+        for completed_id in ("seed_000001", "seed_000002", "seed_000004", "seed_000005"):
+            self.assertEqual(
+                by_seed[completed_id]["stop_reason"],
+                "completed",
+                f"{completed_id} should have completed cleanly",
+            )
+
+    async def test_run_rollout_isolates_auditor_input_refusal_to_one_seed(self) -> None:
+        """One auditor_input_refused seed must not abort the rest of the batch.
+
+        Absorbed from PR #44 commit f265154. The auditor's adversarial
+        system prompt is exactly the kind of input Azure Prompt Shields'
+        jailbreak detector flags. The fix routes auditor-side input
+        errors into a recorded transcript event with
+        stop_reason='auditor_input_refused'.
+        """
+        seed_rows = [
+            {
+                "kind": "scenario",
+                "seed": {
+                    "title": f"Title {i}",
+                    "description": f"scenario seed {i}",
+                },
+            }
+            for i in range(5)
+        ]
+        auditor_calls: list[str] = []
+
+        async def fake_generate(model, messages, options):
+            del options
+            description_marker = ""
+            for msg in messages:
+                content = msg.content if hasattr(msg, "content") else msg.get("content", "")
+                if "scenario seed" in content:
+                    description_marker = content
+                    break
+            auditor_calls.append(description_marker[:120])
+            if "scenario seed 2" in description_marker:
+                raise LLMInputError(
+                    "Bad request: AzureException BadRequestError - Invalid "
+                    "prompt: your prompt was flagged as potentially "
+                    "violating our usage policy (Prompt Shields jailbreak)"
+                )
+            return ModelResponse(text="Where should I go?", model=str(model))
+
+        class FakeHostedSession:
+            runtime_mode = "hosted"
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def run_turn(self, messages):
+                user_text = ""
+                for msg in reversed(messages):
+                    if msg.role == "user":
+                        user_text = msg.text
+                        break
+                return TurnResult(
+                    text="OK.",
+                    state_messages=list(messages) + [Message(role="assistant", content="OK.")],
+                    interaction_messages=[
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": "OK."},
+                    ],
+                    raw={"response": {"content": "OK."}},
+                )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch("p2m.stages.rollout.generate", new=fake_generate),
+                patch("p2m.stages.rollout._build_target_session", return_value=FakeHostedSession()),
+            ):
+                result = await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4-mini"),
+                        rollout=RolloutConfig(max_turns=1, concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-auditor-refusal",
+                )
+
+            transcript_rows = [
+                json.loads(line)
+                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(len(auditor_calls), 5)
+        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(result["new_count"], 5)
+
+        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        refused = by_seed["seed_000003"]
+        self.assertEqual(refused["stop_reason"], "auditor_input_refused")
+        refusal_events = [
+            event for event in refused["events"]
+            if event["edit"]["type"] == "add_message"
+            and "[AUDITOR INPUT REFUSED:" in event["edit"]["message"].get("content", "")
+        ]
+        self.assertEqual(len(refusal_events), 1)
+
+    async def test_run_rollout_still_fails_fast_on_provider_5xx(self) -> None:
+        """LLMProviderError (Azure 5xx) is global, not seed-specific.
+
+        Verifies the per-row tolerance didn't accidentally swallow
+        auth/rate-limit/5xx errors that should still abort the stage.
+        Absorbed from PR #44 commit 82cf339.
+        """
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(3)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            raise LLMProviderError("Azure 503 ServiceUnavailable")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
+                self.assertRaises(LLMProviderError),
+            ):
+                await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4-mini"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        auditor=AuditorConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-provider-error",
+                )
+
+    async def test_run_rollout_fails_when_untyped_error_ratio_exceeds_threshold(self) -> None:
+        """Untyped errors above the failure threshold abort the stage.
+
+        Per-row tolerance is for typed refusals (target_input_refused,
+        auditor_input_refused, target_error). When the worker hits
+        unrecognised exceptions at scale we should fail loudly because
+        that's almost always a systemic problem (config bug, broken
+        validation) rather than seed-specific bad luck. Default
+        threshold is 10%; this test forces 50% (1/2) and asserts the
+        stage raises. The companion test
+        ``test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails``
+        covers the soft-fail path with the threshold relaxed.
+        """
+        seed_rows = [
+            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            for i in range(2)
+        ]
+
+        async def fake_run_prompt_seed(**kwargs):
+            seed_id = str(kwargs["seed"]["seed_id"])
+            if seed_id == "seed_000001":
+                class FakeTranscript:
+                    def to_dict(self_inner) -> dict[str, str]:
+                        return {"kind": "prompt", "seed_id": seed_id}
+
+                return FakeTranscript()
+            raise RuntimeError("worker exploded")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            seed_path = tmp_path / "seeds.jsonl"
+            out_dir = tmp_path / "run"
+            seed_path.write_text(
+                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.dict(os.environ, {"P2M_ROLLOUT_ERROR_FAIL_RATIO": "0.10"}, clear=False),
+                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
+                self.assertRaisesRegex(RuntimeError, "worker exploded"),
+            ):
+                await run_rollout(
+                    seed_path=str(seed_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        rollout=RolloutConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-error-ratio",
+                )
 
 
 if __name__ == "__main__":

@@ -53,6 +53,9 @@ pipeline:
     concurrency: 1
     target:
       callable: REPLACE_WITH_FRAMEWORK:chat
+      trace:
+        backend: phoenix             # demo callables call phoenix.otel.register();
+        group_by: session.id         # this pulls those spans into transcripts.jsonl
     auditor:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 6

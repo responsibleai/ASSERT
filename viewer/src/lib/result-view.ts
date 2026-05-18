@@ -17,10 +17,23 @@ function normalizeMessageRole(role: string): InteractionMessage['role'] {
 
 function normalizeInteractionMessages(messages: InteractionMessage[]): InteractionMessage[] {
 	let judgeTurn = 0;
+	let lastPrincipalRole: 'user' | 'assistant' | null = null;
 	return messages.map((message) => {
 		const role = normalizeMessageRole(message.role);
-		const nextJudgeTurn = role === 'system' ? null : judgeTurn + 1;
-		if (nextJudgeTurn != null) judgeTurn = nextJudgeTurn;
+		let nextJudgeTurn: number | null;
+		const isToolCall = message.type === 'tool_call';
+		if (role === 'system') {
+			nextJudgeTurn = null;
+		} else if (role === 'user') {
+			judgeTurn += 1;
+			nextJudgeTurn = judgeTurn;
+			lastPrincipalRole = 'user';
+		} else {
+			// assistant, tool, or tool_call: belongs to the surrounding assistant turn.
+			if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
+			nextJudgeTurn = judgeTurn;
+			lastPrincipalRole = 'assistant';
+		}
 		return {
 			...message,
 			role,
@@ -40,6 +53,7 @@ function toInteractionMessages(messages: AuditTranscriptMessage[]): InteractionM
 		tool_call_id: message.tool_call_id,
 		function: message.function,
 		arguments: message.arguments,
+		agent: message.agent ?? null,
 		raw: message.raw
 	})));
 }
@@ -54,7 +68,11 @@ function readSeedTools(seedMetadata: Record<string, unknown> | null | undefined)
 }
 
 function countConversationMessages(messages: InteractionMessage[]): number {
-	return messages.filter((message) => message.role !== 'system').length;
+	const turns = new Set<number>();
+	for (const message of messages) {
+		if (typeof message.judgeTurn === 'number') turns.add(message.judgeTurn);
+	}
+	return turns.size;
 }
 
 function synthesizePromptMessages(sample: JudgedSample): InteractionMessage[] {

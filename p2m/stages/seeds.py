@@ -30,7 +30,14 @@ from p2m.core.io import (
     slugify,
     write_jsonl,
 )
-from p2m.core.model_client import GenerateOptions, generate_structured
+from p2m.core.model_client import (
+    GenerateOptions,
+    LLMAuthError,
+    LLMInputError,
+    LLMProviderError,
+    LLMRateLimitError,
+    generate_structured,
+)
 from p2m.core.tools import normalize_tool_defs
 from p2m.stages.design import normalize_design
 
@@ -40,6 +47,18 @@ SCENARIO_SEED_TEMPLATE = (BASE_DIR / "prompts" / "seeds_scenario_single.md").rea
 SEEDS_FILE = "seeds.jsonl"
 SCOPE = "suite"
 SUITE_OUTPUT = SEEDS_FILE
+
+# Cap on the number of seeds requested per LLM call. Each scenario seed
+# carries a system prompt, opening message, and factor metadata
+# (≈300-500 output tokens), so a batch of 15 routinely overflows the
+# default 3000-token max_tokens budget and the response truncates mid-JSON.
+# Splitting the per-tuple budget into chunks of MAX_SEEDS_PER_BATCH keeps
+# every batch comfortably inside the budget, lifts effective concurrency
+# (more, smaller jobs run in parallel), and lets per-batch failures lose
+# fewer seeds at a time. Empirically observed at sample_size=1000 with
+# 67 covering-array tuples (≈15 seeds per tuple): 65/67 batches truncated
+# without this cap, only 30 valid seeds survived.
+MAX_SEEDS_PER_BATCH = 5
 
 TOOL_SOURCE_RUNTIME = "runtime"
 TOOL_SOURCE_PER_SEED = "per_seed"
@@ -156,14 +175,37 @@ SEED_SCHEMA_WITH_TOOLS: dict[str, Any] = {
 }
 
 
-def seeds_response_schema(tool_source: str = TOOL_SOURCE_RUNTIME) -> dict[str, Any]:
-    """Full response schema wrapping seeds in a ``{"seeds": [...]}`` envelope."""
+def seeds_response_schema(
+    tool_source: str = TOOL_SOURCE_RUNTIME,
+    min_items: int | None = None,
+    max_items: int | None = None,
+) -> dict[str, Any]:
+    """Full response schema wrapping seeds in a ``{"seeds": [...]}`` envelope.
+
+    When ``min_items`` is provided, the schema requires the model to return at
+    least that many seeds. Without this lower bound, gpt-5.4-mini frequently
+    returns N-1 items for batches larger than ~10, since the schema previously
+    allowed 0-2000 items regardless of the prompt's stated count.
+
+    When ``max_items`` is provided, it overrides the default 2000 ceiling so
+    callers can pin both bounds to the exact target count. Pinning both bounds
+    keeps the schema symmetric with the prompt's stated count and prevents the
+    model from over-generating in the (unlikely) inverse failure mode.
+    """
     item_schema = SEED_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_SEED else SEED_SCHEMA
+    resolved_max = max_items if (max_items is not None and max_items > 0) else 2000
+    seeds_schema: dict[str, Any] = {
+        "type": "array",
+        "maxItems": resolved_max,
+        "items": item_schema,
+    }
+    if min_items is not None and min_items > 0:
+        seeds_schema["minItems"] = min_items
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "seeds": {"type": "array", "maxItems": 2000, "items": item_schema},
+            "seeds": seeds_schema,
         },
         "required": ["seeds"],
     }
@@ -582,15 +624,25 @@ def build_generation_jobs(
         for _ in range(count):
             all_assignments.append(dict(row))
 
-        jobs.append(
-            SeedJob(
-                order=len(jobs),
-                behavior=behavior_entry,
-                count=count,
-                start_index=next_index,
-                tuple_spec=spec,
+        # Split the per-tuple budget into chunks ≤ MAX_SEEDS_PER_BATCH so
+        # each LLM call stays inside the default max_tokens budget. Each
+        # chunk becomes its own SeedJob with a contiguous start_index slot
+        # so generated seed IDs remain stable and unique within the tuple.
+        chunk_offset = 0
+        remaining = count
+        while remaining > 0:
+            chunk = min(MAX_SEEDS_PER_BATCH, remaining)
+            jobs.append(
+                SeedJob(
+                    order=len(jobs),
+                    behavior=behavior_entry,
+                    count=chunk,
+                    start_index=next_index + chunk_offset,
+                    tuple_spec=spec,
+                )
             )
-        )
+            chunk_offset += chunk
+            remaining -= chunk
         next_index += count
 
     return jobs, all_assignments or None
@@ -615,15 +667,26 @@ async def _generate_records(
     design: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
-) -> list[dict[str, Any]]:
-    """Call the LLM once per covering-array tuple and return records."""
+) -> dict[str, Any]:
+    """Call the LLM once per covering-array tuple and return records.
+
+    Returns a dict with two keys:
+
+    * ``records``: the flattened, in-order list of successfully generated
+      seed records. May be a partial list if some batches failed.
+    * ``errored_count``: number of batches that failed and produced no
+      records. Surfaced upward so the runner / metrics can report
+      partial-success runs.
+
+    Raises only when *every* batch failed — that signals a systemic
+    problem (auth, schema, config) rather than transient provider noise.
+    """
     if sample_size <= 0 or sample_size > 100_000:
         raise ValueError(f"{kind} sample_size must be between 1 and 100000")
     if concurrency <= 0:
         raise ValueError("seed generation concurrency must be > 0")
 
     design_data = design or {}
-    schema = seeds_response_schema(tool_source)
     seed_id_prefix = SEED_ID_PREFIX[kind]
     concept_name = policy.get("concept", {}).get("name", "concept")
 
@@ -636,69 +699,123 @@ async def _generate_records(
     factor_names = design_factors(design_data)
 
     async def _process(job: SeedJob) -> dict[str, Any]:
-        prompt = build_generation_prompt(
-            kind=kind,
-            policy=policy,
-            behavior=job.behavior,
-            count=job.count,
-            context=context,
-            design=design_data,
-            tuple_spec=job.tuple_spec,
-            tool_source=tool_source,
-        )
+        """Generate one batch of seeds for *job*.
+
+        Per-batch failures (rate limit / provider 5xx / malformed JSON
+        payloads / fewer-than-requested seeds) are caught and returned
+        as a structured ``error`` sentinel rather than re-raised, so a
+        single bad batch cannot kill the entire seeds stage and discard
+        the work the other concurrent batches have already finished.
+        Auth errors still propagate immediately — they are never
+        transient and continuing only burns tokens.
+        """
         slug = slugify(str(job.behavior.get("name") or ""))
         behavior_name = str(job.behavior.get("name") or "")
-
-        response = await generate_structured(
-            model,
-            prompt,
-            schema_name=f"{kind}_seeds",
-            json_schema=schema,
-            options=GenerateOptions(
-                temperature=temperature, max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort, timeout_s=timeout_s,
-                call_label=f"seeds:{kind}:{slug}",
-            ),
-        )
-        payload = response.parsed
-        if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):
-            raise ValueError(f"{kind} seed generation returned invalid seeds payload")
-
-        returned_seeds = payload["seeds"]
-        if len(returned_seeds) < job.count:
-            raise ValueError(
-                f"{kind} generation returned {len(returned_seeds)} seeds "
-                f"for a batch of {job.count}"
+        try:
+            prompt = build_generation_prompt(
+                kind=kind,
+                policy=policy,
+                behavior=job.behavior,
+                count=job.count,
+                context=context,
+                design=design_data,
+                tuple_spec=job.tuple_spec,
+                tool_source=tool_source,
             )
-        returned_seeds = returned_seeds[:job.count]
+            job_schema = seeds_response_schema(
+                tool_source, min_items=job.count, max_items=job.count
+            )
 
-        records = []
-        for idx, raw_seed in enumerate(returned_seeds):
-            if not isinstance(raw_seed, dict):
-                raise ValueError(f"{kind} generation returned non-dict seed at index {idx}")
-            factors: dict[str, str] = {"behavior": behavior_name}
-            if job.tuple_spec:
-                factors.update({
-                    factor_name: job.tuple_spec[factor_name]["name"]
-                    for factor_name in factor_names
-                })
-            records.append(
-                seed_record(
-                    kind=kind, seed_id=f"{seed_id_prefix}-{slug}-{job.start_index + idx:03d}",
-                    concept=concept_name,
-                    seed_payload=normalize_generated_seed(
-                        raw_seed,
-                        tool_source=tool_source,
-                        fixed_system_prompt=fixed_system_prompt,
-                    ),
-                    factors=factors,
+            response = await generate_structured(
+                model,
+                prompt,
+                schema_name=f"{kind}_seeds",
+                json_schema=job_schema,
+                options=GenerateOptions(
+                    temperature=temperature, max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort, timeout_s=timeout_s,
+                    call_label=f"seeds:{kind}:{slug}",
+                ),
+            )
+            payload = response.parsed
+            if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):
+                raise ValueError(f"{kind} seed generation returned invalid seeds payload")
+
+            returned_seeds = payload["seeds"]
+            if len(returned_seeds) < job.count:
+                raise ValueError(
+                    f"{kind} generation returned {len(returned_seeds)} seeds "
+                    f"for a batch of {job.count}"
                 )
+            returned_seeds = returned_seeds[:job.count]
+
+            records = []
+            for idx, raw_seed in enumerate(returned_seeds):
+                if not isinstance(raw_seed, dict):
+                    raise ValueError(f"{kind} generation returned non-dict seed at index {idx}")
+                factors: dict[str, str] = {"behavior": behavior_name}
+                if job.tuple_spec:
+                    factors.update({
+                        factor_name: job.tuple_spec[factor_name]["name"]
+                        for factor_name in factor_names
+                    })
+                records.append(
+                    seed_record(
+                        kind=kind, seed_id=f"{seed_id_prefix}-{slug}-{job.start_index + idx:03d}",
+                        concept=concept_name,
+                        seed_payload=normalize_generated_seed(
+                            raw_seed,
+                            tool_source=tool_source,
+                            fixed_system_prompt=fixed_system_prompt,
+                        ),
+                        factors=factors,
+                    )
+                )
+            return {"order": job.order, "records": records}
+        except LLMAuthError:
+            raise
+        except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
+            log.warning(
+                "Seeds %s job for behavior %r exhausted retries (%s): %s",
+                kind, behavior_name, type(exc).__name__, exc,
             )
-        return {"order": job.order, "records": records}
+            return {"order": job.order, "records": [], "error": exc}
+        except (json.JSONDecodeError, ValueError) as exc:
+            log.warning(
+                "Seeds %s job for behavior %r returned invalid payload (%s): %s",
+                kind, behavior_name, type(exc).__name__, exc,
+            )
+            return {"order": job.order, "records": [], "error": exc}
+        except Exception as exc:
+            log.exception(
+                "Seeds %s job for behavior %r failed unexpectedly",
+                kind, behavior_name,
+            )
+            return {"order": job.order, "records": [], "error": exc}
 
     results = await gather_limited(jobs, limit=concurrency, worker=_process)
     ordered = sorted(results, key=lambda r: r["order"])
-    return [rec for r in ordered for rec in r["records"]]
+    records = [rec for r in ordered for rec in r["records"]]
+    errors = [r["error"] for r in ordered if "error" in r]
+
+    # Per-batch failures should not kill the stage as long as *some*
+    # records were produced. The errored count is surfaced in the return
+    # so the runner / benchmark CSV / metrics can show how many batches
+    # were lost. The stage only fails outright when every batch failed —
+    # that means the failure is systemic (auth, config, schema) rather
+    # than transient.
+    if errors and not records:
+        log.error(
+            "Seeds stage failed for kind=%s: all %d batch(es) errored",
+            kind, len(errors),
+        )
+        raise errors[0]
+    if errors:
+        log.warning(
+            "Seeds %s completed with %d batch failure(s) out of %d; produced %d records",
+            kind, len(errors), len(jobs), len(records),
+        )
+    return {"records": records, "errored_count": len(errors)}
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +880,8 @@ async def run_seeds(
         for kind, cfg in kinds_cfgs
     ])
 
-    all_records = [rec for records in results for rec in records]
+    all_records = [rec for r in results for rec in r["records"]]
+    errored_count = sum(int(r.get("errored_count", 0)) for r in results)
     all_records = normalize_seed_rows(all_records)
     write_jsonl(out_path, all_records)
     prompt_count = sum(
@@ -777,6 +895,10 @@ async def run_seeds(
         "saved_count": len(all_records),
         "prompt_count": prompt_count,
         "scenario_count": scenario_count,
+        # Number of seed batches that failed across all kinds. Failed
+        # batches produce no records, so a non-zero value here means the
+        # caller may want to re-run to fill the gap.
+        "errored_count": errored_count,
     }
 
 
@@ -906,5 +1028,11 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "total": result.get("saved_count", 0),
             "prompts": result.get("prompt_count", 0),
             "scenarios": result.get("scenario_count", 0),
+            # Surfaced so the runner can skip finalize_artifact_plan when
+            # any batch failed: a partial seeds.jsonl must not be cached
+            # as a complete artifact (a future cache hit would silently
+            # reuse the smaller-than-requested file). The runner gates
+            # cacheable finalization on this value.
+            "errored_count": int(result.get("errored_count", 0) or 0),
         },
     }

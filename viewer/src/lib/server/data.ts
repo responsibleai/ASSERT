@@ -245,34 +245,15 @@ function suiteSeedCounts(seedRows: UnifiedSeedRow[]): { prompt: number; scenario
 }
 
 function countConversationMessages(messages: InteractionMessage[]): number {
-	return messages.filter((message) => message.role !== 'system').length;
+	const turns = new Set<number>();
+	for (const message of messages) {
+		if (typeof message.judgeTurn === 'number') turns.add(message.judgeTurn);
+	}
+	return turns.size;
 }
 
 function countTargetConversationMessages(transcript: UnifiedTranscriptRow): number {
-	const events = Array.isArray(transcript.events) ? transcript.events : [];
-	let count = 0;
-
-	for (const event of events) {
-		if (!event || typeof event !== 'object') continue;
-		const rawViewField = (event as Record<string, unknown>).view;
-		const rawViews = Array.isArray(rawViewField) ? rawViewField : [rawViewField];
-		const views = rawViews.filter((view): view is string => typeof view === 'string');
-		if (!views.includes('target')) continue;
-
-		const edit = (event as Record<string, unknown>).edit;
-		if (!edit || typeof edit !== 'object') continue;
-
-		if ((edit as Record<string, unknown>).type === 'tool_call') {
-			count += 1;
-			continue;
-		}
-
-		const message = (edit as Record<string, unknown>).message;
-		if (!message || typeof message !== 'object') continue;
-		if ((message as Record<string, unknown>).role !== 'system') count += 1;
-	}
-
-	return count;
+	return countConversationMessages(materializeTargetMessages(transcript));
 }
 
 function readLlmCalls(value: unknown): LlmCallTrace[] {
@@ -298,10 +279,19 @@ function readLlmCalls(value: unknown): LlmCallTrace[] {
 	});
 }
 
+function agentLabelFromRaw(raw: Record<string, unknown> | undefined): string | null {
+	if (!raw) return null;
+	const node = raw._node;
+	if (typeof node !== 'string') return null;
+	const trimmed = node.trim();
+	return trimmed || null;
+}
+
 function materializeTargetMessages(transcript: UnifiedTranscriptRow): InteractionMessage[] {
 	const messages: InteractionMessage[] = [];
 	const events = Array.isArray(transcript.events) ? transcript.events : [];
 	let judgeTurn = 0;
+	let lastPrincipalRole: 'user' | 'assistant' | null = null;
 
 	for (const [eventIndex, event] of events.entries()) {
 		if (!event || typeof event !== 'object') continue;
@@ -322,6 +312,7 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 				? ((event as Record<string, unknown>).raw as Record<string, unknown>)
 				: undefined;
 		const id = `event:${eventIndex}`;
+		const agent = agentLabelFromRaw(raw);
 
 		if (kind === 'add_message' || kind === 'set_system_message') {
 			const payload = (edit as Record<string, unknown>).message;
@@ -347,8 +338,22 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 					? ((payload as Record<string, unknown>).arguments as Record<string, unknown>)
 					: undefined;
 			if (typeof role !== 'string' || typeof content !== 'string') continue;
-			const messageJudgeTurn = kind === 'set_system_message' ? null : judgeTurn + 1;
-			if (messageJudgeTurn != null) judgeTurn = messageJudgeTurn;
+
+			let messageJudgeTurn: number | null;
+			if (kind === 'set_system_message' || role === 'system') {
+				messageJudgeTurn = null;
+			} else if (role === 'user') {
+				judgeTurn += 1;
+				messageJudgeTurn = judgeTurn;
+				lastPrincipalRole = 'user';
+			} else if (role === 'assistant' || role === 'tool') {
+				if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
+				messageJudgeTurn = judgeTurn;
+				lastPrincipalRole = 'assistant';
+			} else {
+				messageJudgeTurn = null;
+			}
+
 			messages.push({
 				id,
 				role: role as InteractionMessage['role'],
@@ -359,6 +364,7 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 				tool_call_id: toolCallId,
 				function: functionName,
 				arguments: argumentsObject,
+				agent: role === 'assistant' ? agent : null,
 				raw
 			});
 			continue;
@@ -379,7 +385,8 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 				: undefined;
 		const toolResult = (edit as Record<string, unknown>).tool_result;
 		if (typeof toolName !== 'string') continue;
-		judgeTurn += 1;
+		if (lastPrincipalRole !== 'assistant') judgeTurn += 1;
+		lastPrincipalRole = 'assistant';
 		messages.push({
 			id,
 			role: 'tool',
@@ -389,6 +396,7 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 			tool_call_id: toolCallId,
 			function: toolName,
 			arguments: toolArgs,
+			agent: null,
 			raw
 		});
 	}

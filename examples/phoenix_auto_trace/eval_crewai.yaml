@@ -1,6 +1,8 @@
 # Framework eval: shared suite, one run per framework.
 # All 5 frameworks use the same policy+seeds, same judge (gpt-5.4-mini).
-# Targets are plain callables (no target.trace) — demos self-instrument via Phoenix.
+# The demo callable self-instruments via `phoenix.otel.register(auto_instrument=True)`;
+# the `trace: { backend: phoenix }` block below tells p2m to pull those spans out
+# of Phoenix at end-of-session so tool calls show up in the viewer.
 
 suite: framework-eval-mini
 run: crewai
@@ -36,6 +38,9 @@ pipeline:
     concurrency: 1
     target:
       callable: examples.phoenix_auto_trace.travel_crewai:chat
+      trace:
+        backend: phoenix
+        group_by: session.id
     auditor:
       model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 6

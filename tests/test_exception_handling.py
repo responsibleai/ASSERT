@@ -123,6 +123,79 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         await session.open()
         await session.close()
 
+    # ------------------------------------------------------------------
+    # litellm reclassification (absorbed from PR #44 commit 0184d8d)
+    # ------------------------------------------------------------------
+
+    async def test_run_turn_reclassifies_litellm_bad_request_as_input_error(self) -> None:
+        """User callables (LangGraph, agent frameworks, raw litellm) bypass
+        ``generate()``/``_with_retries`` and so emit unclassified provider
+        errors. ``CallableSession.run_turn`` must re-classify them so the
+        rollout stage's per-seed isolation paths can route content-filter
+        rejections to a recorded transcript event instead of aborting the
+        whole batch.
+        """
+        from p2m.core.session import CallableSession
+        from p2m.core.model_client import LLMInputError, Message
+
+        # Lightweight stand-in for ``litellm.BadRequestError`` that avoids
+        # importing litellm in the unit test. ``_classify_llm_error`` reads
+        # exception types from the live litellm module at call time, so we
+        # patch it directly to make the substitution explicit.
+        class FakeLitellmBadRequest(Exception):
+            pass
+
+        def _classified(exc: Exception) -> Exception:
+            if isinstance(exc, FakeLitellmBadRequest):
+                err = LLMInputError(f"Bad request: {exc}")
+                err.__cause__ = exc
+                return err
+            return exc
+
+        async def fake_invoke_callable(fn, *args, **kwargs):
+            raise FakeLitellmBadRequest(
+                "Invalid prompt: your prompt was flagged as potentially "
+                "violating our usage policy"
+            )
+
+        session = CallableSession(callable_ref="json:dumps")
+        await session.open()
+        try:
+            with (
+                patch("p2m.core.session.invoke_callable", new=fake_invoke_callable),
+                patch("p2m.core.session._classify_llm_error", new=_classified),
+            ):
+                with self.assertRaises(LLMInputError) as ctx:
+                    await session.run_turn([Message(role="user", content="hi")])
+            self.assertIn("flagged as potentially violating", str(ctx.exception))
+            self.assertIsInstance(ctx.exception.__cause__, FakeLitellmBadRequest)
+        finally:
+            await session.close()
+
+    async def test_run_turn_passes_through_unclassified_exceptions(self) -> None:
+        """Errors that the classifier doesn't recognise (e.g. user agent
+        crashes, ValueError from misconfigured tools) must propagate as-is
+        rather than being smuggled into one of the four LLM error classes.
+        """
+        from p2m.core.session import CallableSession
+        from p2m.core.model_client import Message
+
+        class CustomAgentError(RuntimeError):
+            pass
+
+        async def fake_invoke_callable(fn, *args, **kwargs):
+            raise CustomAgentError("user agent blew up")
+
+        session = CallableSession(callable_ref="json:dumps")
+        await session.open()
+        try:
+            with patch("p2m.core.session.invoke_callable", new=fake_invoke_callable):
+                with self.assertRaises(CustomAgentError) as ctx:
+                    await session.run_turn([Message(role="user", content="hi")])
+            self.assertIn("user agent blew up", str(ctx.exception))
+        finally:
+            await session.close()
+
 
 class OTelTracedSessionErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_module_raises_value_error(self) -> None:
@@ -151,12 +224,16 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         except ImportError:
             self.skipTest("aiohttp not installed")
 
+        import os
+        from unittest.mock import patch as env_patch
+
         from p2m.core.session import HTTPEndpointSession
 
-        session = HTTPEndpointSession(
-            endpoint="http://127.0.0.1:59123",  # closed high port
-            message_timeout_s=1.0,
-        )
+        with env_patch.dict(os.environ, {"P2M_ALLOW_PRIVATE_ENDPOINTS": "1"}):
+            session = HTTPEndpointSession(
+                endpoint="http://127.0.0.1:59123",  # closed high port
+                message_timeout_s=1.0,
+            )
         await session.open()
         try:
             from p2m.core.model_client import Message
