@@ -19,6 +19,7 @@ don't exist.
 | `concept.md` | Telecom agent behavior spec (derived from τ²-bench's `main_policy.md`) |
 | `telecom_tools.yaml` | 14 agent tool schemas in p2m YAML format |
 | `eval_config.yaml` | p2m pipeline config (policy → seeds → rollout → judge) |
+| `run_correlation.py` | Orchestration script — runs tau2, p2m, and correlation analysis |
 
 ## Running the p2m evaluation
 
@@ -28,9 +29,41 @@ p2m run --config examples/telecom_tau2_correlation/eval_config.yaml
 
 # Override model and run name from CLI
 p2m run --config examples/telecom_tau2_correlation/eval_config.yaml \
-  --set rollout.target.model.name=azure/gpt-4o \
-  --set run=gpt-4o-eval
+  --force-stage rollout --force-stage judge
 ```
+
+## Running the full correlation study
+
+The `run_correlation.py` script automates the end-to-end workflow:
+
+```bash
+# All three stages (tau2 → p2m → correlate) with 7 default models
+python examples/telecom_tau2_correlation/run_correlation.py
+
+# Selective stages — reuse existing tau2 results, only run p2m + correlate
+python examples/telecom_tau2_correlation/run_correlation.py --stages p2m,correlate
+
+# Custom model set
+python examples/telecom_tau2_correlation/run_correlation.py \
+  --models azure/gpt-4o-mini azure/gpt-4o azure/gpt-5.4
+
+# Dry-run to see what commands would execute
+python examples/telecom_tau2_correlation/run_correlation.py --dry-run
+
+# Verbose logging
+python examples/telecom_tau2_correlation/run_correlation.py -v
+```
+
+### Stages
+
+| Stage | What it does |
+|---|---|
+| `tau2` | Run τ²-bench on the telecom domain for each model |
+| `p2m` | Run p2m evaluation with the eval_config for each model |
+| `correlate` | Compute Spearman rank correlation and print summary |
+
+Stages can be run independently. The `correlate` stage loads prior results
+from `results/correlation_results.json` for any stages not included.
 
 ## Correlation study workflow
 
