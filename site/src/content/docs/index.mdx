@@ -1,0 +1,41 @@
+---
+title: Adaptive Eval
+description: Spec-driven evaluation for AI agents. Failure modes you define, test cases the pipeline generates, trace-grounded verdicts.
+template: splash
+hero:
+  tagline: Spec-driven evaluation for AI agents. You write what your agent should and should not do. The pipeline generates targeted test cases, runs them against your agent, and uses an LLM judge to score each conversation against your spec — citing OpenTelemetry trace evidence, not just text.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: /adaptive-eval/get-started/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/microsoft/adaptive-eval
+      icon: external
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Failure-mode-first" icon="approve-check">
+    You write a plain-English spec of what your agent should and should not do.
+    The taxonomy generator turns it into structured failure modes that drive test
+    generation.
+  </Card>
+  <Card title="Any framework" icon="puzzle">
+    `target.callable` accepts any Python entrypoint — LangGraph, CrewAI, OpenAI
+    Agents SDK, DSPy, LlamaIndex, AutoGen/MAF, or your custom orchestration.
+  </Card>
+  <Card title="Trace-grounded judgment" icon="magnifier">
+    Two lines of OpenInference instrumentation. The judge cites tool calls,
+    routing decisions, and intermediate steps as evidence — not just the final
+    text.
+  </Card>
+  <Card title="Local-first" icon="laptop">
+    Pipeline runs on your machine, artifacts land on disk under
+    `artifacts/results/`. Browse them in the viewer or feed them into your CI.
+  </Card>
+</CardGrid>

@@ -1,0 +1,32 @@
+---
+title: Examples
+description: Three end-to-end Adaptive Eval examples covering the integration shapes you'll meet in practice.
+---
+
+Three end-to-end examples, each one mapping to a different integration shape and a different evaluation story.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="Travel Planner — OTel example"
+    href="/adaptive-eval/examples/travel-planner-otel/"
+    description="LangGraph multi-tool agent. Two-line Phoenix / OpenInference auto-trace. The judge sees every tool call and routing decision. Best when you have a framework agent."
+  />
+  <LinkCard
+    title="Health Assistant — prompt-agent example"
+    href="/adaptive-eval/examples/health-assistant-prompt-agent/"
+    description="Hosted model with a system prompt and simulated or generated tools — no framework, no orchestration. Best for prompt-only agents or quick spec-iteration loops."
+  />
+  <LinkCard
+    title="Triage Agent — eval-fix loop"
+    href="/adaptive-eval/examples/triage-agent-eval-fix/"
+    description="Adaptive Eval plus AgentShield in a closed loop: find failure modes, author a guardrails contract, re-evaluate to verify the fix landed. Best when you need to ship a fix you can prove works."
+  />
+</CardGrid>
+
+## Which one should I read first?
+
+- **Have a framework agent (LangGraph, CrewAI, OpenAI Agents SDK, ...) ?** → [Travel Planner](/adaptive-eval/examples/travel-planner-otel/)
+- **Just have a system prompt and a model, want to iterate?** → [Health Assistant](/adaptive-eval/examples/health-assistant-prompt-agent/)
+- **Need to demonstrate eval → fix → re-eval?** → [Triage Agent](/adaptive-eval/examples/triage-agent-eval-fix/)
