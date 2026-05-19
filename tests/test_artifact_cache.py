@@ -122,7 +122,7 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertTrue(reverted_plan.reused)
             self.assertEqual(reverted_plan.version, "v0001")
 
-    def test_finalize_omits_concept_hash_for_non_policy_stages(self) -> None:
+    def test_finalize_omits_behavior_hash_for_non_policy_stages(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
@@ -142,8 +142,8 @@ class ArtifactCacheTest(unittest.TestCase):
             ref = finalize_artifact_plan(ctx, test_set_plan)
 
             metadata = (test_set_plan.artifact_dir / "artifact.json").read_text(encoding="utf-8")
-            self.assertNotIn("concept_hash", metadata)
-            self.assertNotIn("concept_hash", ref)
+            self.assertNotIn("behavior_hash", metadata)
+            self.assertNotIn("behavior_hash", ref)
 
     def test_artifact_ref_does_not_emit_relative_path_aliases(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -372,21 +372,21 @@ class ArtifactCacheTest(unittest.TestCase):
             root = Path(tmp_dir)
             ctx = self._ctx(root)
             self._finalize_policy(ctx, {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2})
-            seeds_cfg = {
+            test_set_cfg = {
                 "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1},
                 "save_path": "user/elsewhere/test_set.jsonl",
             }
-            seeds_plan = prepare_artifact_plan(
+            test_set_plan = prepare_artifact_plan(
                 ctx=ctx,
                 stage_name="test_set",
-                raw_cfg=seeds_cfg,
+                raw_cfg=test_set_cfg,
                 forced=False,
             )
-            activate_artifact_plan(ctx, seeds_plan)
-            overridden = override_cacheable_output_paths("test_set", seeds_cfg, seeds_plan)
+            activate_artifact_plan(ctx, test_set_plan)
+            overridden = override_cacheable_output_paths("test_set", test_set_cfg, test_set_plan)
 
-            self.assertEqual(Path(overridden["save_path"]), seeds_plan.output_paths["test_set"])
-            self.assertEqual(seeds_cfg["save_path"], "user/elsewhere/test_set.jsonl")
+            self.assertEqual(Path(overridden["save_path"]), test_set_plan.output_paths["test_set"])
+            self.assertEqual(test_set_cfg["save_path"], "user/elsewhere/test_set.jsonl")
 
     def test_override_cacheable_output_paths_returns_input_for_unknown_stage(self) -> None:
         raw_cfg = {"foo": "bar"}
@@ -401,7 +401,7 @@ class ArtifactCacheTest(unittest.TestCase):
             output_paths={},
             fingerprint=ArtifactFingerprint(
                 stage_name="inference",
-                concept_hash=None,
+                behavior_hash=None,
                 config_hash="x",
                 input_hash="y",
                 descriptor={},

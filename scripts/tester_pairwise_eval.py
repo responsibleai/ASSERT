@@ -227,14 +227,14 @@ class RunBundle:
     run_dir: Path
     run_id: str
     target: str
-    transcripts_by_seed: dict[str, dict[str, Any]]
-    scores_by_seed: dict[str, dict[str, Any]]
+    transcripts_by_test_case: dict[str, dict[str, Any]]
+    scores_by_test_case: dict[str, dict[str, Any]]
 
 
 @dataclass(frozen=True)
 class PairwiseTask:
     test_case_id: str
-    seed_row: dict[str, Any]
+    test_case_row: dict[str, Any]
     transcript_a_row: dict[str, Any]
     transcript_b_row: dict[str, Any]
     score_a_row: dict[str, Any] | None
@@ -348,7 +348,7 @@ def _default_out_dir(
     return suite_dir / "pairwise" / slug
 
 
-def _index_rows_by_seed(rows: list[dict[str, Any]], *, label: str) -> dict[str, dict[str, Any]]:
+def _index_rows_by_test_case(rows: list[dict[str, Any]], *, label: str) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for row in rows:
         if str(row.get("type") or "") != "scenario":
@@ -456,14 +456,14 @@ def load_run_bundle(run_dir: str | Path) -> RunBundle:
         raise FileNotFoundError(f"Transcript file not found: {transcripts_path}")
 
     transcript_rows = load_jsonl(transcripts_path)
-    transcripts_by_seed = _index_rows_by_seed(
+    transcripts_by_test_case = _index_rows_by_test_case(
         transcript_rows,
         label=f"transcript in {resolved_run_dir}",
     )
-    if not transcripts_by_seed:
+    if not transcripts_by_test_case:
         raise ValueError(f"No scenario transcripts found in {transcripts_path}")
 
-    scores_by_seed = _index_rows_by_seed(
+    scores_by_test_case = _index_rows_by_test_case(
         load_jsonl(resolved_run_dir / "scores.jsonl"),
         label=f"score in {resolved_run_dir}",
     )
@@ -471,21 +471,21 @@ def load_run_bundle(run_dir: str | Path) -> RunBundle:
         suite_dir=resolved_run_dir.parent,
         run_dir=resolved_run_dir,
         run_id=resolved_run_dir.name,
-        target=_single_target(transcripts_by_seed, run_dir=resolved_run_dir),
-        transcripts_by_seed=transcripts_by_seed,
-        scores_by_seed=scores_by_seed,
+        target=_single_target(transcripts_by_test_case, run_dir=resolved_run_dir),
+        transcripts_by_test_case=transcripts_by_test_case,
+        scores_by_test_case=scores_by_test_case,
     )
 
 
-def _seed_rows_by_id(suite_dir: Path) -> dict[str, dict[str, Any]]:
-    return _index_rows_by_seed(
+def _test_case_rows_by_id(suite_dir: Path) -> dict[str, dict[str, Any]]:
+    return _index_rows_by_test_case(
         load_jsonl(suite_dir / "test_set.jsonl"),
-        label=f"seed in {suite_dir}",
+        label=f"test case in {suite_dir}",
     )
 
 
-def _seed_order(seed_rows: dict[str, dict[str, Any]]) -> dict[str, int]:
-    return {test_case_id: index for index, test_case_id in enumerate(seed_rows)}
+def _test_case_order(test_case_rows: dict[str, dict[str, Any]]) -> dict[str, int]:
+    return {test_case_id: index for index, test_case_id in enumerate(test_case_rows)}
 
 
 def _judge_model_from_config(run_dir: Path) -> str | None:
@@ -506,8 +506,8 @@ def _judge_model_from_config(run_dir: Path) -> str | None:
     return model_name or None
 
 
-def _seed_payload(seed_row: dict[str, Any]) -> dict[str, Any]:
-    payload = seed_row.get("seed")
+def _test_case_payload(test_case_row: dict[str, Any]) -> dict[str, Any]:
+    payload = test_case_row.get("seed")
     return payload if isinstance(payload, dict) else {}
 
 
@@ -537,13 +537,13 @@ def _format_transcript_for_prompt(row: dict[str, Any]) -> str:
 
 def build_pairwise_prompt(
     *,
-    seed_row: dict[str, Any],
+    test_case_row: dict[str, Any],
     transcript_a_row: dict[str, Any],
     transcript_b_row: dict[str, Any],
 ) -> str:
     return _build_comparison_prompt(
         prompt_template=PAIRWISE_JUDGE_PROMPT,
-        seed_row=seed_row,
+        test_case_row=test_case_row,
         transcript_a_row=transcript_a_row,
         transcript_b_row=transcript_b_row,
     )
@@ -551,13 +551,13 @@ def build_pairwise_prompt(
 
 def build_effectiveness_prompt(
     *,
-    seed_row: dict[str, Any],
+    test_case_row: dict[str, Any],
     transcript_a_row: dict[str, Any],
     transcript_b_row: dict[str, Any],
 ) -> str:
     return _build_comparison_prompt(
         prompt_template=EFFECTIVENESS_JUDGE_PROMPT,
-        seed_row=seed_row,
+        test_case_row=test_case_row,
         transcript_a_row=transcript_a_row,
         transcript_b_row=transcript_b_row,
     )
@@ -566,19 +566,19 @@ def build_effectiveness_prompt(
 def _build_comparison_prompt(
     *,
     prompt_template: str,
-    seed_row: dict[str, Any],
+    test_case_row: dict[str, Any],
     transcript_a_row: dict[str, Any],
     transcript_b_row: dict[str, Any],
 ) -> str:
-    seed_payload = _seed_payload(seed_row)
+    test_case_payload = _test_case_payload(test_case_row)
     transcript_a = _format_transcript_for_prompt(transcript_a_row)
     transcript_b = _format_transcript_for_prompt(transcript_b_row)
     return prompt_template.format(
-        test_case_id=str(seed_row.get("test_case_id") or transcript_a_row.get("test_case_id") or ""),
-        behavior=str(row_behavior(seed_row) or row_behavior(transcript_a_row) or seed_row.get("behavior") or transcript_a_row.get("behavior") or ""),
-        title=str(seed_payload.get("title") or "(untitled scenario)"),
-        description=str(seed_payload.get("description") or "(no description)"),
-        system_prompt=str(seed_payload.get("system_prompt") or "(none)"),
+        test_case_id=str(test_case_row.get("test_case_id") or transcript_a_row.get("test_case_id") or ""),
+        behavior=str(row_behavior(test_case_row) or row_behavior(transcript_a_row) or test_case_row.get("behavior") or transcript_a_row.get("behavior") or ""),
+        title=str(test_case_payload.get("title") or "(untitled scenario)"),
+        description=str(test_case_payload.get("description") or "(no description)"),
+        system_prompt=str(test_case_payload.get("system_prompt") or "(none)"),
         target=str(transcript_a_row.get("target") or transcript_b_row.get("target") or ""),
         a_transcript=transcript_a or "[No visible conversation]",
         b_transcript=transcript_b or "[No visible conversation]",
@@ -831,7 +831,7 @@ def build_pairwise_metrics(
         "missing_pairs": missing_pairs,
         "by_behavior": realism_metrics["by_behavior"],
         "by_dimension": realism_metrics["by_dimension"],
-        "common_failure_modes": realism_metrics["common_failure_modes"],
+        "common_error_modes": realism_metrics["common_error_modes"],
         "axis_comparison": _build_axis_comparison(rows),
         "effectiveness": effectiveness_metrics,
     }
@@ -900,7 +900,7 @@ def _build_metric_block(
         "win_rates": _winner_rates(winner_counts, denominator=len(scored_rows)),
         "by_behavior": by_behavior,
         "by_dimension": by_dimension,
-        "common_failure_modes": {
+        "common_error_modes": {
             "run_a_stop_reasons": _stop_reason_counts(rows, "a_stop_reason"),
             "run_b_stop_reasons": _stop_reason_counts(rows, "b_stop_reason"),
         },
@@ -1162,10 +1162,10 @@ def render_pairwise_summary(metrics: dict[str, Any]) -> str:
                 f"- {behavior}: A={sub_wins.get('A', 0)}, B={sub_wins.get('B', 0)}, tie={sub_wins.get('tie', 0)}, order_inconsistent={payload.get('order_inconsistent', 0)}, judge_failures={payload.get('judge_failures', 0)}."
             )
 
-    failure_modes = metrics.get("common_failure_modes")
-    if isinstance(failure_modes, dict):
-        run_a_failures = failure_modes.get("run_a_stop_reasons")
-        run_b_failures = failure_modes.get("run_b_stop_reasons")
+    error_modes = metrics.get("common_error_modes")
+    if isinstance(error_modes, dict):
+        run_a_failures = error_modes.get("run_a_stop_reasons")
+        run_b_failures = error_modes.get("run_b_stop_reasons")
         if run_a_failures or run_b_failures:
             lines.extend(["", "## Failure Modes", ""])
             if run_a_failures:
@@ -1448,33 +1448,33 @@ async def _judge_pair(
     policy_permissible_by_name: dict[str, bool],
 ) -> dict[str, Any]:
     realism_prompt_ab = build_pairwise_prompt(
-        seed_row=task.seed_row,
+        test_case_row=task.test_case_row,
         transcript_a_row=task.transcript_a_row,
         transcript_b_row=task.transcript_b_row,
     )
     realism_prompt_ba = build_pairwise_prompt(
-        seed_row=task.seed_row,
+        test_case_row=task.test_case_row,
         transcript_a_row=task.transcript_b_row,
         transcript_b_row=task.transcript_a_row,
     )
     effectiveness_prompt_ab = build_effectiveness_prompt(
-        seed_row=task.seed_row,
+        test_case_row=task.test_case_row,
         transcript_a_row=task.transcript_a_row,
         transcript_b_row=task.transcript_b_row,
     )
     effectiveness_prompt_ba = build_effectiveness_prompt(
-        seed_row=task.seed_row,
+        test_case_row=task.test_case_row,
         transcript_a_row=task.transcript_b_row,
         transcript_b_row=task.transcript_a_row,
     )
     behavior = str(
-        row_behavior(task.seed_row)
+        row_behavior(task.test_case_row)
         or row_behavior(task.transcript_a_row)
         or ""
     )
     base_row = {
         "test_case_id": task.test_case_id,
-        "behavior": str(task.seed_row.get("behavior") or task.transcript_a_row.get("behavior") or ""),
+        "behavior": str(task.test_case_row.get("behavior") or task.transcript_a_row.get("behavior") or ""),
         "behavior": behavior,
         "permissible": policy_permissible(
             policy_permissible_by_name,
@@ -1546,15 +1546,15 @@ def _validate_same_suite(run_a: RunBundle, run_b: RunBundle) -> None:
         )
 
 
-def _shared_test_case_ids(run_a: RunBundle, run_b: RunBundle, seed_rows: dict[str, dict[str, Any]]) -> list[str]:
-    shared = set(run_a.transcripts_by_seed).intersection(run_b.transcripts_by_seed)
-    seed_order = _seed_order(seed_rows)
-    return sorted(shared, key=lambda test_case_id: (seed_order.get(test_case_id, 10**9), test_case_id))
+def _shared_test_case_ids(run_a: RunBundle, run_b: RunBundle, test_case_rows: dict[str, dict[str, Any]]) -> list[str]:
+    shared = set(run_a.transcripts_by_test_case).intersection(run_b.transcripts_by_test_case)
+    test_case_order = _test_case_order(test_case_rows)
+    return sorted(shared, key=lambda test_case_id: (test_case_order.get(test_case_id, 10**9), test_case_id))
 
 
 def _build_missing_pairs(run_a: RunBundle, run_b: RunBundle) -> dict[str, Any]:
-    run_a_only = sorted(set(run_a.transcripts_by_seed) - set(run_b.transcripts_by_seed))
-    run_b_only = sorted(set(run_b.transcripts_by_seed) - set(run_a.transcripts_by_seed))
+    run_a_only = sorted(set(run_a.transcripts_by_test_case) - set(run_b.transcripts_by_test_case))
+    run_b_only = sorted(set(run_b.transcripts_by_test_case) - set(run_a.transcripts_by_test_case))
     return {
         "run_a_only_count": len(run_a_only),
         "run_b_only_count": len(run_b_only),
@@ -1585,11 +1585,11 @@ async def run_tester_pairwise_eval(
     if not resolved_judge_model:
         raise ValueError("judge_model is required when run A config.yaml does not provide one")
 
-    seed_rows = _seed_rows_by_id(run_a.suite_dir)
+    test_case_rows = _test_case_rows_by_id(run_a.suite_dir)
     policy_permissible_by_name = permissible_by_behavior(
         json.loads((run_a.suite_dir / "taxonomy.json").read_text(encoding="utf-8"))
     )
-    shared_test_case_ids = _shared_test_case_ids(run_a, run_b, seed_rows)
+    shared_test_case_ids = _shared_test_case_ids(run_a, run_b, test_case_rows)
     if max_pairs is not None:
         shared_test_case_ids = shared_test_case_ids[:max_pairs]
     if not shared_test_case_ids:
@@ -1597,11 +1597,11 @@ async def run_tester_pairwise_eval(
 
     tasks: list[PairwiseTask] = []
     for test_case_id in shared_test_case_ids:
-        if test_case_id not in seed_rows:
-            raise ValueError(f"Missing seed metadata for shared test_case_id={test_case_id}")
-        seed_row = seed_rows[test_case_id]
-        transcript_a_row = run_a.transcripts_by_seed[test_case_id]
-        transcript_b_row = run_b.transcripts_by_seed[test_case_id]
+        if test_case_id not in test_case_rows:
+            raise ValueError(f"Missing test case metadata for shared test_case_id={test_case_id}")
+        test_case_row = test_case_rows[test_case_id]
+        transcript_a_row = run_a.transcripts_by_test_case[test_case_id]
+        transcript_b_row = run_b.transcripts_by_test_case[test_case_id]
 
         a_behavior = row_behavior(transcript_a_row)
         b_behavior = row_behavior(transcript_b_row)
@@ -1611,11 +1611,11 @@ async def run_tester_pairwise_eval(
         tasks.append(
             PairwiseTask(
                 test_case_id=test_case_id,
-                seed_row=seed_row,
+                test_case_row=test_case_row,
                 transcript_a_row=transcript_a_row,
                 transcript_b_row=transcript_b_row,
-                score_a_row=run_a.scores_by_seed.get(test_case_id),
-                score_b_row=run_b.scores_by_seed.get(test_case_id),
+                score_a_row=run_a.scores_by_test_case.get(test_case_id),
+                score_b_row=run_b.scores_by_test_case.get(test_case_id),
             )
         )
 

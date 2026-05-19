@@ -32,14 +32,14 @@ HTML_FORMAT = "html"
 SUPPORTED_FORMATS = (CSV_FORMAT, EXCEL_FORMAT, HTML_FORMAT)
 
 RUNS_TABLE = "runs"
-SEEDS_TABLE = "test_set"
+TEST_SET_TABLE = "test_set"
 CONVERSATIONS_TABLE = "conversations"
 SCORES_TABLE = "scores"
 RELEVANT_NODES_TABLE = "relevant_nodes"
 
 TABLE_ORDER = (
     RUNS_TABLE,
-    SEEDS_TABLE,
+    TEST_SET_TABLE,
     CONVERSATIONS_TABLE,
     SCORES_TABLE,
     RELEVANT_NODES_TABLE,
@@ -47,7 +47,7 @@ TABLE_ORDER = (
 
 SHEET_NAMES = {
     RUNS_TABLE: "Runs",
-    SEEDS_TABLE: "Test Set",
+    TEST_SET_TABLE: "Test Set",
     CONVERSATIONS_TABLE: "Conversations",
     SCORES_TABLE: "Scores",
     RELEVANT_NODES_TABLE: "Relevant Nodes",
@@ -55,7 +55,7 @@ SHEET_NAMES = {
 
 CSV_FILENAMES = {
     RUNS_TABLE: "runs.csv",
-    SEEDS_TABLE: "test_set.csv",
+    TEST_SET_TABLE: "test_set.csv",
     CONVERSATIONS_TABLE: "conversations.csv",
     SCORES_TABLE: "scores.csv",
     RELEVANT_NODES_TABLE: "relevant_nodes.csv",
@@ -133,11 +133,11 @@ def _row_permissible(
     return policy_permissible(permissible_by_name, row_behavior(row))
 
 
-def _seed_definition(
-    seed_row: dict[str, Any],
+def _test_case_definition(
+    test_case_row: dict[str, Any],
     definitions_by_name: dict[str, str],
 ) -> str:
-    return policy_definition(definitions_by_name, row_behavior(seed_row))
+    return policy_definition(definitions_by_name, row_behavior(test_case_row))
 
 
 def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str, Any]) -> dict[str, Any]:
@@ -292,27 +292,27 @@ def _transcript_from_row(row: dict[str, Any]) -> Transcript:
     )
 
 
-def _seed_row(
-    seed_row: dict[str, Any],
+def _test_case_row(
+    test_case_row: dict[str, Any],
     suite_id: str,
     permissible_by_name: dict[str, bool],
     definitions_by_name: dict[str, str],
 ) -> dict[str, Any]:
-    payload = seed_row.get("seed")
-    seed_payload = payload if isinstance(payload, dict) else {}
-    kind = str(seed_row.get("type") or "")
-    description = str(seed_payload.get("description") or "")
-    title = str(seed_payload.get("title") or "") if kind == "scenario" else ""
+    payload = test_case_row.get("seed")
+    test_case_payload = payload if isinstance(payload, dict) else {}
+    kind = str(test_case_row.get("type") or "")
+    description = str(test_case_payload.get("description") or "")
+    title = str(test_case_payload.get("title") or "") if kind == "scenario" else ""
     return {
         "suite_id": suite_id,
-        "test_case_id": str(seed_row.get("test_case_id") or ""),
+        "test_case_id": str(test_case_row.get("test_case_id") or ""),
         "type": kind,
-        "behavior": row_behavior(seed_row),
-        "permissible": _row_permissible(seed_row, permissible_by_name),
-        "definition": _seed_definition(seed_row, definitions_by_name),
+        "behavior": row_behavior(test_case_row),
+        "permissible": _row_permissible(test_case_row, permissible_by_name),
+        "definition": _test_case_definition(test_case_row, definitions_by_name),
         "title": title,
         "description": description,
-        "system_prompt": str(seed_payload.get("system_prompt") or ""),
+        "system_prompt": str(test_case_payload.get("system_prompt") or ""),
     }
 
 
@@ -537,12 +537,12 @@ def load_suite_tables(
     taxonomy = load_json(suite_dir / "taxonomy.json") or {}
     definitions_by_name = definitions_by_behavior(taxonomy)
     permissible_by_name = permissible_by_behavior(taxonomy)
-    seed_rows = load_jsonl(suite_dir / "test_set.jsonl")
-    prompt_test_case_count, scenario_test_case_count = _test_case_counts(seed_rows)
+    test_case_rows = load_jsonl(suite_dir / "test_set.jsonl")
+    prompt_test_case_count, scenario_test_case_count = _test_case_counts(test_case_rows)
     run_rows: list[dict[str, Any]] = []
-    seed_table = [
-        _seed_row(seed_row, suite_id, permissible_by_name, definitions_by_name)
-        for seed_row in seed_rows
+    test_set_table = [
+        _test_case_row(test_case_row, suite_id, permissible_by_name, definitions_by_name)
+        for test_case_row in test_case_rows
     ]
     conversation_rows: list[dict[str, Any]] = []
     raw_score_rows: list[tuple[str, dict[str, Any]]] = []
@@ -552,10 +552,10 @@ def load_suite_tables(
     score_node_names: list[str] = []
     seen_node_names: set[str] = set()
 
-    concept_payload = taxonomy.get("behavior") if isinstance(taxonomy.get("behavior"), dict) else {}
-    concept_name = str(concept_payload.get("name") or "")
-    if not concept_name:
-        concept_name = str(seed_rows[0].get("behavior") or "") if seed_rows else ""
+    behavior_payload = taxonomy.get("behavior") if isinstance(taxonomy.get("behavior"), dict) else {}
+    behavior_name = str(behavior_payload.get("name") or "")
+    if not behavior_name:
+        behavior_name = str(test_case_rows[0].get("behavior") or "") if test_case_rows else ""
 
     for run_dir in _run_dirs(suite_dir):
         run_id = run_dir.name
@@ -639,7 +639,7 @@ def load_suite_tables(
                 "status": str(manifest.get("status") or ""),
                 "started_at": str(manifest.get("started_at") or ""),
                 "ended_at": str(manifest.get("ended_at") or ""),
-                "concept_name": concept_name,
+                "behavior_name": behavior_name,
                 "target": target,
                 "tester_model": tester_model,
                 "judge_model": judge_model,
@@ -678,7 +678,7 @@ def load_suite_tables(
 
     tables = {
         RUNS_TABLE: run_rows,
-        SEEDS_TABLE: seed_table,
+        TEST_SET_TABLE: test_set_table,
         CONVERSATIONS_TABLE: conversation_rows,
         SCORES_TABLE: score_table,
         RELEVANT_NODES_TABLE: relevant_node_table,
@@ -691,7 +691,7 @@ def load_suite_tables(
             "status",
             "started_at",
             "ended_at",
-            "concept_name",
+            "behavior_name",
             "target",
             "tester_model",
             "judge_model",
@@ -704,7 +704,7 @@ def load_suite_tables(
             "permissible_overrefusal_rate",
             "not_permissible_policy_violation_rate",
         ],
-        SEEDS_TABLE: [
+        TEST_SET_TABLE: [
             "suite_id",
             "test_case_id",
             "type",
@@ -1046,7 +1046,7 @@ def write_html_export(
     # --- summary cards ---
     cards: list[str] = []
     if runs:
-        behavior = runs[0].get("concept_name", "")
+        behavior = runs[0].get("behavior_name", "")
         if behavior:
             cards.append(
                 f'<div class="card"><div class="label">Behavior</div>'
@@ -1060,7 +1060,7 @@ def write_html_export(
             )
     cards.append(
         f'<div class="card"><div class="label">Test Set</div>'
-        f'<div class="val">{len(tables[SEEDS_TABLE])}</div></div>'
+        f'<div class="val">{len(tables[TEST_SET_TABLE])}</div></div>'
     )
     cards.append(
         f'<div class="card"><div class="label">Conversations</div>'

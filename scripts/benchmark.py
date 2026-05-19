@@ -249,16 +249,16 @@ def _override_config(
     taxonomy["behavior_category_count"] = behavior_category_count
     pipeline["taxonomy"] = taxonomy
 
-    seeds_block = dict(pipeline.get("test_set") or {})
+    test_set_block = dict(pipeline.get("test_set") or {})
     # Scenario-only by design: the inference/judge concurrency knob is what
     # this benchmark exercises, and scenario inferences are the heavier
     # multi-turn shape that makes that knob bite. Strip any prompt block
     # that may be in the base config.
-    seeds_block.pop("prompt", None)
-    scenario = dict(seeds_block.get("scenario") or {})
+    test_set_block.pop("prompt", None)
+    scenario = dict(test_set_block.get("scenario") or {})
     scenario["sample_size"] = test_set
-    seeds_block["scenario"] = scenario
-    pipeline["test_set"] = seeds_block
+    test_set_block["scenario"] = scenario
+    pipeline["test_set"] = test_set_block
 
     inference = dict(pipeline.get("inference") or {})
     inference["concurrency"] = concurrency

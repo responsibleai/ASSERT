@@ -33,8 +33,8 @@ from p2m.core.io import (
     get_permissible_flag,
     load_jsonl,
     load_prompt_text,
-    load_seeds,
-    normalize_seed_rows,
+    load_test_cases,
+    normalize_test_case_rows,
     resolve_path,
     write_jsonl,
     row_factors,
@@ -73,7 +73,7 @@ _INFERENCE_CONFIG_HASH_FILE = ".inference_config_hash"
 _VERSIONED_ARTIFACT_RE = re.compile(r"^v\d{4}$")
 
 
-def _is_versioned_seed_artifact_path(path: Path) -> bool:
+def _is_versioned_test_set_artifact_path(path: Path) -> bool:
     """Return True if the path lives under a versioned cache directory.
 
     Layout produced by the artifact cache:
@@ -107,9 +107,9 @@ def _inference_config_fingerprint(
     reuses transcripts from a prior test_set.jsonl content.
     """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
-    seeds_sha = ""
+    test_set_sha = ""
     if test_set_path is not None and test_set_path.exists():
-        seeds_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
+        test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
     key = json_module.dumps(
         {
             "target": target_name,
@@ -117,7 +117,7 @@ def _inference_config_fingerprint(
             "max_turns": evaluation.inference.max_turns if evaluation else None,
             "concurrency": evaluation.inference.concurrency if evaluation else None,
             "tester": evaluation.tester.model.name if evaluation and evaluation.tester else None,
-            "seeds_sha": seeds_sha,
+            "test_set_sha": test_set_sha,
         },
         sort_keys=True,
     )
@@ -130,7 +130,7 @@ TOOL_SIM_PROMPT = load_prompt_text("inference_toolsim_user.md")
 def _infer_tool_source(target: TargetConfig) -> str:
     """Infer tool_source from the target config.
 
-    - simulator without toolset -> per_seed (tools come from each seed row)
+    - simulator without toolset -> per_seed (tools come from each test-case row)
     - everything else ΓåÆ runtime (tools come from a tool module or fixed toolset)
     """
     if target.tools is not None and target.tools.simulator and not target.tools.toolset:
@@ -338,61 +338,61 @@ def _append_llm_calls(transcript: Transcript, llm_calls: list[dict[str, Any]]) -
     return call_id_by_index
 
 
-def _prepare_seeds(
+def _prepare_test_cases(
     rows: list[dict[str, Any]],
     *,
     tool_source: str,
     fixed_system_prompt: str | None,
 ) -> list[dict[str, Any]]:
-    """Validate canonical seed rows and normalize prompt/scenario-specific fields."""
+    """Validate canonical test-case rows and normalize prompt/scenario-specific fields."""
     test_set: list[dict[str, Any]] = []
-    nested_seed_fields = {"prompt", "description", "system_prompt", "title", "tools", "state"}
+    nested_test_case_fields = {"prompt", "description", "system_prompt", "title", "tools", "state"}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
-            raise ValueError(f"seed at index {index} must be an object")
+            raise ValueError(f"test case at index {index} must be an object")
 
         kind = row.get("type")
         if kind not in {"prompt", "scenario"}:
-            raise ValueError(f"seed at index {index} must declare type 'prompt' or 'scenario'")
+            raise ValueError(f"test case at index {index} must declare type 'prompt' or 'scenario'")
 
-        seed_payload = row.get("seed")
-        if not isinstance(seed_payload, dict):
-            raise ValueError(f"{kind} seed at index {index} requires a seed object")
-        seed_row = dict(row)
-        normalized_payload = dict(seed_payload)
+        test_case_payload = row.get("seed")
+        if not isinstance(test_case_payload, dict):
+            raise ValueError(f"{kind} test case at index {index} requires a test case payload object")
+        test_case_row = dict(row)
+        normalized_payload = dict(test_case_payload)
         system_prompt = str(normalized_payload.get("system_prompt") or "").strip() or None
         if system_prompt is None:
             normalized_payload.pop("system_prompt", None)
         else:
             normalized_payload["system_prompt"] = system_prompt
         if fixed_system_prompt and system_prompt is not None:
-            raise ValueError("target.system_prompt cannot be combined with non-empty seed.system_prompt")
+            raise ValueError("target.system_prompt cannot be combined with non-empty test case system_prompt")
         tools = normalized_payload.get("tools")
         if tool_source == "per_seed":
             if not isinstance(tools, list) or not tools:
-                raise ValueError("seed.tools is required when tool_source=per_seed")
+                raise ValueError("test case tools are required when tool_source=per_seed")
             normalize_tool_defs(tools)
         elif tools is not None:
-            raise ValueError("seed.tools is only allowed when tool_source=per_seed")
-        seed_row["seed"] = normalized_payload
+            raise ValueError("test case tools are only allowed when tool_source=per_seed")
+        test_case_row["seed"] = normalized_payload
         if kind == "prompt":
-            invalid_fields = sorted(field for field in nested_seed_fields if field in row)
+            invalid_fields = sorted(field for field in nested_test_case_fields if field in row)
             if invalid_fields:
                 raise ValueError(
-                    f"prompt seed at index {index} must move {', '.join(invalid_fields)} under seed"
+                    f"prompt test case at index {index} must move {', '.join(invalid_fields)} under the test case payload"
                 )
             if not str(normalized_payload.get("description") or "").strip():
                 raise ValueError(
-                    f"prompt seed at index {index} requires a non-empty seed.description"
+                    f"prompt test case at index {index} requires a non-empty test case description"
                 )
         elif not str(normalized_payload.get("description") or "").strip():
             raise ValueError(
-                f"scenario seed at index {index} requires a non-empty seed.description"
+                f"scenario test case at index {index} requires a non-empty test case description"
             )
-        permissible = get_permissible_flag(seed_row)
+        permissible = get_permissible_flag(test_case_row)
         if permissible is not None:
-            seed_row["permissible"] = permissible
-        test_set.append(seed_row)
+            test_case_row["permissible"] = permissible
+        test_set.append(test_case_row)
     return test_set
 
 
@@ -443,7 +443,7 @@ def _build_hosted_session(
         tools = scenario.get("tools")
         if tools is None:
             if not isinstance(toolset_path, str) or not toolset_path.strip():
-                raise ValueError("simulated tools require target.tools.toolset or seed.tools")
+                raise ValueError("simulated tools require target.tools.toolset or per-test-case tools")
             resolved_path = Path(toolset_path).expanduser()
             if not resolved_path.is_absolute():
                 candidates = []
@@ -472,13 +472,13 @@ def _build_hosted_session(
 def _build_target_session(
     *,
     target: TargetConfig,
-    seed_payload: dict[str, Any],
+    test_case_payload: dict[str, Any],
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
     call_label: str | None = None,
 ) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession:
-    """Create the runtime session for one seed inference."""
+    """Create the runtime session for one test-case inference."""
     if target.is_endpoint:
         if not target.endpoint:
             raise ValueError("endpoint target requires an endpoint URL")
@@ -512,7 +512,7 @@ def _build_target_session(
             raise ValueError("external target requires a connector")
         return ExternalSession(
             connector_ref=target.connector,
-            scenario=seed_payload,
+            scenario=test_case_payload,
             startup_timeout_s=inference.startup_timeout_s,
             message_timeout_s=inference.tool_timeout_s,
             config_path=config_path,
@@ -530,7 +530,7 @@ def _build_target_session(
     return _build_hosted_session(
         model=target_model,
         tools_config=tools_dict,
-        scenario=seed_payload,
+        scenario=test_case_payload,
         generate_options=GenerateOptions(
             max_tokens=target_max_tokens,
             temperature=target_temperature,
@@ -545,22 +545,22 @@ def _build_target_session(
     )
 
 
-async def _run_prompt_seed(
+async def _run_prompt_test_case(
     *,
-    seed: dict[str, Any],
+    test_case: dict[str, Any],
     target: TargetConfig,
     inference: InferenceConfig,
     max_tokens: int,
     config_path: Path | None,
 ) -> Transcript:
-    """Run one prompt seed against the target runtime."""
-    seed_payload = seed.get("seed")
-    if not isinstance(seed_payload, dict):
-        raise ValueError("inference requires each seed row to include a seed object")
-    test_case_id = str(seed["test_case_id"])
+    """Run one prompt test case against the target runtime."""
+    test_case_payload = test_case.get("seed")
+    if not isinstance(test_case_payload, dict):
+        raise ValueError("inference requires each test-case row to include a test case payload object")
+    test_case_id = str(test_case["test_case_id"])
     runtime = _build_target_session(
         target=target,
-        seed_payload=seed_payload,
+        test_case_payload=test_case_payload,
         inference=inference,
         max_tokens=max_tokens,
         config_path=config_path,
@@ -571,18 +571,18 @@ async def _run_prompt_seed(
         metadata=TranscriptMetadata(
             kind="prompt",
             test_case_id=test_case_id,
-            behavior=str(seed.get("behavior") or ""),
+            behavior=str(test_case.get("behavior") or ""),
             target=target_id,
             tester_model="",
             target_reasoning_effort=target.model.reasoning_effort if target.model else None,
-            dimensions=row_factors(seed),
+            dimensions=row_factors(test_case),
         )
     )
-    prompt = str(seed_payload.get("description") or "").strip()
+    prompt = str(test_case_payload.get("description") or "").strip()
     if not prompt:
-        raise ValueError("prompt test_set require a non-empty seed.description")
+        raise ValueError("prompt test cases require a non-empty description")
     target_system_prompt = str(target.system_prompt or "").strip() or None
-    effective_system_message = target_system_prompt or (str(seed_payload.get("system_prompt") or "").strip() or None)
+    effective_system_message = target_system_prompt or (str(test_case_payload.get("system_prompt") or "").strip() or None)
     initial_messages: list[Message] = []
     if effective_system_message:
         initial_messages.append(Message(role="system", content=effective_system_message))
@@ -613,9 +613,9 @@ async def _run_prompt_seed(
 
     if runtime_error is not None:
         # Target-side LLMInputError (e.g. Azure content filter rejecting an
-        # adversarial prompt) is intrinsic to this seed's data, not a global
+        # adversarial prompt) is intrinsic to this test case's data, not a global
         # pipeline problem. Record it as a transcript event so judge/metrics
-        # can see the refusal, and continue with the next seed. Other
+        # can see the refusal, and continue with the next test case. Other
         # classified LLM errors (auth, rate-limit, provider 5xx) and
         # arbitrary runtime exceptions still propagate to the worker error
         # path. (Absorbed from PR #44 commit 82cf339 — was previously only
@@ -661,7 +661,7 @@ async def _run_tester_target_loop(
     target_runtime: HostedSession | ExternalSession | CallableSession | HTTPEndpointSession,
     max_turns: int,
 ) -> tuple[str | None, list[Message], list[Message]]:
-    """Run the alternating tester and target loop for one scenario seed."""
+    """Run the alternating tester and target loop for one scenario test case."""
     stop_reason = None
     test_case_id = transcript.metadata.test_case_id
 
@@ -709,7 +709,7 @@ async def _run_tester_target_loop(
                 # Prompt Shields jailbreak detector. The default tester
                 # system prompt is jailbreak-shaped by design and reliably
                 # trips Prompt Shields on a small fraction of test_set. This
-                # is per-seed data, not a global pipeline error: a different
+                # is per-test-case data, not a global pipeline error: a different
                 # seed will lead the tester down a different path and
                 # complete normally. Record the refusal in the transcript
                 # and stop the conversation cleanly so the worker can move
@@ -728,13 +728,13 @@ async def _run_tester_target_loop(
                 break
             except (LLMAuthError, LLMRateLimitError, LLMProviderError):
                 # Auth/rate-limit/provider-5xx errors are global pipeline
-                # problems, not seed-specific. Propagate so the runner can
+                # problems, not test-case-specific. Propagate so the runner can
                 # surface a clean message and fail the stage fast.
                 raise
             except Exception as exc:
                 last_error = str(exc)
                 log.debug(
-                    "Tester call failed for seed %s turn %d attempt %d: %s\n%s",
+                    "Tester call failed for test case %s turn %d attempt %d: %s\n%s",
                     test_case_id, turn_index, attempt, exc, traceback.format_exc(),
                 )
                 if attempt < 2:
@@ -820,10 +820,10 @@ async def _run_tester_target_loop(
         except LLMInputError as exc:
             # Target-side input refusal mid-conversation (e.g. Azure content
             # filter rejecting one of the tester's adversarial follow-ups).
-            # Same intrinsic-to-this-seed reasoning as in _run_prompt_seed:
+            # Same intrinsic-to-this-test-case reasoning as in _run_prompt_test_case:
             # record the refusal in the transcript, end the conversation
             # cleanly with stop_reason='target_input_refused', and let the
-            # worker move on to the next seed. (Absorbed from PR #44
+            # worker move on to the next test case. (Absorbed from PR #44
             # commit 82cf339.)
             transcript.add_event(TranscriptEvent(
                 view=["target", "combined"],
@@ -839,7 +839,7 @@ async def _run_tester_target_loop(
             break
         except (LLMAuthError, LLMRateLimitError, LLMProviderError):
             # Auth/rate-limit/provider-5xx errors are global pipeline
-            # problems, not seed-specific. Propagate so the runner can
+            # problems, not test-case-specific. Propagate so the runner can
             # surface a clean message and fail the stage fast.
             raise
         except Exception as exc:
@@ -856,24 +856,24 @@ async def _run_tester_target_loop(
     return stop_reason, tester_messages, target_messages
 
 
-async def _run_scenario_seed(
+async def _run_scenario_test_case(
     *,
-    seed: dict[str, Any],
+    test_case: dict[str, Any],
     target: TargetConfig,
     evaluation: EvaluationConfig,
     max_tokens: int,
     config_path: Path | None,
 ) -> Transcript:
-    """Run one scenario seed and capture its transcript."""
+    """Run one scenario test case and capture its transcript."""
     tester = evaluation.tester
     if tester is None:
         raise ValueError("scenario inference requires evaluation.tester")
 
-    seed_data = seed["seed"]
-    test_case_id = str(seed["test_case_id"])
+    test_case_data = test_case["seed"]
+    test_case_id = str(test_case["test_case_id"])
     runtime = _build_target_session(
         target=target,
-        seed_payload=seed_data,
+        test_case_payload=test_case_data,
         inference=evaluation.inference,
         max_tokens=max_tokens,
         config_path=config_path,
@@ -883,21 +883,21 @@ async def _run_scenario_seed(
         metadata=TranscriptMetadata(
             kind="scenario",
             test_case_id=test_case_id,
-            behavior=str(seed.get("behavior") or ""),
+            behavior=str(test_case.get("behavior") or ""),
             target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
             tester_model=str(tester.model.name),
             target_reasoning_effort=target.model.reasoning_effort if target.model else None,
             tester_reasoning_effort=tester.model.reasoning_effort,
-            dimensions=row_factors(seed),
+            dimensions=row_factors(test_case),
         )
     )
 
-    system_prompt = TESTER_SYSTEM_PROMPT.replace("{{description}}", str(seed_data.get("description") or ""))
+    system_prompt = TESTER_SYSTEM_PROMPT.replace("{{description}}", str(test_case_data.get("description") or ""))
     system_prompt = system_prompt.replace("{{max_turns}}", str(evaluation.inference.max_turns))
 
     target_messages: list[Message] = []
     target_system_prompt = str(target.system_prompt or "").strip() or None
-    effective_system_message = target_system_prompt or (str(seed_data.get("system_prompt") or "").strip() or None)
+    effective_system_message = target_system_prompt or (str(test_case_data.get("system_prompt") or "").strip() or None)
     tester_messages: list[Message] = [
         Message(role="system", content=system_prompt),
         Message(role="user", content="Begin the conversation now with the user's first message only."),
@@ -956,7 +956,7 @@ async def run_inference(
     forced: bool = False,
     rewrite_test_set_path: bool = True,
 ) -> dict[str, Any]:
-    """Run all seed inferences and write the transcript artifact."""
+    """Run all test-case inferences and write the transcript artifact."""
     if not target.model and not target.connector and not target.callable and not target.endpoint:
         raise ValueError("inference requires target.model, target.connector, target.callable, or target.endpoint")
 
@@ -977,15 +977,15 @@ async def run_inference(
         raise ValueError("runtime tool_source requires target.tools.toolset when target.tools.simulator is set")
     fixed_system_prompt = str(target.system_prompt or "").strip() or None
     resolved_test_set_path = resolve_path(test_set_path)
-    canonical_rows = normalize_seed_rows(load_seeds(resolved_test_set_path, strict=strict))
-    seeds_list = _prepare_seeds(
+    canonical_rows = normalize_test_case_rows(load_test_cases(resolved_test_set_path, strict=strict))
+    test_cases = _prepare_test_cases(
         canonical_rows,
         tool_source=tool_source,
         fixed_system_prompt=fixed_system_prompt,
     )
-    if not seeds_list:
-        raise ValueError("No test_set found")
-    if rewrite_test_set_path and _is_versioned_seed_artifact_path(resolved_test_set_path):
+    if not test_cases:
+        raise ValueError("No test cases found")
+    if rewrite_test_set_path and _is_versioned_test_set_artifact_path(resolved_test_set_path):
         # Versioned cache outputs are immutable; rewriting them would
         # invalidate the recorded file_hashes in artifact.json.
         rewrite_test_set_path = False
@@ -997,7 +997,7 @@ async def run_inference(
     out_dir.mkdir(parents=True, exist_ok=True)
     resolved_max_tokens = max_tokens if max_tokens is not None else DEFAULT_INFERENCE_MAX_TOKENS
     inference = evaluation.inference if evaluation is not None else InferenceConfig()
-    indexed_seeds = list(enumerate(seeds_list))
+    indexed_test_cases = list(enumerate(test_cases))
     transcripts_path = out_dir / TRANSCRIPTS_FILE
 
     # Resume: load already-completed test_case_ids and skip them.
@@ -1014,7 +1014,7 @@ async def run_inference(
             # User explicitly forced this stage (directly or via the runner's
             # --force-stage cascade). Discard the cached output unconditionally;
             # don't trust the hash because regenerated upstream artifacts may
-            # be byte-identical (deterministic seed generation, no design
+            # be byte-identical (deterministic test-case generation, no design
             # dimensions, etc.) which would otherwise leave the cache intact.
             transcripts_path.unlink()
         else:
@@ -1032,31 +1032,31 @@ async def run_inference(
                         completed_test_case_ids.add(str(sid))
     if completed_test_case_ids:
         log.info(
-            f"Resuming inference: {len(completed_test_case_ids)} test_set already completed, skipping"
+            f"Resuming inference: {len(completed_test_case_ids)} test cases already completed, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
-    pending_seeds = [
-        (i, seed) for i, seed in indexed_seeds
-        if str(seed.get("test_case_id", "")) not in completed_test_case_ids
+    pending_test_cases = [
+        (i, test_case) for i, test_case in indexed_test_cases
+        if str(test_case.get("test_case_id", "")) not in completed_test_case_ids
     ]
 
-    async def _worker(seed: tuple[int, dict[str, Any]]) -> dict[str, Any]:
-        """Wrap single-seed inference so concurrent execution keeps errors structured.
+    async def _worker(test_case: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+        """Wrap single-test-case inference so concurrent execution keeps errors structured.
 
         Auth errors fail the stage immediately — they're never transient
         and continuing only burns tokens. Rate-limit, provider, and
         input errors after the per-call retry budget is exhausted are
-        treated as per-row failures: the seed is recorded with an
+        treated as per-row failures: the test case is recorded with an
         ``error`` field and the stage continues. Without this, a single
         unrecoverable LLM call would discard all the transcripts that
         the other concurrent inferences have already produced.
         """
-        output_index, seed_row = seed
+        output_index, test_case_row = test_case
         try:
-            kind = seed_row["type"]
+            kind = test_case_row["type"]
             if kind == "prompt":
-                transcript = await _run_prompt_seed(
-                    seed=seed_row,
+                transcript = await _run_prompt_test_case(
+                    test_case=test_case_row,
                     target=target,
                     inference=inference,
                     max_tokens=resolved_max_tokens,
@@ -1065,8 +1065,8 @@ async def run_inference(
             elif kind == "scenario":
                 if evaluation is None:
                     raise ValueError("scenario inference requires evaluation configuration")
-                transcript = await _run_scenario_seed(
-                    seed=seed_row,
+                transcript = await _run_scenario_test_case(
+                    test_case=test_case_row,
                     target=target,
                     evaluation=evaluation,
                     max_tokens=resolved_max_tokens,
@@ -1078,34 +1078,34 @@ async def run_inference(
         except LLMAuthError:
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
-            test_case_id = seed_row.get("test_case_id", "?")
+            test_case_id = test_case_row.get("test_case_id", "?")
             log.warning(
-                "Inference call exhausted retries for seed %s (%s): %s",
+                "Inference call exhausted retries for test case %s (%s): %s",
                 test_case_id, type(exc).__name__, exc,
             )
             return {"output_index": output_index, "error": exc}
         except (ValueError, KeyError) as exc:
-            test_case_id = seed_row.get("test_case_id", "?")
+            test_case_id = test_case_row.get("test_case_id", "?")
             log.debug(
-                "Inference worker config/validation error for seed %s: %s\n%s",
+                "Inference worker config/validation error for test case %s: %s\n%s",
                 test_case_id, exc, traceback.format_exc(),
             )
             return {"output_index": output_index, "error": exc}
         except Exception as exc:
-            test_case_id = seed_row.get("test_case_id", "?")
+            test_case_id = test_case_row.get("test_case_id", "?")
             log.debug(
-                "Inference worker failed for seed %s: %s\n%s",
+                "Inference worker failed for test case %s: %s\n%s",
                 test_case_id, exc, traceback.format_exc(),
             )
             return {"output_index": output_index, "error": exc}
 
-    semaphore = asyncio.Semaphore(max(1, min(inference.concurrency, len(pending_seeds) or 1)))
+    semaphore = asyncio.Semaphore(max(1, min(inference.concurrency, len(pending_test_cases) or 1)))
 
-    async def _guard(seed: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+    async def _guard(test_case: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         async with semaphore:
-            return await _worker(seed)
+            return await _worker(test_case)
 
-    tasks = [asyncio.create_task(_guard(seed)) for seed in pending_seeds]
+    tasks = [asyncio.create_task(_guard(test_case)) for test_case in pending_test_cases]
     total = len(tasks)
     results = []
     errors: list[Exception] = []
@@ -1137,19 +1137,16 @@ async def run_inference(
             errors.append(error)
         done = len(results)
         idx = result["output_index"]
-        seed_row = seeds_list[idx]
-        kind = seed_row.get("type", "")
+        test_case_row = test_cases[idx]
+        kind = test_case_row.get("type", "")
         # Prefer the most specific identifier so each line in the progress
-        # output reads differently. Pre-merge this came directly from
-        # `seed_row['sub_risk']`; post-merge the equivalent now lives at
-        # `seed_row['dimensions']['behavior']`. Fall back to the broad
-        # behavior and finally the test_case_id (the deterministic slug like
-        # `prompt-fabricated-dosage-001`).
-        dimensions = seed_row.get("dimensions") or {}
+        # output reads differently. Use the behavior dimension when available,
+        # then fall back to the broad behavior and finally the test_case_id.
+        dimensions = test_case_row.get("dimensions") or {}
         label = (
             dimensions.get("behavior")
-            or seed_row.get("behavior")
-            or seed_row.get("test_case_id", "")
+            or test_case_row.get("behavior")
+            or test_case_row.get("test_case_id", "")
         )
         kind_tag = f"[{kind}] " if kind else ""
         status = "✓" if error is None else f"✗ {type(error).__name__}"
@@ -1161,7 +1158,7 @@ async def run_inference(
 
     # Per-row failures should not kill the stage as long as *some* rows
     # produced useful transcripts. The errors are visible in the
-    # per-seed progress lines above and are summarised in errored_count
+    # per-test-case progress lines above and are summarised in errored_count
     # below. The stage only fails outright when nothing succeeded
     # (no useful transcripts in this run AND no cached transcripts from
     # a prior run) — that means the failure is systemic (auth, config,
@@ -1169,7 +1166,7 @@ async def run_inference(
     if successful_results == 0 and not completed_test_case_ids:
         if errors:
             log.error(
-                "Inference stage failed: all %d seed(s) errored and no prior transcripts were cached",
+                "Inference stage failed: all %d test case(s) errored and no prior transcripts were cached",
                 len(errors),
             )
             raise errors[0]
@@ -1190,7 +1187,7 @@ async def run_inference(
     # worker hit an unrecognised failure mode. At scale, a half-failed run
     # with a few successful transcripts is more likely a systemic problem
     # (deployment misconfigured, target broken, validation bug) than
-    # per-seed bad luck — failing loudly here surfaces it instead of
+    # per-test-case bad luck — failing loudly here surfaces it instead of
     # quietly producing a thin artifact. The default threshold of 10% is
     # tunable via the P2M_INFERENCE_ERROR_FAIL_RATIO env var for ops
     # scenarios. Typed refusals are NOT counted toward the ratio.
@@ -1206,21 +1203,21 @@ async def run_inference(
             os.environ.get("P2M_INFERENCE_ERROR_FAIL_RATIO"),
         )
         error_fail_ratio = 0.10
-    if errors and pending_seeds:
-        actual_ratio = len(errors) / len(pending_seeds)
+    if errors and pending_test_cases:
+        actual_ratio = len(errors) / len(pending_test_cases)
         if actual_ratio > error_fail_ratio:
             log.error(
                 "Inference stage failed: %d/%d (%.1f%%) new test_set errored, "
                 "exceeding the failure threshold of %.1f%% "
                 "(set P2M_INFERENCE_ERROR_FAIL_RATIO to override)",
-                len(errors), len(pending_seeds),
+                len(errors), len(pending_test_cases),
                 actual_ratio * 100, error_fail_ratio * 100,
             )
             raise errors[0]
     if errors:
         log.warning(
-            "Inference stage completed with %d seed failure(s) out of %d new test_set; see transcripts.jsonl for details",
-            len(errors), len(pending_seeds),
+            "Inference stage completed with %d test case failure(s) out of %d new test_set; see transcripts.jsonl for details",
+            len(errors), len(pending_test_cases),
         )
     if target_error_count:
         log.warning(
@@ -1259,11 +1256,11 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
-    seed_artifact_ref = (ctx.get("artifact_versions") or {}).get("test_set")
+    test_set_artifact_ref = (ctx.get("artifact_versions") or {}).get("test_set")
     # Only rewrite the seed file when there is no cached artifact to protect.
     # If the user supplied an explicit test_set_path AND we have no cache ref, we
     # still want the canonicalization pass to normalize their input file.
-    rewrite_test_set_path = not isinstance(seed_artifact_ref, dict)
+    rewrite_test_set_path = not isinstance(test_set_artifact_ref, dict)
     result = await run_inference(
         test_set_path=cfg["test_set_path"],
         save_dir=cfg["save_dir"],
@@ -1282,7 +1279,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target_model = target_obj.model.name or ""
     return {
         "transcripts_path": result["transcripts_path"],
-        "seed_artifact_version": seed_artifact_ref,
+        "test_set_artifact_version": test_set_artifact_ref,
         "_summary": {
             "count": result.get("count", 0),
             "new_count": result.get("new_count", 0),

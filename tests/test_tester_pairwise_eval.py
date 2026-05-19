@@ -122,7 +122,7 @@ def _verdict_for_schema_prompt(schema_name: str, prompt: str, *, realism_winner:
 
 
 class TesterPairwiseEvalHelpersTest(unittest.TestCase):
-    def _seed_row(self, *, test_case_id: str, behavior: str = "behavior") -> dict:
+    def _test_case_row(self, *, test_case_id: str, behavior: str = "behavior") -> dict:
         return {
             "type": "scenario",
             "test_case_id": test_case_id,
@@ -181,15 +181,15 @@ class TesterPairwiseEvalHelpersTest(unittest.TestCase):
 
     def test_build_pairwise_prompt_includes_metadata_and_both_transcripts(self) -> None:
         prompt = tester_pairwise_eval.build_pairwise_prompt(
-            seed_row=self._seed_row(test_case_id="seed-1"),
-            transcript_a_row=self._transcript_row(test_case_id="seed-1", run_label="A"),
-            transcript_b_row=self._transcript_row(test_case_id="seed-1", run_label="B"),
+            test_case_row=self._test_case_row(test_case_id="test-case-1"),
+            transcript_a_row=self._transcript_row(test_case_id="test-case-1", run_label="A"),
+            transcript_b_row=self._transcript_row(test_case_id="test-case-1", run_label="B"),
         )
 
-        self.assertIn("Seed ID: seed-1", prompt)
-        self.assertIn("Title for seed-1", prompt)
-        self.assertIn("Scenario description for seed-1.", prompt)
-        self.assertIn("System prompt for seed-1.", prompt)
+        self.assertIn("Seed ID: test-case-1", prompt)
+        self.assertIn("Title for test-case-1", prompt)
+        self.assertIn("Scenario description for test-case-1.", prompt)
+        self.assertIn("System prompt for test-case-1.", prompt)
         self.assertNotIn("Run:", prompt)
         self.assertNotIn("Stop reason:", prompt)
         self.assertNotIn("Visible user turns:", prompt)
@@ -311,7 +311,7 @@ class TesterPairwiseEvalHelpersTest(unittest.TestCase):
                         "judge_failures": 0,
                     }
                 },
-                "common_failure_modes": {
+                "common_error_modes": {
                     "run_a_stop_reasons": {},
                     "run_b_stop_reasons": {},
                 },
@@ -374,7 +374,7 @@ class TesterPairwiseEvalHelpersTest(unittest.TestCase):
 
 
 class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
-    def _seed_row(self, *, test_case_id: str, behavior: str = "behavior") -> dict:
+    def _test_case_row(self, *, test_case_id: str, behavior: str = "behavior") -> dict:
         return {
             "type": "scenario",
             "test_case_id": test_case_id,
@@ -516,7 +516,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         )
         return run_dir
 
-    async def test_run_pairwise_eval_aligns_shared_seeds_and_reports_unmatched(self) -> None:
+    async def test_run_pairwise_eval_aligns_shared_test_set_and_reports_unmatched(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, json_schema, options
             return ModelResponse(parsed=_verdict_for_schema_prompt(schema_name, prompt), text="{}", model="judge-model")
@@ -527,33 +527,33 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             self._write_jsonl(
                 suite_dir / "test_set.jsonl",
                 [
-                    self._seed_row(test_case_id="seed-1"),
-                    self._seed_row(test_case_id="seed-2"),
-                    self._seed_row(test_case_id="seed-3"),
+                    self._test_case_row(test_case_id="test-case-1"),
+                    self._test_case_row(test_case_id="test-case-2"),
+                    self._test_case_row(test_case_id="test-case-3"),
                 ],
             )
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
                 transcript_rows=[
-                    self._transcript_row(test_case_id="seed-1", run_label="A"),
-                    self._transcript_row(test_case_id="seed-2", run_label="A"),
+                    self._transcript_row(test_case_id="test-case-1", run_label="A"),
+                    self._transcript_row(test_case_id="test-case-2", run_label="A"),
                 ],
                 score_rows=[
-                    self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False),
-                    self._score_row(test_case_id="seed-2", policy_violation=True, overrefusal=False),
+                    self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False),
+                    self._score_row(test_case_id="test-case-2", policy_violation=True, overrefusal=False),
                 ],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
                 transcript_rows=[
-                    self._transcript_row(test_case_id="seed-2", run_label="B"),
-                    self._transcript_row(test_case_id="seed-3", run_label="B"),
+                    self._transcript_row(test_case_id="test-case-2", run_label="B"),
+                    self._transcript_row(test_case_id="test-case-3", run_label="B"),
                 ],
                 score_rows=[
-                    self._score_row(test_case_id="seed-2", policy_violation=False, overrefusal=False),
-                    self._score_row(test_case_id="seed-3", policy_violation=False, overrefusal=True),
+                    self._score_row(test_case_id="test-case-2", policy_violation=False, overrefusal=False),
+                    self._score_row(test_case_id="test-case-3", policy_violation=False, overrefusal=True),
                 ],
             )
 
@@ -573,12 +573,12 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             ]
             metrics = json.loads(Path(result["metrics_path"]).read_text(encoding="utf-8"))
 
-        self.assertEqual([row["test_case_id"] for row in rows], ["seed-2"])
+        self.assertEqual([row["test_case_id"] for row in rows], ["test-case-2"])
         self.assertEqual(metrics["total_matched_pairs"], 1)
         self.assertEqual(metrics["missing_pairs"]["run_a_only_count"], 1)
         self.assertEqual(metrics["missing_pairs"]["run_b_only_count"], 1)
-        self.assertEqual(metrics["missing_pairs"]["run_a_only_test_case_ids"], ["seed-1"])
-        self.assertEqual(metrics["missing_pairs"]["run_b_only_test_case_ids"], ["seed-3"])
+        self.assertEqual(metrics["missing_pairs"]["run_a_only_test_case_ids"], ["test-case-1"])
+        self.assertEqual(metrics["missing_pairs"]["run_b_only_test_case_ids"], ["test-case-3"])
 
     async def test_run_pairwise_eval_writes_expected_row_schema(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
@@ -597,18 +597,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=True, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=True)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=True)],
             )
 
             with (
@@ -652,18 +652,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=True, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
 
             with (
@@ -704,18 +704,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "artifacts" / "results" / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -743,18 +743,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -770,12 +770,12 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(captured), 4)
         realism_prompt = next(prompt for schema_name, prompt in captured if schema_name == "tester_pairwise_realism_judgment")
         effectiveness_prompt = next(prompt for schema_name, prompt in captured if schema_name == "tester_pairwise_effectiveness_judgment")
-        self.assertIn("Seed ID: seed-1", realism_prompt)
-        self.assertIn("Scenario description for seed-1.", realism_prompt)
-        self.assertIn("user turn from A for seed-1", realism_prompt)
-        self.assertIn("assistant reply to A for seed-1", realism_prompt)
-        self.assertIn("user turn from B for seed-1", realism_prompt)
-        self.assertIn("assistant reply to B for seed-1", realism_prompt)
+        self.assertIn("Seed ID: test-case-1", realism_prompt)
+        self.assertIn("Scenario description for test-case-1.", realism_prompt)
+        self.assertIn("user turn from A for test-case-1", realism_prompt)
+        self.assertIn("assistant reply to A for test-case-1", realism_prompt)
+        self.assertIn("user turn from B for test-case-1", realism_prompt)
+        self.assertIn("assistant reply to B for test-case-1", realism_prompt)
         self.assertNotIn("Run:", realism_prompt)
         self.assertNotIn("Stop reason:", realism_prompt)
         self.assertNotIn("Visible user turns:", realism_prompt)
@@ -803,19 +803,19 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
                 judge_model="saved-pairwise-judge",
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -839,18 +839,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -885,18 +885,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -934,18 +934,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=True, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
 
             with (
@@ -983,18 +983,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
@@ -1033,18 +1033,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=True)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=True)],
             )
 
             with (
@@ -1075,7 +1075,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_pairwise_eval_rejects_missing_seed_metadata(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, prompt, schema_name, json_schema, options
-            raise AssertionError("judge should not run when seed metadata is missing")
+            raise AssertionError("judge should not run when test case metadata is missing")
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1084,21 +1084,21 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (
                 patch.object(tester_pairwise_eval, "generate_structured", new=fake_generate_structured),
                 patch.object(tester_pairwise_eval, "generate", new=_eval_response),
             ):
-                with self.assertRaisesRegex(ValueError, "Missing seed metadata for shared test_case_id=seed-1"):
+                with self.assertRaisesRegex(ValueError, "Missing test case metadata for shared test_case_id=test-case-1"):
                     await tester_pairwise_eval.run_tester_pairwise_eval(
                         run_a_dir=str(run_a),
                         run_b_dir=str(run_b),
@@ -1121,18 +1121,18 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
-            self._write_jsonl(suite_dir / "test_set.jsonl", [self._seed_row(test_case_id="seed-1")])
+            self._write_jsonl(suite_dir / "test_set.jsonl", [self._test_case_row(test_case_id="test-case-1")])
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="A")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="seed-1", run_label="B")],
-                score_rows=[self._score_row(test_case_id="seed-1", policy_violation=False, overrefusal=False)],
+                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
             with (

@@ -92,7 +92,7 @@ async def run_systematize(
     if not behavior:
         raise ValueError("behavior text is required")
 
-    concept_text = behavior.strip()
+    behavior_text = behavior.strip()
     temperature = temperature if temperature is not None else DEFAULT_SYSTEMATIZE_TEMPERATURE
     max_tokens = max_tokens if max_tokens is not None else DEFAULT_SYSTEMATIZE_MAX_TOKENS
     # Reasoning models don't support temperature
@@ -102,7 +102,7 @@ async def run_systematize(
     system_prompt = GEN_PROMPT.replace("{{BEHAVIOR_TARGET}}", str(behavior_category_count))
     messages = [
         Message(role="system", content=system_prompt),
-        Message(role="user", content=concept_text),
+        Message(role="user", content=behavior_text),
     ]
 
     response = await generate_structured(
@@ -187,7 +187,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     async with log_heartbeat("[systematize] [1/2] Researching behavior taxonomy"):
         await run_systematization(
             behavior=behavior_name,
-            concept_text=behavior_description,
+            behavior_text=behavior_description,
             save_path=sys_path,
             model_cfg=sys_model_cfg,
             web_search=web_search,

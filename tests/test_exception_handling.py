@@ -340,7 +340,7 @@ class InferenceWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
 
             debug_messages = [r for r in log_cm.output if "Inference worker" in r]
             self.assertTrue(len(debug_messages) > 0, "Expected debug log for worker failure")
-            self.assertIn("seed_000001", debug_messages[0])
+            self.assertIn("test_case_000001", debug_messages[0])
             self.assertIn("simulated network failure", debug_messages[0])
             self.assertIn("Traceback", debug_messages[0])
 

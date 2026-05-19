@@ -1,7 +1,7 @@
 """Suite-level analysis that combines metrics across stages.
 
 Computes judge rates with confidence intervals, inference health,
-seed outcome analysis, and per-behavior breakdowns for a complete suite.
+test-case outcome analysis, and per-behavior breakdowns for a complete suite.
 Produces both structured data and human-readable summaries designed
 for terminal display.
 """
@@ -284,9 +284,9 @@ def format_suite_summary(results: dict[str, Any]) -> str:
     # 3. Repeatability (per tester group)
     if "repeatability" in results:
         for tester, rep in sorted(results["repeatability"].items()):
-            n_shared = rep.get("n_seeds_full_coverage", 0)
+            n_shared = rep.get("n_test_cases_full_coverage", 0)
             if n_shared < 5:
-                lines.append(f"Seed-level repeatability: {tester}")
+                lines.append(f"Test-case-level repeatability: {tester}")
                 lines.append(f"  Too few shared test_set ({n_shared}) for reliable estimate.")
             else:
                 lines.append(format_repeatability(rep))

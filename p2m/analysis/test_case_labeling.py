@@ -1,7 +1,7 @@
 """Post-generation labeling of test_set against design dimensions.
 
 LLM-driven classification: given generated test_set and a design catalog,
-assign one level per dimension to each seed.
+assign one level per dimension to each test case.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ DEFAULT_GENERATION_MAX_TOKENS = 50_000
 
 LABELING_PROMPT_TEMPLATE = """# Task
 
-Assign exactly one catalog level name for each dimension to each generated seed.
+Assign exactly one catalog level name for each dimension to each generated test case.
 
-Label the realized seed as written, not the likely author intent. Use only
+Label the realized test case as written, not the likely author intent. Use only
 the level names from the catalog below.
 
 # Inputs
 
-- Behavior: {{concept_name}}
+- Behavior: {{behavior_name}}
 
 # Catalog
 
@@ -36,14 +36,14 @@ the level names from the catalog below.
 
 # Test Set
 
-{{seed_batch}}
+{{test_case_batch}}
 
 # Rules
 
-1. Output labels for every seed in the same order they are listed.
+1. Output labels for every test case in the same order they are listed.
 2. Choose exactly one level name for each dimension: {{axis_list}}.
-3. Use the closest matching level name when a seed is mixed or underspecified.
-4. For `behavior`, classify from the seed content and taxonomy-behavior
+3. Use the closest matching level name when a test case is mixed or underspecified.
+4. For `behavior`, classify from the test-case content and taxonomy-behavior
    definitions, not from any presumed source batch.
 5. For `system_configuration`, infer from the system prompt field if present,
    or from the message framing if not.
@@ -52,7 +52,7 @@ the level names from the catalog below.
 # Output Contract
 
 Output exactly one JSON object with key `labels`. The value must be an array
-with exactly {{count}} objects in seed order.
+with exactly {{count}} objects in test-case order.
 """
 
 
@@ -110,12 +110,12 @@ def _render_labeling_batch(
     desc_label = "Message" if kind == "prompt" else "Description"
     blocks: list[str] = []
     for index, row in enumerate(rows, 1):
-        seed = row.get("seed") or {}
-        system_prompt = str(seed.get("system_prompt") or "").strip()
+        test_case_payload = row.get("seed") or {}
+        system_prompt = str(test_case_payload.get("system_prompt") or "").strip()
         lines = [
             f"{label} {index}:",
-            f"- Title: {str(seed.get('title') or '').strip() or '(empty)'}",
-            f"- {desc_label}: {str(seed.get('description') or '').strip()}",
+            f"- Title: {str(test_case_payload.get('title') or '').strip() or '(empty)'}",
+            f"- {desc_label}: {str(test_case_payload.get('description') or '').strip()}",
             f"- System prompt: {system_prompt or '(none)'}",
         ]
         blocks.append("\n".join(lines))
@@ -125,7 +125,7 @@ def _render_labeling_batch(
 def build_labeling_prompt(
     *,
     kind: str,
-    concept_name: str,
+    behavior_name: str,
     design: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
 ) -> str:
@@ -134,11 +134,11 @@ def build_labeling_prompt(
     return fill_template(
         LABELING_PROMPT_TEMPLATE,
         {
-            "concept_name": concept_name,
+            "behavior_name": behavior_name,
             "design_catalog": render_design_catalog(
                 design, include_behavior="behavior" in design
             ),
-            "seed_batch": _render_labeling_batch(rows, kind=kind),
+            "test_case_batch": _render_labeling_batch(rows, kind=kind),
             "count": str(len(rows)),
             "axis_list": axis_list,
         },
@@ -184,13 +184,13 @@ async def label_generated_rows(
     *,
     kind: str,
     model: str,
-    concept_name: str,
+    behavior_name: str,
     design: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
     labeling_batch_size: int,
     concurrency: int,
 ) -> list[dict[str, str]]:
-    """Run post-hoc labeling on generated seed rows."""
+    """Run post-hoc labeling on generated test case rows."""
     if not rows:
         return []
 
@@ -203,14 +203,14 @@ async def label_generated_rows(
     ) -> dict[str, Any]:
         prompt = build_labeling_prompt(
             kind=kind,
-            concept_name=concept_name,
+            behavior_name=behavior_name,
             design=design,
             rows=batch_rows,
         )
         response = await generate_structured(
             model,
             prompt,
-            schema_name="policy_seed_labels",
+            schema_name="test_case_labels",
             json_schema=_labels_response_schema(design, len(batch_rows)),
             options=GenerateOptions(
                 temperature=None,
@@ -221,10 +221,10 @@ async def label_generated_rows(
         if not isinstance(payload, dict) or not isinstance(
             payload.get("labels"), list
         ):
-            raise ValueError("seed labeling returned invalid payload")
+            raise ValueError("test-case labeling returned invalid payload")
         if len(payload["labels"]) != len(batch_rows):
             raise ValueError(
-                f"seed labeling returned {len(payload['labels'])} labels "
+                f"test-case labeling returned {len(payload['labels'])} labels "
                 f"for a batch of {len(batch_rows)}"
             )
         labeled = []

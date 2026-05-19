@@ -117,7 +117,7 @@ class MaterializeTargetMessagesTurnSemanticsTest(unittest.TestCase):
 
     def test_tools_before_assistant_text_inherit_upcoming_target_turn(self) -> None:
         # Regression test for the screenshot bug: tool calls/results that
-        # arrive immediately after an tester user message — but BEFORE
+        # arrive immediately after a tester user message — but BEFORE
         # the target's assistant text — must be labeled with the target's
         # upcoming turn (tester=11 -> tools=12, assistant=12), not the
         # tester's just-finished turn (would have been 11 across the board).

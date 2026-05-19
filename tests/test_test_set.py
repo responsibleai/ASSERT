@@ -1,4 +1,4 @@
-"""Tests for the shared seed sampling engine."""
+"""Tests for the shared test-case sampling engine."""
 
 import random
 import unittest
@@ -19,7 +19,7 @@ from p2m.stages.test_set import (
     build_generation_jobs,
     build_generation_prompt,
     sample_from_covering_array,
-    seed_record,
+    test_case_record as make_test_case_record,
 )
 
 FACTOR_NAMES = ("domain", "user_context")
@@ -242,33 +242,33 @@ class LabelerRetestAgreementTest(unittest.TestCase):
 
 
 class SeedRecordTest(unittest.TestCase):
-    def test_seed_record_tags_prompt_kind(self) -> None:
-        record = seed_record(
+    def test_test_case_record_tags_prompt_kind(self) -> None:
+        record = make_test_case_record(
             kind="prompt",
             test_case_id="ps-001",
             behavior="test-behavior",
-            seed_payload={"title": "t", "description": "d"},
+            test_case_payload={"title": "t", "description": "d"},
         )
         self.assertEqual(record["type"], "prompt")
         self.assertEqual(record["test_case_id"], "ps-001")
         self.assertNotIn("permissible", record)
 
-    def test_seed_record_omits_empty_factors(self) -> None:
-        record = seed_record(
+    def test_test_case_record_omits_empty_factors(self) -> None:
+        record = make_test_case_record(
             kind="prompt",
             test_case_id="ps-001",
             behavior="test-behavior",
-            seed_payload={"title": "t", "description": "d"},
+            test_case_payload={"title": "t", "description": "d"},
             dimensions={},
         )
         self.assertNotIn("dimensions", record)
 
-    def test_seed_record_persists_factors(self) -> None:
-        record = seed_record(
+    def test_test_case_record_persists_factors(self) -> None:
+        record = make_test_case_record(
             kind="prompt",
             test_case_id="ps-001",
             behavior="test-behavior",
-            seed_payload={"title": "t", "description": "d"},
+            test_case_payload={"title": "t", "description": "d"},
             dimensions={"domain": "domain 0"},
         )
         self.assertEqual(record["dimensions"], {"domain": "domain 0"})
@@ -322,7 +322,7 @@ class BuildGenerationPromptTest(unittest.TestCase):
         self.assertIn("A-specific definition", prompt)
         self.assertNotIn("{{taxonomy_body}}", prompt)
         self.assertNotIn("permissible_status", prompt)
-        self.assertNotIn("seed_strategy", prompt)
+        self.assertNotIn("test_case_strategy", prompt)
 
 
 class BuildGenerationJobsTest(unittest.TestCase):
@@ -374,7 +374,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_one_job_per_tuple(self) -> None:
         """Each covering-array tuple gets one job when its count fits inside
-        MAX_SEEDS_PER_BATCH (here count == 1). Tuples whose count exceeds
+        MAX_TEST_CASES_PER_BATCH (here count == 1). Tuples whose count exceeds
         the cap are split into multiple jobs (covered by
         ``test_generation_jobs_split_when_per_tuple_count_exceeds_cap``)."""
         taxonomy = _make_policy()
@@ -390,7 +390,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_budget_allocation_divmod(self) -> None:
         """Budget spreads evenly with remainder going to first tuples.
-        Counts here (2 or 3) all fit inside MAX_SEEDS_PER_BATCH so each
+        Counts here (2 or 3) all fit inside MAX_TEST_CASES_PER_BATCH so each
         tuple still produces exactly one job."""
         taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
@@ -456,10 +456,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
                 self.assertIn(factor_name, job.tuple_spec)
 
     def test_generation_jobs_split_when_per_tuple_count_exceeds_cap(self) -> None:
-        """When a covering-array tuple's budget exceeds MAX_SEEDS_PER_BATCH,
+        """When a covering-array tuple's budget exceeds MAX_TEST_CASES_PER_BATCH,
         the tuple produces multiple jobs whose counts are each ≤ the cap and
         whose start_index slots remain contiguous within the tuple."""
-        from p2m.stages.test_set import MAX_SEEDS_PER_BATCH
+        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
 
         taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
@@ -467,7 +467,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
             design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
         )
         num_tuples = len(ca)
-        per_tuple = MAX_SEEDS_PER_BATCH * 3 + 2
+        per_tuple = MAX_TEST_CASES_PER_BATCH * 3 + 2
         sample_size = num_tuples * per_tuple
         jobs, _ = build_generation_jobs(
             taxonomy=taxonomy,
@@ -477,11 +477,11 @@ class BuildGenerationJobsTest(unittest.TestCase):
         )
 
         self.assertEqual(sum(job.count for job in jobs), sample_size)
-        self.assertTrue(all(job.count <= MAX_SEEDS_PER_BATCH for job in jobs))
+        self.assertTrue(all(job.count <= MAX_TEST_CASES_PER_BATCH for job in jobs))
 
         expected_jobs_per_tuple = (
-            per_tuple + MAX_SEEDS_PER_BATCH - 1
-        ) // MAX_SEEDS_PER_BATCH
+            per_tuple + MAX_TEST_CASES_PER_BATCH - 1
+        ) // MAX_TEST_CASES_PER_BATCH
         self.assertEqual(len(jobs), num_tuples * expected_jobs_per_tuple)
 
         running = 0
@@ -490,9 +490,9 @@ class BuildGenerationJobsTest(unittest.TestCase):
             running += job.count
 
     def test_generation_jobs_no_split_when_count_within_cap(self) -> None:
-        """When per-tuple count fits inside MAX_SEEDS_PER_BATCH, each tuple
+        """When per-tuple count fits inside MAX_TEST_CASES_PER_BATCH, each tuple
         still produces exactly one job (covers the small-batch case)."""
-        from p2m.stages.test_set import MAX_SEEDS_PER_BATCH
+        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
 
         taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
@@ -500,7 +500,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
             design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
         )
         num_tuples = len(ca)
-        sample_size = num_tuples * MAX_SEEDS_PER_BATCH
+        sample_size = num_tuples * MAX_TEST_CASES_PER_BATCH
         jobs, _ = build_generation_jobs(
             taxonomy=taxonomy,
             design=design,
@@ -508,7 +508,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
             rng=random.Random(42),
         )
         self.assertEqual(len(jobs), num_tuples)
-        self.assertTrue(all(job.count == MAX_SEEDS_PER_BATCH for job in jobs))
+        self.assertTrue(all(job.count == MAX_TEST_CASES_PER_BATCH for job in jobs))
 
 
 class BuildPolicyNodeFactorTest(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Characterization tests for the seed domain modules."""
+"""Characterization tests for the test-case domain modules."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from p2m.analysis.design_metrics import (
     intended_vs_observed_metrics,
     behavior_agreement,
 )
-from p2m.analysis.seed_labeling import (
+from p2m.analysis.test_case_labeling import (
     _label_entry_schema,
     _labels_response_schema,
     _normalize_observed_label_entry,
@@ -28,11 +28,11 @@ from p2m.stages.design import (
 from p2m.stages.test_set import (
     PROMPT_FIELD_EXAMPLES,
     SCENARIO_FIELD_EXAMPLES,
-    SEED_SCHEMA,
+    TEST_CASE_SCHEMA,
     _template_replacements,
-    normalize_generated_seed,
+    normalize_generated_test_case,
     render_tuple_spec,
-    seeds_response_schema,
+    test_set_response_schema as make_test_set_response_schema,
 )
 
 FACTOR_NAMES = ("domain", "user_context")
@@ -72,7 +72,7 @@ def _minimal_policy() -> dict[str, Any]:
 
 class NormalizeGeneratedSeedTest(unittest.TestCase):
     def test_keeps_title_description_system_prompt(self) -> None:
-        result = normalize_generated_seed(
+        result = normalize_generated_test_case(
             {"title": "T", "description": "D", "system_prompt": "S"},
             tool_source="runtime",
             fixed_system_prompt=None,
@@ -81,7 +81,7 @@ class NormalizeGeneratedSeedTest(unittest.TestCase):
 
     def test_raises_on_missing_description(self) -> None:
         with self.assertRaises(ValueError):
-            normalize_generated_seed(
+            normalize_generated_test_case(
                 {"title": "T", "description": ""},
                 tool_source="runtime",
                 fixed_system_prompt=None,
@@ -128,33 +128,33 @@ class DesignResponseSchemaTest(unittest.TestCase):
 
 
 class SeedsResponseSchemaTest(unittest.TestCase):
-    def test_schema_wraps_seeds_array(self) -> None:
-        schema = seeds_response_schema()
-        self.assertEqual(schema["properties"]["test_set"]["items"], SEED_SCHEMA)
+    def test_schema_wraps_test_set_array(self) -> None:
+        schema = make_test_set_response_schema()
+        self.assertEqual(schema["properties"]["test_set"]["items"], TEST_CASE_SCHEMA)
 
     def test_schema_omits_min_items_by_default(self) -> None:
-        schema = seeds_response_schema()
+        schema = make_test_set_response_schema()
         self.assertNotIn("minItems", schema["properties"]["test_set"])
         self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
     def test_schema_pins_min_items_when_count_supplied(self) -> None:
-        schema = seeds_response_schema(min_items=27)
+        schema = make_test_set_response_schema(min_items=27)
         self.assertEqual(schema["properties"]["test_set"]["minItems"], 27)
         self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
     def test_schema_ignores_non_positive_min_items(self) -> None:
         for value in (0, -1):
-            schema = seeds_response_schema(min_items=value)
+            schema = make_test_set_response_schema(min_items=value)
             self.assertNotIn("minItems", schema["properties"]["test_set"])
 
     def test_schema_pins_both_bounds_when_min_and_max_match(self) -> None:
-        schema = seeds_response_schema(min_items=500, max_items=500)
+        schema = make_test_set_response_schema(min_items=500, max_items=500)
         self.assertEqual(schema["properties"]["test_set"]["minItems"], 500)
         self.assertEqual(schema["properties"]["test_set"]["maxItems"], 500)
 
     def test_schema_ignores_non_positive_max_items(self) -> None:
         for value in (0, -1):
-            schema = seeds_response_schema(max_items=value)
+            schema = make_test_set_response_schema(max_items=value)
             self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
 
@@ -183,7 +183,7 @@ class SchemaExampleTest(unittest.TestCase):
     def test_prompt_example_contains_field_examples(self) -> None:
         seed = {
             key: PROMPT_FIELD_EXAMPLES[key]
-            for key in SEED_SCHEMA["properties"]
+            for key in TEST_CASE_SCHEMA["properties"]
             if key in PROMPT_FIELD_EXAMPLES
         }
         parsed = json.loads(json.dumps({"test_set": [seed]}, indent=2))
@@ -192,7 +192,7 @@ class SchemaExampleTest(unittest.TestCase):
     def test_scenario_example_contains_field_examples(self) -> None:
         seed = {
             key: SCENARIO_FIELD_EXAMPLES[key]
-            for key in SEED_SCHEMA["properties"]
+            for key in TEST_CASE_SCHEMA["properties"]
             if key in SCENARIO_FIELD_EXAMPLES
         }
         parsed = json.loads(json.dumps({"test_set": [seed]}, indent=2))
@@ -230,7 +230,7 @@ class TemplateReplacementsTest(unittest.TestCase):
             taxonomy_body="",
         )
         self.assertNotIn("permissible_status", replacements)
-        self.assertNotIn("seed_strategy", replacements)
+        self.assertNotIn("test_case_strategy", replacements)
 
 
 class NormalizeObservedLabelEntryTest(unittest.TestCase):
@@ -255,7 +255,7 @@ class BuildLabelingPromptTest(unittest.TestCase):
     def test_includes_concept_and_catalog(self) -> None:
         result = build_labeling_prompt(
             kind="prompt",
-            concept_name="test_risk",
+            behavior_name="test_risk",
             design=_minimal_design(),
             rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
@@ -266,7 +266,7 @@ class BuildLabelingPromptTest(unittest.TestCase):
     def test_omits_behavior_when_design_lacks_it(self) -> None:
         result = build_labeling_prompt(
             kind="scenario",
-            concept_name="test_risk",
+            behavior_name="test_risk",
             design=_minimal_design(include_behavior=False),
             rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )

@@ -51,7 +51,7 @@ def _seeds_case() -> StageSmokeCase:
     return StageSmokeCase(
         name="test_set",
         run=test_set.run,
-        workflow_patch="p2m.stages.test_set.run_seeds",
+        workflow_patch="p2m.stages.test_set.run_test_set",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -101,7 +101,7 @@ def _inference_case() -> StageSmokeCase:
 def _judge_case() -> StageSmokeCase:
     def setup_fn(root: Path) -> None:
         write_json(root / "taxonomy.json", {"behavior": {"name": "Risk"}, "behavior_categories": []})
-        write_jsonl(root / "transcripts.jsonl", [{"type": "prompt", "test_case_id": "seed-1"}])
+        write_jsonl(root / "transcripts.jsonl", [{"type": "prompt", "test_case_id": "test-case-1"}])
 
     def cfg_factory(root: Path) -> dict[str, object]:
         return {
@@ -177,7 +177,7 @@ class StageRunnerSmokeTest(unittest.TestCase):
                     )
 
                 self.assertEqual(calls["systematization"]["behavior"], "harmful_advice")
-                self.assertEqual(calls["systematization"]["concept_text"], "Harmful advice")
+                self.assertEqual(calls["systematization"]["behavior_text"], "Harmful advice")
                 self.assertEqual(calls["systematization"]["model_cfg"].name, "azure/gpt-5.4")
                 self.assertEqual(calls["convert"]["behavior_category_count_hint"], 5)
                 self.assertEqual(Path(result["taxonomy_path"]).resolve(), (root / "taxonomy.json").resolve())

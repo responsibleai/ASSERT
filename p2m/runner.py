@@ -148,11 +148,11 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             design_model = raw_cfg["model"].get("name", "")
         model_suffix = f" ({design_model})" if design_model else ""
         if level_count and factor_count:
-            log.info(f"{tag} Designing seed-coverage grid: {total_factors} dimensions x {level_count} levels each{model_suffix}...")
+            log.info(f"{tag} Designing test-case coverage grid: {total_factors} dimensions x {level_count} levels each{model_suffix}...")
         elif factor_count:
-            log.info(f"{tag} Designing seed-coverage grid: {total_factors} dimensions{model_suffix}...")
+            log.info(f"{tag} Designing test-case coverage grid: {total_factors} dimensions{model_suffix}...")
         else:
-            log.info(f"{tag} Designing seed-coverage grid (behavior dimension only){model_suffix}...")
+            log.info(f"{tag} Designing test-case coverage grid (behavior dimension only){model_suffix}...")
     elif stage_name == "test_set":
         prompt_budget = 0
         scenario_budget = 0
@@ -167,7 +167,6 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
                 policy_data = json.loads(taxonomy_path.read_text(encoding="utf-8"))
                 behavior_category_count = len(
                     policy_data.get("behavior_categories")
-                    or policy_data.get("sub_risks")
                     or []
                 )
             except Exception:
@@ -182,13 +181,13 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             detail += f" from {behavior_category_count} behavior categories)"
         elif detail:
             detail += ")"
-        seed_models = set()
+        test_case_models = set()
         for kind_key in ("prompt", "scenario"):
             kind_cfg = raw_cfg.get(kind_key)
             if isinstance(kind_cfg, dict) and isinstance(kind_cfg.get("model"), dict):
-                seed_models.add(kind_cfg["model"].get("name", ""))
-        seed_models.discard("")
-        model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
+                test_case_models.add(kind_cfg["model"].get("name", ""))
+        test_case_models.discard("")
+        model_suffix = f" ({', '.join(sorted(test_case_models))})" if test_case_models else ""
         log.info(f"{tag} Generating test cases{detail}{model_suffix}...")
     elif stage_name == "inference":
         target = ctx.get("target")

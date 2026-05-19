@@ -78,12 +78,12 @@ def load_policy(path: Path) -> Dict[str, Any]:
     return {"raw": data, "behavior_categories": flattened}
 
 
-def _prompt_seed_text(row: Dict[str, Any]) -> str | None:
+def _prompt_test_case_text(row: Dict[str, Any]) -> str | None:
     if row.get("type") != "prompt":
         return None
-    row_seed = row.get("seed")
-    if isinstance(row_seed, dict):
-        text = str(row_seed.get("description") or "").strip()
+    row_test_case = row.get("seed")
+    if isinstance(row_test_case, dict):
+        text = str(row_test_case.get("description") or "").strip()
         return text or None
     return None
 
@@ -204,38 +204,38 @@ def compute_metrics(cfg: Config):
         client, cfg.embed_backend, cfg.embed_model, example_texts
     )
 
-    # Collect seed info
+    # Collect test-case info
     per_behavior_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
     per_behavior_valid: Dict[str, List[bool]] = defaultdict(list)
     per_behavior_len: Dict[str, List[int]] = defaultdict(list)
 
-    prompt_seeds = [entry for entry in test_set if _prompt_seed_text(entry) is not None]
-    seed_prompts = [_prompt_seed_text(entry) or "" for entry in prompt_seeds]
-    seed_vecs = embed_texts(client, cfg.embed_backend, cfg.embed_model, seed_prompts)
+    prompt_test_cases = [entry for entry in test_set if _prompt_test_case_text(entry) is not None]
+    test_case_prompts = [_prompt_test_case_text(entry) or "" for entry in prompt_test_cases]
+    test_case_vecs = embed_texts(client, cfg.embed_backend, cfg.embed_model, test_case_prompts)
 
     def embed_dim() -> int:
-        if seed_vecs.size:
-            return seed_vecs.shape[1]
+        if test_case_vecs.size:
+            return test_case_vecs.shape[1]
         if example_vecs.size:
             return example_vecs.shape[1]
         return 1
 
     unknown_behavior_category_counts: Dict[str, int] = defaultdict(int)
-    for entry, vec in zip(prompt_seeds, seed_vecs):
+    for entry, vec in zip(prompt_test_cases, test_case_vecs):
         sr = row_behavior(entry)
         if sr not in behavior_names:
             unknown_behavior_category_counts[sr] += 1
             continue
         per_behavior_vecs[sr].append(vec)
         per_behavior_valid[sr].append(True)
-        per_behavior_len[sr].append(len(_prompt_seed_text(entry) or ""))
+        per_behavior_len[sr].append(len(_prompt_test_case_text(entry) or ""))
 
     if unknown_behavior_category_counts:
         summary = ", ".join(
             f"{name} ({count})" for name, count in sorted(unknown_behavior_category_counts.items())
         )
         print(
-            f"[seed_metrics] Skipping {sum(unknown_behavior_category_counts.values())} test_set "
+            f"[test_set_metrics] Skipping {sum(unknown_behavior_category_counts.values())} test_set "
             f"with behavior_categories not in taxonomy.json: {summary}"
         )
 
@@ -321,7 +321,7 @@ def compute_metrics(cfg: Config):
         "skew": {"gini": skew_gini, "entropy": skew_ent},
         "example_coverage": ex_cov,
         "valid_total": sum(count_vals),
-        "seed_total": len(test_set),
+        "test_case_total": len(test_set),
     }
 
     report = {
@@ -336,7 +336,7 @@ def compute_metrics(cfg: Config):
     )
 
     if cfg.out_md:
-        lines = ["# Seed Metrics", "", "## Overall", ""]
+        lines = ["# Test Set Metrics", "", "## Overall", ""]
         if cfg.presence_coverage:
             lines.append(f"Coverage: presence={coverage['presence']:.3f}")
         else:
@@ -344,7 +344,7 @@ def compute_metrics(cfg: Config):
                 "Coverage: "
                 + ", ".join(f"@{k}={coverage[k]:.3f}" for k in cfg.k_list)
             )
-        lines.append(f"Valid total: {overall['valid_total']} / {overall['seed_total']}")
+        lines.append(f"Valid total: {overall['valid_total']} / {overall['test_case_total']}")
         lines.append(f"Gini: {skew_gini:.3f}, Entropy: {skew_ent:.3f}")
         if ex_cov["median_distance"] is not None:
             lines.append(

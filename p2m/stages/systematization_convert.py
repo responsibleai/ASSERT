@@ -183,16 +183,16 @@ async def run_systematization_to_policy(
             f"If it persists, check your endpoint's token rate limit and quota."
         )
 
-    concept_block = taxonomy_payload.get("behavior")
-    if not isinstance(concept_block, dict):
+    behavior_block = taxonomy_payload.get("behavior")
+    if not isinstance(behavior_block, dict):
         raise ValueError("systematization_convert returned invalid behavior")
-    concept_definition = _require_nonempty_string(concept_block.get("definition"), field="behavior.definition")
+    behavior_definition = _require_nonempty_string(behavior_block.get("definition"), field="behavior.definition")
     terms = _normalize_definition_of_terms(taxonomy_payload.get("definition_of_terms"))
     behavior_categories = _normalize_behavior_categories(taxonomy_payload.get("behavior_categories"))
     taxonomy = {
         "behavior": {
             "name": behavior,
-            "definition": concept_definition,
+            "definition": behavior_definition,
         },
         "definition_of_terms": terms,
         "behavior_categories": behavior_categories,

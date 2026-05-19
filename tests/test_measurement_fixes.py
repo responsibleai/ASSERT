@@ -30,7 +30,7 @@ class MeasurementFixesTest(unittest.TestCase):
     def _meta(self) -> TranscriptMetadata:
         return TranscriptMetadata(
             kind="scenario",
-            test_case_id="seed-1",
+            test_case_id="test-case-1",
             behavior="behavior",
             target="target",
             dimensions={"behavior": "behavior"},
@@ -914,7 +914,7 @@ class MeasurementFixesTest(unittest.TestCase):
     def test_run_judge_isolates_input_refusal_to_one_seed(self) -> None:
         """A judge-side LLMInputError on one transcript must not abort the
         stage. The refused row is recorded with ``judge_status='filter_skipped'``
-        so the seed isn't lost and the stage can move on. Mirrors the
+        so the test case isn't lost and the stage can move on. Mirrors the
         target-side / tester-side refusal handling in inference. (Absorbed
         from PR #44 commit dcaa91f — was previously only available as a
         benchmark monkey-patch in scripts/benchmark.py.)
@@ -1009,13 +1009,13 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(result["count"], 3)
         self.assertEqual(len(score_rows), 3)
 
-        by_seed = {row["test_case_id"]: row for row in score_rows}
-        refused = by_seed["seed-refused"]
+        by_test_case = {row["test_case_id"]: row for row in score_rows}
+        refused = by_test_case["seed-refused"]
         self.assertEqual(refused["judge_status"], "filter_skipped")
         self.assertIn("judge_input_refused", refused["judge_error"])
         self.assertEqual(refused["verdict"], {})
         for ok_seed in ("seed-ok", "seed-ok-2"):
-            self.assertEqual(by_seed[ok_seed]["judge_status"], "ok")
+            self.assertEqual(by_test_case[ok_seed]["judge_status"], "ok")
 
     def _make_minimal_transcripts(self, transcripts_path: Path, test_case_ids: list[str]) -> None:
         with transcripts_path.open("w", encoding="utf-8") as handle:

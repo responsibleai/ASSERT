@@ -168,7 +168,7 @@ async def run_judge(
         Auth errors fail the stage immediately — they're never transient
         and continuing only burns tokens. Rate-limit, provider, and
         input errors after the per-call retry budget is exhausted are
-        treated as per-row failures: the seed is recorded with an
+        treated as per-row failures: the test case is recorded with an
         ``error`` field and the stage continues. Without this, a single
         unrecoverable judge call would discard all the work the other
         concurrent calls have already finished.
@@ -184,16 +184,16 @@ async def run_judge(
         except LLMInputError as exc:
             # Judge-side input refusal (e.g. Azure content filter rejecting
             # a transcript whose adversarial content the judge LLM can't
-            # process). This is per-seed data, not a global pipeline
+            # process). This is per-test-case data, not a global pipeline
             # problem: a different transcript will judge cleanly. Record a
-            # filter_skipped score row so the seed isn't lost and the
+            # filter_skipped score row so the test case isn't lost and the
             # stage can move on. Mirrors the target_input_refused and
             # tester_input_refused handling in inference. (Absorbed from
             # PR #44 commit dcaa91f — was previously only available as a
             # benchmark monkey-patch in scripts/benchmark.py.)
             test_case_id = row.get("test_case_id", "?")
             log.warning(
-                "Judge content-filter refusal for seed %s: %s",
+                "Judge content-filter refusal for test case %s: %s",
                 test_case_id, exc,
             )
             dimensions = row_factors(row)
@@ -217,7 +217,7 @@ async def run_judge(
         except (LLMRateLimitError, LLMProviderError) as exc:
             test_case_id = row.get("test_case_id", "?")
             log.warning(
-                "Judge call exhausted retries for seed %s (%s): %s",
+                "Judge call exhausted retries for test case %s (%s): %s",
                 test_case_id, type(exc).__name__, exc,
             )
             return {
@@ -227,7 +227,7 @@ async def run_judge(
         except (json.JSONDecodeError, ValueError) as exc:
             test_case_id = row.get("test_case_id", "?")
             log.debug(
-                "Judge worker parse/validation error for seed %s: %s\n%s",
+                "Judge worker parse/validation error for test case %s: %s\n%s",
                 test_case_id, exc, traceback.format_exc(),
             )
             return {
@@ -237,7 +237,7 @@ async def run_judge(
         except Exception as exc:
             test_case_id = row.get("test_case_id", "?")
             log.debug(
-                "Judge worker failed for seed %s: %s\n%s",
+                "Judge worker failed for test case %s: %s\n%s",
                 test_case_id, exc, traceback.format_exc(),
             )
             return {

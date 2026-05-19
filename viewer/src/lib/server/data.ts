@@ -939,7 +939,7 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 
 	return {
 		suite_id: suiteId,
-		concept_name: normalizePolicy(snapshot.taxonomy)?.behavior?.name || suiteId,
+		behavior_name: normalizePolicy(snapshot.taxonomy)?.behavior?.name || suiteId,
 		behavior_category_count: snapshot.taxonomy?.behavior_categories?.length ?? 0,
 		prompt_test_case_count: itemCounts.prompt,
 		scenario_test_case_count: itemCounts.scenario,

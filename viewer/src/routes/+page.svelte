@@ -20,14 +20,14 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') items = items.filter((s) => s.status === statusFilter);
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
+			if (sortBy === 'name') return a.behavior_name.localeCompare(b.behavior_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -182,7 +182,7 @@
 					</span>
 				</div>
 				<a href="/suite/{suite.suite_id}" class="card-heading mt-1 block text-base font-semibold text-text no-underline">
-					{suite.concept_name}
+					{suite.behavior_name}
 				</a>
 				<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
 					<a href="/suite/{suite.suite_id}?section=taxonomy" class="no-underline hover:text-interactive">
@@ -224,7 +224,7 @@
 					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="px-4 py-2.5 align-middle">
-							<a href="/suite/{suite.suite_id}" class="card-heading text-base font-semibold no-underline hover:text-interactive hover:underline">{suite.concept_name}</a>
+							<a href="/suite/{suite.suite_id}" class="card-heading text-base font-semibold no-underline hover:text-interactive hover:underline">{suite.behavior_name}</a>
 							<p class="mt-0.5 truncate font-mono text-[10px] text-text-muted">{suite.suite_id}</p>
 						</td>
 						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=taxonomy" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.behavior_category_count}</a></td>

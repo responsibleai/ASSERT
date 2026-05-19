@@ -7,10 +7,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from p2m.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
-from p2m.core.io import load_seeds
+from p2m.core.io import load_test_cases
 from p2m.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from p2m.core.session import TurnResult
-from p2m.stages.inference import _prepare_seeds, _inference_config_fingerprint, _run_prompt_seed, run_inference
+from p2m.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
 from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
@@ -29,20 +29,20 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tester=TesterConfig(model="azure/gpt-5.4"),
         )
         with TemporaryDirectory() as tmp_dir:
-            seeds_a = Path(tmp_dir) / "seeds_a.jsonl"
-            seeds_b = Path(tmp_dir) / "seeds_b.jsonl"
-            seeds_a.write_text(
+            test_set_a = Path(tmp_dir) / "test_set_a.jsonl"
+            test_set_b = Path(tmp_dir) / "test_set_b.jsonl"
+            test_set_a.write_text(
                 '{"type":"prompt","test_case_id":"prompt-x-001","content":"first"}\n',
                 encoding="utf-8",
             )
-            seeds_b.write_text(
+            test_set_b.write_text(
                 '{"type":"prompt","test_case_id":"prompt-x-001","content":"second"}\n',
                 encoding="utf-8",
             )
 
             hash_no_seeds = _inference_config_fingerprint(target, evaluation, 1024)
-            hash_a = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_a)
-            hash_b = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_b)
+            hash_a = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=test_set_a)
+            hash_b = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=test_set_b)
 
         # Including test_set_path must materially change the fingerprint
         # versus the legacy no-test_set form, and two different seed files
@@ -50,7 +50,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(hash_a, hash_no_seeds)
         self.assertNotEqual(hash_a, hash_b)
 
-    def test_prepare_seeds_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
+    def test_prepare_test_cases_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
         rows = [
             {
                 "type": "prompt",
@@ -62,15 +62,15 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         ]
         with self.assertRaisesRegex(
             ValueError,
-            "target.system_prompt cannot be combined with non-empty seed.system_prompt",
+            "target.system_prompt cannot be combined with non-empty test case system_prompt",
         ):
-            _prepare_seeds(
+            _prepare_test_cases(
                 rows,
                 tool_source="runtime",
                 fixed_system_prompt="fixed prompt",
             )
 
-    def test_prepare_seeds_treats_empty_seed_prompt_as_absent(self) -> None:
+    def test_prepare_test_cases_treats_empty_seed_prompt_as_absent(self) -> None:
         rows = [
             {
                 "type": "prompt",
@@ -80,7 +80,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         ]
-        test_set = _prepare_seeds(
+        test_set = _prepare_test_cases(
             rows,
             tool_source="runtime",
             fixed_system_prompt=None,
@@ -88,7 +88,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("system_prompt", test_set[0]["seed"])
 
-    def test_prepare_seeds_validates_per_seed_tools(self) -> None:
+    def test_prepare_test_cases_validates_per_seed_tools(self) -> None:
         rows = [
             {
                 "type": "prompt",
@@ -106,7 +106,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         ]
-        test_set = _prepare_seeds(
+        test_set = _prepare_test_cases(
             rows,
             tool_source="per_seed",
             fixed_system_prompt=None,
@@ -114,7 +114,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(test_set[0]["seed"]["tools"][0]["name"], "lookup")
 
-    def test_prepare_seeds_rejects_seed_tools_for_runtime_tool_source(self) -> None:
+    def test_prepare_test_cases_rejects_seed_tools_for_runtime_tool_source(self) -> None:
         rows = [
             {
                 "type": "prompt",
@@ -132,17 +132,17 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         ]
-        with self.assertRaisesRegex(ValueError, "seed.tools is only allowed when tool_source=per_seed"):
-            _prepare_seeds(
+        with self.assertRaisesRegex(ValueError, "test case tools are only allowed when tool_source=per_seed"):
+            _prepare_test_cases(
                 rows,
                 tool_source="runtime",
                 fixed_system_prompt=None,
             )
 
     async def test_run_inference_uses_fixed_target_prompt_exactly(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {"description": "seed prompt"},
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
@@ -174,7 +174,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -190,9 +190,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_messages[1].content, "seed prompt")
 
     async def test_run_inference_uses_per_seed_prompt_exactly(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {
                 "description": "seed prompt",
                 "system_prompt": "Per-seed prompt",
@@ -227,7 +227,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -242,7 +242,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_messages[0].content, "Per-seed prompt")
 
     async def test_run_inference_can_leave_versioned_seed_file_unchanged(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
             "test_case_id": "original-seed-id",
             "seed": {"description": "seed prompt"},
@@ -274,8 +274,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            original_seed_text = json.dumps(seed_row) + "\n"
-            test_set_path.write_text(original_seed_text, encoding="utf-8")
+            original_test_case_text = json.dumps(test_case_row) + "\n"
+            test_set_path.write_text(original_test_case_text, encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -287,14 +287,14 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     rewrite_test_set_path=False,
                 )
 
-            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
+            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_test_case_text)
 
     async def test_run_inference_never_mutates_versioned_seed_artifact(self) -> None:
         """Even when callers pass rewrite_test_set_path=True, files under
         artifacts/test_set/v#### must be left intact so the cached file_hashes
         stay valid."""
 
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
             "test_case_id": "original-seed-id",
             "seed": {"description": "seed prompt"},
@@ -328,8 +328,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             versioned_dir.mkdir(parents=True, exist_ok=True)
             test_set_path = versioned_dir / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            original_seed_text = json.dumps(seed_row) + "\n"
-            test_set_path.write_text(original_seed_text, encoding="utf-8")
+            original_test_case_text = json.dumps(test_case_row) + "\n"
+            test_set_path.write_text(original_test_case_text, encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -341,12 +341,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     rewrite_test_set_path=True,
                 )
 
-            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
+            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_test_case_text)
 
     async def test_run_inference_fails_when_viewer_artifact_build_fails(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {"description": "seed prompt"},
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
@@ -376,7 +376,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()),
@@ -395,9 +395,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     )
 
     async def test_run_inference_persists_owned_llm_calls_and_links_message_ids(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {"description": "seed prompt"},
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
@@ -441,7 +441,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -463,9 +463,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcript_row["llm_calls"][0]["message_ids"], ["event:1"])
 
     async def test_run_inference_sets_runtime_close_error_stop_reason(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {"description": "seed prompt"},
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
@@ -495,7 +495,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
@@ -514,9 +514,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcript_rows[0]["stop_reason"], "runtime_close_error")
 
     async def test_run_inference_external_transcript_writes_minimal_rows(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {"description": "Please help", "system_prompt": "You are a health assistant."},
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
@@ -546,7 +546,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()):
                 await run_inference(
@@ -567,9 +567,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcript_rows[0]["events"][0]["edit"]["message"]["content"], "You are a health assistant.")
 
     async def test_run_inference_scenario_keeps_setup_hidden_for_external_target(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "scenario",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
             "seed": {
@@ -607,7 +607,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.inference.generate", new=fake_generate),
@@ -644,9 +644,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_run_inference_scenario_forwards_setup_like_text_unchanged(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "scenario",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
             "seed": {
@@ -691,7 +691,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.inference.generate", new=fake_generate),
@@ -725,9 +725,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target_events[0]["edit"]["message"]["content"], "hey, can you help me figure out this headache?")
 
     async def test_run_inference_scenario_keeps_setup_hidden_for_hosted_target(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "scenario",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
             "seed": {
@@ -767,7 +767,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.inference.generate", new=fake_generate),
@@ -791,9 +791,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([message.content for message in user_messages], ["Hello target"])
 
     async def test_run_inference_scenario_keeps_setup_hidden_for_other_hosted_runtime_modes(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "scenario",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "behavior": "Risk",
             "dimensions": {"behavior": "behavior-a"},
             "seed": {
@@ -835,7 +835,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 tmp_path = Path(tmp_dir)
                 test_set_path = tmp_path / "test_set.jsonl"
                 out_dir = tmp_path / "run"
-                test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+                test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
                 with (
                     patch("p2m.stages.inference.generate", new=fake_generate),
@@ -859,9 +859,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([message.content for message in user_messages], ["Hello target"])
 
     async def test_run_inference_rejects_item_tools_without_simulator_target(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {
                 "description": "seed prompt",
                 "tools": [
@@ -880,11 +880,11 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(
                 ValueError,
-                "seed.tools is only allowed when tool_source=per_seed",
+                "test case tools are only allowed when tool_source=per_seed",
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -895,9 +895,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_run_inference_per_seed_uses_seed_tools_with_simulator_target(self) -> None:
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed-1",
+            "test_case_id": "test-case-1",
             "seed": {
                 "description": "seed prompt",
                 "tools": [
@@ -911,14 +911,14 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         }
-        captured_seed_payload: dict[str, object] = {}
+        captured_test_case_payload: dict[str, object] = {}
 
-        async def fake_run_prompt_seed(**kwargs):
-            captured_seed_payload.update(kwargs["seed"]["seed"])
+        async def fake_run_prompt_test_case(**kwargs):
+            captured_test_case_payload.update(kwargs["test_case"]["seed"])
 
             class FakeTranscript:
                 def to_dict(self) -> dict[str, object]:
-                    return {"type": "prompt", "test_case_id": str(kwargs["seed"]["test_case_id"])}
+                    return {"type": "prompt", "test_case_id": str(kwargs["test_case"]["test_case_id"])}
 
             return FakeTranscript()
 
@@ -926,9 +926,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", tools=ToolsConfig(simulator="azure/gpt-5.4-mini")),
@@ -940,17 +940,17 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-        self.assertEqual(captured_seed_payload["tools"][0]["name"], "lookup")
+        self.assertEqual(captured_test_case_payload["tools"][0]["name"], "lookup")
 
     async def test_run_inference_preserves_input_order_under_parallel_completion(self) -> None:
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "slow prompt"}},
             {"type": "prompt", "seed": {"description": "fast prompt"}},
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = kwargs["seed"]["test_case_id"]
-            if test_case_id == "seed_000001":
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = kwargs["test_case"]["test_case_id"]
+            if test_case_id == "test_case_000001":
                 await asyncio.sleep(0.05)
 
             class FakeTranscript:
@@ -963,9 +963,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -982,19 +982,19 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(sorted(row["test_case_id"] for row in transcript_rows), ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["test_case_id"] for row in transcript_rows), ["test_case_000001", "test_case_000002"])
 
     async def test_run_inference_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "slow prompt"}},
             {"type": "prompt", "seed": {"description": "fast prompt"}},
         ]
         release_slow = asyncio.Event()
         fast_finished = asyncio.Event()
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = str(kwargs["seed"]["test_case_id"])
-            if test_case_id == "seed_000001":
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
+            if test_case_id == "test_case_000001":
                 await release_slow.wait()
             else:
                 fast_finished.set()
@@ -1010,9 +1010,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             transcripts_path = out_dir / "transcripts.jsonl"
-            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 inference_task = asyncio.create_task(
                     run_inference(
                         test_set_path=str(test_set_path),
@@ -1036,7 +1036,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     json.loads(line)
                     for line in transcripts_path.read_text(encoding="utf-8").splitlines()
                 ]
-                self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000002"])
+                self.assertEqual([row["test_case_id"] for row in interim_rows], ["test_case_000002"])
 
                 release_slow.set()
                 await inference_task
@@ -1046,7 +1046,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(sorted(row["test_case_id"] for row in final_rows), ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["test_case_id"] for row in final_rows), ["test_case_000001", "test_case_000002"])
 
     async def test_run_inference_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
         """A per-row worker failure no longer kills the stage outright.
@@ -1065,16 +1065,16 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         focused on the soft-fail contract; the ratio threshold itself
         is covered by a dedicated test below.
         """
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "successful prompt"}},
             {"type": "prompt", "seed": {"description": "failing prompt"}},
         ]
         release_failure = asyncio.Event()
         success_finished = asyncio.Event()
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = str(kwargs["seed"]["test_case_id"])
-            if test_case_id == "seed_000001":
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
+            if test_case_id == "test_case_000001":
                 success_finished.set()
 
                 class FakeTranscript:
@@ -1091,10 +1091,10 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             transcripts_path = out_dir / "transcripts.jsonl"
-            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
             with patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
-                 patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                 patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 inference_task = asyncio.create_task(
                     run_inference(
                         test_set_path=str(test_set_path),
@@ -1118,7 +1118,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     json.loads(line)
                     for line in transcripts_path.read_text(encoding="utf-8").splitlines()
                 ]
-                self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000001"])
+                self.assertEqual([row["test_case_id"] for row in interim_rows], ["test_case_000001"])
 
                 release_failure.set()
                 result = await inference_task
@@ -1128,7 +1128,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual([row["test_case_id"] for row in final_rows], ["seed_000001"])
+        self.assertEqual([row["test_case_id"] for row in final_rows], ["test_case_000001"])
         self.assertEqual(result["errored_count"], 1)
         self.assertEqual(result["new_count"], 2)
         self.assertEqual(result["target_error_count"], 0)
@@ -1139,21 +1139,21 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         broken target) rather than per-row noise, and silently
         completing would be misleading.
         """
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "first failing prompt"}},
             {"type": "prompt", "seed": {"description": "second failing prompt"}},
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
+        async def fake_run_prompt_test_case(**kwargs):
             raise RuntimeError("boom")
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
                     await run_inference(
                         test_set_path=str(test_set_path),
@@ -1168,14 +1168,14 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_inference_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated transcripts.jsonl causes completed test_set to be skipped."""
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "already done"}},
             {"type": "prompt", "seed": {"description": "still pending"}},
         ]
         call_log: list[str] = []
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = str(kwargs["seed"]["test_case_id"])
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
             call_log.append(test_case_id)
 
             class FakeTranscript:
@@ -1190,12 +1190,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             out_dir.mkdir()
             test_set_path.write_text(
-                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
                 encoding="utf-8",
             )
 
             # First run: let both test_set complete.
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -1203,11 +1203,11 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-resume",
                 )
             self.assertEqual(result["count"], 2)
-            self.assertEqual(sorted(call_log), ["seed_000001", "seed_000002"])
+            self.assertEqual(sorted(call_log), ["test_case_000001", "test_case_000002"])
 
-            # Second run: seed_000001 and seed_000002 already exist — nothing to do.
+            # Second run: test_case_000001 and test_case_000002 already exist — nothing to do.
             call_log.clear()
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -1219,12 +1219,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_inference_discards_transcripts_on_config_change(self) -> None:
         """Changing target model invalidates existing transcripts."""
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "a prompt"}},
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = str(kwargs["seed"]["test_case_id"])
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
@@ -1236,10 +1236,10 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text(json.dumps(seed_rows[0]) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(test_case_rows[0]) + "\n", encoding="utf-8")
 
             # First run with model A.
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-a"),
@@ -1248,7 +1248,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             # Second run with model B — should discard and re-run.
-            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-b"),
@@ -1257,7 +1257,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
             # count is 1 (re-ran, not 2 = resumed + new)
             self.assertEqual(result["count"], 1)
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": "base prompt"}},
             {
                 "type": "scenario",
@@ -1271,17 +1271,17 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
+        async def fake_run_prompt_test_case(**kwargs):
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"type": "prompt", "test_case_id": str(kwargs["seed"]["test_case_id"])}
+                    return {"type": "prompt", "test_case_id": str(kwargs["test_case"]["test_case_id"])}
 
             return FakeTranscript()
 
-        async def fake_run_scenario_seed(**kwargs):
+        async def fake_run_scenario_test_case(**kwargs):
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"type": "scenario", "test_case_id": str(kwargs["seed"]["test_case_id"])}
+                    return {"type": "scenario", "test_case_id": str(kwargs["test_case"]["test_case_id"])}
 
             return FakeTranscript()
 
@@ -1289,11 +1289,11 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
-                patch("p2m.stages.inference._run_scenario_seed", new=fake_run_scenario_seed),
+                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
+                patch("p2m.stages.inference._run_scenario_test_case", new=fake_run_scenario_test_case),
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -1307,11 +1307,11 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            canonical_rows = load_seeds(test_set_path)
+            canonical_rows = load_test_cases(test_set_path)
 
         self.assertEqual(
             [row["test_case_id"] for row in canonical_rows],
-            ["seed_000001", "seed_000002", "seed_000003"],
+            ["test_case_000001", "test_case_000002", "test_case_000003"],
         )
         self.assertNotIn("parent_test_case_id", canonical_rows[2])
 
@@ -1319,7 +1319,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
     # Per-row refusal isolation (absorbed from PR #44)
     # ------------------------------------------------------------------
 
-    async def test_run_prompt_seed_records_target_input_refusal(self) -> None:
+    async def test_run_prompt_test_case_records_target_input_refusal(self) -> None:
         """Target-side LLMInputError is recorded as a transcript event, not raised.
 
         Without this, one Azure content-filter refusal kills the entire
@@ -1340,9 +1340,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         async def fake_close(self_inner):
             return None
 
-        seed_row = {
+        test_case_row = {
             "type": "prompt",
-            "test_case_id": "seed_000001",
+            "test_case_id": "test_case_000001",
             "seed": {"description": "adversarial prompt the target refuses"},
         }
 
@@ -1351,8 +1351,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             patch.object(HostedSession, "close", new=fake_close),
             patch.object(HostedSession, "run_turn", new=fake_run_turn),
         ):
-            transcript = await _run_prompt_seed(
-                seed=seed_row,
+            transcript = await _run_prompt_test_case(
+                test_case=test_case_row,
                 target=TargetConfig(model="azure/gpt-5.4-mini"),
                 inference=InferenceConfig(max_turns=1, concurrency=1),
                 max_tokens=1000,
@@ -1380,7 +1380,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         """
         from p2m.core.session import HostedSession
 
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(5)
         ]
@@ -1418,7 +1418,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             test_set_path.write_text(
-                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
                 encoding="utf-8",
             )
 
@@ -1448,8 +1448,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(transcript_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_seed = {row["test_case_id"]: row for row in transcript_rows}
-        refused = by_seed["seed_000003"]
+        by_test_case = {row["test_case_id"]: row for row in transcript_rows}
+        refused = by_test_case["test_case_000003"]
         self.assertEqual(refused["stop_reason"], "target_input_refused")
         refusal_events = [
             event for event in refused["events"]
@@ -1458,9 +1458,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(refusal_events), 1)
 
-        for completed_id in ("seed_000001", "seed_000002", "seed_000004", "seed_000005"):
+        for completed_id in ("test_case_000001", "test_case_000002", "test_case_000004", "test_case_000005"):
             self.assertEqual(
-                by_seed[completed_id]["stop_reason"],
+                by_test_case[completed_id]["stop_reason"],
                 "completed",
                 f"{completed_id} should have completed cleanly",
             )
@@ -1474,7 +1474,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         errors into a recorded transcript event with
         stop_reason='tester_input_refused'.
         """
-        seed_rows = [
+        test_case_rows = [
             {
                 "type": "scenario",
                 "seed": {
@@ -1533,7 +1533,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             test_set_path.write_text(
-                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
                 encoding="utf-8",
             )
 
@@ -1562,8 +1562,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(transcript_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_seed = {row["test_case_id"]: row for row in transcript_rows}
-        refused = by_seed["seed_000003"]
+        by_test_case = {row["test_case_id"]: row for row in transcript_rows}
+        refused = by_test_case["test_case_000003"]
         self.assertEqual(refused["stop_reason"], "tester_input_refused")
         refusal_events = [
             event for event in refused["events"]
@@ -1573,18 +1573,18 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(refusal_events), 1)
 
     async def test_run_inference_still_fails_fast_on_provider_5xx(self) -> None:
-        """LLMProviderError (Azure 5xx) is global, not seed-specific.
+        """LLMProviderError (Azure 5xx) is global, not test-case-specific.
 
         Verifies the per-row tolerance didn't accidentally swallow
         auth/rate-limit/5xx errors that should still abort the stage.
         Absorbed from PR #44 commit 82cf339.
         """
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(3)
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
+        async def fake_run_prompt_test_case(**kwargs):
             raise LLMProviderError("Azure 503 ServiceUnavailable")
 
         with TemporaryDirectory() as tmp_dir:
@@ -1592,12 +1592,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             test_set_path.write_text(
-                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
                 encoding="utf-8",
             )
 
             with (
-                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
+                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
                 self.assertRaises(LLMProviderError),
             ):
                 await run_inference(
@@ -1619,20 +1619,20 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         tester_input_refused, target_error). When the worker hits
         unrecognised exceptions at scale we should fail loudly because
         that's almost always a systemic problem (config bug, broken
-        validation) rather than seed-specific bad luck. Default
+        validation) rather than test-case-specific bad luck. Default
         threshold is 10%; this test forces 50% (1/2) and asserts the
         stage raises. The companion test
         ``test_run_inference_keeps_partial_successful_transcripts_when_later_worker_fails``
         covers the soft-fail path with the threshold relaxed.
         """
-        seed_rows = [
+        test_case_rows = [
             {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(2)
         ]
 
-        async def fake_run_prompt_seed(**kwargs):
-            test_case_id = str(kwargs["seed"]["test_case_id"])
-            if test_case_id == "seed_000001":
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
+            if test_case_id == "test_case_000001":
                 class FakeTranscript:
                     def to_dict(self_inner) -> dict[str, str]:
                         return {"type": "prompt", "test_case_id": test_case_id}
@@ -1645,13 +1645,13 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             test_set_path.write_text(
-                "\n".join(json.dumps(row) for row in seed_rows) + "\n",
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
                 encoding="utf-8",
             )
 
             with (
                 patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.10"}, clear=False),
-                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
+                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
                 self.assertRaisesRegex(RuntimeError, "worker exploded"),
             ):
                 await run_inference(

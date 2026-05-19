@@ -109,7 +109,7 @@ class ArtifactFingerprint:
     """Stable hash material for a cacheable artifact."""
 
     stage_name: str
-    concept_hash: str | None
+    behavior_hash: str | None
     config_hash: str
     input_hash: str
     descriptor: dict[str, Any]
@@ -367,8 +367,8 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
         "config_hash": plan.fingerprint.config_hash,
         "input_hash": plan.fingerprint.input_hash,
     }
-    if plan.fingerprint.concept_hash is not None:
-        hashes["concept_hash"] = plan.fingerprint.concept_hash
+    if plan.fingerprint.behavior_hash is not None:
+        hashes["behavior_hash"] = plan.fingerprint.behavior_hash
     metadata = {
         "schema_version": 1,
         "artifact_type": plan.stage_name,
@@ -583,9 +583,9 @@ def artifact_ref(
         "metadata_path": relative_metadata_path,
         "file_hashes": file_hashes,
     }
-    concept_hash = hashes.get("concept_hash", plan.fingerprint.concept_hash)
-    if concept_hash is not None:
-        ref["concept_hash"] = concept_hash
+    behavior_hash = hashes.get("behavior_hash", plan.fingerprint.behavior_hash)
+    if behavior_hash is not None:
+        ref["behavior_hash"] = behavior_hash
     return ref
 
 
@@ -614,9 +614,9 @@ def _ref_from_metadata(
         "metadata_path": _relative_to_suite(sidecar_path, suite_root),
         "file_hashes": file_hashes,
     }
-    concept_hash = hashes.get("concept_hash")
-    if concept_hash is not None:
-        ref["concept_hash"] = concept_hash
+    behavior_hash = hashes.get("behavior_hash")
+    if behavior_hash is not None:
+        ref["behavior_hash"] = behavior_hash
     return ref
 
 
@@ -627,18 +627,18 @@ def build_artifact_fingerprint(
     raw_cfg: dict[str, Any],
 ) -> ArtifactFingerprint:
     descriptor = _stage_descriptor(ctx=ctx, stage_name=stage_name, raw_cfg=raw_cfg)
-    concept_hash = descriptor.get("concept_hash")
+    behavior_hash = descriptor.get("behavior_hash")
     config_hash = hash_payload(descriptor["config"])
     input_hash = hash_payload({
         "stage_name": stage_name,
-        "concept_hash": concept_hash,
+        "behavior_hash": behavior_hash,
         "config_hash": config_hash,
         "dependencies": descriptor.get("dependencies", {}),
         "prompts": descriptor.get("prompts", {}),
     })
     return ArtifactFingerprint(
         stage_name=stage_name,
-        concept_hash=concept_hash if isinstance(concept_hash, str) else None,
+        behavior_hash=behavior_hash if isinstance(behavior_hash, str) else None,
         config_hash=config_hash,
         input_hash=input_hash,
         descriptor=descriptor,
@@ -659,16 +659,16 @@ def _stage_descriptor(
     stage_name: str,
     raw_cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    # ``concept_hash`` is computed only for the systematize stage. Downstream
+    # ``behavior_hash`` is computed only for the systematize stage. Downstream
     # cacheable stages do NOT recompute it — they pick the behavior change up
     # transitively via ``_dependency_descriptor``: test_set depends on the
     # systematize artifact, so any behavior edit invalidates the cascade. This relies on the
     # dependency chain being complete; if a future cacheable stage stops
     # depending on its upstream artifact, hash this behavior directly here
     # too or the cache will reuse stale outputs after a behavior edit.
-    concept_hash = None
+    behavior_hash = None
     if stage_name == "systematize":
-        concept_hash = hash_payload({
+        behavior_hash = hash_payload({
             "behavior_name": ctx.get("behavior_name"),
             "behavior": ctx.get("behavior"),
         })
@@ -679,8 +679,8 @@ def _stage_descriptor(
         "dependencies": _dependency_descriptor(ctx=ctx, stage_name=stage_name),
         "prompts": _prompt_descriptor(stage_name),
     }
-    if concept_hash is not None:
-        descriptor["concept_hash"] = concept_hash
+    if behavior_hash is not None:
+        descriptor["behavior_hash"] = behavior_hash
     return descriptor
 
 

@@ -80,7 +80,7 @@ def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     return "—"
 
 
-def _compute_seed_metrics(
+def _compute_test_set_metrics(
     rows: list[dict[str, Any]],
     *,
     include_tester_model: bool = False,
@@ -115,12 +115,12 @@ def _compute_seed_metrics(
 
 def compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute prompt-only summary metrics."""
-    return _compute_seed_metrics(rows)
+    return _compute_test_set_metrics(rows)
 
 
 def compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute scenario-only summary metrics."""
-    return _compute_seed_metrics(rows, include_tester_model=True)
+    return _compute_test_set_metrics(rows, include_tester_model=True)
 
 
 def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
@@ -190,10 +190,10 @@ def load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     )
     prompt_test_case_count, scenario_test_case_count = count_test_case_types(suite_dir / "test_set.jsonl")
 
-    concept_name = suite_dir.name
-    concept_block = (taxonomy or {}).get("behavior")
-    if isinstance(concept_block, dict) and isinstance(concept_block.get("name"), str) and concept_block.get("name"):
-        concept_name = concept_block["name"]
+    behavior_name = suite_dir.name
+    behavior_block = (taxonomy or {}).get("behavior")
+    if isinstance(behavior_block, dict) and isinstance(behavior_block.get("name"), str) and behavior_block.get("name"):
+        behavior_name = behavior_block["name"]
 
     if has_results:
         status = "has_results"
@@ -205,7 +205,7 @@ def load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "concept_name": concept_name,
+        "behavior_name": behavior_name,
         "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
         "prompt_test_case_count": prompt_test_case_count,
         "scenario_test_case_count": scenario_test_case_count,

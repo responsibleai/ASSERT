@@ -128,7 +128,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
             with patch("p2m.stages.systematization.generate_structured", new=fake_generate_structured):
                 written_path = await run_systematization(
                     behavior="harmful advice",
-                    concept_text="Harmful advice",
+                    behavior_text="Harmful advice",
                     save_path=str(out_path),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", reasoning_effort="high"),
                     mode="research",
@@ -172,7 +172,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
             with patch("p2m.stages.systematization.generate_structured", new=fake_generate_structured):
                 await run_systematization(
                     behavior="harmful advice",
-                    concept_text="Risk body",
+                    behavior_text="Risk body",
                     save_path=str(out_path),
                     model_cfg=ModelConfig(name="azure/o3", temperature=0.2, reasoning_effort="high"),
                     mode="direct",
@@ -258,7 +258,7 @@ Avoid over-flagging educational content.
             ):
                 await run_systematization(
                     behavior="harmful advice",
-                    concept_text="Harmful advice",
+                    behavior_text="Harmful advice",
                     save_path=str(out_path),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", reasoning_effort="high"),
                     mode="research",

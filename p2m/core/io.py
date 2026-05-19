@@ -71,7 +71,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
                 pass
 
 
-def load_seeds(
+def load_test_cases(
     path: str | Path,
     *,
     strict: bool = False,
@@ -101,12 +101,12 @@ def load_seeds(
     return records
 
 
-def normalize_seed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Assign canonical opaque seed IDs."""
+def normalize_test_case_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assign canonical opaque test case IDs."""
     normalized = [dict(row) for row in rows]
     counter = 1
     for row in normalized:
-        row["test_case_id"] = f"seed_{counter:06d}"
+        row["test_case_id"] = f"test_case_{counter:06d}"
         counter += 1
     return normalized
 
@@ -154,7 +154,7 @@ def load_prompt_text(filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def normalize_seed_context(value: str | None) -> str | None:
+def normalize_test_case_context(value: str | None) -> str | None:
     if value is None:
         return None
     trimmed = value.strip()

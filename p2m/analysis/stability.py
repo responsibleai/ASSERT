@@ -18,22 +18,22 @@ from typing import Any
 def _compute_group_stats(
     rows: list[dict[str, Any]],
     *,
-    seed_key: str,
+    test_case_key: str,
     run_key: str,
     outcome_key: str,
 ) -> dict[str, Any]:
-    """Shared computation for seed-level outcome stats within a group of runs."""
-    by_seed: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    """Shared computation for test-case-level outcome stats within a group of runs."""
+    by_test_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
     by_run: dict[str, list[bool]] = defaultdict(list)
 
     for row in rows:
-        sid = str(row.get(seed_key, ""))
+        sid = str(row.get(test_case_key, ""))
         run = str(row.get(run_key, ""))
         outcome = bool(row.get(outcome_key, False))
-        by_seed[sid].append({"run": run, "outcome": outcome})
+        by_test_case[sid].append({"run": run, "outcome": outcome})
         by_run[run].append(outcome)
 
-    n_seeds = len(by_seed)
+    n_seeds = len(by_test_case)
     if n_seeds == 0:
         return {"n_seeds": 0, "n_runs": 0}
 
@@ -41,7 +41,7 @@ def _compute_group_stats(
 
     # Only count test_set present in all runs for agreement stats
     full_coverage_seeds = {
-        sid: entries for sid, entries in by_seed.items()
+        sid: entries for sid, entries in by_test_case.items()
         if len(entries) == n_runs
     }
     n_full = len(full_coverage_seeds)
@@ -72,7 +72,7 @@ def _compute_group_stats(
 
     return {
         "n_seeds": n_seeds,
-        "n_seeds_full_coverage": n_full,
+        "n_test_cases_full_coverage": n_full,
         "n_runs": n_runs,
         "n_always_violate": n_always_violate,
         "n_always_clear": n_always_clear,
@@ -86,7 +86,7 @@ def _compute_group_stats(
 def compute_tester_variation(
     scored_rows: list[dict[str, Any]],
     *,
-    seed_key: str = "test_case_id",
+    test_case_key: str = "test_case_id",
     tester_key: str = "tester_model",
     run_key: str = "run",
     outcome_key: str = "policy_violation",
@@ -125,16 +125,16 @@ def compute_tester_variation(
 def compute_repeatability(
     scored_rows: list[dict[str, Any]],
     *,
-    seed_key: str = "test_case_id",
+    test_case_key: str = "test_case_id",
     run_key: str = "run",
     outcome_key: str = "policy_violation",
 ) -> dict[str, Any]:
-    """Compute seed-level repeatability across runs of the SAME configuration.
+    """Compute test-case-level repeatability across runs of the SAME configuration.
 
     Only pass rows from runs that share the same tester, target, and judge.
     """
     return _compute_group_stats(
-        scored_rows, seed_key=seed_key, run_key=run_key, outcome_key=outcome_key,
+        scored_rows, test_case_key=test_case_key, run_key=run_key, outcome_key=outcome_key,
     )
 
 
@@ -159,7 +159,7 @@ def format_repeatability(result: dict[str, Any]) -> str:
     if result.get("n_runs", 0) < 2:
         return "Need ≥2 runs of same configuration for repeatability."
 
-    n_full = result["n_seeds_full_coverage"]
+    n_full = result["n_test_cases_full_coverage"]
     lines = []
     lines.append(f"Repeatability ({result['n_runs']} runs, "
                  f"{n_full} shared test_set)")

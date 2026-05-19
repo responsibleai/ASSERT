@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from p2m.core.io import (
-    load_seeds,
+    load_test_cases,
     resolve_path,
     write_jsonl,
 )
@@ -26,7 +26,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         transcript = Transcript(
             metadata=TranscriptMetadata(
                 kind="scenario",
-                test_case_id="seed-1",
+                test_case_id="test-case-1",
                 behavior="behavior",
                 target="target",
                 dimensions={"behavior": "behavior"},
@@ -70,24 +70,24 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             {"type": "string"},
         )
 
-    def test_utils_shim_write_jsonl_and_load_seeds_round_trip(self) -> None:
+    def test_utils_shim_write_jsonl_and_load_test_cases_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "test_set.jsonl"
             write_jsonl(path, [{"prompt": "one"}, {"prompt": "two"}])
 
-            rows = load_seeds(path)
+            rows = load_test_cases(path)
             self.assertEqual(rows, [{"prompt": "one"}, {"prompt": "two"}])
 
-    def test_utils_shim_load_seeds_skips_malformed_lines_when_not_strict(self) -> None:
+    def test_utils_shim_load_test_cases_skips_malformed_lines_when_not_strict(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "test_set.jsonl"
             path.write_text('{"prompt":"ok"}\nnot-json\n', encoding="utf-8")
 
-            rows = load_seeds(path, strict=False)
+            rows = load_test_cases(path, strict=False)
             self.assertEqual(rows, [{"prompt": "ok"}])
 
             with self.assertRaises(ValueError):
-                load_seeds(path, strict=True)
+                load_test_cases(path, strict=True)
 
     def test_built_in_dimensions_include_required_base_metrics(self) -> None:
         self.assertEqual(

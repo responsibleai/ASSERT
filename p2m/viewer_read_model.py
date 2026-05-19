@@ -79,7 +79,7 @@ def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
     return base_dir.joinpath(*parts)
 
 
-def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Path:
+def _test_set_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Path:
     """Return the test set artifact path selected by a run, with legacy fallback."""
 
     artifacts = manifest.get("artifact_versions") if isinstance(manifest, dict) else None
@@ -494,7 +494,7 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     relative_root = run_dir
     manifest_path = run_dir / "manifest.json"
     manifest = _load_json_file(manifest_path) if manifest_path.exists() else None
-    test_set_path = _seed_artifact_path(suite_dir, manifest)
+    test_set_path = _test_set_artifact_path(suite_dir, manifest)
     config_path = run_dir / "config.yaml"
     transcripts_path = run_dir / "transcripts.jsonl"
     scores_path = run_dir / "scores.jsonl"
@@ -519,36 +519,36 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     config = _load_yaml_file(config_path)
     runtime_mode = _runtime_mode(config)
 
-    transcript_by_seed: dict[tuple[str, str], dict[str, Any]] = {}
+    transcript_by_test_case: dict[tuple[str, str], dict[str, Any]] = {}
     for _, _, row in transcript_rows:
         kind, test_case_id = _kind_and_test_case_id(row, path=transcripts_path)
         key = (kind, test_case_id)
-        if key in transcript_by_seed:
+        if key in transcript_by_test_case:
             raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {transcripts_path}")
-        transcript_by_seed[key] = row
+        transcript_by_test_case[key] = row
 
-    seeds_by_seed: dict[tuple[str, str], dict[str, Any]] = {}
+    test_cases_by_id: dict[tuple[str, str], dict[str, Any]] = {}
     if test_set_path.exists():
         for _, _, row in _iter_jsonl_with_offsets(test_set_path):
             kind, test_case_id = _kind_and_test_case_id(row, path=test_set_path)
             key = (kind, test_case_id)
-            if key in seeds_by_seed:
+            if key in test_cases_by_id:
                 raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {test_set_path}")
-            seeds_by_seed[key] = row
+            test_cases_by_id[key] = row
 
     score_rows = _iter_jsonl_with_offsets(scores_path)
     prompt_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
     for _, _, row in score_rows:
         kind, test_case_id = _kind_and_test_case_id(row, path=scores_path)
-        transcript_row = transcript_by_seed.get((kind, test_case_id))
+        transcript_row = transcript_by_test_case.get((kind, test_case_id))
         if transcript_row is None:
             raise ViewerReadModelBuildError(
                 f"Missing transcript row for {kind}:{test_case_id} while building {run_dir}"
             )
-        seed_row = seeds_by_seed.get((kind, test_case_id))
+        test_case_row = test_cases_by_id.get((kind, test_case_id))
         dimensions = (
-            _read_factors(seed_row.get("dimensions") if seed_row is not None else None)
+            _read_factors(test_case_row.get("dimensions") if test_case_row is not None else None)
             or _read_factors(row.get("dimensions"))
             or _read_factors(transcript_row.get("dimensions"))
         )

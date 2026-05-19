@@ -16,7 +16,7 @@ from p2m.core.io import row_behavior
 def count_inference_turns(transcript_row: dict[str, Any]) -> int:
     """Count the number of tester-initiated inference turns in a transcript.
 
-    A inference turn is an tester user-message sent to the target view.
+    A inference turn is a tester user-message sent to the target view.
     """
     count = 0
     for event in transcript_row.get("events", []):

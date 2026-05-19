@@ -15,7 +15,7 @@ dimensions. Use the user's context to ground your levels.
 
 # Inputs
 
-- Behavior: {{concept_name}}
+- Behavior: {{behavior_name}}
 - Behavior Categories:
 {{behavior_categories}}
 - Context:

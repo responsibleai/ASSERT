@@ -182,7 +182,7 @@ class RunnerManifestTest(unittest.TestCase):
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
             transcripts_path.write_text(
-                '{"type":"prompt","test_case_id":"seed-1"}\n',
+                '{"type":"prompt","test_case_id":"test-case-1"}\n',
                 encoding="utf-8",
             )
             (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
@@ -249,7 +249,7 @@ class RunnerManifestTest(unittest.TestCase):
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
             transcripts_path.write_text(
-                '{"type":"prompt","test_case_id":"seed-1"}\n', encoding="utf-8"
+                '{"type":"prompt","test_case_id":"test-case-1"}\n', encoding="utf-8"
             )
             (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(

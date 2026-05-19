@@ -40,7 +40,7 @@ def _build_report(args: argparse.Namespace) -> dict:
         "status": "not_implemented",
         "baseline_sha": args.baseline,
         "treatment_sha": args.treatment,
-        "seeds_per_spec": args.test_set,
+        "test_cases_per_spec": args.test_set,
         "decision": {
             "decision": "PASS",
             "reasons": [

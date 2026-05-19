@@ -124,7 +124,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                     json.dumps(
                         {
                             "type": "scenario",
-                            "test_case_id": "seed-1",
+                            "test_case_id": "test-case-1",
                             "behavior": "behavior",
                             "dimensions": {"behavior": "node-a"},
                             "seed": {
@@ -137,7 +137,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                     json.dumps(
                         {
                             "type": "scenario",
-                            "test_case_id": "seed-2",
+                            "test_case_id": "test-case-2",
                             "behavior": "behavior",
                             "dimensions": {"behavior": "node-b"},
                             "seed": {
@@ -174,7 +174,7 @@ class SuiteResultsExportTest(unittest.TestCase):
         transcript_rows = [
             {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "dimensions": {"behavior": "node-a"},
                 "target": "target-model",
@@ -194,7 +194,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             json.dumps(
                 {
                     "type": "scenario",
-                    "test_case_id": "seed-2",
+                    "test_case_id": "test-case-2",
                     "behavior": "behavior",
                     "dimensions": {"behavior": "node-b"},
                     "target": "target-model-2",
@@ -212,7 +212,7 @@ class SuiteResultsExportTest(unittest.TestCase):
 
         score_rows = [
             self._score_row(
-                test_case_id="seed-1",
+                test_case_id="test-case-1",
                 behavior="node-a",
                 permissible=False,
                 policy_violation=True,
@@ -223,7 +223,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                 node1_violated=None,
             ),
             self._score_row(
-                test_case_id="seed-2",
+                test_case_id="test-case-2",
                 behavior="node-b",
                 permissible=True,
                 policy_violation=False,
@@ -281,10 +281,10 @@ class SuiteResultsExportTest(unittest.TestCase):
             self.assertEqual(len(runs_lines), 3)
             self.assertIn("suite_id,run_id,status", runs_lines[0])
 
-            seeds_lines = (export_dir / "test_set.csv").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(seeds_lines), 3)
-            self.assertTrue(seeds_lines[0].startswith("suite_id,test_case_id,type"))
-            self.assertNotIn("run_id", seeds_lines[0])
+            test_set_lines = (export_dir / "test_set.csv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(test_set_lines), 3)
+            self.assertTrue(test_set_lines[0].startswith("suite_id,test_case_id,type"))
+            self.assertNotIn("run_id", test_set_lines[0])
 
             conversations_text = (export_dir / "conversations.csv").read_text(encoding="utf-8")
             self.assertIn("Here is a reply", conversations_text)
@@ -302,7 +302,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             scores_lines = scores_text.splitlines()
             scores_reader = csv.DictReader(scores_lines)
             score_dicts = list(scores_reader)
-            seed1_row = next(r for r in score_dicts if r["test_case_id"] == "seed-1")
+            seed1_row = next(r for r in score_dicts if r["test_case_id"] == "test-case-1")
             self.assertEqual(seed1_row["node-a_relevant"], "True")
             self.assertEqual(seed1_row["node-a_violated"], "True")
             self.assertEqual(seed1_row["node-a_confidence"], "high")

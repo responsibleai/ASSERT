@@ -151,10 +151,10 @@ class TestComputeInferenceMetrics:
 # --- stability.py ---
 
 
-def _make_scored_rows(seed_outcomes: dict[str, list[bool]], runs: list[str]):
+def _make_scored_rows(test_case_outcomes: dict[str, list[bool]], runs: list[str]):
     """Build scored rows from a seed→per-run-outcomes mapping."""
     rows = []
-    for sid, outcomes in seed_outcomes.items():
+    for sid, outcomes in test_case_outcomes.items():
         for run, outcome in zip(runs, outcomes):
             rows.append({"test_case_id": sid, "run": run, "policy_violation": outcome})
     return rows

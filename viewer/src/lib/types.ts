@@ -226,7 +226,7 @@ export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
-	concept_name: string;
+	behavior_name: string;
 	behavior_category_count: number;
 	prompt_test_case_count: number;
 	scenario_test_case_count: number;

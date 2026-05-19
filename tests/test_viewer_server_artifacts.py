@@ -103,7 +103,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -124,7 +124,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -140,7 +140,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -194,7 +194,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "versioned behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -226,7 +226,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "target": "target-model",
                         "events": [],
@@ -240,7 +240,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "judge_model": "judge-model",
                         "target": "target-model",
@@ -274,7 +274,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -293,7 +293,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             transcript_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -303,7 +303,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             }
             score_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -322,7 +322,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "scores.jsonl").write_text(json.dumps(score_row) + "\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(ViewerReadModelBuildError, "Duplicate prompt:seed-1 row"):
+            with self.assertRaisesRegex(ViewerReadModelBuildError, "Duplicate prompt:test-case-1 row"):
                 build_run_viewer_artifacts(run_dir)
 
     def test_build_viewer_read_model_rejects_duplicate_score_keys(self) -> None:
@@ -336,7 +336,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -355,7 +355,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             transcript_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -365,7 +365,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             }
             score_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -384,7 +384,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ViewerReadModelBuildError, "Duplicate prompt:seed-1 row"):
+            with self.assertRaisesRegex(ViewerReadModelBuildError, "Duplicate prompt:test-case-1 row"):
                 build_run_viewer_artifacts(run_dir)
 
     def test_load_judged_prompts_surfaces_invalid_scores_jsonl(self) -> None:
@@ -403,7 +403,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "prompt"},
@@ -563,7 +563,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {
@@ -581,7 +581,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             valid_row = {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "dimensions": {"behavior": "behavior"},
                 "stop_reason": "max_turns",
@@ -635,8 +635,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                   previewCount: payload.inferencePreviewRows.length,
                   previewSeed: payload.inferencePreviewRows[0]?.test_case_id ?? null,
                   previewTurns: payload.inferencePreviewRows[0]?.turns_count ?? null,
-                  previewDrawerTitle: payload.scenarioSeedMap?.['seed-1']?.title ?? null,
-                  previewDrawerMessages: payload.scenarioDrawerItems?.['seed-1']?.messages.length ?? 0,
+                  previewDrawerTitle: payload.scenarioSeedMap?.['test-case-1']?.title ?? null,
+                  previewDrawerMessages: payload.scenarioDrawerItems?.['test-case-1']?.messages.length ?? 0,
                   previewTotal: payload.inferencePreviewTotal,
                   auditScores: payload.auditScores.length
                 }}));
@@ -647,7 +647,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["previewCount"], 1)
-            self.assertEqual(payload["previewSeed"], "seed-1")
+            self.assertEqual(payload["previewSeed"], "test-case-1")
             self.assertEqual(payload["previewTurns"], 2)
             self.assertEqual(payload["previewDrawerTitle"], "Scenario title")
             self.assertEqual(payload["previewDrawerMessages"], 0)
@@ -684,7 +684,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
@@ -699,7 +699,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             valid_row = {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -763,7 +763,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
@@ -780,7 +780,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             valid_row = {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -853,7 +853,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
@@ -874,7 +874,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             valid_row = {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "dimensions": {"behavior": "behavior"},
                 "stop_reason": "max_turns",
@@ -883,7 +883,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             }
             score_row = {
                 "type": "scenario",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "dimensions": {"behavior": "behavior"},
                 "judge_model": "judge-model",
@@ -950,7 +950,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -978,7 +978,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1000,7 +1000,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1070,7 +1070,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -1091,7 +1091,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             transcript_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -1112,7 +1112,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             }
             score_row = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -1399,7 +1399,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed", "system_prompt": "System prompt"},
@@ -1422,7 +1422,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1457,7 +1457,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1486,7 +1486,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 f"""\
                 const {{ loadRunPageData, loadPromptDrawerItem }} = await import({json.dumps(data_path.as_uri())});
                 const page = loadRunPageData('suite-a', 'run-a');
-                const promptItem = await loadPromptDrawerItem('suite-a', 'run-a', 'seed-1');
+                const promptItem = await loadPromptDrawerItem('suite-a', 'run-a', 'test-case-1');
                 console.log(JSON.stringify({{
                   promptCount: page.samples.length,
                   drawerTitle: promptItem?.row_title ?? null,
@@ -1524,7 +1524,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
@@ -1533,7 +1533,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-2",
+                        "test_case_id": "test-case-2",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed 2"},
@@ -1556,7 +1556,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             prompt_transcript = {
                 "type": "prompt",
-                "test_case_id": "seed-1",
+                "test_case_id": "test-case-1",
                 "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
@@ -1578,7 +1578,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "prompt",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1607,7 +1607,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 f"""\
                 try {{
                   const {{ loadPromptDrawerItem }} = await import({json.dumps(data_path.as_uri())});
-                  await loadPromptDrawerItem('suite-a', 'run-a', 'seed-1');
+                  await loadPromptDrawerItem('suite-a', 'run-a', 'test-case-1');
                   console.log(JSON.stringify({{ ok: true }}));
                 }} catch (error) {{
                   console.log(JSON.stringify({{
@@ -1662,7 +1662,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
@@ -1681,7 +1681,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "scenario",
-                        "test_case_id": "seed-1",
+                        "test_case_id": "test-case-1",
                         "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
@@ -1727,7 +1727,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
     """Tests for path-traversal defenses that don't depend on Node TS support."""
 
     def test_manifest_relative_path_rejects_parent_directory_segments(self) -> None:
-        from p2m.viewer_read_model import _manifest_relative_path, _seed_artifact_path
+        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1746,7 +1746,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                 }
             }
             self.assertEqual(
-                _seed_artifact_path(suite_dir, malicious_manifest),
+                _test_set_artifact_path(suite_dir, malicious_manifest),
                 suite_dir / "test_set.jsonl",
             )
 
@@ -1756,19 +1756,19 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                 }
             }
             self.assertEqual(
-                _seed_artifact_path(suite_dir, safe_manifest),
+                _test_set_artifact_path(suite_dir, safe_manifest),
                 suite_dir / "artifacts" / "test_set" / "v0001" / "test_set.jsonl",
             )
 
-    def test_seed_artifact_path_rejects_absolute_paths(self) -> None:
+    def test_test_set_artifact_path_rejects_absolute_paths(self) -> None:
         """Regression for Copilot review #003 (round 2).
 
-        A tampered manifest that supplies an absolute seed path must be
+        A tampered manifest that supplies an absolute test-set path must be
         ignored — otherwise the absolute branch silently bypasses the
         relative ``..`` defense and reads from anywhere on disk.
         """
 
-        from p2m.viewer_read_model import _seed_artifact_path
+        from p2m.viewer_read_model import _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1786,11 +1786,11 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                 }
             }
             self.assertEqual(
-                _seed_artifact_path(suite_dir, malicious_manifest),
+                _test_set_artifact_path(suite_dir, malicious_manifest),
                 suite_dir / "test_set.jsonl",
             )
 
-    def test_seed_artifact_path_rejects_paths_that_normalize_to_directory(self) -> None:
+    def test_test_set_artifact_path_rejects_paths_that_normalize_to_directory(self) -> None:
         """Regression for Copilot review #002 (round 3).
 
         A manifest path that normalizes to no segments (``"."``, ``"./"``,
@@ -1799,7 +1799,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
         IsADirectoryError / EISDIR).
         """
 
-        from p2m.viewer_read_model import _manifest_relative_path, _seed_artifact_path
+        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1816,7 +1816,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                     }
                 }
                 self.assertEqual(
-                    _seed_artifact_path(suite_dir, manifest),
+                    _test_set_artifact_path(suite_dir, manifest),
                     suite_dir / "test_set.jsonl",
                     msg=f"expected fallback for {raw_path!r}",
                 )

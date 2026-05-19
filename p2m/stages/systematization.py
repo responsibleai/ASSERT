@@ -33,16 +33,16 @@ class SystematizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _humanize_concept_name(concept_name: str | None) -> str:
-    return str(concept_name or "").replace("_", " ").replace("-", " ").strip()
+def _humanize_behavior_name(behavior_name: str | None) -> str:
+    return str(behavior_name or "").replace("_", " ").replace("-", " ").strip()
 
-def _build_prompt(*, behavior: str, concept_text: str, context: str | None = None) -> str:
+def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = None) -> str:
     parts = [
         f"{SYSTEMATIZATION_PROMPT}\n\n",
         "# Input\n",
         "The following is the actual behavior to systematize. Treat the label and body below as the real input, not as examples.\n\n",
         f"## Behavior Label\n{behavior}\n\n",
-        f"## Background Behavior of Interest\n{concept_text.strip()}\n",
+        f"## Background Behavior of Interest\n{behavior_text.strip()}\n",
     ]
     if context:
         parts.append(f"\n## Application Context\n{context.strip()}\n")
@@ -102,7 +102,7 @@ def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
 async def run_systematization(
     *,
     behavior: str,
-    concept_text: str,
+    behavior_text: str,
     save_path: str,
     model_cfg: ModelConfig,
     mode: str = "research",
@@ -110,7 +110,7 @@ async def run_systematization(
     context: str | None = None,
 ) -> Path:
     """Generate one systematization artifact and persist it to disk."""
-    if not concept_text.strip():
+    if not behavior_text.strip():
         raise ValueError("systematization requires non-empty behavior text")
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
@@ -123,7 +123,7 @@ async def run_systematization(
 
     response = await generate_structured(
         model_cfg.name,
-        _build_prompt(behavior=behavior, concept_text=concept_text, context=context),
+        _build_prompt(behavior=behavior, behavior_text=behavior_text, context=context),
         schema_name="systematization",
         json_schema=SystematizationResponse.model_json_schema(),
         options=GenerateOptions(

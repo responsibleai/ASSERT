@@ -1,6 +1,6 @@
 """Design quality and labeling metrics.
 
-Pure post-hoc statistics computed over seed assignments and design catalogs:
+Pure post-hoc statistics computed over test-case assignments and design catalogs:
 coverage, entropy, effective dimensionality, NMI, confusion matrices, and
 inter-rater agreement.
 """
@@ -360,7 +360,7 @@ def build_supplementary_metrics(
 
     labeling_quality: dict[str, Any] = {}
     if "behavior" in design:
-        labeling_quality["behavior_agreement_with_seed_behavior"] = behavior_agreement(
+        labeling_quality["behavior_agreement_with_test_case_behavior"] = behavior_agreement(
             observed_assignments, rows
         )
     if intended_assignments is not None:

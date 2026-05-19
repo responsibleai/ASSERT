@@ -16,7 +16,7 @@ from p2m.core.io import (
     get_permissible_flag,
     load_policy,
     load_prompt_text,
-    normalize_seed_context,
+    normalize_test_case_context,
     resolve_path,
     write_json,
 )
@@ -245,7 +245,7 @@ async def run_design(
         raise ValueError("level_count must be > 0")
     taxonomy = load_policy(taxonomy_path)
     output_dir = resolve_path(out_dir)
-    normalized_context = normalize_seed_context(context) if context else None
+    normalized_context = normalize_test_case_context(context) if context else None
     raw_factors = [] if dimensions is None else dimensions
     if not isinstance(raw_factors, list):
         raise ValueError("dimensions must be a list when provided")
@@ -316,7 +316,7 @@ async def run_design(
             prompt = fill_template(
                 DESIGN_PROMPT_TEMPLATE,
                 {
-                    "concept_name": str(taxonomy.get("behavior", {}).get("name") or "behavior"),
+                    "behavior_name": str(taxonomy.get("behavior", {}).get("name") or "behavior"),
                     "behavior_categories": render_behavior_categories(taxonomy),
                     "context": normalized_context or "- (no additional context provided)",
                     "factors_section": render_factors_section(factors_to_generate),

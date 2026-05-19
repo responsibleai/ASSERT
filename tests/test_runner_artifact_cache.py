@@ -55,7 +55,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             "suite_id": "suite-a",
             "run_id": run_id,
             "behavior_name": "travel_planner_eval",
-            "concept_name": "travel_planner_eval",
+            "behavior_name": "travel_planner_eval",
             "behavior": behavior,
             "context": "Travel planner with flight and hotel tools.",
             "dimensions": [],
@@ -83,7 +83,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             Path(ctx["design_path"]).parent.mkdir(parents=True, exist_ok=True)
             Path(ctx["design_path"]).write_text("{}", encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
-                '{"type":"prompt","test_case_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
             )
             return {"design_path": ctx["design_path"], "test_set_path": ctx["test_set_path"]}
@@ -93,7 +93,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             run_root = Path(ctx["run_root"])
             run_root.mkdir(parents=True, exist_ok=True)
             transcripts = run_root / "transcripts.jsonl"
-            transcripts.write_text('{"type":"prompt","test_case_id":"seed_000001"}\n', encoding="utf-8")
+            transcripts.write_text('{"type":"prompt","test_case_id":"test_case_000001"}\n', encoding="utf-8")
             return {"transcripts_path": str(transcripts)}
 
         return {
@@ -320,7 +320,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                 design_path = save_path.parent / "design.json"
                 design_path.write_text("{}", encoding="utf-8")
                 save_path.write_text(
-                    '{"type":"prompt","test_case_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                    '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                     encoding="utf-8",
                 )
                 return {"design_path": str(design_path), "test_set_path": str(save_path)}
@@ -389,7 +389,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             Path(ctx["test_set_path"]).parent.mkdir(parents=True, exist_ok=True)
             Path(ctx["design_path"]).write_text('{"partial": true}', encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
-                '{"type":"prompt","test_case_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
             )
             raise RuntimeError("simulated test_set failure")
@@ -446,7 +446,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             Path(ctx["test_set_path"]).parent.mkdir(parents=True, exist_ok=True)
             Path(ctx["design_path"]).write_text("{}", encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
-                '{"type":"prompt","test_case_id":"seed_000001","seed":{"prompt":"hi"}}\n',
+                '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
             )
             return {

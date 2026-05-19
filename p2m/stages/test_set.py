@@ -24,8 +24,8 @@ from p2m.core.io import (
     fill_template,
     load_policy,
     load_prompt_text,
-    normalize_seed_context,
-    normalize_seed_rows,
+    normalize_test_case_context,
+    normalize_test_case_rows,
     resolve_path,
     slugify,
     write_jsonl,
@@ -42,28 +42,28 @@ from p2m.core.tools import normalize_tool_defs
 from p2m.stages.design import DEFAULT_LEVEL_COUNT, normalize_design, run_design
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-PROMPT_SEED_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
-SCENARIO_SEED_TEMPLATE = (BASE_DIR / "prompts" / "test_set_scenario_single.md").read_text(encoding="utf-8")
+PROMPT_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
+SCENARIO_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_scenario_single.md").read_text(encoding="utf-8")
 TEST_SET_FILE = "test_set.jsonl"
 SCOPE = "suite"
 SUITE_OUTPUT = TEST_SET_FILE
 
-# Cap on the number of test_set requested per LLM call. Each scenario seed
+# Cap on the number of test_set requested per LLM call. Each scenario test case
 # carries a system prompt, opening message, and dimension metadata
 # (≈300-500 output tokens), so a batch of 15 routinely overflows the
 # default 3000-token max_tokens budget and the response truncates mid-JSON.
-# Splitting the per-tuple budget into chunks of MAX_SEEDS_PER_BATCH keeps
+# Splitting the per-tuple budget into chunks of MAX_TEST_CASES_PER_BATCH keeps
 # every batch comfortably inside the budget, lifts effective concurrency
 # (more, smaller jobs run in parallel), and lets per-batch failures lose
 # fewer test_set at a time. Empirically observed at sample_size=1000 with
 # 67 covering-array tuples (≈15 test_set per tuple): 65/67 batches truncated
 # without this cap, only 30 valid test_set survived.
-MAX_SEEDS_PER_BATCH = 5
+MAX_TEST_CASES_PER_BATCH = 5
 
 TOOL_SOURCE_RUNTIME = "runtime"
-TOOL_SOURCE_PER_SEED = "per_seed"
+TOOL_SOURCE_PER_TEST_CASE = "per_seed"
 
-SEED_ID_PREFIX = {"prompt": "ps", "scenario": "as"}
+TEST_CASE_ID_PREFIX = {"prompt": "ps", "scenario": "as"}
 GENERATION_GUIDANCE_TEMPLATE = load_prompt_text("test_set_generation_guidance.md")
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -94,20 +94,20 @@ def output_schema_example(
     kind: str,
     tool_source: str = TOOL_SOURCE_RUNTIME,
 ) -> str:
-    """Build the JSON output-schema example for seed generation prompts."""
-    schema = SEED_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_SEED else SEED_SCHEMA
+    """Build the JSON output-schema example for test-case generation prompts."""
+    schema = TEST_CASE_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_TEST_CASE else TEST_CASE_SCHEMA
     field_examples = FIELD_EXAMPLES[kind]
-    seed: dict[str, Any] = {}
+    test_case: dict[str, Any] = {}
     for prop_name in schema.get("properties", {}):
         if prop_name in field_examples:
-            seed[prop_name] = field_examples[prop_name]
+            test_case[prop_name] = field_examples[prop_name]
         elif prop_name == "tools":
-            seed["tools"] = [TOOL_FIELD_EXAMPLES]
-    return json.dumps({"test_set": [seed]}, indent=2)
+            test_case["tools"] = [TOOL_FIELD_EXAMPLES]
+    return json.dumps({"test_set": [test_case]}, indent=2)
 
 
 def _validate_tool_source(tool_source: str, target: TargetConfig | None) -> None:
-    if tool_source not in {TOOL_SOURCE_RUNTIME, TOOL_SOURCE_PER_SEED}:
+    if tool_source not in {TOOL_SOURCE_RUNTIME, TOOL_SOURCE_PER_TEST_CASE}:
         raise ValueError("test_set.tool_source must be 'runtime' or 'per_seed'")
     if tool_source == TOOL_SOURCE_RUNTIME:
         return
@@ -127,7 +127,7 @@ def _validate_tool_source(tool_source: str, target: TargetConfig | None) -> None
 # Schema & record builder
 # ---------------------------------------------------------------------------
 
-SEED_SCHEMA: dict[str, Any] = {
+TEST_CASE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -138,7 +138,7 @@ SEED_SCHEMA: dict[str, Any] = {
     "required": ["title", "description", "system_prompt"],
 }
 
-SEED_SCHEMA_WITH_TOOLS: dict[str, Any] = {
+TEST_CASE_SCHEMA_WITH_TOOLS: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -175,7 +175,7 @@ SEED_SCHEMA_WITH_TOOLS: dict[str, Any] = {
 }
 
 
-def seeds_response_schema(
+def test_set_response_schema(
     tool_source: str = TOOL_SOURCE_RUNTIME,
     min_items: int | None = None,
     max_items: int | None = None,
@@ -192,70 +192,70 @@ def seeds_response_schema(
     keeps the schema symmetric with the prompt's stated count and prevents the
     model from over-generating in the (unlikely) inverse failure mode.
     """
-    item_schema = SEED_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_SEED else SEED_SCHEMA
+    item_schema = TEST_CASE_SCHEMA_WITH_TOOLS if tool_source == TOOL_SOURCE_PER_TEST_CASE else TEST_CASE_SCHEMA
     resolved_max = max_items if (max_items is not None and max_items > 0) else 2000
-    seeds_schema: dict[str, Any] = {
+    test_set_schema: dict[str, Any] = {
         "type": "array",
         "maxItems": resolved_max,
         "items": item_schema,
     }
     if min_items is not None and min_items > 0:
-        seeds_schema["minItems"] = min_items
+        test_set_schema["minItems"] = min_items
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "test_set": seeds_schema,
+            "test_set": test_set_schema,
         },
         "required": ["test_set"],
     }
 
 
-def normalize_generated_seed(
-    raw_seed: dict[str, Any],
+def normalize_generated_test_case(
+    raw_test_case: dict[str, Any],
     *,
     tool_source: str,
     fixed_system_prompt: str | None,
 ) -> dict[str, Any]:
     payload = {
-        "title": str(raw_seed.get("title") or ""),
-        "description": str(raw_seed.get("description") or ""),
+        "title": str(raw_test_case.get("title") or ""),
+        "description": str(raw_test_case.get("description") or ""),
     }
     if not payload["description"].strip():
-        raise ValueError("generated seed is missing description")
+        raise ValueError("generated test case is missing description")
 
-    system_prompt = str(raw_seed.get("system_prompt") or "").strip()
+    system_prompt = str(raw_test_case.get("system_prompt") or "").strip()
     if system_prompt and fixed_system_prompt is None:
         payload["system_prompt"] = system_prompt
 
-    raw_tools = raw_seed.get("tools")
-    if tool_source == TOOL_SOURCE_PER_SEED:
+    raw_tools = raw_test_case.get("tools")
+    if tool_source == TOOL_SOURCE_PER_TEST_CASE:
         if not isinstance(raw_tools, list) or not raw_tools:
-            raise ValueError("generated seed requires non-empty tools when test_set.tool_source=per_seed")
+            raise ValueError("generated test case requires non-empty tools when test_set.tool_source=per_seed")
         try:
             normalize_tool_defs(raw_tools)
         except (KeyError, TypeError) as exc:
-            raise ValueError("generated seed contains invalid tool definitions") from exc
+            raise ValueError("generated test case contains invalid tool definitions") from exc
         payload["tools"] = raw_tools
     elif raw_tools:
-        raise ValueError("generated seed.tools is only allowed when test_set.tool_source=per_seed")
+        raise ValueError("generated test case.tools is only allowed when test_set.tool_source=per_seed")
 
     return payload
 
 
-def seed_record(
+def test_case_record(
     *,
     kind: str,
     test_case_id: str,
     behavior: str,
-    seed_payload: dict[str, Any],
+    test_case_payload: dict[str, Any],
     dimensions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     record = {
         "type": kind,
         "test_case_id": test_case_id,
         "behavior": behavior,
-        "seed": seed_payload,
+        "seed": test_case_payload,
     }
     if dimensions:
         record["dimensions"] = dimensions
@@ -278,11 +278,11 @@ Instead, use the target profile below to shape realistic scenarios:
 - Which action families matter for this risk
 - What boundary conditions are worth probing
 """,
-    TOOL_SOURCE_PER_SEED: """
+    TOOL_SOURCE_PER_TEST_CASE: """
 ## Tools (agentic modality)
 
 This is an **agentic** audit. The target model will have access to tools during the conversation.
-For each seed, define 1-5 realistic tools that the target model would have in this scenario.
+For each test case, define 1-5 realistic tools that the target model would have in this scenario.
 """,
 }
 
@@ -293,7 +293,7 @@ def _render_taxonomy_body(taxonomy: dict[str, Any]) -> str:
 
 def _template_replacements(
     kind: str,
-    concept_name: str,
+    behavior_spec_name: str,
     behavior_name: str,
     behavior_description: str,
     examples: list[str],
@@ -357,7 +357,7 @@ def build_generation_prompt(
 
     *kind*: ``"prompt"`` or ``"scenario"``.
     """
-    concept_name = str(taxonomy.get("behavior", {}).get("name") or "behavior")
+    behavior_spec_name = str(taxonomy.get("behavior", {}).get("name") or "behavior")
     behavior_name = str(behavior.get("name") or "").strip()
     behavior_description = str(behavior.get("description") or "").strip()
     policy_behavior = next(
@@ -394,7 +394,7 @@ def build_generation_prompt(
 
     replacements = _template_replacements(
         kind,
-        concept_name,
+        behavior_spec_name,
         behavior_name,
         behavior_description,
         behavior_examples,
@@ -405,7 +405,7 @@ def build_generation_prompt(
         tool_source=tool_source,
     )
     return fill_template(
-        PROMPT_SEED_TEMPLATE if kind == "prompt" else SCENARIO_SEED_TEMPLATE,
+        PROMPT_TEST_CASE_TEMPLATE if kind == "prompt" else SCENARIO_TEST_CASE_TEMPLATE,
         replacements,
     )
 
@@ -560,7 +560,7 @@ def sample_from_covering_array(
 
 @dataclass(frozen=True)
 class TestCaseJob:
-    """One covering-array tuple's seed-generation work unit."""
+    """One covering-array tuple's test-case generation work unit."""
     order: int
     behavior: dict[str, Any]
     count: int
@@ -623,14 +623,14 @@ def build_generation_jobs(
         for _ in range(count):
             all_assignments.append(dict(row))
 
-        # Split the per-tuple budget into chunks ≤ MAX_SEEDS_PER_BATCH so
+        # Split the per-tuple budget into chunks ≤ MAX_TEST_CASES_PER_BATCH so
         # each LLM call stays inside the default max_tokens budget. Each
         # chunk becomes its own TestCaseJob with a contiguous start_index slot
-        # so generated seed IDs remain stable and unique within the tuple.
+        # so generated test case IDs remain stable and unique within the tuple.
         chunk_offset = 0
         remaining = count
         while remaining > 0:
-            chunk = min(MAX_SEEDS_PER_BATCH, remaining)
+            chunk = min(MAX_TEST_CASES_PER_BATCH, remaining)
             jobs.append(
                 TestCaseJob(
                     order=len(jobs),
@@ -683,11 +683,11 @@ async def _generate_records(
     if sample_size <= 0 or sample_size > 100_000:
         raise ValueError(f"{kind} sample_size must be between 1 and 100000")
     if concurrency <= 0:
-        raise ValueError("seed generation concurrency must be > 0")
+        raise ValueError("test-case generation concurrency must be > 0")
 
     design_data = design or {}
-    test_case_id_prefix = SEED_ID_PREFIX[kind]
-    concept_name = taxonomy.get("behavior", {}).get("name", "behavior")
+    test_case_id_prefix = TEST_CASE_ID_PREFIX[kind]
+    behavior_spec_name = taxonomy.get("behavior", {}).get("name", "behavior")
 
     jobs, _ = build_generation_jobs(
         taxonomy=taxonomy,
@@ -721,14 +721,14 @@ async def _generate_records(
                 tuple_spec=job.tuple_spec,
                 tool_source=tool_source,
             )
-            job_schema = seeds_response_schema(
+            job_schema = test_set_response_schema(
                 tool_source, min_items=job.count, max_items=job.count
             )
 
             response = await generate_structured(
                 model,
                 prompt,
-                schema_name=f"{kind}_seeds",
+                schema_name=f"{kind}_test_cases",
                 json_schema=job_schema,
                 options=GenerateOptions(
                     temperature=temperature, max_tokens=max_tokens,
@@ -738,20 +738,20 @@ async def _generate_records(
             )
             payload = response.parsed
             if not isinstance(payload, dict) or not isinstance(payload.get("test_set"), list):
-                raise ValueError(f"{kind} seed generation returned invalid test_set payload")
+                raise ValueError(f"{kind} test-case generation returned invalid test_set payload")
 
-            returned_seeds = payload["test_set"]
-            if len(returned_seeds) < job.count:
+            returned_test_cases = payload["test_set"]
+            if len(returned_test_cases) < job.count:
                 raise ValueError(
-                    f"{kind} generation returned {len(returned_seeds)} test_set "
+                    f"{kind} generation returned {len(returned_test_cases)} test_set "
                     f"for a batch of {job.count}"
                 )
-            returned_seeds = returned_seeds[:job.count]
+            returned_test_cases = returned_test_cases[:job.count]
 
             records = []
-            for idx, raw_seed in enumerate(returned_seeds):
-                if not isinstance(raw_seed, dict):
-                    raise ValueError(f"{kind} generation returned non-dict seed at index {idx}")
+            for idx, raw_test_case in enumerate(returned_test_cases):
+                if not isinstance(raw_test_case, dict):
+                    raise ValueError(f"{kind} generation returned non-dict test case at index {idx}")
                 dimensions: dict[str, str] = {"behavior": behavior_name}
                 if job.tuple_spec:
                     dimensions.update({
@@ -759,11 +759,11 @@ async def _generate_records(
                         for factor_name in factor_names
                     })
                 records.append(
-                    seed_record(
+                    test_case_record(
                         kind=kind, test_case_id=f"{test_case_id_prefix}-{slug}-{job.start_index + idx:03d}",
-                        behavior=concept_name,
-                        seed_payload=normalize_generated_seed(
-                            raw_seed,
+                        behavior=behavior_spec_name,
+                        test_case_payload=normalize_generated_test_case(
+                            raw_test_case,
                             tool_source=tool_source,
                             fixed_system_prompt=fixed_system_prompt,
                         ),
@@ -822,7 +822,7 @@ async def _generate_records(
 # ---------------------------------------------------------------------------
 
 
-async def run_seeds(
+async def run_test_set(
     *,
     taxonomy_path: str,
     save_path: str,
@@ -843,7 +843,7 @@ async def run_seeds(
     taxonomy = load_policy(taxonomy_path)
     out_path = resolve_path(save_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    normalized_context = normalize_seed_context(context)
+    normalized_context = normalize_test_case_context(context)
     fixed_system_prompt = (str(target.system_prompt or "").strip() or None) if target is not None else None
 
     design = normalize_design(design or {}, taxonomy, inject_behavior=True)
@@ -881,7 +881,7 @@ async def run_seeds(
 
     all_records = [rec for r in results for rec in r["records"]]
     errored_count = sum(int(r.get("errored_count", 0)) for r in results)
-    all_records = normalize_seed_rows(all_records)
+    all_records = normalize_test_case_rows(all_records)
     write_jsonl(out_path, all_records)
     prompt_count = sum(
         1 for record in all_records if record.get("type") == "prompt"
@@ -894,7 +894,7 @@ async def run_seeds(
         "saved_count": len(all_records),
         "prompt_count": prompt_count,
         "scenario_count": scenario_count,
-        # Number of seed batches that failed across all kinds. Failed
+        # Number of test-case batches that failed across all kinds. Failed
         # batches produce no records, so a non-zero value here means the
         # caller may want to re-run to fill the gap.
         "errored_count": errored_count,
@@ -905,7 +905,7 @@ def _parse_kind_config(
     raw_cfg: dict[str, Any], kind: str, raw: dict[str, Any],
     *, sample_size: int, temperature: float, max_tokens: int,
 ) -> dict[str, Any]:
-    """Validate and build a normalized config dict for a seed generation kind."""
+    """Validate and build a normalized config dict for a test-case generation kind."""
     if not isinstance(raw, dict):
         raise ValueError(f"test_set.{kind} must be a mapping")
     if "budget" in raw:
@@ -935,7 +935,7 @@ def _parse_kind_config(
 
 
 async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Stage entry point — parse raw YAML config, validate, and delegate to run_seeds."""
+    """Stage entry point — parse raw YAML config, validate, and delegate to run_test_set."""
     context = ctx.get("context")
     if context is not None and not isinstance(context, str):
         raise ValueError("context must be a string when provided")
@@ -1033,7 +1033,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         kinds.append(f"scenario(n={scenario_cfg['sample_size']})")
     log.debug(f"test_set: kinds=[{', '.join(kinds)}], tool_source={tool_source}")
 
-    result = await run_seeds(
+    result = await run_test_set(
         taxonomy_path=taxonomy_path,
         save_path=cfg["save_path"],
         context=context,

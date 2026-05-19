@@ -726,7 +726,7 @@ class TestOTelTracedSession(unittest.TestCase):
         finally:
             del sys.modules["_test_otel_spans"]
 
-    def test_multi_turn_accumulation(self):
+    def test_scenario_accumulation(self):
         """Multiple turns should accumulate trace data."""
         from p2m.core.otel_session import OTelTracedSession
         from p2m.core.model_client import Message
@@ -812,7 +812,7 @@ class TestInferenceOTelWiring(unittest.TestCase):
         )
         session = _build_target_session(
             target=target,
-            seed_payload={},
+            test_case_payload={},
             inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,
@@ -827,7 +827,7 @@ class TestInferenceOTelWiring(unittest.TestCase):
         target = TargetConfig(callable="some.module:fn")
         session = _build_target_session(
             target=target,
-            seed_payload={},
+            test_case_payload={},
             inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,
@@ -1281,7 +1281,7 @@ class TestHTTPEndpointSession(unittest.TestCase):
         target = TargetConfig(endpoint="http://localhost:8080/chat")
         session = _build_target_session(
             target=target,
-            seed_payload={},
+            test_case_payload={},
             inference=InferenceConfig(),
             max_tokens=1024,
             config_path=None,

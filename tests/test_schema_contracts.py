@@ -15,8 +15,8 @@ from p2m.core.judge import (
     render_output_schema,
 )
 from p2m.stages.test_set import (
-    SEED_SCHEMA,
-    SEED_SCHEMA_WITH_TOOLS,
+    TEST_CASE_SCHEMA,
+    TEST_CASE_SCHEMA_WITH_TOOLS,
     output_schema_example,
 )
 from p2m.core.io import fill_template
@@ -34,17 +34,17 @@ class SeedSchemaExampleTest(unittest.TestCase):
         """Every key in the example must be a property in the schema."""
         example = json.loads(output_schema_example("prompt"))
         seed = example["test_set"][0]
-        schema_props = set(SEED_SCHEMA["properties"].keys())
+        schema_props = set(TEST_CASE_SCHEMA["properties"].keys())
         self.assertEqual(set(seed.keys()), schema_props)
 
     def test_generated_tool_example_validates_against_schema(self) -> None:
         example = json.loads(output_schema_example("prompt", tool_source="per_seed"))
         seed = example["test_set"][0]
-        schema_props = set(SEED_SCHEMA_WITH_TOOLS["properties"].keys())
+        schema_props = set(TEST_CASE_SCHEMA_WITH_TOOLS["properties"].keys())
         self.assertEqual(set(seed.keys()), schema_props)
 
     def test_schema_required_fields_match_properties(self) -> None:
-        for schema in (SEED_SCHEMA, SEED_SCHEMA_WITH_TOOLS):
+        for schema in (TEST_CASE_SCHEMA, TEST_CASE_SCHEMA_WITH_TOOLS):
             with self.subTest(schema=schema):
                 self.assertEqual(
                     set(schema["required"]),

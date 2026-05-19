@@ -15,7 +15,7 @@ from click.shell_completion import CompletionItem
 from rich.console import Console
 from rich.table import Table
 
-from p2m.core.io import load_json, load_jsonl, get_permissible_flag
+from p2m.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from p2m.logging_config import configure_logging
 from p2m.stages import STAGE_NAMES
@@ -34,7 +34,7 @@ CONTEXT_SETTINGS = {
 DEFAULT_COMPARE_METRIC = "policy_violation"
 
 _RUNNER_MODULE: Any | None = None
-_SEED_METRICS_MODULE: Any | None = None
+_TEST_SET_METRICS_MODULE: Any | None = None
 _ANALYZE_TAXONOMIES_MODULE: Any | None = None
 
 
@@ -60,13 +60,13 @@ def _load_runner_module():
     return _RUNNER_MODULE
 
 
-def _load_seed_metrics():
-    global _SEED_METRICS_MODULE
-    if _SEED_METRICS_MODULE is None:
-        from p2m.analysis import seed_metrics
+def _load_test_set_metrics():
+    global _TEST_SET_METRICS_MODULE
+    if _TEST_SET_METRICS_MODULE is None:
+        from p2m.analysis import test_set_metrics
 
-        _SEED_METRICS_MODULE = seed_metrics
-    return _SEED_METRICS_MODULE
+        _TEST_SET_METRICS_MODULE = test_set_metrics
+    return _TEST_SET_METRICS_MODULE
 
 
 def _load_analyze_taxonomies():
@@ -405,10 +405,10 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
 
     created_at = (suite_meta or {}).get("created_at")
 
-    concept_name = suite_dir.name
-    concept_block = (taxonomy or {}).get("behavior")
-    if isinstance(concept_block, dict) and isinstance(concept_block.get("name"), str) and concept_block.get("name"):
-        concept_name = concept_block["name"]
+    behavior_name = suite_dir.name
+    behavior_block = (taxonomy or {}).get("behavior")
+    if isinstance(behavior_block, dict) and isinstance(behavior_block.get("name"), str) and behavior_block.get("name"):
+        behavior_name = behavior_block["name"]
 
     if has_results:
         status = "has_results"
@@ -420,7 +420,7 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "concept_name": concept_name,
+        "behavior_name": behavior_name,
         "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
         "prompt_test_case_count": prompt_test_case_count,
         "scenario_test_case_count": scenario_test_case_count,
@@ -446,7 +446,7 @@ def _load_all_suites(results_dir: Path) -> list[dict[str, Any]]:
     return suites
 
 
-def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, dict[str, Any]]:
+def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in rows:
         if infer_judge_status(row) != "ok":
@@ -454,9 +454,9 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
         value = get_verdict_dimension(row.get("verdict"), metric)
         if not is_valid_event_flag(value):
             continue
-        sub_risk = str(row.get("sub_risk") or "")
+        behavior_category = row_behavior(row)
         bucket = grouped.setdefault(
-            sub_risk,
+            behavior_category,
             {
                 "true_count": 0,
                 "count": 0,
@@ -466,10 +466,10 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
         bucket["true_count"] += int(value)
         bucket["count"] += 1
     result = {}
-    for sub_risk, bucket in grouped.items():
+    for behavior_category, bucket in grouped.items():
         if bucket["count"] <= 0:
             continue
-        result[sub_risk] = {
+        result[behavior_category] = {
             "rate": bucket["true_count"] / bucket["count"],
             "count": bucket["count"],
             "permissible": bucket["permissible"],
@@ -667,7 +667,7 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
     for suite_summary in suites:
         table.add_row(
             suite_summary["suite_id"],
-            str(suite_summary["concept_name"]),
+            str(suite_summary["behavior_name"]),
             str(suite_summary["behavior_category_count"]),
             str(suite_summary["prompt_test_case_count"]),
             str(suite_summary["scenario_test_case_count"]),
@@ -709,7 +709,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         summary.add_column("Field", style="cyan", no_wrap=True)
         summary.add_column("Value", style="white")
         summary.add_row("Suite", suite_summary["suite_id"])
-        summary.add_row("Behavior", str(suite_summary["concept_name"]))
+        summary.add_row("Behavior", str(suite_summary["behavior_name"]))
         summary.add_row("Status", str(suite_summary["status"]))
         summary.add_row("Created", _format_timestamp(suite_summary.get("created_at")))
         summary.add_row("Behavior Categories", str(suite_summary["behavior_category_count"]))
@@ -944,18 +944,18 @@ def _run_within_suite_compare(
     if metric not in available_metrics:
         _error(f"Metric '{metric}' was not found in the compared prompt judgments. Available: {sorted(available_metrics)}")
 
-    subrisk_deltas: list[dict[str, Any]] = []
+    behavior_category_deltas: list[dict[str, Any]] = []
     if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
-        first_map = _subrisk_metric_map(run_summaries[0]["prompt_rows"], metric)
-        last_map = _subrisk_metric_map(run_summaries[-1]["prompt_rows"], metric)
-        for sub_risk in sorted(set(first_map) | set(last_map)):
-            first = first_map.get(sub_risk)
-            last = last_map.get(sub_risk)
+        first_map = _behavior_category_metric_map(run_summaries[0]["prompt_rows"], metric)
+        last_map = _behavior_category_metric_map(run_summaries[-1]["prompt_rows"], metric)
+        for behavior_category in sorted(set(first_map) | set(last_map)):
+            first = first_map.get(behavior_category)
+            last = last_map.get(behavior_category)
             if first is None or last is None:
                 continue
-            subrisk_deltas.append(
+            behavior_category_deltas.append(
                 {
-                    "sub_risk": sub_risk,
+                    "behavior_category": behavior_category,
                     "permissible": first.get("permissible"),
                     "first_rate": first["rate"],
                     "last_rate": last["rate"],
@@ -964,9 +964,9 @@ def _run_within_suite_compare(
                     "last_count": last["count"],
                 }
             )
-        subrisk_deltas.sort(key=lambda row: abs(row["delta"]), reverse=True)
+        behavior_category_deltas.sort(key=lambda row: abs(row["delta"]), reverse=True)
         if limit >= 0:
-            subrisk_deltas = subrisk_deltas[:limit]
+            behavior_category_deltas = behavior_category_deltas[:limit]
 
     run_rows = []
     for run_summary in run_summaries:
@@ -986,7 +986,7 @@ def _run_within_suite_compare(
         "suite_id": suite,
         "metric": metric,
         "runs": run_rows,
-        "subrisk_deltas": subrisk_deltas,
+        "behavior_category_deltas": behavior_category_deltas,
     }
     if as_json:
         _echo_json(payload)
@@ -1027,7 +1027,7 @@ def _run_within_suite_compare(
         )
     console.print(table)
 
-    if subrisk_deltas:
+    if behavior_category_deltas:
         delta_table = Table(
             title=f"Top Behavior Category Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
             box=None,
@@ -1040,9 +1040,9 @@ def _run_within_suite_compare(
         delta_table.add_column(runs[0], style="white", no_wrap=True)
         delta_table.add_column(runs[-1], style="white", no_wrap=True)
         delta_table.add_column("Delta", style="white", no_wrap=True)
-        for row in subrisk_deltas:
+        for row in behavior_category_deltas:
             delta_table.add_row(
-                row["sub_risk"],
+                row["behavior_category"],
                 str(bool(row["permissible"])),
                 _fmt_percent(row["first_rate"]),
                 _fmt_percent(row["last_rate"]),
@@ -1226,7 +1226,7 @@ def analysis():
     """Post-hoc analysis commands for test_set and inspect logs."""
 
 
-@analysis.command("seed-metrics", short_help="Compute coverage and diversity metrics for test-set files")
+@analysis.command("test-set-metrics", short_help="Compute coverage and diversity metrics for test-set files")
 @click.option("--taxonomy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Taxonomy JSON to score against.")
 @click.option("--test_set", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Test-set JSONL file to analyze.")
 @click.option("--embed-model", default="text-embedding-3-large", show_default=True, help="Embedding model name.")
@@ -1236,7 +1236,7 @@ def analysis():
 @click.option("--presence-coverage", is_flag=True, help="Use simple presence coverage instead of coverage@k.")
 @click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "test_set_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
 @click.option("--out-md", default=None, type=click.Path(path_type=Path), help="Optional Markdown report path.")
-def analysis_seed_metrics(
+def analysis_test_set_metrics(
     taxonomy: Path,
     test_set: Path,
     embed_model: str,
@@ -1248,8 +1248,8 @@ def analysis_seed_metrics(
     out_md: Optional[Path],
 ):
     """Compute test-set metrics from the packaged CLI instead of calling the script directly."""
-    seed_metrics = _load_analysis_module(_load_seed_metrics)
-    cfg = seed_metrics.Config(
+    test_set_metrics = _load_analysis_module(_load_test_set_metrics)
+    cfg = test_set_metrics.Config(
         taxonomy_path=str(taxonomy),
         test_set_path=str(test_set),
         embed_model=embed_model,
@@ -1261,15 +1261,12 @@ def analysis_seed_metrics(
         out_md=str(out_md) if out_md else None,
     )
     try:
-        seed_metrics.compute_metrics(cfg)
+        test_set_metrics.compute_metrics(cfg)
     except ModuleNotFoundError as exc:
         _handle_missing_analysis_dependency(exc)
     click.echo(f"Wrote {out_json}")
     if out_md:
         click.echo(f"Wrote {out_md}")
-
-
-analysis.add_command(analysis_seed_metrics, "test-set-metrics")
 
 
 @analysis.command("taxonomy-logs", short_help="Summarize legacy taxonomy-eval logs and write plots")
