@@ -102,6 +102,12 @@ def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
         logger.info("── tau2 model %d/%d: %s ──", i, total, model)
         save_name = f"telecom_{slug}"
         tau2_bin = shutil.which("tau2") or str(Path(sys.executable).parent / "tau2")
+        if not Path(tau2_bin).exists() and not shutil.which("tau2"):
+            logger.error(
+                "tau2 CLI not found. Install it with:\n"
+                "  pip install 'tau2 @ git+https://github.com/SEACrowd/tau3-bench.git'"
+            )
+            sys.exit(1)
         cmd = [
             tau2_bin, "run",
             "--domain", TAU2_DOMAIN,
@@ -423,7 +429,7 @@ def confirm_stage(stage: str, models: list[str], *, yes: bool = False) -> bool:
 
 # ── Main ────────────────────────────────────────────────────────────
 def main() -> None:
-    global TAU2_NUM_TRIALS, TAU2_USER_LLM
+    global TAU2_NUM_TRIALS, TAU2_USER_LLM, TAU2_MAX_CONCURRENCY
 
     parser = argparse.ArgumentParser(
         description="Run telecom τ²-bench ↔ p2m correlation study.",
@@ -459,6 +465,12 @@ def main() -> None:
         help=f"LLM for tau2 user simulator (default: {TAU2_USER_LLM})",
     )
     parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=TAU2_MAX_CONCURRENCY,
+        help=f"Max concurrent tasks for tau2 (default: {TAU2_MAX_CONCURRENCY})",
+    )
+    parser.add_argument(
         "--p2m-seed-count",
         type=int,
         default=None,
@@ -485,6 +497,7 @@ def main() -> None:
     # Apply overrides to module-level defaults
     TAU2_NUM_TRIALS = args.tau2_trials
     TAU2_USER_LLM = args.tau2_user_llm
+    TAU2_MAX_CONCURRENCY = args.max_concurrency
 
     stages = [s.strip() for s in args.stages]
     valid_stages = {"tau2", "p2m", "correlate"}
