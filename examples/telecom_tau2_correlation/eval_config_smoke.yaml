@@ -39,6 +39,8 @@ pipeline:
     concurrency: 2
     target:
       model: { name: azure/gpt-5.4-nano, temperature: 0.0, max_tokens: 4000 }
+      trace:
+        backend: phoenix
       system_prompt: |
         You are a customer service agent for a telecom company.
         Follow operational procedures exactly. Always use tools to
