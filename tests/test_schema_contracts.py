@@ -38,7 +38,7 @@ class SeedSchemaExampleTest(unittest.TestCase):
         self.assertEqual(set(seed.keys()), schema_props)
 
     def test_generated_tool_example_validates_against_schema(self) -> None:
-        example = json.loads(output_schema_example("prompt", tool_source="per_seed"))
+        example = json.loads(output_schema_example("prompt", tool_source="per_test_case"))
         seed = example["test_set"][0]
         schema_props = set(TEST_CASE_SCHEMA_WITH_TOOLS["properties"].keys())
         self.assertEqual(set(seed.keys()), schema_props)

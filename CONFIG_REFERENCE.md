@@ -119,12 +119,12 @@ Accepted keys:
   - `dimensions` — list of dimensions crossed with behavior categories.
   - `level_count` — positive integer. Default: `3`. Used when dimensions need generated levels.
   - `model` — model config for generating missing dimension levels.
-- `tool_source` — string. Default: `runtime`. Allowed values: `runtime`, `per_seed`.
+- `tool_source` — string. Default: `runtime`. Allowed values: `runtime`, `per_test_case`. The legacy alias `per_seed` is still accepted but emits a `DeprecationWarning`; prefer `per_test_case`.
 - `model` — shared fallback for `prompt.model`, `scenario.model`, and `stratify.model`.
 
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `test_set.prompt.model`, then `test_set.model`, then `default_model`. Scenario generation uses the same order with `test_set.scenario.model` first. Stratify generation uses `test_set.stratify.model`, then `test_set.model`, then `default_model`.
 
-`tool_source: per_seed` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
+`tool_source: per_test_case` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
 
 Example:
 

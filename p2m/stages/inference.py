@@ -61,6 +61,7 @@ from p2m.core.transcript import (
     TranscriptEvent,
     TranscriptMetadata,
 )
+from p2m.stages.test_set import TOOL_SOURCE_PER_TEST_CASE, TOOL_SOURCE_RUNTIME
 from p2m.viewer_read_model import build_run_viewer_artifacts
 
 SCOPE = "run"
@@ -130,12 +131,12 @@ TOOL_SIM_PROMPT = load_prompt_text("inference_toolsim_user.md")
 def _infer_tool_source(target: TargetConfig) -> str:
     """Infer tool_source from the target config.
 
-    - simulator without toolset -> per_seed (tools come from each test-case row)
-    - everything else ΓåÆ runtime (tools come from a tool module or fixed toolset)
+    - simulator without toolset -> per_test_case (tools come from each test-case row)
+    - everything else → runtime (tools come from a tool module or fixed toolset)
     """
     if target.tools is not None and target.tools.simulator and not target.tools.toolset:
-        return "per_seed"
-    return "runtime"
+        return TOOL_SOURCE_PER_TEST_CASE
+    return TOOL_SOURCE_RUNTIME
 
 
 def _record_system_message(transcript: Transcript, system_message: str) -> None:
@@ -368,12 +369,12 @@ def _prepare_test_cases(
         if fixed_system_prompt and system_prompt is not None:
             raise ValueError("target.system_prompt cannot be combined with non-empty test case system_prompt")
         tools = normalized_payload.get("tools")
-        if tool_source == "per_seed":
+        if tool_source == TOOL_SOURCE_PER_TEST_CASE:
             if not isinstance(tools, list) or not tools:
-                raise ValueError("test case tools are required when tool_source=per_seed")
+                raise ValueError("test case tools are required when tool_source=per_test_case")
             normalize_tool_defs(tools)
         elif tools is not None:
-            raise ValueError("test case tools are only allowed when tool_source=per_seed")
+            raise ValueError("test case tools are only allowed when tool_source=per_test_case")
         test_case_row["seed"] = normalized_payload
         if kind == "prompt":
             invalid_fields = sorted(field for field in nested_test_case_fields if field in row)
@@ -962,17 +963,17 @@ async def run_inference(
 
     tool_source = _infer_tool_source(target)
 
-    if tool_source == "per_seed":
+    if tool_source == TOOL_SOURCE_PER_TEST_CASE:
         if not target.model:
-            raise ValueError("tool_source=per_seed requires target.model")
+            raise ValueError("tool_source=per_test_case requires target.model")
         if target.connector:
-            raise ValueError("tool_source=per_seed does not support target.connector")
+            raise ValueError("tool_source=per_test_case does not support target.connector")
         if target.tools is None or not target.tools.simulator:
-            raise ValueError("tool_source=per_seed requires target.tools.simulator")
+            raise ValueError("tool_source=per_test_case requires target.tools.simulator")
         if target.tools.module:
-            raise ValueError("tool_source=per_seed does not support target.tools.module")
+            raise ValueError("tool_source=per_test_case does not support target.tools.module")
         if target.tools.toolset:
-            raise ValueError("tool_source=per_seed does not support target.tools.toolset")
+            raise ValueError("tool_source=per_test_case does not support target.tools.toolset")
     elif target.tools is not None and target.tools.simulator and not target.tools.toolset:
         raise ValueError("runtime tool_source requires target.tools.toolset when target.tools.simulator is set")
     fixed_system_prompt = str(target.system_prompt or "").strip() or None

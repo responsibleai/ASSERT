@@ -23,8 +23,7 @@ from p2m.stages import STAGE_NAMES
 ROOT = Path(__file__).resolve().parent.parent
 JUDGE_DIMENSIONS_PATH = ROOT / "examples" / "eval-definitions" / "judge_dimensions.yaml"
 DEFAULT_RESULTS_DIR = ROOT / "artifacts" / "results"
-DEFAULT_LOGS_DIR = ROOT / "logs"
-DEFAULT_PLOTS_DIR = ROOT / "plots"
+
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
     "max_content_width": 100,
@@ -35,7 +34,7 @@ DEFAULT_COMPARE_METRIC = "policy_violation"
 
 _RUNNER_MODULE: Any | None = None
 _TEST_SET_METRICS_MODULE: Any | None = None
-_ANALYZE_TAXONOMIES_MODULE: Any | None = None
+
 
 
 class SuggestingGroup(click.Group):
@@ -67,15 +66,6 @@ def _load_test_set_metrics():
 
         _TEST_SET_METRICS_MODULE = test_set_metrics
     return _TEST_SET_METRICS_MODULE
-
-
-def _load_analyze_taxonomies():
-    global _ANALYZE_TAXONOMIES_MODULE
-    if _ANALYZE_TAXONOMIES_MODULE is None:
-        from p2m.analysis import analyze_policies as analyze_taxonomies
-
-        _ANALYZE_TAXONOMIES_MODULE = analyze_taxonomies
-    return _ANALYZE_TAXONOMIES_MODULE
 
 
 def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
@@ -1267,31 +1257,6 @@ def analysis_test_set_metrics(
     click.echo(f"Wrote {out_json}")
     if out_md:
         click.echo(f"Wrote {out_md}")
-
-
-@analysis.command("taxonomy-logs", short_help="Summarize legacy taxonomy-eval logs and write plots")
-@click.option("--logs-dir", default=DEFAULT_LOGS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory containing legacy .eval archives.")
-@click.option("--out-dir", default=DEFAULT_PLOTS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory for plots.")
-@click.option("--csv", default=None, type=click.Path(path_type=Path), help="Optional flattened CSV output path.")
-def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
-    """Analyze legacy taxonomy-eval logs without leaving the packaged CLI."""
-    analyze_taxonomies = _load_analysis_module(_load_analyze_taxonomies)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    df = analyze_taxonomies.load_all(logs_dir)
-    grouped = df.groupby(["risk", "model"]).agg(
-        overall_mean=("overall_raw", "mean"),
-        norm_mean=("score_norm", "mean"),
-        passes=("verdict", lambda series: (series == "pass").mean()),
-        n=("verdict", "count"),
-    )
-    click.echo("\nSummary (per risk/model):")
-    click.echo(grouped.reset_index().to_markdown(index=False))
-    if csv:
-        analyze_taxonomies.write_csv(df, csv)
-        click.echo(f"\nWrote {csv}")
-    analyze_taxonomies.plot_overall(df, out_dir)
-    analyze_taxonomies.plot_dimensions(df, out_dir)
 
 
 @cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running inference")

@@ -139,7 +139,7 @@
 	}
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		test_set: 'Seed Generation',
+		test_set: 'Test Set Generation',
 		inference: 'Inference',
 		judge: 'Scoring',
 	};
@@ -330,7 +330,7 @@
 
 	async function openSampleModal(sample: JudgedSample) {
 		if (!sample.test_case_id) {
-			promptDrawerError = 'Prompt is missing a seed id.';
+			promptDrawerError = 'Prompt is missing a test case id.';
 			return;
 		}
 		const token = bumpPromptDrawerLoadToken();

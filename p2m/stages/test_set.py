@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import random
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,22 @@ SUITE_OUTPUT = TEST_SET_FILE
 MAX_TEST_CASES_PER_BATCH = 5
 
 TOOL_SOURCE_RUNTIME = "runtime"
-TOOL_SOURCE_PER_TEST_CASE = "per_seed"
+TOOL_SOURCE_PER_TEST_CASE = "per_test_case"
+TOOL_SOURCE_PER_TEST_CASE_LEGACY = "per_seed"  # accepted as deprecated alias
+
+_VALID_TOOL_SOURCES = {TOOL_SOURCE_RUNTIME, TOOL_SOURCE_PER_TEST_CASE, TOOL_SOURCE_PER_TEST_CASE_LEGACY}
+
+
+def _normalize_tool_source(value: str) -> str:
+    """Map the deprecated `per_seed` alias to the canonical `per_test_case`."""
+    if value == TOOL_SOURCE_PER_TEST_CASE_LEGACY:
+        warnings.warn(
+            "test_set.tool_source='per_seed' is deprecated; use 'per_test_case'.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return TOOL_SOURCE_PER_TEST_CASE
+    return value
 
 TEST_CASE_ID_PREFIX = {"prompt": "ps", "scenario": "as"}
 GENERATION_GUIDANCE_TEMPLATE = load_prompt_text("test_set_generation_guidance.md")
@@ -108,19 +124,19 @@ def output_schema_example(
 
 def _validate_tool_source(tool_source: str, target: TargetConfig | None) -> None:
     if tool_source not in {TOOL_SOURCE_RUNTIME, TOOL_SOURCE_PER_TEST_CASE}:
-        raise ValueError("test_set.tool_source must be 'runtime' or 'per_seed'")
+        raise ValueError("test_set.tool_source must be 'runtime' or 'per_test_case'")
     if tool_source == TOOL_SOURCE_RUNTIME:
         return
     if target is None or not target.model:
-        raise ValueError("test_set.tool_source=per_seed requires target.model")
+        raise ValueError("test_set.tool_source=per_test_case requires target.model")
     if target.connector:
-        raise ValueError("test_set.tool_source=per_seed does not support target.connector")
+        raise ValueError("test_set.tool_source=per_test_case does not support target.connector")
     if target.tools is None or not target.tools.simulator:
-        raise ValueError("test_set.tool_source=per_seed requires target.tools.simulator")
+        raise ValueError("test_set.tool_source=per_test_case requires target.tools.simulator")
     if target.tools.module:
-        raise ValueError("test_set.tool_source=per_seed does not support target.tools.module")
+        raise ValueError("test_set.tool_source=per_test_case does not support target.tools.module")
     if target.tools.toolset:
-        raise ValueError("test_set.tool_source=per_seed does not support target.tools.toolset")
+        raise ValueError("test_set.tool_source=per_test_case does not support target.tools.toolset")
 
 
 # ---------------------------------------------------------------------------
@@ -231,14 +247,14 @@ def normalize_generated_test_case(
     raw_tools = raw_test_case.get("tools")
     if tool_source == TOOL_SOURCE_PER_TEST_CASE:
         if not isinstance(raw_tools, list) or not raw_tools:
-            raise ValueError("generated test case requires non-empty tools when test_set.tool_source=per_seed")
+            raise ValueError("generated test case requires non-empty tools when test_set.tool_source=per_test_case")
         try:
             normalize_tool_defs(raw_tools)
         except (KeyError, TypeError) as exc:
             raise ValueError("generated test case contains invalid tool definitions") from exc
         payload["tools"] = raw_tools
     elif raw_tools:
-        raise ValueError("generated test case.tools is only allowed when test_set.tool_source=per_seed")
+        raise ValueError("generated test case.tools is only allowed when test_set.tool_source=per_test_case")
 
     return payload
 
@@ -960,6 +976,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     tool_source = raw_cfg.get("tool_source", TOOL_SOURCE_RUNTIME)
     if not isinstance(tool_source, str):
         raise ValueError("test_set.tool_source must be a string")
+    if tool_source not in _VALID_TOOL_SOURCES:
+        raise ValueError("test_set.tool_source must be 'runtime' or 'per_test_case'")
+    tool_source = _normalize_tool_source(tool_source)
 
     prompt_cfg = None
     scenario_cfg = None

@@ -1,5 +1,6 @@
 import json
 import unittest
+import warnings
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
@@ -7,10 +8,31 @@ from unittest.mock import AsyncMock, patch
 from p2m.core.config_model import TargetConfig, ToolsConfig
 from p2m.core.model_client import LLMRateLimitError, ModelResponse
 from p2m.stages.stratification import normalize_stratification
-from p2m.stages.test_set import run as run_stage, run_test_set
+from p2m.stages.test_set import (
+    TOOL_SOURCE_PER_TEST_CASE,
+    _normalize_tool_source,
+    run as run_stage,
+    run_test_set,
+)
 
 
 class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
+    def test_tool_source_per_seed_alias_warns_and_normalizes(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            normalized = _normalize_tool_source("per_seed")
+        self.assertEqual(normalized, TOOL_SOURCE_PER_TEST_CASE)
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        self.assertEqual(len(deprecation_warnings), 1)
+        self.assertIn("per_test_case", str(deprecation_warnings[0].message))
+
+    def test_tool_source_canonical_value_does_not_warn(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            normalized = _normalize_tool_source("per_test_case")
+        self.assertEqual(normalized, "per_test_case")
+        self.assertEqual([w for w in caught if issubclass(w.category, DeprecationWarning)], [])
+
     async def test_stage_rejects_removed_validator_keys(self) -> None:
         with self.assertRaisesRegex(ValueError, "test_set validators are no longer supported"):
             await run_stage(
@@ -167,7 +189,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("system_prompt", row["seed"])
 
-    async def test_run_test_set_per_seed_requires_simulator_target(self) -> None:
+    async def test_run_test_set_per_test_case_requires_simulator_target(self) -> None:
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
             "behavior_categories": [
@@ -181,7 +203,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with self.assertRaisesRegex(ValueError, "test_set.tool_source=per_seed requires target.tools.simulator"):
+            with self.assertRaisesRegex(ValueError, "test_set.tool_source=per_test_case requires target.tools.simulator"):
                 await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -194,10 +216,10 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4"),
-                    tool_source="per_seed",
+                    tool_source="per_test_case",
                 )
 
-    async def test_run_test_set_per_seed_emits_tools_and_validates_shape(self) -> None:
+    async def test_run_test_set_per_test_case_emits_tools_and_validates_shape(self) -> None:
         async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
             del model, messages, schema_name, json_schema, options
             return ModelResponse(
@@ -254,7 +276,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
                         model="azure/gpt-5.4",
                         tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                     ),
-                    tool_source="per_seed",
+                    tool_source="per_test_case",
                     stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                 )
 
@@ -494,7 +516,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
-    async def test_run_test_set_per_seed_rejects_invalid_generated_tool_payloads(self) -> None:
+    async def test_run_test_set_per_test_case_rejects_invalid_generated_tool_payloads(self) -> None:
         async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
             del model, messages, schema_name, json_schema, options
             return ModelResponse(
@@ -533,7 +555,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
                             model="azure/gpt-5.4",
                             tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                         ),
-                        tool_source="per_seed",
+                        tool_source="per_test_case",
                         stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                     )
 

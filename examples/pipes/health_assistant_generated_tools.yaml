@@ -24,7 +24,7 @@ pipeline:
       max_tokens: 10000
     behavior_category_count: 25
   test_set:
-    tool_source: per_seed
+    tool_source: per_test_case
     prompt:
       model:
         name: azure/gpt-5.4-mini

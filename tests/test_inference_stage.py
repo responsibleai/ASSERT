@@ -88,7 +88,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("system_prompt", test_set[0]["seed"])
 
-    def test_prepare_test_cases_validates_per_seed_tools(self) -> None:
+    def test_prepare_test_cases_validates_per_test_case_tools(self) -> None:
         rows = [
             {
                 "type": "prompt",
@@ -108,7 +108,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         ]
         test_set = _prepare_test_cases(
             rows,
-            tool_source="per_seed",
+            tool_source="per_test_case",
             fixed_system_prompt=None,
         )
 
@@ -132,7 +132,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         ]
-        with self.assertRaisesRegex(ValueError, "test case tools are only allowed when tool_source=per_seed"):
+        with self.assertRaisesRegex(ValueError, "test case tools are only allowed when tool_source=per_test_case"):
             _prepare_test_cases(
                 rows,
                 tool_source="runtime",
@@ -189,7 +189,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_messages[0].content, "You are a coding agent.")
         self.assertEqual(captured_messages[1].content, "seed prompt")
 
-    async def test_run_inference_uses_per_seed_prompt_exactly(self) -> None:
+    async def test_run_inference_uses_per_test_case_prompt_exactly(self) -> None:
         test_case_row = {
             "type": "prompt",
             "test_case_id": "test-case-1",
@@ -884,7 +884,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
             with self.assertRaisesRegex(
                 ValueError,
-                "test case tools are only allowed when tool_source=per_seed",
+                "test case tools are only allowed when tool_source=per_test_case",
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -894,7 +894,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-    async def test_run_inference_per_seed_uses_seed_tools_with_simulator_target(self) -> None:
+    async def test_run_inference_per_test_case_uses_seed_tools_with_simulator_target(self) -> None:
         test_case_row = {
             "type": "prompt",
             "test_case_id": "test-case-1",

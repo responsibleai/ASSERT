@@ -34,7 +34,7 @@ error: 'bg-score-fail/5 border-score-fail/20'
 };
 const stageLabels: Record<string, string> = {
 taxonomy: 'Taxonomy Generation',
-test_set: 'Seed Generation',
+test_set: 'Test Set Generation',
 inference: 'Inference',
 judge: 'Scoring',
 systematization: 'Systematization',
