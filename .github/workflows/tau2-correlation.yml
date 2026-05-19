@@ -1,0 +1,126 @@
+# p2m/tau2 Correlation Study
+#
+# Manual workflow for running individual stages of the correlation study.
+# Run one model at a time — tau2 takes ~4 hours per model (4 trials).
+#
+# Usage examples:
+#   - Run tau2 for gpt-4o-mini:  stage=tau2, model=azure/gpt-4o-mini
+#   - Run p2m for gpt-5-mini:    stage=p2m, model=azure/gpt-5-mini
+#   - Compute correlation:        stage=correlate (model is ignored)
+
+name: "p2m/tau2 Correlation"
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to run"
+        required: true
+        type: choice
+        options:
+          - tau2
+          - p2m
+          - correlate
+      model:
+        description: "Model to evaluate (e.g. azure/gpt-4o-mini)"
+        required: false
+        default: "azure/gpt-4o-mini"
+        type: string
+      max_concurrency:
+        description: "Max concurrent tasks (tau2 parallelism)"
+        required: false
+        default: "10"
+        type: string
+      tau2_trials:
+        description: "Number of tau2 trials per task"
+        required: false
+        default: "4"
+        type: string
+
+env:
+  AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+  AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
+  AZURE_API_VERSION: "2024-12-01-preview"
+
+jobs:
+  run:
+    name: "${{ inputs.stage }} — ${{ inputs.model }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max (tau2 with 4 trials can take ~4h)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv pip install --system -e ".[otel]"
+          uv pip install --system scipy
+          # tau2-bench from public repo
+          uv pip install --system "tau2 @ git+https://github.com/SEACrowd/tau3-bench.git"
+
+      - name: Restore previous results
+        uses: actions/cache/restore@v4
+        with:
+          path: examples/telecom_tau2_correlation/results/
+          key: tau2-correlation-results
+
+      - name: "Run: ${{ inputs.stage }}"
+        working-directory: examples/telecom_tau2_correlation
+        run: |
+          STAGE="${{ inputs.stage }}"
+          MODEL="${{ inputs.model }}"
+          CONCURRENCY="${{ inputs.max_concurrency }}"
+          TRIALS="${{ inputs.tau2_trials }}"
+
+          ARGS=(--stages "$STAGE" --yes --verbose)
+
+          if [ "$STAGE" != "correlate" ]; then
+            ARGS+=(--models "$MODEL")
+          fi
+
+          ARGS+=(--max-concurrency "$CONCURRENCY")
+          ARGS+=(--tau2-trials "$TRIALS")
+
+          echo "::group::Command"
+          echo "python run_correlation.py ${ARGS[*]}"
+          echo "::endgroup::"
+
+          python run_correlation.py "${ARGS[@]}"
+
+      - name: Save results to cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: examples/telecom_tau2_correlation/results/
+          key: tau2-correlation-results-${{ inputs.stage }}-${{ hashFiles('examples/telecom_tau2_correlation/results/**') }}
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "correlation-${{ inputs.stage }}-${{ inputs.model && inputs.model || 'all' }}"
+          path: |
+            examples/telecom_tau2_correlation/results/
+            artifacts/results/telecom-tau2-correlation-v1/
+          if-no-files-found: ignore
+
+      - name: Post summary
+        if: always()
+        working-directory: examples/telecom_tau2_correlation
+        run: |
+          RESULTS="results/correlation_results.json"
+          if [ -f "$RESULTS" ]; then
+            echo "## τ²↔p2m Correlation Results" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            python -m json.tool "$RESULTS" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## ${{ inputs.stage }} completed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Model: ${{ inputs.model }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "No correlation results yet (need both tau2 + p2m data)." >> "$GITHUB_STEP_SUMMARY"
+          fi
