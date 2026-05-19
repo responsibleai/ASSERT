@@ -24,8 +24,10 @@ import argparse
 import copy
 import json
 import logging
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -51,9 +53,16 @@ RESULTS_DIR = SCRIPT_DIR / "results"
 
 # tau2 defaults
 TAU2_DOMAIN = "telecom"
-TAU2_USER_LLM = "azure/gpt-5.4-mini"
+TAU2_USER_LLM = "azure/gpt-5.4-nano"
 TAU2_NUM_TRIALS = 4
 TAU2_MAX_CONCURRENCY = 5
+
+# Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
+# These are rough lower bounds; actual cost scales with model pricing.
+_EST_TAU2_MINUTES_PER_MODEL = 8       # wall-clock with concurrency=5
+_EST_P2M_MINUTES_PER_MODEL = 8        # 70 seeds
+_EST_TAU2_COST_PER_MODEL_NANO = 4.50  # USD, agent+user at nano pricing
+_EST_P2M_INPUT_TOKENS_PER_MODEL = 3_200_000
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -63,17 +72,19 @@ def model_slug(model: str) -> str:
 
 
 def run_cmd(cmd: list[str], *, dry_run: bool = False) -> subprocess.CompletedProcess | None:
-    """Run a subprocess, logging the command."""
+    """Run a subprocess with output streamed to the terminal."""
     display = " ".join(cmd)
     if dry_run:
         logger.info("[DRY-RUN] %s", display)
         return None
     logger.info("Running: %s", display)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    t0 = time.monotonic()
+    result = subprocess.run(cmd)
+    elapsed = time.monotonic() - t0
     if result.returncode != 0:
-        logger.error("Command failed (exit %d):\n%s", result.returncode, result.stderr)
+        logger.error("Command failed (exit %d) after %.1fs", result.returncode, elapsed)
     else:
-        logger.debug("stdout:\n%s", result.stdout[:2000])
+        logger.info("Completed in %.1fs (%.1f min)", elapsed, elapsed / 60)
     return result
 
 
@@ -84,11 +95,15 @@ def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
     Returns a dict mapping model name → output JSON path.
     """
     outputs: dict[str, Path] = {}
-    for model in models:
+    total = len(models)
+    stage_t0 = time.monotonic()
+    for i, model in enumerate(models, 1):
         slug = model_slug(model)
+        logger.info("── tau2 model %d/%d: %s ──", i, total, model)
         save_name = f"telecom_{slug}"
+        tau2_bin = shutil.which("tau2") or str(Path(sys.executable).parent / "tau2")
         cmd = [
-            "tau2", "run",
+            tau2_bin, "run",
             "--domain", TAU2_DOMAIN,
             "--agent-llm", model,
             "--user-llm", TAU2_USER_LLM,
@@ -108,6 +123,9 @@ def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
         outputs[model] = output_path
         if result and result.returncode != 0:
             logger.warning("tau2 failed for %s, skipping", model)
+    if not dry_run:
+        logger.info("── tau2 stage done: %.1f min for %d model(s) ──",
+                     (time.monotonic() - stage_t0) / 60, total)
     return outputs
 
 
@@ -139,28 +157,38 @@ def run_p2m(models: list[str], *, dry_run: bool = False) -> dict[str, str]:
     """
     base_config = yaml.safe_load(P2M_CONFIG.read_text())
     runs: dict[str, str] = {}
+    total = len(models)
+    stage_t0 = time.monotonic()
 
-    for model in models:
+    for i, model in enumerate(models, 1):
         slug = model_slug(model)
         run_name = f"{slug}-eval"
+        logger.info("── p2m model %d/%d: %s ──", i, total, model)
 
         # Deep-copy and patch the config for this model
         config = copy.deepcopy(base_config)
         config["run"] = run_name
         config["pipeline"]["rollout"]["target"]["model"]["name"] = model
 
-        # Write temporary config
-        tmp_config = RESULTS_DIR / f"config_{slug}.yaml"
+        # Write temporary config next to the source config so that
+        # relative paths (concept markdown, tool files) resolve correctly.
+        tmp_config = P2M_CONFIG.parent / f"config_{slug}.yaml"
         tmp_config.parent.mkdir(parents=True, exist_ok=True)
         tmp_config.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
 
-        cmd = ["p2m", "run", "--config", str(tmp_config)]
+        cmd = [
+            shutil.which("p2m") or str(Path(sys.executable).parent / "p2m"),
+            "run", "--config", str(tmp_config),
+        ]
         result = run_cmd(cmd, dry_run=dry_run)
         runs[model] = run_name
 
         if result and result.returncode != 0:
             logger.warning("p2m failed for %s, skipping", model)
 
+    if not dry_run:
+        logger.info("── p2m stage done: %.1f min for %d model(s) ──",
+                     (time.monotonic() - stage_t0) / 60, total)
     return runs
 
 
@@ -188,7 +216,12 @@ def collect_p2m_scores(suite_name: str, runs: dict[str, str]) -> dict[str, dict[
         dim_totals: dict[str, list[bool]] = {}
         for line in lines:
             record = json.loads(line)
-            verdicts = record.get("verdicts", record.get("scores", {}))
+            # p2m nests dimensions under verdict.dimensions
+            verdicts = (
+                record.get("verdict", {}).get("dimensions")
+                or record.get("verdicts")
+                or record.get("scores", {})
+            )
             for dim, verdict in verdicts.items():
                 dim_totals.setdefault(dim, []).append(bool(verdict))
 
@@ -313,8 +346,85 @@ def print_summary(
     print("=" * 72 + "\n")
 
 
+# ── Cost / progress helpers ─────────────────────────────────────────
+def print_tau2_cost_summary(outputs: dict[str, Path]) -> None:
+    """Print cost summary from tau2 simulation results."""
+    for model, path in outputs.items():
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text())
+        sims = data.get("simulations", [])
+        if not sims:
+            continue
+        total_agent = sum(s.get("agent_cost", 0) for s in sims)
+        total_user = sum(s.get("user_cost", 0) for s in sims)
+        rewards = [s["reward_info"]["reward"] for s in sims]
+        mean_reward = sum(rewards) / len(rewards)
+        logger.info(
+            "tau2 %s: %d sims, reward=%.4f, cost=$%.2f (agent=$%.2f + user=$%.2f)",
+            model_slug(model), len(sims), mean_reward,
+            total_agent + total_user, total_agent, total_user,
+        )
+
+
+def print_p2m_cost_summary(suite_name: str, runs: dict[str, str]) -> None:
+    """Print token usage summary from p2m metrics files."""
+    artifacts_base = REPO_ROOT / "artifacts" / "results" / suite_name
+    for model, run_name in runs.items():
+        metrics_path = artifacts_base / run_name / "metrics.json"
+        if not metrics_path.exists():
+            continue
+        metrics = json.loads(metrics_path.read_text())
+        totals = metrics.get("totals", {})
+        elapsed = metrics.get("elapsed_s", 0)
+        input_tok = totals.get("input_tokens", 0)
+        output_tok = totals.get("output_tokens", 0)
+        cached = totals.get("cached_input_tokens", 0)
+        calls = totals.get("calls", 0)
+        cache_pct = (cached / input_tok * 100) if input_tok else 0
+        logger.info(
+            "p2m %s: %d calls, %.2fM input (%.0f%% cached), %.1fK output, %.1f min",
+            model_slug(model), calls,
+            input_tok / 1e6, cache_pct, output_tok / 1e3, elapsed / 60,
+        )
+
+
+def confirm_stage(stage: str, models: list[str], *, yes: bool = False) -> bool:
+    """Show cost/time estimate and ask for confirmation before an expensive stage."""
+    if yes:
+        return True
+
+    n = len(models)
+    slugs = ", ".join(model_slug(m) for m in models)
+
+    if stage == "tau2":
+        est_min = _EST_TAU2_MINUTES_PER_MODEL * n
+        est_cost = _EST_TAU2_COST_PER_MODEL_NANO * n
+        print(f"\n{'─' * 60}")
+        print(f"  Stage: tau2 ({TAU2_NUM_TRIALS} trials, concurrency {TAU2_MAX_CONCURRENCY})")
+        print(f"  Models ({n}): {slugs}")
+        print(f"  Estimated: ~{est_min} min, ~${est_cost:.0f}+ (nano pricing)")
+        print(f"  Note: cost scales with model pricing (gpt-5.4 >> nano)")
+        print(f"{'─' * 60}")
+    elif stage == "p2m":
+        est_min = _EST_P2M_MINUTES_PER_MODEL * n
+        est_tok = _EST_P2M_INPUT_TOKENS_PER_MODEL * n
+        print(f"\n{'─' * 60}")
+        print(f"  Stage: p2m evaluation (70 seeds per model)")
+        print(f"  Models ({n}): {slugs}")
+        print(f"  Estimated: ~{est_min} min, ~{est_tok / 1e6:.0f}M input tokens")
+        print(f"{'─' * 60}")
+    else:
+        return True  # correlate is compute-only, no API cost
+
+    answer = input("  Proceed? [y/N] ").strip().lower()
+    return answer in ("y", "yes")
+
+
 # ── Main ────────────────────────────────────────────────────────────
 def main() -> None:
+    global TAU2_NUM_TRIALS, TAU2_USER_LLM
+
     parser = argparse.ArgumentParser(
         description="Run telecom τ²-bench ↔ p2m correlation study.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -359,6 +469,11 @@ def main() -> None:
         action="store_true",
         help="Debug-level logging",
     )
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Skip confirmation prompts (auto-approve all stages)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -368,7 +483,6 @@ def main() -> None:
     )
 
     # Apply overrides to module-level defaults
-    global TAU2_NUM_TRIALS, TAU2_USER_LLM
     TAU2_NUM_TRIALS = args.tau2_trials
     TAU2_USER_LLM = args.tau2_user_llm
 
@@ -398,16 +512,24 @@ def main() -> None:
 
     if "tau2" in stages:
         logger.info("═══ STAGE: tau2 ═══")
-        outputs = run_tau2(args.models, dry_run=args.dry_run)
-        if not args.dry_run:
-            tau2_rewards = collect_tau2_rewards(outputs)
+        if not confirm_stage("tau2", args.models, yes=args.dry_run or args.yes):
+            logger.info("Skipped tau2 stage.")
+        else:
+            outputs = run_tau2(args.models, dry_run=args.dry_run)
+            if not args.dry_run:
+                tau2_rewards = collect_tau2_rewards(outputs)
+                print_tau2_cost_summary(outputs)
 
     if "p2m" in stages:
         logger.info("═══ STAGE: p2m ═══")
         suite_name = yaml.safe_load(P2M_CONFIG.read_text()).get("suite", "telecom-tau2-correlation-v1")
-        runs = run_p2m(args.models, dry_run=args.dry_run)
-        if not args.dry_run:
-            p2m_scores = collect_p2m_scores(suite_name, runs)
+        if not confirm_stage("p2m", args.models, yes=args.dry_run or args.yes):
+            logger.info("Skipped p2m stage.")
+        else:
+            runs = run_p2m(args.models, dry_run=args.dry_run)
+            if not args.dry_run:
+                p2m_scores = collect_p2m_scores(suite_name, runs)
+                print_p2m_cost_summary(suite_name, runs)
 
     if "correlate" in stages:
         logger.info("═══ STAGE: correlate ═══")
