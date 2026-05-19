@@ -128,7 +128,7 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 		messages,
 		llm_calls: sample.llm_calls ?? [],
 		target_runtime_mode: sample.target_runtime_mode ?? null,
-		factors: sample.factors,
+		dimensions: sample.dimensions,
 		context: {
 			tools: readSeedTools(sample.seed_metadata),
 			turns_count: countConversationMessages(messages)
@@ -144,10 +144,10 @@ export function normalizeScenarioResult(
 ): ViewerResultItem {
 	const interactionMessages = toInteractionMessages(messages);
 	return {
-		id: `scenario:${score.seed_id}`,
+		id: `scenario:${score.test_case_id}`,
 		kind: 'scenario',
-		row_title: seedInfo?.title ?? score.seed_id,
-		header_title: seedInfo?.title ?? score.seed_id,
+		row_title: seedInfo?.title ?? score.test_case_id,
+		header_title: seedInfo?.title ?? score.test_case_id,
 		behavior: score.behavior,
 		verdict: score.verdict,
 		judge_status: score.judge_status,
@@ -156,7 +156,7 @@ export function normalizeScenarioResult(
 		messages: interactionMessages,
 		llm_calls: llmCalls,
 		target_runtime_mode: score.target_runtime_mode ?? null,
-		factors: score.factors ?? seedInfo?.factors,
+		dimensions: score.dimensions ?? seedInfo?.dimensions,
 		context: {
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,

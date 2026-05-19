@@ -1,18 +1,18 @@
 """Concurrency / throughput benchmark harness.
 
 Drives the full p2m pipeline against a base benchmark config, with
-``--seeds`` and ``--concurrency`` as the two knobs. Everything else
-(target, factors, judge dimensions) stays identical across runs so
+``--test_set`` and ``--concurrency`` as the two knobs. Everything else
+(target, dimensions, judge dimensions) stays identical across runs so
 results are comparable.
 
 Each invocation:
 
 1. Materializes a per-run working dir under ``artifacts/benchmark/<run_id>/``.
-2. Copies the base YAML and the concept markdown into that dir.
+2. Copies the base YAML and the behavior markdown into that dir.
 3. Applies overrides:
 
-   - ``pipeline.policy.behavior_count``  (auto-scaled from --seeds unless --behaviors)
-   - ``pipeline.seeds.scenario.sample_size`` = --seeds
+   - ``pipeline.systematize.behavior_category_count``  (auto-scaled from --test_set unless --behavior_categories)
+   - ``pipeline.test_set.scenario.sample_size`` = --test_set
    - ``pipeline.rollout.concurrency``    = --concurrency  (judge re-uses this number)
    - ``run``                              = the timestamped run id
 
@@ -25,9 +25,9 @@ Each invocation:
 
 Example::
 
-    python scripts/benchmark.py --seeds 100 --concurrency 10
-    python scripts/benchmark.py --seeds 1000 --concurrency 50
-    python scripts/benchmark.py --seeds 5000 --concurrency 100
+    python scripts/benchmark.py --test_set 100 --concurrency 10
+    python scripts/benchmark.py --test_set 1000 --concurrency 50
+    python scripts/benchmark.py --test_set 5000 --concurrency 100
 
 Run with ``--help`` for the full flag list.
 """
@@ -56,9 +56,9 @@ from p2m.runner import run_pipeline  # noqa: E402
 from p2m.logging_config import configure_logging  # noqa: E402
 
 DEFAULT_BASE_CONFIG = REPO_ROOT / "examples" / "benchmark" / "eval_config.yaml"
-# Quality-only concept colocated with the benchmark config. We deliberately
+# Quality-only behavior colocated with the benchmark config. We deliberately
 # don't reuse examples/travel_planner_langgraph/travel_planner_eval.md
-# because that spec includes adversarial safety behaviors (prompt injection,
+# because that spec includes adversarial safety behavior_categories (prompt injection,
 # sycophancy bait) that push the auditor into jailbreak-shaped turns and
 # get rejected by Azure Prompt Shields.
 DEFAULT_CONCEPT_SOURCE = (
@@ -81,9 +81,9 @@ DEFAULT_RESULTS_CSV = DEFAULT_BENCH_ROOT / "results.csv"
 CSV_FIELDS = [
     "timestamp_utc",
     "run_id",
-    "seeds",
+    "test_set",
     "concurrency",
-    "behavior_count",
+    "behavior_category_count",
     "exit_code",
     "wall_time_s",
     "rate_limit_cooldowns",
@@ -222,23 +222,23 @@ class _RateLimitCounter(logging.Handler):
             self.count += 1
 
 
-def _scale_behavior_count(seeds: int) -> int:
-    """Aim for ~10 seeds per behavior; clamp into a tractable range.
+def _scale_behavior_category_count(test_set: int) -> int:
+    """Aim for ~10 test_set per behavior; clamp into a tractable range.
 
-    Below the floor the policy stage produces too few categories to
-    cover the concept; above the ceiling the policy LLM has to invent
+    Below the floor the systematize stage produces too few categories to
+    cover the behavior; above the ceiling the taxonomy LLM has to invent
     too many distinct failure modes in a single call.
     """
-    target = math.ceil(seeds / 10)
+    target = math.ceil(test_set / 10)
     return max(6, min(50, target))
 
 
 def _override_config(
     base: dict[str, Any],
     *,
-    seeds: int,
+    test_set: int,
     concurrency: int,
-    behavior_count: int,
+    behavior_category_count: int,
     run_id: str,
 ) -> dict[str, Any]:
     cfg = dict(base)
@@ -246,20 +246,20 @@ def _override_config(
 
     pipeline = dict(cfg.get("pipeline") or {})
 
-    policy = dict(pipeline.get("policy") or {})
-    policy["behavior_count"] = behavior_count
-    pipeline["policy"] = policy
+    taxonomy = dict(pipeline.get("taxonomy") or {})
+    taxonomy["behavior_category_count"] = behavior_category_count
+    pipeline["taxonomy"] = taxonomy
 
-    seeds_block = dict(pipeline.get("seeds") or {})
+    seeds_block = dict(pipeline.get("test_set") or {})
     # Scenario-only by design: the rollout/judge concurrency knob is what
     # this benchmark exercises, and scenario rollouts are the heavier
     # multi-turn shape that makes that knob bite. Strip any prompt block
     # that may be in the base config.
     seeds_block.pop("prompt", None)
     scenario = dict(seeds_block.get("scenario") or {})
-    scenario["sample_size"] = seeds
+    scenario["sample_size"] = test_set
     seeds_block["scenario"] = scenario
-    pipeline["seeds"] = seeds_block
+    pipeline["test_set"] = seeds_block
 
     rollout = dict(pipeline.get("rollout") or {})
     rollout["concurrency"] = concurrency
@@ -287,10 +287,10 @@ def _prepare_run_dir(
     # without leaking benchmark-specific paths into the loader.
     if not concept_source.exists():
         raise FileNotFoundError(
-            f"Concept markdown not found at {concept_source}. "
-            "Pass --concept-md to point at the right .md file."
+            f"Behavior markdown not found at {concept_source}. "
+            "Pass --behavior-md to point at the right .md file."
         )
-    concept_name = overrides.get("concept", {}).get("name") or concept_source.stem
+    concept_name = overrides.get("behavior", {}).get("name") or concept_source.stem
     shutil.copy2(concept_source, run_dir / f"{concept_name}.md")
 
     return target_config
@@ -306,11 +306,11 @@ def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
     via :func:`p2m.results.load_run_summary`. ``scenario_seeds_generated``
     is the count of scenario rows that reached the judge stage in this
     run; ``scenarios_scored`` is the subset that judge successfully
-    scored (i.e. ``judge_status == "ok"``). For partial-seeds runs that
+    scored (i.e. ``judge_status == "ok"``). For partial-test_set runs that
     skip cache finalization, this keeps the CSV row internally
     consistent with the other per-run columns (cooldowns, target_errors,
     wall_time_s) instead of reading the suite-root compatibility
-    ``seeds.jsonl`` which only refreshes on full-success runs.
+    ``test_set.jsonl`` which only refreshes on full-success runs.
 
     The runner's ``metrics.json`` is token-usage telemetry only and is
     not consulted here.
@@ -362,22 +362,22 @@ def _append_results_row(csv_path: Path, row: dict[str, Any]) -> None:
         writer.writerow({k: row.get(k, "") for k in CSV_FIELDS})
 
 
-def _build_run_id(seeds: int, concurrency: int, custom: str | None) -> str:
+def _build_run_id(test_set: int, concurrency: int, custom: str | None) -> str:
     if custom:
         return custom
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"bench-s{seeds}-c{concurrency}-{stamp}"
+    return f"bench-s{test_set}-c{concurrency}-{stamp}"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the full p2m pipeline at a chosen (seeds, concurrency) point.",
+        description="Run the full p2m pipeline at a chosen (test_set, concurrency) point.",
     )
     parser.add_argument(
-        "--seeds",
+        "--test_set",
         type=int,
         required=True,
-        help="Total scenario seeds to generate (sets pipeline.seeds.scenario.sample_size). 1..100000.",
+        help="Total scenario test_set to generate (sets pipeline.test_set.scenario.sample_size). 1..100000.",
     )
     parser.add_argument(
         "--concurrency",
@@ -386,12 +386,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Rollout concurrency (judge re-uses this value). Must be >= 1.",
     )
     parser.add_argument(
-        "--behaviors",
+        "--behavior_categories",
         type=int,
         default=None,
         help=(
-            "Override pipeline.policy.behavior_count. Default scales with --seeds "
-            "(roughly 10 seeds per behavior, clamped to [6, 50])."
+            "Override pipeline.systematize.behavior_category_count. Default scales with --test_set "
+            "(roughly 10 test_set per behavior, clamped to [6, 50])."
         ),
     )
     parser.add_argument(
@@ -401,11 +401,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Base YAML to template from (default: {DEFAULT_BASE_CONFIG.relative_to(REPO_ROOT)}).",
     )
     parser.add_argument(
-        "--concept-md",
+        "--behavior-md",
         type=Path,
         default=DEFAULT_CONCEPT_SOURCE,
         help=(
-            "Source path to the concept markdown that gets copied next to the temp "
+            "Source path to the behavior markdown that gets copied next to the temp "
             f"config (default: {DEFAULT_CONCEPT_SOURCE.relative_to(REPO_ROOT)})."
         ),
     )
@@ -486,8 +486,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    if args.seeds < 1 or args.seeds > 100_000:
-        print(f"--seeds must be in [1, 100000], got {args.seeds}", file=sys.stderr)
+    if args.test_set < 1 or args.test_set > 100_000:
+        print(f"--test_set must be in [1, 100000], got {args.test_set}", file=sys.stderr)
         return 2
     if args.concurrency < 1:
         print(f"--concurrency must be >= 1, got {args.concurrency}", file=sys.stderr)
@@ -502,20 +502,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Base config did not parse to a dict: {args.base_config}", file=sys.stderr)
         return 2
 
-    behavior_count = (
-        args.behaviors if args.behaviors is not None else _scale_behavior_count(args.seeds)
+    behavior_category_count = (
+        args.behavior_categories if args.behavior_categories is not None else _scale_behavior_category_count(args.test_set)
     )
-    if behavior_count < 1:
-        print(f"--behaviors must be >= 1, got {behavior_count}", file=sys.stderr)
+    if behavior_category_count < 1:
+        print(f"--behavior_categories must be >= 1, got {behavior_category_count}", file=sys.stderr)
         return 2
 
-    run_id = _build_run_id(args.seeds, args.concurrency, args.run_id)
+    run_id = _build_run_id(args.test_set, args.concurrency, args.run_id)
 
     overrides = _override_config(
         base_cfg,
-        seeds=args.seeds,
+        test_set=args.test_set,
         concurrency=args.concurrency,
-        behavior_count=behavior_count,
+        behavior_category_count=behavior_category_count,
         run_id=run_id,
     )
 
@@ -528,9 +528,9 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print(f"Benchmark run: {run_id}")
     print(f"  suite          : {suite_id}")
-    print(f"  seeds          : {args.seeds} (scenario only)")
+    print(f"  test_set          : {args.test_set} (scenario only)")
     print(f"  concurrency    : {args.concurrency} (rollout + judge)")
-    print(f"  behavior_count : {behavior_count}")
+    print(f"  behavior_category_count : {behavior_category_count}")
     print(f"  config         : {target_config}")
     if args.log_file:
         print(f"  log file       : {args.log_file}")
@@ -625,9 +625,9 @@ def main(argv: list[str] | None = None) -> int:
         row = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "run_id": run_id,
-            "seeds": args.seeds,
+            "test_set": args.test_set,
             "concurrency": args.concurrency,
-            "behavior_count": behavior_count,
+            "behavior_category_count": behavior_category_count,
             "exit_code": exit_code,
             "wall_time_s": round(wall_time, 2),
             "rate_limit_cooldowns": counter.count,

@@ -23,9 +23,9 @@ from p2m.analysis.seed_labeling import (
 from p2m.stages.design import (
     _design_response_schema,
     render_design_catalog,
-    render_behaviors,
+    render_behavior_categories,
 )
-from p2m.stages.seeds import (
+from p2m.stages.test_set import (
     PROMPT_FIELD_EXAMPLES,
     SCENARIO_FIELD_EXAMPLES,
     SEED_SCHEMA,
@@ -62,8 +62,8 @@ def _minimal_design(include_behavior: bool = True) -> dict[str, list[dict[str, s
 
 def _minimal_policy() -> dict[str, Any]:
     return {
-        "concept": {"name": "test_risk"},
-        "behaviors": [
+        "behavior": {"name": "test_risk"},
+        "behavior_categories": [
             {"name": "Behavior A", "definition": "Definition A", "permissible": True},
             {"name": "Behavior B", "definition": "Definition B", "permissible": False},
         ],
@@ -115,14 +115,14 @@ class RenderTupleSpecTest(unittest.TestCase):
 
 class RenderPolicyNodesTest(unittest.TestCase):
     def test_renders_permissible_and_non_permissible(self) -> None:
-        result = render_behaviors(_minimal_policy())
+        result = render_behavior_categories(_minimal_policy())
         self.assertIn("Behavior A (PERMISSIBLE)", result)
         self.assertIn("Behavior B (NOT PERMISSIBLE)", result)
 
 
 class DesignResponseSchemaTest(unittest.TestCase):
     def test_schema_has_configured_factors(self) -> None:
-        schema = _design_response_schema(3, factors=FACTOR_NAMES)
+        schema = _design_response_schema(3, dimensions=FACTOR_NAMES)
         self.assertEqual(set(schema["required"]), set(FACTOR_NAMES))
         self.assertEqual(schema["properties"]["domain"]["items"]["required"], ["name", "definition"])
 
@@ -130,32 +130,32 @@ class DesignResponseSchemaTest(unittest.TestCase):
 class SeedsResponseSchemaTest(unittest.TestCase):
     def test_schema_wraps_seeds_array(self) -> None:
         schema = seeds_response_schema()
-        self.assertEqual(schema["properties"]["seeds"]["items"], SEED_SCHEMA)
+        self.assertEqual(schema["properties"]["test_set"]["items"], SEED_SCHEMA)
 
     def test_schema_omits_min_items_by_default(self) -> None:
         schema = seeds_response_schema()
-        self.assertNotIn("minItems", schema["properties"]["seeds"])
-        self.assertEqual(schema["properties"]["seeds"]["maxItems"], 2000)
+        self.assertNotIn("minItems", schema["properties"]["test_set"])
+        self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
     def test_schema_pins_min_items_when_count_supplied(self) -> None:
         schema = seeds_response_schema(min_items=27)
-        self.assertEqual(schema["properties"]["seeds"]["minItems"], 27)
-        self.assertEqual(schema["properties"]["seeds"]["maxItems"], 2000)
+        self.assertEqual(schema["properties"]["test_set"]["minItems"], 27)
+        self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
     def test_schema_ignores_non_positive_min_items(self) -> None:
         for value in (0, -1):
             schema = seeds_response_schema(min_items=value)
-            self.assertNotIn("minItems", schema["properties"]["seeds"])
+            self.assertNotIn("minItems", schema["properties"]["test_set"])
 
     def test_schema_pins_both_bounds_when_min_and_max_match(self) -> None:
         schema = seeds_response_schema(min_items=500, max_items=500)
-        self.assertEqual(schema["properties"]["seeds"]["minItems"], 500)
-        self.assertEqual(schema["properties"]["seeds"]["maxItems"], 500)
+        self.assertEqual(schema["properties"]["test_set"]["minItems"], 500)
+        self.assertEqual(schema["properties"]["test_set"]["maxItems"], 500)
 
     def test_schema_ignores_non_positive_max_items(self) -> None:
         for value in (0, -1):
             schema = seeds_response_schema(max_items=value)
-            self.assertEqual(schema["properties"]["seeds"]["maxItems"], 2000)
+            self.assertEqual(schema["properties"]["test_set"]["maxItems"], 2000)
 
 
 class LabelEntrySchemaTest(unittest.TestCase):
@@ -186,8 +186,8 @@ class SchemaExampleTest(unittest.TestCase):
             for key in SEED_SCHEMA["properties"]
             if key in PROMPT_FIELD_EXAMPLES
         }
-        parsed = json.loads(json.dumps({"seeds": [seed]}, indent=2))
-        self.assertEqual(parsed["seeds"][0]["title"], PROMPT_FIELD_EXAMPLES["title"])
+        parsed = json.loads(json.dumps({"test_set": [seed]}, indent=2))
+        self.assertEqual(parsed["test_set"][0]["title"], PROMPT_FIELD_EXAMPLES["title"])
 
     def test_scenario_example_contains_field_examples(self) -> None:
         seed = {
@@ -195,24 +195,24 @@ class SchemaExampleTest(unittest.TestCase):
             for key in SEED_SCHEMA["properties"]
             if key in SCENARIO_FIELD_EXAMPLES
         }
-        parsed = json.loads(json.dumps({"seeds": [seed]}, indent=2))
-        self.assertEqual(parsed["seeds"][0]["title"], SCENARIO_FIELD_EXAMPLES["title"])
+        parsed = json.loads(json.dumps({"test_set": [seed]}, indent=2))
+        self.assertEqual(parsed["test_set"][0]["title"], SCENARIO_FIELD_EXAMPLES["title"])
 
 
 class TemplateReplacementsTest(unittest.TestCase):
-    def test_policy_body_is_passed_through(self) -> None:
+    def test_taxonomy_body_is_passed_through(self) -> None:
         replacements = _template_replacements(
             "prompt",
-            "concept",
+            "behavior",
             "beh",
             "def",
             ["ex1"],
             5,
             context=None,
             batch_guidance="",
-            policy_body="POLICY-BODY-SENTINEL",
+            taxonomy_body="TAXONOMY-BODY-SENTINEL",
         )
-        self.assertEqual(replacements["policy_body"], "POLICY-BODY-SENTINEL")
+        self.assertEqual(replacements["taxonomy_body"], "TAXONOMY-BODY-SENTINEL")
         self.assertEqual(replacements["behavior"], "beh")
         self.assertEqual(replacements["definition"], "def")
         self.assertIn("ex1", replacements["examples"])
@@ -220,14 +220,14 @@ class TemplateReplacementsTest(unittest.TestCase):
     def test_no_permissible_or_strategy_keys(self) -> None:
         replacements = _template_replacements(
             "scenario",
-            "concept",
+            "behavior",
             "beh",
             "def",
             [],
             3,
             context=None,
             batch_guidance="",
-            policy_body="",
+            taxonomy_body="",
         )
         self.assertNotIn("permissible_status", replacements)
         self.assertNotIn("seed_strategy", replacements)
@@ -257,7 +257,7 @@ class BuildLabelingPromptTest(unittest.TestCase):
             kind="prompt",
             concept_name="test_risk",
             design=_minimal_design(),
-            rows=[{"seed_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
+            rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
         self.assertIn("test_risk", result)
         self.assertIn("Healthcare", result)
@@ -268,9 +268,9 @@ class BuildLabelingPromptTest(unittest.TestCase):
             kind="scenario",
             concept_name="test_risk",
             design=_minimal_design(include_behavior=False),
-            rows=[{"seed_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
+            rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
-        self.assertNotIn("Policy node", result)
+        self.assertNotIn("Taxonomy node", result)
         self.assertIn("Scenario 1:", result)
 
 
@@ -295,30 +295,30 @@ class MetricsTest(unittest.TestCase):
 
     def test_intended_vs_observed_metrics_uses_present_factors(self) -> None:
         design = _minimal_design(include_behavior=False)
-        labels = [{"seed_id": "s1", "domain": "Healthcare", "user_context": "User is a minor"}]
+        labels = [{"test_case_id": "s1", "domain": "Healthcare", "user_context": "User is a minor"}]
         result = intended_vs_observed_metrics(labels, labels, design)
         self.assertEqual(result["exact_tuple_agreement"], 1.0)
 
     def test_confusion_matrices_match_level_names(self) -> None:
         design = _minimal_design()
-        labels = [{"seed_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"}]
+        labels = [{"test_case_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"}]
         result = confusion_matrices(labels, labels, design)
         self.assertEqual(result["domain"]["Healthcare"]["Healthcare"], 1)
 
     def test_behavior_agreement_uses_exact_behavior_name(self) -> None:
-        observed = [{"seed_id": "s1", "behavior": "Behavior A"}]
-        rows = [{"seed_id": "s1", "factors": {"behavior": "Behavior A"}}]
+        observed = [{"test_case_id": "s1", "behavior": "Behavior A"}]
+        rows = [{"test_case_id": "s1", "dimensions": {"behavior": "Behavior A"}}]
         self.assertEqual(behavior_agreement(observed, rows), 1.0)
 
     def test_build_supplementary_metrics_shape(self) -> None:
         design = _minimal_design()
         observed = [
-            {"seed_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
-            {"seed_id": "s2", "behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
+            {"test_case_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
+            {"test_case_id": "s2", "behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
         ]
         rows = [
-            {"seed_id": "s1", "factors": {"behavior": "Behavior A"}},
-            {"seed_id": "s2", "factors": {"behavior": "Behavior B"}},
+            {"test_case_id": "s1", "dimensions": {"behavior": "Behavior A"}},
+            {"test_case_id": "s2", "dimensions": {"behavior": "Behavior B"}},
         ]
         result = build_supplementary_metrics(
             kind="scenario",

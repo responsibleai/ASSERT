@@ -68,7 +68,7 @@ class FormatUsageLineTest(unittest.TestCase):
 class BuildRunMetricsTest(unittest.TestCase):
     def test_aggregates_per_stage_into_totals(self) -> None:
         stage_usage = {
-            "seeds": {
+            "test_set": {
                 "calls": 15,
                 "input_tokens": 75_000,
                 "output_tokens": 5_000,

@@ -12,7 +12,7 @@ class CliTest(unittest.TestCase):
         self.runner = CliRunner()
 
     def test_removed_commands_are_unavailable(self) -> None:
-        for command in ["policy", "seeds"]:
+        for command in ["taxonomy", "test_set"]:
             with self.subTest(command=command):
                 result = self.runner.invoke(cli, [command])
                 self.assertNotEqual(result.exit_code, 0)

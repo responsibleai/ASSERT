@@ -103,14 +103,14 @@ def compute_judge_metrics(
     dim_results: dict[str, Any] = {}
     for dim in dimensions:
         outcomes: list[bool] = []
-        seeds: list[str] = []
+        test_set: list[str] = []
         for row in ok_rows:
             val = _get_dimension(row, dim)
             if val is not None:
                 outcomes.append(val)
-                seeds.append(str(row.get("seed_id", "")))
+                test_set.append(str(row.get("test_case_id", "")))
 
-        overall = binary_rate_ci(outcomes, groups=seeds, n_boot=n_boot)
+        overall = binary_rate_ci(outcomes, groups=test_set, n_boot=n_boot)
 
         # Per-behavior rates
         by_behavior: dict[str, list[bool]] = defaultdict(list)
@@ -204,7 +204,7 @@ def analyze_suite(
                 verdict = row.get("verdict", {})
                 dims = verdict.get("dimensions", {}) if isinstance(verdict, dict) else {}
                 all_scored_for_variation.append({
-                    "seed_id": row.get("seed_id", ""),
+                    "test_case_id": row.get("test_case_id", ""),
                     "run": run_id,
                     "auditor_model": auditor_model,
                     "policy_violation": bool(dims.get("policy_violation", False)),
@@ -230,7 +230,7 @@ def analyze_suite(
                         verdict = row.get("verdict", {})
                         dims = verdict.get("dimensions", {}) if isinstance(verdict, dict) else {}
                         rep_rows.append({
-                            "seed_id": row.get("seed_id", ""),
+                            "test_case_id": row.get("test_case_id", ""),
                             "run": run_id,
                             "policy_violation": bool(dims.get("policy_violation", False)),
                         })
@@ -251,7 +251,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
     # 1. Main runs comparison table
     if main_runs:
         lines.append("Main runs")
-        lines.append(f"{'Auditor':<22} {'Scored':>6} {'Policy violations':>18} "
+        lines.append(f"{'Auditor':<22} {'Scored':>6} {'Taxonomy violations':>18} "
                      f"{'Invalid turns':>13} {'Run quality':>11}")
         lines.append("─" * 76)
 
@@ -287,7 +287,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
             n_shared = rep.get("n_seeds_full_coverage", 0)
             if n_shared < 5:
                 lines.append(f"Seed-level repeatability: {auditor}")
-                lines.append(f"  Too few shared seeds ({n_shared}) for reliable estimate.")
+                lines.append(f"  Too few shared test_set ({n_shared}) for reliable estimate.")
             else:
                 lines.append(format_repeatability(rep))
             lines.append("")
@@ -343,10 +343,10 @@ def format_suite_summary(results: dict[str, Any]) -> str:
             any_positive = any(s["positive"] > 0 for s in by_b.values())
 
             if not any_positive:
-                lines.append(f"    (0 observed across {len(by_b)} behaviors)")
+                lines.append(f"    (0 observed across {len(by_b)} behavior_categories)")
                 continue
 
-            # Show behaviors with sufficient support, sorted by contribution
+            # Show behavior_categories with sufficient support, sorted by contribution
             substantial = [(b, s) for b, s in by_b.items() if s["sufficient"] and s["positive"] > 0]
             sparse = [(b, s) for b, s in by_b.items() if not s["sufficient"]]
 
@@ -356,7 +356,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
             if sparse:
                 sparse_pos = sum(s["positive"] for _, s in sparse)
                 sparse_total = sum(s["count"] for _, s in sparse)
-                lines.append(f"    ({len(sparse)} sparse behaviors, n<{MIN_BEHAVIOR_SUPPORT}: "
+                lines.append(f"    ({len(sparse)} sparse behavior_categories, n<{MIN_BEHAVIOR_SUPPORT}: "
                              f"{sparse_pos} violations in {sparse_total} cases)")
 
         lines.append("")

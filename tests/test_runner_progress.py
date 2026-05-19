@@ -11,7 +11,7 @@ from p2m.runner import run_pipeline
 
 class RunnerProgressTest(unittest.TestCase):
     def _write_concept_markdown(self, root: Path) -> None:
-        (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+        (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
     def test_run_pipeline_writes_minimal_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -20,15 +20,15 @@ class RunnerProgressTest(unittest.TestCase):
             suite_root = root / "results" / "suite-a"
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
-            transcripts_path.write_text('{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8")
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            transcripts_path.write_text('{"type":"prompt","test_case_id":"seed-1"}\n', encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(
                 "\n".join(
                     [
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "behavior:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -74,7 +74,7 @@ class RunnerProgressTest(unittest.TestCase):
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "behavior:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -149,16 +149,16 @@ class RunnerProgressTest(unittest.TestCase):
         suite_root.mkdir(parents=True)
         transcripts_path = suite_root / "transcripts.jsonl"
         transcripts_path.write_text(
-            '{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8"
+            '{"type":"prompt","test_case_id":"seed-1"}\n', encoding="utf-8"
         )
-        (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+        (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
         cfg_path.write_text(
             "\n".join(
                 [
                     "suite: suite-a",
                     "run: run-a",
                     f"results_dir: {root / 'results'}",
-                    "concept:",
+                    "behavior:",
                     "  name: harmful_medical_advice",
                     "pipeline:",
                     "  judge:",

@@ -370,23 +370,23 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     }
 
 
-def _count_seed_kinds(path: Path) -> tuple[int, int]:
+def _count_test_case_types(path: Path) -> tuple[int, int]:
     rows = load_jsonl(path)
     prompt_count = 0
     scenario_count = 0
     for row in rows:
-        kind = row.get("kind")
-        if kind == "prompt":
+        row_type = row.get("type")
+        if row_type == "prompt":
             prompt_count += 1
-        elif kind == "scenario":
+        elif row_type == "scenario":
             scenario_count += 1
     return prompt_count, scenario_count
 
 
 def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     suite_meta = load_json(suite_dir / "suite.json")
-    policy = load_json(suite_dir / "policy.json")
-    if suite_meta is None and policy is None:
+    taxonomy = load_json(suite_dir / "taxonomy.json")
+    if suite_meta is None and taxonomy is None:
         return None
 
     run_summaries = []
@@ -401,29 +401,29 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
         (run_summary.get("prompt_metrics") is not None) or (run_summary.get("scenario_metrics") is not None)
         for run_summary in run_summaries
     )
-    seed_count, scenario_seed_count = _count_seed_kinds(suite_dir / "seeds.jsonl")
+    prompt_test_case_count, scenario_test_case_count = _count_test_case_types(suite_dir / "test_set.jsonl")
 
     created_at = (suite_meta or {}).get("created_at")
 
-    risk_name = suite_dir.name
-    risk_block = (policy or {}).get("risk")
-    if isinstance(risk_block, dict) and isinstance(risk_block.get("name"), str) and risk_block.get("name"):
-        risk_name = risk_block["name"]
+    concept_name = suite_dir.name
+    concept_block = (taxonomy or {}).get("behavior")
+    if isinstance(concept_block, dict) and isinstance(concept_block.get("name"), str) and concept_block.get("name"):
+        concept_name = concept_block["name"]
 
     if has_results:
         status = "has_results"
-    elif seed_count or scenario_seed_count:
-        status = "seeds_ready"
+    elif prompt_test_case_count or scenario_test_case_count:
+        status = "test_set_ready"
     else:
-        status = "policy_only"
+        status = "systematized"
 
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "risk_name": risk_name,
-        "sub_risk_count": len((policy or {}).get("sub_risks") or []),
-        "seed_count": seed_count,
-        "scenario_seed_count": scenario_seed_count,
+        "concept_name": concept_name,
+        "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
+        "prompt_test_case_count": prompt_test_case_count,
+        "scenario_test_case_count": scenario_test_case_count,
         "run_count": len(run_summaries),
         "runs": run_summaries,
         "status": status,
@@ -658,19 +658,19 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
     console = _console(no_color=no_color)
     table = Table(title=f"Suites ({results_root})", box=None, show_header=True, show_edge=False, pad_edge=False)
     table.add_column("Suite", style="cyan", no_wrap=True)
-    table.add_column("Risk", style="white")
-    table.add_column("Sub-Risks", style="white", no_wrap=True)
-    table.add_column("Prompt Seeds", style="white", no_wrap=True)
-    table.add_column("Scenario Seeds", style="white", no_wrap=True)
+    table.add_column("Behavior", style="white")
+    table.add_column("Behavior Categories", style="white", no_wrap=True)
+    table.add_column("Prompt Test Cases", style="white", no_wrap=True)
+    table.add_column("Scenario Test Cases", style="white", no_wrap=True)
     table.add_column("Runs", style="white", no_wrap=True)
     table.add_column("Status", style="dim", no_wrap=True)
     for suite_summary in suites:
         table.add_row(
             suite_summary["suite_id"],
-            str(suite_summary["risk_name"]),
-            str(suite_summary["sub_risk_count"]),
-            str(suite_summary["seed_count"]),
-            str(suite_summary["scenario_seed_count"]),
+            str(suite_summary["concept_name"]),
+            str(suite_summary["behavior_category_count"]),
+            str(suite_summary["prompt_test_case_count"]),
+            str(suite_summary["scenario_test_case_count"]),
             str(suite_summary["run_count"]),
             str(suite_summary["status"]),
         )
@@ -709,12 +709,12 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         summary.add_column("Field", style="cyan", no_wrap=True)
         summary.add_column("Value", style="white")
         summary.add_row("Suite", suite_summary["suite_id"])
-        summary.add_row("Risk", str(suite_summary["risk_name"]))
+        summary.add_row("Behavior", str(suite_summary["concept_name"]))
         summary.add_row("Status", str(suite_summary["status"]))
         summary.add_row("Created", _format_timestamp(suite_summary.get("created_at")))
-        summary.add_row("Sub-Risks", str(suite_summary["sub_risk_count"]))
-        summary.add_row("Prompt Seeds", str(suite_summary["seed_count"]))
-        summary.add_row("Scenario Seeds", str(suite_summary["scenario_seed_count"]))
+        summary.add_row("Behavior Categories", str(suite_summary["behavior_category_count"]))
+        summary.add_row("Prompt Test Cases", str(suite_summary["prompt_test_case_count"]))
+        summary.add_row("Scenario Test Cases", str(suite_summary["scenario_test_case_count"]))
         summary.add_row("Runs", str(suite_summary["run_count"]))
         console.print(summary)
 
@@ -849,9 +849,9 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     default=DEFAULT_COMPARE_METRIC,
     shell_complete=_complete_metric,
     show_default=True,
-    help="Bad-event dimension to use for the top sub-risk delta table.",
+    help="Bad-event dimension to use for the top behavior-category delta table.",
 )
-@click.option("--limit", default=8, show_default=True, type=int, help="Maximum sub-risks to show in the delta table.")
+@click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
 @click.pass_context
@@ -1029,13 +1029,13 @@ def _run_within_suite_compare(
 
     if subrisk_deltas:
         delta_table = Table(
-            title=f"Top Sub-Risk Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
+            title=f"Top Behavior Category Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
             box=None,
             show_header=True,
             show_edge=False,
             pad_edge=False,
         )
-        delta_table.add_column("Sub-Risk", style="cyan")
+        delta_table.add_column("Behavior Category", style="cyan")
         delta_table.add_column("Permissible", style="white", no_wrap=True)
         delta_table.add_column(runs[0], style="white", no_wrap=True)
         delta_table.add_column(runs[-1], style="white", no_wrap=True)
@@ -1223,22 +1223,22 @@ def results_compare_suites(
 
 @cli.group(cls=SuggestingGroup, short_help="Run post-hoc analysis commands")
 def analysis():
-    """Post-hoc analysis commands for seeds and inspect logs."""
+    """Post-hoc analysis commands for test_set and inspect logs."""
 
 
-@analysis.command("seed-metrics", short_help="Compute coverage and diversity metrics for seed files")
-@click.option("--policy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Policy JSON to score against.")
-@click.option("--seeds", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Seed JSONL file to analyze.")
+@analysis.command("seed-metrics", short_help="Compute coverage and diversity metrics for test-set files")
+@click.option("--taxonomy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Taxonomy JSON to score against.")
+@click.option("--test_set", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Test-set JSONL file to analyze.")
 @click.option("--embed-model", default="text-embedding-3-large", show_default=True, help="Embedding model name.")
 @click.option("--embed-backend", type=click.Choice(["openai", "hf"]), default="openai", show_default=True, help="Embedding backend.")
 @click.option("--k", "k_values", multiple=True, type=int, help="Coverage@k values. Repeat to provide multiple values.")
 @click.option("--example-distance-thresh", default=0.2, type=float, show_default=True, help="Cosine distance threshold for example coverage.")
 @click.option("--presence-coverage", is_flag=True, help="Use simple presence coverage instead of coverage@k.")
-@click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "seed_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
+@click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "test_set_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
 @click.option("--out-md", default=None, type=click.Path(path_type=Path), help="Optional Markdown report path.")
 def analysis_seed_metrics(
-    policy: Path,
-    seeds: Path,
+    taxonomy: Path,
+    test_set: Path,
     embed_model: str,
     embed_backend: str,
     k_values: tuple[int, ...],
@@ -1247,11 +1247,11 @@ def analysis_seed_metrics(
     out_json: Path,
     out_md: Optional[Path],
 ):
-    """Compute seed metrics from the packaged CLI instead of calling the script directly."""
+    """Compute test-set metrics from the packaged CLI instead of calling the script directly."""
     seed_metrics = _load_analysis_module(_load_seed_metrics)
     cfg = seed_metrics.Config(
-        policy_path=str(policy),
-        seeds_path=str(seeds),
+        taxonomy_path=str(taxonomy),
+        test_set_path=str(test_set),
         embed_model=embed_model,
         embed_backend=embed_backend,
         k_list=list(k_values) if k_values else [1, 2, 3],
@@ -1269,12 +1269,15 @@ def analysis_seed_metrics(
         click.echo(f"Wrote {out_md}")
 
 
-@analysis.command("policy-logs", short_help="Summarize legacy policy-eval logs and write plots")
+analysis.add_command(analysis_seed_metrics, "test-set-metrics")
+
+
+@analysis.command("taxonomy-logs", short_help="Summarize legacy taxonomy-eval logs and write plots")
 @click.option("--logs-dir", default=DEFAULT_LOGS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory containing legacy .eval archives.")
 @click.option("--out-dir", default=DEFAULT_PLOTS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory for plots.")
 @click.option("--csv", default=None, type=click.Path(path_type=Path), help="Optional flattened CSV output path.")
 def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
-    """Analyze legacy policy-eval logs without leaving the packaged CLI."""
+    """Analyze legacy taxonomy-eval logs without leaving the packaged CLI."""
     analyze_taxonomies = _load_analysis_module(_load_analyze_taxonomies)
 
     out_dir.mkdir(parents=True, exist_ok=True)

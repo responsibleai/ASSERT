@@ -38,8 +38,8 @@ examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
-├── concepts/                   reusable eval spec definitions
+├── behaviors/                   reusable eval spec definitions
 └── agents/                     simple tool modules and tool schemas
 ```
 
-See [`concepts\README.md`](concepts/README.md) for reusable concept definitions.
+See [`behaviors\README.md`](behaviors/README.md) for reusable behavior definitions.

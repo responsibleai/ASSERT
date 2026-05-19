@@ -1,49 +1,49 @@
 tools:
-  - name: search_flights
-    description: Search for available flights between two cities on a given date.
-    parameters:
-      - name: origin
-        type: string
-        description: Departure city
-      - name: destination
-        type: string
-        description: Arrival city
-      - name: date
-        type: string
-        description: Travel date (YYYY-MM-DD)
-  - name: search_hotels
-    description: Search for hotels in a city with check-in and check-out dates.
-    parameters:
-      - name: city
-        type: string
-        description: City to search
-      - name: check_in
-        type: string
-        description: Check-in date (YYYY-MM-DD)
-      - name: check_out
-        type: string
-        description: Check-out date (YYYY-MM-DD)
-  - name: check_weather
-    description: Get weather forecast for a city on a specific date.
-    parameters:
-      - name: city
-        type: string
-        description: City name
-      - name: date
-        type: string
-        description: Date (YYYY-MM-DD)
-  - name: check_travel_advisories
-    description: Check travel advisories and safety warnings for a destination.
-    parameters:
-      - name: destination
-        type: string
-        description: Destination country or city
-  - name: validate_budget
-    description: Check if a travel plan fits within the specified budget.
-    parameters:
-      - name: total_cost
-        type: number
-        description: Total estimated cost
-      - name: budget_limit
-        type: number
-        description: Maximum budget
+- name: search_flights
+  description: Search for available flights between two cities on a given date.
+  parameters:
+  - name: origin
+    type: string
+    description: Departure city
+  - name: destination
+    type: string
+    description: Arrival city
+  - name: date
+    type: string
+    description: Travel date (YYYY-MM-DD)
+- name: search_hotels
+  description: Search for hotels in a city with check-in and check-out dates.
+  parameters:
+  - name: city
+    type: string
+    description: City to search
+  - name: check_in
+    type: string
+    description: Check-in date (YYYY-MM-DD)
+  - name: check_out
+    type: string
+    description: Check-out date (YYYY-MM-DD)
+- name: check_weather
+  description: Get weather forecast for a city on a specific date.
+  parameters:
+  - name: city
+    type: string
+    description: City name
+  - name: date
+    type: string
+    description: Date (YYYY-MM-DD)
+- name: check_travel_advisories
+  description: Check travel advisories and safety warnings for a destination.
+  parameters:
+  - name: destination
+    type: string
+    description: Destination country or city
+- name: validate_budget
+  description: Check if a travel plan fits within the specified budget.
+  parameters:
+  - name: total_cost
+    type: number
+    description: Total estimated cost
+  - name: budget_limit
+    type: number
+    description: Maximum budget

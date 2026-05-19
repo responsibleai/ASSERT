@@ -15,9 +15,9 @@ class RuntimeContextTest(unittest.TestCase):
             {
                 "suite": "suite-a",
                 "run": "run-a",
-                "concept": {"name": "harmful_medical_advice"},
+                "behavior": {"name": "harmful_medical_advice"},
                 "pipeline": {
-                    "seeds": {"prompt": {"model": {"name": "azure/gpt-5.4"}}},
+                    "test_set": {"prompt": {"model": {"name": "azure/gpt-5.4"}}},
                     "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
                     "judge": {"model": {"name": "azure/gpt-5.4"}},
                 },
@@ -34,9 +34,9 @@ class RuntimeContextTest(unittest.TestCase):
             load_runtime_context(
                 {
                     "suite": "suite-a",
-                    "concept": {"name": "harmful_medical_advice"},
+                    "behavior": {"name": "harmful_medical_advice"},
                     "pipeline": {
-                        "rollout": {"seed_path": "seeds.jsonl"},
+                        "rollout": {"test_set_path": "test_set.jsonl"},
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
@@ -47,17 +47,17 @@ class RuntimeContextTest(unittest.TestCase):
     def test_load_runtime_context_allows_disabled_stage_family(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             cfg_path = Path(tmp_dir) / "config.yaml"
-            (cfg_path.parent / "concept.md").write_text(
+            (cfg_path.parent / "behavior.md").write_text(
                 "Help with harmful medical advice.",
                 encoding="utf-8",
             )
             context = load_runtime_context(
                 {
                     "suite": "suite-a",
-                    "concept": {"name": "harmful_medical_advice"},
+                    "behavior": {"name": "harmful_medical_advice"},
                     "pipeline": {
-                        "policy": {"enabled": False, "model": {"name": "azure/gpt-5.4"}},
-                        "design": {},
+                        "systematize": {"enabled": False, "model": {"name": "azure/gpt-5.4"}},
+                        "test_set": {"enabled": False, "prompt": {"model": {"name": "azure/gpt-5.4"}}},
                     },
                 },
                 cfg_path,
@@ -66,7 +66,7 @@ class RuntimeContextTest(unittest.TestCase):
 
             self.assertEqual(
                 [stage_name for stage_name, _ in context["stages"]],
-                ["policy", "design"],
+                ["systematize", "test_set"],
             )
 
     def test_load_runtime_context_allows_disabled_rollout_without_target(self) -> None:
@@ -74,7 +74,7 @@ class RuntimeContextTest(unittest.TestCase):
             {
                 "suite": "suite-a",
                 "pipeline": {
-                    "rollout": {"enabled": False, "seed_path": "seeds.jsonl"},
+                    "rollout": {"enabled": False, "test_set_path": "test_set.jsonl"},
                 },
             },
             Path("examples/pipes/health_assistant.yaml"),
@@ -104,7 +104,7 @@ class IdentifierValidationTest(unittest.TestCase):
     """Tests for _validate_identifier and path confinement in config.py."""
 
     _BASE_CONFIG = {
-        "concept": {"name": "harmful_medical_advice"},
+        "behavior": {"name": "harmful_medical_advice"},
         "pipeline": {
             "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
             "judge": {"model": {"name": "azure/gpt-5.4"}},
@@ -150,7 +150,7 @@ class IdentifierValidationTest(unittest.TestCase):
                 {
                     "suite_id": "suite-a",
                     "run_id": "run-a",
-                    "concept": {"name": "harmful_medical_advice"},
+                    "behavior": {"name": "harmful_medical_advice"},
                     "pipeline": {
                         "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
@@ -174,7 +174,7 @@ class IdentifierValidationTest(unittest.TestCase):
 
     def test_rejects_concept_with_traversal(self) -> None:
         with self.assertRaises(ConfigError):
-            self._load(suite="suite-a", concept={"name": "../../../etc/passwd"})
+            self._load(suite="suite-a", behavior={"name": "../../../etc/passwd"})
 
 
 class RunnerManifestTest(unittest.TestCase):
@@ -186,17 +186,17 @@ class RunnerManifestTest(unittest.TestCase):
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
             transcripts_path.write_text(
-                '{"kind":"prompt","seed_id":"seed-1"}\n',
+                '{"type":"prompt","test_case_id":"seed-1"}\n',
                 encoding="utf-8",
             )
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(
                 "\n".join(
                     [
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "behavior:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -207,7 +207,7 @@ class RunnerManifestTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+            (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
@@ -254,16 +254,16 @@ class RunnerManifestTest(unittest.TestCase):
             suite_root.mkdir(parents=True)
             transcripts_path = suite_root / "transcripts.jsonl"
             transcripts_path.write_text(
-                '{"kind":"prompt","seed_id":"seed-1"}\n', encoding="utf-8"
+                '{"type":"prompt","test_case_id":"seed-1"}\n', encoding="utf-8"
             )
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(
                 "\n".join(
                     [
                         "suite: suite-a",
                         "run: run-a",
                         f"results_dir: {root / 'results'}",
-                        "concept:",
+                        "behavior:",
                         "  name: harmful_medical_advice",
                         "pipeline:",
                         "  judge:",
@@ -274,7 +274,7 @@ class RunnerManifestTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (root / "concept.md").write_text("Help with harmful medical advice.", encoding="utf-8")
+            (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"

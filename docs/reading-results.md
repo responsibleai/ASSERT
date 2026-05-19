@@ -7,8 +7,8 @@ Every run writes local artifacts under `artifacts/results/<suite>/<run>/`.
 ```text
 artifacts/results/<suite>/
 ├── suite.json
-├── policy.json
-├── seeds.jsonl
+├── taxonomy.json
+├── test_set.jsonl
 └── <run>/
     ├── manifest.json
     ├── config.yaml

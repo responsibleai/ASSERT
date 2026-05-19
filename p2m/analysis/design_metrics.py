@@ -75,7 +75,7 @@ def within_node_coverage_min(
     assignments: list[dict[str, str]],
     design: dict[str, list[dict[str, str]]],
 ) -> float:
-    """Worst-case per-factor entropy across all policy behaviors."""
+    """Worst-case per-dimension entropy across all taxonomy behavior_categories."""
     if "behavior" not in design:
         return 0.0
     flattened: list[float] = []
@@ -239,8 +239,8 @@ def intended_vs_observed_metrics(
     design: dict[str, list[dict[str, str]]],
 ) -> dict[str, Any]:
     aa = tuple(key for key in design if not key.startswith("_"))
-    intended_by_id = {a["seed_id"]: a for a in intended}
-    observed_by_id = {a["seed_id"]: a for a in observed}
+    intended_by_id = {a["test_case_id"]: a for a in intended}
+    observed_by_id = {a["test_case_id"]: a for a in observed}
     shared = sorted(set(intended_by_id) & set(observed_by_id))
     if not shared:
         return {
@@ -273,8 +273,8 @@ def confusion_matrices(
     observed: list[dict[str, str]],
     design: dict[str, list[dict[str, str]]],
 ) -> dict[str, dict[str, dict[str, int]]]:
-    intended_by_id = {a["seed_id"]: a for a in intended}
-    observed_by_id = {a["seed_id"]: a for a in observed}
+    intended_by_id = {a["test_case_id"]: a for a in intended}
+    observed_by_id = {a["test_case_id"]: a for a in observed}
     shared = sorted(set(intended_by_id) & set(observed_by_id))
     if not shared:
         return {}
@@ -299,8 +299,8 @@ def labeler_retest_agreement(
     design: dict[str, list[dict[str, str]]],
 ) -> dict[str, float]:
     aa = tuple(key for key in design if not key.startswith("_"))
-    a_by_id = {r["seed_id"]: r for r in labels_a}
-    b_by_id = {r["seed_id"]: r for r in labels_b}
+    a_by_id = {r["test_case_id"]: r for r in labels_a}
+    b_by_id = {r["test_case_id"]: r for r in labels_b}
     shared = sorted(set(a_by_id) & set(b_by_id))
     if not shared:
         return {axis: 0.0 for axis in aa}
@@ -324,18 +324,18 @@ def behavior_agreement(
         return 0.0
     if not any("behavior" in a for a in observed_assignments):
         return 0.0
-    observed_by_seed_id = {
-        a["seed_id"]: a["behavior"] for a in observed_assignments
+    observed_by_test_case_id = {
+        a["test_case_id"]: a["behavior"] for a in observed_assignments
         if "behavior" in a
     }
     total = 0
     matches = 0
     for row in rows:
-        seed_id = str(row.get("seed_id") or "")
-        if seed_id not in observed_by_seed_id:
+        test_case_id = str(row.get("test_case_id") or "")
+        if test_case_id not in observed_by_test_case_id:
             continue
         total += 1
-        if observed_by_seed_id[seed_id] == row_behavior(row):
+        if observed_by_test_case_id[test_case_id] == row_behavior(row):
             matches += 1
     return matches / total if total else 0.0
 
@@ -376,7 +376,7 @@ def build_supplementary_metrics(
         )
 
     return {
-        "kind": kind,
+        "type": kind,
         "design_quality": design_quality,
         "labeling_quality": labeling_quality,
     }

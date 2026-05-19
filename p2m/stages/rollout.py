@@ -86,7 +86,7 @@ def _is_versioned_seed_artifact_path(path: Path) -> bool:
     for index in range(len(parts) - 3):
         if (
             parts[index] == "artifacts"
-            and parts[index + 1] in {"seeds", "policy", "design"}
+            and parts[index + 1] in {"test_set", "taxonomy", "design"}
             and _VERSIONED_ARTIFACT_RE.match(parts[index + 2])
         ):
             return True
@@ -97,19 +97,19 @@ def _rollout_config_fingerprint(
     target: TargetConfig,
     evaluation: EvaluationConfig | None,
     max_tokens: int,
-    seeds_path: Path | None = None,
+    test_set_path: Path | None = None,
 ) -> str:
     """Deterministic hash of config values that affect rollout output.
 
-    Includes the seed input file's content hash when provided so that
-    regenerated seeds invalidate the cached transcripts. Without this,
-    seed ids are deterministic enough that the resume path silently
-    reuses transcripts from a prior seeds.jsonl content.
+    Includes the test set input file's content hash when provided so that
+    regenerated test_set invalidate the cached transcripts. Without this,
+    test case ids are deterministic enough that the resume path silently
+    reuses transcripts from a prior test_set.jsonl content.
     """
     target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
     seeds_sha = ""
-    if seeds_path is not None and seeds_path.exists():
-        seeds_sha = hashlib.sha256(seeds_path.read_bytes()).hexdigest()
+    if test_set_path is not None and test_set_path.exists():
+        seeds_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
     key = json_module.dumps(
         {
             "target": target_name,
@@ -345,13 +345,13 @@ def _prepare_seeds(
     fixed_system_prompt: str | None,
 ) -> list[dict[str, Any]]:
     """Validate canonical seed rows and normalize prompt/scenario-specific fields."""
-    seeds: list[dict[str, Any]] = []
+    test_set: list[dict[str, Any]] = []
     nested_seed_fields = {"prompt", "description", "system_prompt", "title", "tools", "state"}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise ValueError(f"seed at index {index} must be an object")
 
-        kind = row.get("kind")
+        kind = row.get("type")
         if kind not in {"prompt", "scenario"}:
             raise ValueError(f"seed at index {index} must declare kind 'prompt' or 'scenario'")
 
@@ -392,8 +392,8 @@ def _prepare_seeds(
         permissible = get_permissible_flag(seed_row)
         if permissible is not None:
             seed_row["permissible"] = permissible
-        seeds.append(seed_row)
-    return seeds
+        test_set.append(seed_row)
+    return test_set
 
 
 def _build_hosted_session(
@@ -557,30 +557,30 @@ async def _run_prompt_seed(
     seed_payload = seed.get("seed")
     if not isinstance(seed_payload, dict):
         raise ValueError("rollout requires each seed row to include a seed object")
-    seed_id = str(seed["seed_id"])
+    test_case_id = str(seed["test_case_id"])
     runtime = _build_target_session(
         target=target,
         seed_payload=seed_payload,
         rollout=rollout,
         max_tokens=max_tokens,
         config_path=config_path,
-        call_label=f"target:{seed_id}",
+        call_label=f"target:{test_case_id}",
     )
     target_id = str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or "")
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="prompt",
-            seed_id=seed_id,
-            concept=str(seed.get("concept") or ""),
+            test_case_id=test_case_id,
+            behavior=str(seed.get("behavior") or ""),
             target=target_id,
             auditor_model="",
             target_reasoning_effort=target.model.reasoning_effort if target.model else None,
-            factors=row_factors(seed),
+            dimensions=row_factors(seed),
         )
     )
     prompt = str(seed_payload.get("description") or "").strip()
     if not prompt:
-        raise ValueError("prompt seeds require a non-empty seed.description")
+        raise ValueError("prompt test_set require a non-empty seed.description")
     target_system_prompt = str(target.system_prompt or "").strip() or None
     effective_system_message = target_system_prompt or (str(seed_payload.get("system_prompt") or "").strip() or None)
     initial_messages: list[Message] = []
@@ -663,7 +663,7 @@ async def _run_auditor_target_loop(
 ) -> tuple[str | None, list[Message], list[Message]]:
     """Run the alternating auditor and target loop for one scenario seed."""
     stop_reason = None
-    seed_id = transcript.metadata.seed_id
+    test_case_id = transcript.metadata.test_case_id
 
     for turn_index in range(max_turns):
         if stop_reason:
@@ -683,7 +683,7 @@ async def _run_auditor_target_loop(
                         max_tokens=auditor_max_tokens,
                         reasoning_effort=auditor_reasoning_effort,
                         timeout_s=DEFAULT_MODEL_TIMEOUT_S,
-                        call_label=f"auditor:{seed_id}:turn{turn_index}",
+                        call_label=f"auditor:{test_case_id}:turn{turn_index}",
                         extra_kwargs={"extra_body": {"store": True}},
                     ),
                 )
@@ -708,7 +708,7 @@ async def _run_auditor_target_loop(
                 # prompt itself tripped the provider's content filter /
                 # Prompt Shields jailbreak detector. The default auditor
                 # system prompt is jailbreak-shaped by design and reliably
-                # trips Prompt Shields on a small fraction of seeds. This
+                # trips Prompt Shields on a small fraction of test_set. This
                 # is per-seed data, not a global pipeline error: a different
                 # seed will lead the auditor down a different path and
                 # complete normally. Record the refusal in the transcript
@@ -735,7 +735,7 @@ async def _run_auditor_target_loop(
                 last_error = str(exc)
                 log.debug(
                     "Auditor call failed for seed %s turn %d attempt %d: %s\n%s",
-                    seed_id, turn_index, attempt, exc, traceback.format_exc(),
+                    test_case_id, turn_index, attempt, exc, traceback.format_exc(),
                 )
                 if attempt < 2:
                     auditor_messages.append(
@@ -870,25 +870,25 @@ async def _run_scenario_seed(
         raise ValueError("scenario rollout requires evaluation.auditor")
 
     seed_data = seed["seed"]
-    seed_id = str(seed["seed_id"])
+    test_case_id = str(seed["test_case_id"])
     runtime = _build_target_session(
         target=target,
         seed_payload=seed_data,
         rollout=evaluation.rollout,
         max_tokens=max_tokens,
         config_path=config_path,
-        call_label=f"target:{seed_id}",
+        call_label=f"target:{test_case_id}",
     )
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="scenario",
-            seed_id=seed_id,
-            concept=str(seed.get("concept") or ""),
+            test_case_id=test_case_id,
+            behavior=str(seed.get("behavior") or ""),
             target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
             auditor_model=str(auditor.model.name),
             target_reasoning_effort=target.model.reasoning_effort if target.model else None,
             auditor_reasoning_effort=auditor.model.reasoning_effort,
-            factors=row_factors(seed),
+            dimensions=row_factors(seed),
         )
     )
 
@@ -945,7 +945,7 @@ async def _run_scenario_seed(
 
 async def run_rollout(
     *,
-    seed_path: str,
+    test_set_path: str,
     save_dir: str | None = None,
     run_id: str | None = None,
     max_tokens: int | None = None,
@@ -954,7 +954,7 @@ async def run_rollout(
     config_path: Path | None = None,
     strict: bool = False,
     forced: bool = False,
-    rewrite_seed_path: bool = True,
+    rewrite_test_set_path: bool = True,
 ) -> dict[str, Any]:
     """Run all seed rollouts and write the transcript artifact."""
     if not target.model and not target.connector and not target.callable and not target.endpoint:
@@ -976,21 +976,21 @@ async def run_rollout(
     elif target.tools is not None and target.tools.simulator and not target.tools.toolset:
         raise ValueError("runtime tool_source requires target.tools.toolset when target.tools.simulator is set")
     fixed_system_prompt = str(target.system_prompt or "").strip() or None
-    resolved_seed_path = resolve_path(seed_path)
-    canonical_rows = normalize_seed_rows(load_seeds(resolved_seed_path, strict=strict))
+    resolved_test_set_path = resolve_path(test_set_path)
+    canonical_rows = normalize_seed_rows(load_seeds(resolved_test_set_path, strict=strict))
     seeds_list = _prepare_seeds(
         canonical_rows,
         tool_source=tool_source,
         fixed_system_prompt=fixed_system_prompt,
     )
     if not seeds_list:
-        raise ValueError("No seeds found")
-    if rewrite_seed_path and _is_versioned_seed_artifact_path(resolved_seed_path):
+        raise ValueError("No test_set found")
+    if rewrite_test_set_path and _is_versioned_seed_artifact_path(resolved_test_set_path):
         # Versioned cache outputs are immutable; rewriting them would
         # invalidate the recorded file_hashes in artifact.json.
-        rewrite_seed_path = False
-    if rewrite_seed_path:
-        write_jsonl(resolved_seed_path, canonical_rows)
+        rewrite_test_set_path = False
+    if rewrite_test_set_path:
+        write_jsonl(resolved_test_set_path, canonical_rows)
 
     resolved_run_id = str(run_id or uuid.uuid4().hex[:8]).lower()
     out_dir = resolve_path(save_dir or (Path("artifacts/outputs") / resolved_run_id))
@@ -1000,13 +1000,13 @@ async def run_rollout(
     indexed_seeds = list(enumerate(seeds_list))
     transcripts_path = out_dir / TRANSCRIPTS_FILE
 
-    # Resume: load already-completed seed_ids and skip them.
-    completed_seed_ids: set[str] = set()
+    # Resume: load already-completed test_case_ids and skip them.
+    completed_test_case_ids: set[str] = set()
     config_hash = _rollout_config_fingerprint(
         target,
         evaluation,
         resolved_max_tokens,
-        seeds_path=resolved_seed_path,
+        test_set_path=resolved_test_set_path,
     )
     config_hash_path = out_dir / _ROLLOUT_CONFIG_HASH_FILE
     if transcripts_path.exists():
@@ -1015,7 +1015,7 @@ async def run_rollout(
             # --force-stage cascade). Discard the cached output unconditionally;
             # don't trust the hash because regenerated upstream artifacts may
             # be byte-identical (deterministic seed generation, no design
-            # factors, etc.) which would otherwise leave the cache intact.
+            # dimensions, etc.) which would otherwise leave the cache intact.
             transcripts_path.unlink()
         else:
             # Check that existing transcripts were produced with the same config.
@@ -1027,17 +1027,17 @@ async def run_rollout(
                 transcripts_path.unlink()
             else:
                 for row in load_jsonl(transcripts_path):
-                    sid = row.get("seed_id")
+                    sid = row.get("test_case_id")
                     if sid:
-                        completed_seed_ids.add(str(sid))
-    if completed_seed_ids:
+                        completed_test_case_ids.add(str(sid))
+    if completed_test_case_ids:
         log.info(
-            f"Resuming rollout: {len(completed_seed_ids)} seeds already completed, skipping"
+            f"Resuming rollout: {len(completed_test_case_ids)} test_set already completed, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
     pending_seeds = [
         (i, seed) for i, seed in indexed_seeds
-        if str(seed.get("seed_id", "")) not in completed_seed_ids
+        if str(seed.get("test_case_id", "")) not in completed_test_case_ids
     ]
 
     async def _worker(seed: tuple[int, dict[str, Any]]) -> dict[str, Any]:
@@ -1053,7 +1053,7 @@ async def run_rollout(
         """
         output_index, seed_row = seed
         try:
-            kind = seed_row["kind"]
+            kind = seed_row["type"]
             if kind == "prompt":
                 transcript = await _run_prompt_seed(
                     seed=seed_row,
@@ -1078,24 +1078,24 @@ async def run_rollout(
         except LLMAuthError:
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
-            seed_id = seed_row.get("seed_id", "?")
+            test_case_id = seed_row.get("test_case_id", "?")
             log.warning(
                 "Rollout call exhausted retries for seed %s (%s): %s",
-                seed_id, type(exc).__name__, exc,
+                test_case_id, type(exc).__name__, exc,
             )
             return {"output_index": output_index, "error": exc}
         except (ValueError, KeyError) as exc:
-            seed_id = seed_row.get("seed_id", "?")
+            test_case_id = seed_row.get("test_case_id", "?")
             log.debug(
                 "Rollout worker config/validation error for seed %s: %s\n%s",
-                seed_id, exc, traceback.format_exc(),
+                test_case_id, exc, traceback.format_exc(),
             )
             return {"output_index": output_index, "error": exc}
         except Exception as exc:
-            seed_id = seed_row.get("seed_id", "?")
+            test_case_id = seed_row.get("test_case_id", "?")
             log.debug(
                 "Rollout worker failed for seed %s: %s\n%s",
-                seed_id, exc, traceback.format_exc(),
+                test_case_id, exc, traceback.format_exc(),
             )
             return {"output_index": output_index, "error": exc}
 
@@ -1138,18 +1138,18 @@ async def run_rollout(
         done = len(results)
         idx = result["output_index"]
         seed_row = seeds_list[idx]
-        kind = seed_row.get("kind", "")
+        kind = seed_row.get("type", "")
         # Prefer the most specific identifier so each line in the progress
         # output reads differently. Pre-merge this came directly from
         # `seed_row['sub_risk']`; post-merge the equivalent now lives at
-        # `seed_row['factors']['behavior']`. Fall back to the broad
-        # concept and finally the seed_id (the deterministic slug like
+        # `seed_row['dimensions']['behavior']`. Fall back to the broad
+        # behavior and finally the test_case_id (the deterministic slug like
         # `prompt-fabricated-dosage-001`).
-        factors = seed_row.get("factors") or {}
+        dimensions = seed_row.get("dimensions") or {}
         label = (
-            factors.get("behavior")
-            or seed_row.get("concept")
-            or seed_row.get("seed_id", "")
+            dimensions.get("behavior")
+            or seed_row.get("behavior")
+            or seed_row.get("test_case_id", "")
         )
         kind_tag = f"[{kind}] " if kind else ""
         status = "✓" if error is None else f"✗ {type(error).__name__}"
@@ -1166,7 +1166,7 @@ async def run_rollout(
     # (no useful transcripts in this run AND no cached transcripts from
     # a prior run) — that means the failure is systemic (auth, config,
     # broken target) rather than per-row.
-    if successful_results == 0 and not completed_seed_ids:
+    if successful_results == 0 and not completed_test_case_ids:
         if errors:
             log.error(
                 "Rollout stage failed: all %d seed(s) errored and no prior transcripts were cached",
@@ -1210,7 +1210,7 @@ async def run_rollout(
         actual_ratio = len(errors) / len(pending_seeds)
         if actual_ratio > error_fail_ratio:
             log.error(
-                "Rollout stage failed: %d/%d (%.1f%%) new seeds errored, "
+                "Rollout stage failed: %d/%d (%.1f%%) new test_set errored, "
                 "exceeding the failure threshold of %.1f%% "
                 "(set P2M_ROLLOUT_ERROR_FAIL_RATIO to override)",
                 len(errors), len(pending_seeds),
@@ -1219,7 +1219,7 @@ async def run_rollout(
             raise errors[0]
     if errors:
         log.warning(
-            "Rollout stage completed with %d seed failure(s) out of %d new seeds; see transcripts.jsonl for details",
+            "Rollout stage completed with %d seed failure(s) out of %d new test_set; see transcripts.jsonl for details",
             len(errors), len(pending_seeds),
         )
     if target_error_count:
@@ -1233,11 +1233,11 @@ async def run_rollout(
     return {
         "transcripts_path": str(transcripts_path),
         "run_id": resolved_run_id,
-        "count": len(completed_seed_ids) + len(results),
+        "count": len(completed_test_case_ids) + len(results),
         "new_count": len(results),
-        "cached_count": len(completed_seed_ids),
+        "cached_count": len(completed_test_case_ids),
         # Surfaced for the runner / benchmark CSV / metrics so the user
-        # can see how many seeds the next re-run will need to retry,
+        # can see how many test_set the next re-run will need to retry,
         # and how often the target failed mid-conversation.
         "errored_count": len(errors),
         "target_error_count": target_error_count,
@@ -1251,7 +1251,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("rollout requires a target")
     cfg = resolve_stage_paths(
         {
-            "seed_path": raw_cfg.get("seed_path") or ctx.get("seeds_path") or str(Path(ctx["suite_root"]) / "seeds.jsonl"),
+            "test_set_path": raw_cfg.get("test_set_path") or ctx.get("test_set_path") or str(Path(ctx["suite_root"]) / "test_set.jsonl"),
             "save_dir": raw_cfg.get("save_dir") or str(ctx["run_root"]),
             "max_tokens": raw_cfg.get("max_tokens", DEFAULT_ROLLOUT_MAX_TOKENS),
             "strict": raw_cfg.get("strict", False) or ctx.get("strict", False),
@@ -1259,13 +1259,13 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
-    seed_artifact_ref = (ctx.get("artifact_versions") or {}).get("seeds")
+    seed_artifact_ref = (ctx.get("artifact_versions") or {}).get("test_set")
     # Only rewrite the seed file when there is no cached artifact to protect.
-    # If the user supplied an explicit seed_path AND we have no cache ref, we
+    # If the user supplied an explicit test_set_path AND we have no cache ref, we
     # still want the canonicalization pass to normalize their input file.
-    rewrite_seed_path = not isinstance(seed_artifact_ref, dict)
+    rewrite_test_set_path = not isinstance(seed_artifact_ref, dict)
     result = await run_rollout(
-        seed_path=cfg["seed_path"],
+        test_set_path=cfg["test_set_path"],
         save_dir=cfg["save_dir"],
         run_id=ctx["run_id"],
         max_tokens=cfg.get("max_tokens"),
@@ -1274,7 +1274,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         config_path=ctx["config_path"],
         strict=cfg.get("strict", False),
         forced=bool(ctx.get("_stage_forced", False)),
-        rewrite_seed_path=rewrite_seed_path,
+        rewrite_test_set_path=rewrite_test_set_path,
     )
     target_obj = ctx["target"]
     target_model = ""

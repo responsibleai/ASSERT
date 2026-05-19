@@ -238,14 +238,14 @@ def _count_turns(messages: List["Message"], *, skip_system: bool, number_system:
 
 def _metadata_from_dict(data: Dict[str, Any]) -> "TranscriptMetadata":
     return TranscriptMetadata(
-        kind=data["kind"],
-        seed_id=data["seed_id"],
-        concept=data["concept"],
+        kind=data.get("type") or data["kind"],
+        test_case_id=data["test_case_id"],
+        behavior=data["behavior"],
         target=data["target"],
         auditor_model=data["auditor_model"],
         target_reasoning_effort=data.get("target_reasoning_effort"),
         auditor_reasoning_effort=data.get("auditor_reasoning_effort"),
-        factors=data.get("factors"),
+        dimensions=data.get("dimensions"),
     )
 
 
@@ -311,13 +311,13 @@ class TranscriptEvent(BaseModel):
 class TranscriptMetadata(BaseModel):
     """Metadata for a transcript."""
     kind: str
-    seed_id: str
-    concept: str
+    test_case_id: str
+    behavior: str
     target: str
     auditor_model: str
     target_reasoning_effort: Optional[str] = None
     auditor_reasoning_effort: Optional[str] = None
-    factors: Optional[Dict[str, str]] = None
+    dimensions: Optional[Dict[str, str]] = None
 
 
 class LLMCallTrace(BaseModel):
@@ -491,9 +491,9 @@ class Transcript(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         result = {
-            "kind": self.metadata.kind,
-            "seed_id": self.metadata.seed_id,
-            "concept": self.metadata.concept,
+            "type": self.metadata.kind,
+            "test_case_id": self.metadata.test_case_id,
+            "behavior": self.metadata.behavior,
             "events": [e.model_dump() for e in self.events],
             "llm_calls": [call.model_dump() for call in self.llm_calls],
             "stop_reason": self.stop_reason,
@@ -502,8 +502,8 @@ class Transcript(BaseModel):
             "target_reasoning_effort": self.metadata.target_reasoning_effort,
             "auditor_reasoning_effort": self.metadata.auditor_reasoning_effort,
         }
-        if self.metadata.factors:
-            result["factors"] = self.metadata.factors
+        if self.metadata.dimensions:
+            result["dimensions"] = self.metadata.dimensions
         return result
 
     def save_jsonl(self, path: Path) -> None:

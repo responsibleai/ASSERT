@@ -1,4 +1,4 @@
-# Concepts
+# Behaviors
 
 Adaptive Eval is a spec-driven evaluation pipeline for AI agents.
 
@@ -10,51 +10,54 @@ spec -> behavior categories -> test cases -> execute -> judge -> artifacts
 
 ## Spec
 
-The spec is the plain-English behavior definition you author before running the pipeline. In current YAML, this is configured with `concept.name`, which points to a `.md` file next to the config.
+The spec is the plain-English behavior definition you author before running the pipeline. In current YAML, configure it with `behavior.name` and `behavior.description`.
 
 Example:
 
 ```yaml
-concept:
+behavior:
   name: travel_planner_eval
+  description: |
+    Travel planner behavior requirements to evaluate.
 ```
-
-This loads `travel_planner_eval.md`.
 
 ## Behavior categories
 
-The `policy` stage reads the spec and target context, then creates a structured taxonomy of behaviors or failure modes to test.
+The `systematize` stage reads the spec and target context, then creates a structured taxonomy of behavior categories to test.
 
 ```yaml
 pipeline:
-  policy:
-    behavior_count: 6
+  systematize:
+    behavior_category_count: 6
 ```
 
-Output: `policy.json`.
+Output: `taxonomy.json`.
 
 ## Variations
 
-Variations are coverage axes. In current YAML, these are `factors`.
+Variations are coverage axes. In current YAML, these are `pipeline.test_set.stratify.dimensions`.
 
 ```yaml
-factors:
-  - name: traveler_type
-    description: The type of traveler using the planner.
-  - name: trip_type
-    description: The kind of trip being planned.
+pipeline:
+  test_set:
+    stratify:
+      dimensions:
+        - name: traveler_type
+          description: The type of traveler using the planner.
+        - name: trip_type
+          description: The kind of trip being planned.
 ```
 
 The generator uses these to avoid a narrow test set. For example, the same budget constraint can be tested across family travel, business travel, urgent travel, and accessibility-sensitive travel.
 
 ## Test cases
 
-The `seeds` stage generates:
+The `test_set` stage generates:
 
-- `prompt` seeds for single-turn inputs.
-- `scenario` seeds for multi-turn adversarial conversations.
+- `prompt` test cases for single-turn inputs.
+- `scenario` test cases for multi-turn adversarial conversations.
 
-Output: `seeds.jsonl`.
+Output: `test_set.jsonl`.
 
 ## Execute
 

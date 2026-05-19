@@ -54,7 +54,7 @@ def _judge_config_fingerprint(
             "judge_reasoning_effort": judge_reasoning_effort,
             "judge_n": judge_n,
             "judge_dimensions": judge_dimensions,
-            "policy": policy_raw,
+            "taxonomy": policy_raw,
             "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
             "transcripts_sha": transcripts_sha,
         },
@@ -66,7 +66,7 @@ def _judge_config_fingerprint(
 async def run_judge(
     *,
     transcripts_path: str,
-    policy_path: str | None = None,
+    taxonomy_path: str | None = None,
     save_dir: str | None = None,
     evaluation: Any,
     judge_dimensions: list[dict[str, Any]] | None = None,
@@ -85,16 +85,16 @@ async def run_judge(
 
     out_dir = resolve_path(save_dir or str(resolved_transcripts_path.parent))
     out_dir.mkdir(parents=True, exist_ok=True)
-    if not policy_path:
-        raise ValueError("judge stage requires policy_path")
-    resolved_policy_path = resolve_path(policy_path)
-    if not resolved_policy_path.exists():
-        raise ValueError(f"Policy file not found: {policy_path}")
+    if not taxonomy_path:
+        raise ValueError("judge stage requires taxonomy_path")
+    resolved_taxonomy_path = resolve_path(taxonomy_path)
+    if not resolved_taxonomy_path.exists():
+        raise ValueError(f"Taxonomy file not found: {taxonomy_path}")
     try:
-        policy_raw = json.loads(resolved_policy_path.read_text(encoding="utf-8"))
+        policy_raw = json.loads(resolved_taxonomy_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(
-            f"Invalid JSON in policy file {resolved_policy_path}: {exc}"
+            f"Invalid JSON in taxonomy file {resolved_taxonomy_path}: {exc}"
         ) from exc
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
@@ -106,12 +106,12 @@ async def run_judge(
     async def score_row(row: dict[str, Any]) -> dict[str, Any]:
         """Score a single transcript row with the judge model."""
         transcript_metadata = TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            dimensions=row_factors(row),
         )
         transcript = Transcript(
             metadata=transcript_metadata,
@@ -142,9 +142,9 @@ async def run_judge(
         )
 
         score_row = {
-            "kind": row.get("kind", ""),
-            "seed_id": row.get("seed_id", ""),
-            "concept": row.get("concept", ""),
+            "type": row.get("type", ""),
+            "test_case_id": row.get("test_case_id", ""),
+            "behavior": row.get("behavior", ""),
             "judge_model": judge_model,
             "target": row.get("target", ""),
             "auditor_model": row.get("auditor_model", ""),
@@ -155,9 +155,9 @@ async def run_judge(
             "judge_error": judge_result["judge_error"],
             "verdict": judge_result["verdict"],
         }
-        factors = row_factors(row)
-        if factors:
-            score_row["factors"] = factors
+        dimensions = row_factors(row)
+        if dimensions:
+            score_row["dimensions"] = dimensions
         if judge_result.get("multi_judge") is not None:
             score_row["multi_judge"] = judge_result["multi_judge"]
         return score_row
@@ -191,16 +191,16 @@ async def run_judge(
             # auditor_input_refused handling in rollout. (Absorbed from
             # PR #44 commit dcaa91f — was previously only available as a
             # benchmark monkey-patch in scripts/benchmark.py.)
-            seed_id = row.get("seed_id", "?")
+            test_case_id = row.get("test_case_id", "?")
             log.warning(
                 "Judge content-filter refusal for seed %s: %s",
-                seed_id, exc,
+                test_case_id, exc,
             )
-            factors = row_factors(row)
+            dimensions = row_factors(row)
             score_row_filter_skipped: dict[str, Any] = {
-                "kind": row.get("kind", ""),
-                "seed_id": seed_id,
-                "concept": row.get("concept", ""),
+                "type": row.get("type", ""),
+                "test_case_id": test_case_id,
+                "behavior": row.get("behavior", ""),
                 "judge_model": judge_model,
                 "target": row.get("target", ""),
                 "auditor_model": row.get("auditor_model", ""),
@@ -208,37 +208,37 @@ async def run_judge(
                 "judge_error": f"judge_input_refused: {exc}",
                 "verdict": {},
             }
-            if factors:
-                score_row_filter_skipped["factors"] = factors
+            if dimensions:
+                score_row_filter_skipped["dimensions"] = dimensions
             return {
                 "output_index": output_index,
                 "score_row": score_row_filter_skipped,
             }
         except (LLMRateLimitError, LLMProviderError) as exc:
-            seed_id = row.get("seed_id", "?")
+            test_case_id = row.get("test_case_id", "?")
             log.warning(
                 "Judge call exhausted retries for seed %s (%s): %s",
-                seed_id, type(exc).__name__, exc,
+                test_case_id, type(exc).__name__, exc,
             )
             return {
                 "output_index": output_index,
                 "error": exc,
             }
         except (json.JSONDecodeError, ValueError) as exc:
-            seed_id = row.get("seed_id", "?")
+            test_case_id = row.get("test_case_id", "?")
             log.debug(
                 "Judge worker parse/validation error for seed %s: %s\n%s",
-                seed_id, exc, traceback.format_exc(),
+                test_case_id, exc, traceback.format_exc(),
             )
             return {
                 "output_index": output_index,
                 "error": exc,
             }
         except Exception as exc:
-            seed_id = row.get("seed_id", "?")
+            test_case_id = row.get("test_case_id", "?")
             log.debug(
                 "Judge worker failed for seed %s: %s\n%s",
-                seed_id, exc, traceback.format_exc(),
+                test_case_id, exc, traceback.format_exc(),
             )
             return {
                 "output_index": output_index,
@@ -247,7 +247,7 @@ async def run_judge(
 
     scores_path = out_dir / SCORES_FILE
 
-    # Resume: load already-scored (kind, seed_id) pairs and skip them, but only
+    # Resume: load already-scored (kind, test_case_id) pairs and skip them, but only
     # if the judge configuration and transcripts file haven't changed since the
     # last run.
     completed_keys: set[tuple[str, str]] = set()
@@ -280,9 +280,9 @@ async def run_judge(
                 scores_path.unlink()
             else:
                 for prior in load_jsonl(scores_path):
-                    sid = prior.get("seed_id")
+                    sid = prior.get("test_case_id")
                     if sid:
-                        completed_keys.add((str(prior.get("kind") or ""), str(sid)))
+                        completed_keys.add((str(prior.get("type") or ""), str(sid)))
     if completed_keys:
         log.info(
             f"Resuming judge: {len(completed_keys)} transcripts already scored, skipping"
@@ -291,7 +291,7 @@ async def run_judge(
 
     pending = [
         (i, row) for i, row in enumerate(rows)
-        if (str(row.get("kind") or ""), str(row.get("seed_id", ""))) not in completed_keys
+        if (str(row.get("type") or ""), str(row.get("test_case_id", ""))) not in completed_keys
     ]
 
     semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
@@ -348,7 +348,7 @@ async def run_judge(
         # Errored rows are NOT written to scores.jsonl so that re-running
         # the stage will pick them up via the existing resume logic and
         # re-attempt them. We surface the count here for the runner /
-        # benchmark CSV / metrics so the user can see how many seeds
+        # benchmark CSV / metrics so the user can see how many test_set
         # the next run will need to retry.
         "errored_count": len(errors),
     }
@@ -363,7 +363,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     cfg = resolve_stage_paths(
         {
             "transcripts_path": raw_cfg.get("transcripts_path") or str(Path(ctx["run_root"]) / TRANSCRIPTS_FILE),
-            "policy_path": raw_cfg.get("policy_path") or ctx.get("policy_path") or str(Path(ctx["suite_root"]) / "policy.json"),
+            "taxonomy_path": raw_cfg.get("taxonomy_path") or ctx.get("taxonomy_path") or str(Path(ctx["suite_root"]) / "taxonomy.json"),
             "save_dir": raw_cfg.get("save_dir") or str(ctx["run_root"]),
         },
         cfg_path=ctx["config_path"],
@@ -371,7 +371,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     )
     result = await run_judge(
         transcripts_path=cfg["transcripts_path"],
-        policy_path=cfg.get("policy_path"),
+        taxonomy_path=cfg.get("taxonomy_path"),
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],
         judge_dimensions=judge_dimensions,

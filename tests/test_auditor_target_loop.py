@@ -19,11 +19,11 @@ def _make_transcript() -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
             kind="scenario",
-            seed_id="test-seed",
-            concept="Test",
+            test_case_id="test-seed",
+            behavior="Test",
             target="fake/model",
             auditor_model="fake/auditor",
-            factors={"behavior": "sub"},
+            dimensions={"behavior": "sub"},
         )
     )
 

@@ -210,9 +210,9 @@ def render_dimensions_prompt(dimensions: list[JudgeDimension]) -> str:
     return "\n".join(lines)
 
 
-def render_policy_json(policy: Dict[str, Any]) -> str:
-    """Render policy as structured JSON for judge consumption."""
-    return json.dumps(policy or {}, indent=2, ensure_ascii=True)
+def render_policy_json(taxonomy: Dict[str, Any]) -> str:
+    """Render taxonomy as structured JSON for judge consumption."""
+    return json.dumps(taxonomy or {}, indent=2, ensure_ascii=True)
 
 
 def render_output_schema(
@@ -243,7 +243,7 @@ def render_output_schema(
     lines.extend([
         "  },",
         f'  "{NODE_JUDGMENTS_KEY}": [',
-        '    {"node_name": "<verbatim behavior name copied from policy.behaviors[*].name>", "violated": <true|false>, "confidence": "<high|medium|low>", "reasoning": "<concise reasoning with [N] evidence markers>"}',
+        '    {"node_name": "<verbatim behavior name copied from taxonomy.behavior_categories[*].name>", "violated": <true|false>, "confidence": "<high|medium|low>", "reasoning": "<concise reasoning with [N] evidence markers>"}',
         "  ],",
     ])
     if include_citations:
@@ -258,7 +258,7 @@ def build_judge_system_prompt(
     policy_raw: Dict[str, Any],
     dimensions: list[JudgeDimension],
 ) -> str:
-    """Assemble the judge system prompt with policy and dimension sections."""
+    """Assemble the judge system prompt with taxonomy and dimension sections."""
     return (
         template
         .replace("{{policy_json}}", render_policy_json(policy_raw))
@@ -281,12 +281,12 @@ def build_judge_contract(
     for dim in judge_dimensions or []:
         dims_by_name[dim["name"]] = dim
     dims = list(dims_by_name.values())
-    behaviors = policy_raw.get("behaviors")
+    behavior_categories = policy_raw.get("behavior_categories")
     behavior_names: list[str] | None = None
-    if isinstance(behaviors, list):
+    if isinstance(behavior_categories, list):
         behavior_names = []
         seen: set[str] = set()
-        for entry in behaviors:
+        for entry in behavior_categories:
             if not isinstance(entry, dict):
                 continue
             raw_name = entry.get("name")
@@ -297,7 +297,7 @@ def build_judge_contract(
                 continue
             if name in seen:
                 raise ValueError(
-                    f"policy.behaviors contains duplicate name {name!r}; "
+                    f"taxonomy.behavior_categories contains duplicate name {name!r}; "
                     "behavior names must be unique to key judge node judgments"
                 )
             seen.add(name)
@@ -955,7 +955,7 @@ async def run_transcript_judge(
         judge_temperature=judge_temperature,
         judge_max_tokens=judge_max_tokens,
         reasoning_effort=reasoning_effort,
-        call_label=f"judge:{transcript.metadata.seed_id}" if transcript.metadata else None,
+        call_label=f"judge:{transcript.metadata.test_case_id}" if transcript.metadata else None,
     )
     parseable_verdicts, parseable_raws, transport_failures = await _run_judge_attempts(
         judge_model,

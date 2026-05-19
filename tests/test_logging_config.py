@@ -18,7 +18,9 @@ class ConfigureLoggingTest(unittest.TestCase):
     def tearDown(self) -> None:
         # Reset root logger to avoid cross-test pollution.
         root = logging.getLogger()
-        root.handlers.clear()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            handler.close()
         root.setLevel(logging.WARNING)
 
     def test_default_level_is_info(self) -> None:
@@ -50,12 +52,14 @@ class ConfigureLoggingTest(unittest.TestCase):
             self.assertEqual(len(root.handlers), 2)
             file_handler = root.handlers[1]
             self.assertIsInstance(file_handler, logging.FileHandler)
+            self.tearDown()
 
     def test_file_handler_creates_parent_dirs(self) -> None:
         with TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "nested" / "dir" / "test.log"
             configure_logging(log_file=log_path)
             self.assertTrue(log_path.parent.exists())
+            self.tearDown()
 
     def test_litellm_loggers_pinned_to_warning(self) -> None:
         configure_logging(verbose=True)

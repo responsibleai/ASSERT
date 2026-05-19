@@ -32,7 +32,7 @@ HTML_FORMAT = "html"
 SUPPORTED_FORMATS = (CSV_FORMAT, EXCEL_FORMAT, HTML_FORMAT)
 
 RUNS_TABLE = "runs"
-SEEDS_TABLE = "seeds"
+SEEDS_TABLE = "test_set"
 CONVERSATIONS_TABLE = "conversations"
 SCORES_TABLE = "scores"
 RELEVANT_NODES_TABLE = "relevant_nodes"
@@ -47,7 +47,7 @@ TABLE_ORDER = (
 
 SHEET_NAMES = {
     RUNS_TABLE: "Runs",
-    SEEDS_TABLE: "Seeds",
+    SEEDS_TABLE: "Test Set",
     CONVERSATIONS_TABLE: "Conversations",
     SCORES_TABLE: "Scores",
     RELEVANT_NODES_TABLE: "Relevant Nodes",
@@ -55,7 +55,7 @@ SHEET_NAMES = {
 
 CSV_FILENAMES = {
     RUNS_TABLE: "runs.csv",
-    SEEDS_TABLE: "seeds.csv",
+    SEEDS_TABLE: "test_set.csv",
     CONVERSATIONS_TABLE: "conversations.csv",
     SCORES_TABLE: "scores.csv",
     RELEVANT_NODES_TABLE: "relevant_nodes.csv",
@@ -141,9 +141,9 @@ def _seed_definition(
 
 
 def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str, Any]) -> dict[str, Any]:
-    behaviors = policy_raw.get("behaviors")
-    if not isinstance(behaviors, list):
-        raise ValueError("policy.json must contain a behaviors list")
+    behavior_categories = policy_raw.get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        raise ValueError("taxonomy.json must contain a behavior_categories list")
 
     permissible_by_name = permissible_by_behavior(policy_raw)
     permissible_records = [
@@ -201,7 +201,7 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
 
     scored_records = [row for row in records if infer_judge_status(row) == "ok"]
     by_relevant_node = []
-    for node_index, node_payload in enumerate(behaviors):
+    for node_index, node_payload in enumerate(behavior_categories):
         node_name = str(node_payload.get("name") or "") if isinstance(node_payload, dict) else ""
         relevant_rows: list[dict[str, Any]] = []
         node_violated_count = 0
@@ -267,21 +267,21 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
     }
 
 
-def _prompt_seed_counts(seed_rows: list[dict[str, Any]]) -> tuple[int, int]:
-    prompt_count = sum(1 for row in seed_rows if row.get("kind") == "prompt")
-    scenario_count = sum(1 for row in seed_rows if row.get("kind") == "scenario")
+def _test_case_counts(test_set_rows: list[dict[str, Any]]) -> tuple[int, int]:
+    prompt_count = sum(1 for row in test_set_rows if row.get("type") == "prompt")
+    scenario_count = sum(1 for row in test_set_rows if row.get("type") == "scenario")
     return prompt_count, scenario_count
 
 
 def _transcript_from_row(row: dict[str, Any]) -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            dimensions=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -300,14 +300,13 @@ def _seed_row(
 ) -> dict[str, Any]:
     payload = seed_row.get("seed")
     seed_payload = payload if isinstance(payload, dict) else {}
-    kind = str(seed_row.get("kind") or "")
+    kind = str(seed_row.get("type") or "")
     description = str(seed_payload.get("description") or "")
     title = str(seed_payload.get("title") or "") if kind == "scenario" else ""
     return {
         "suite_id": suite_id,
-        "seed_id": str(seed_row.get("seed_id") or ""),
-        "kind": kind,
-        "concept": str(seed_row.get("concept") or ""),
+        "test_case_id": str(seed_row.get("test_case_id") or ""),
+        "type": kind,
         "behavior": row_behavior(seed_row),
         "permissible": _row_permissible(seed_row, permissible_by_name),
         "definition": _seed_definition(seed_row, definitions_by_name),
@@ -336,8 +335,8 @@ def _score_row(
     row = {
         "suite_id": suite_id,
         "run_id": run_id,
-        "seed_id": str(score_row.get("seed_id") or ""),
-        "kind": str(score_row.get("kind") or ""),
+        "test_case_id": str(score_row.get("test_case_id") or ""),
+        "type": str(score_row.get("type") or ""),
         "behavior": row_behavior(score_row),
         "permissible": _row_permissible(score_row, permissible_by_name),
         "judge_status": str(score_row.get("judge_status") or ""),
@@ -535,11 +534,11 @@ def load_suite_tables(
     suite_dir: Path,
     suite_id: str,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
-    policy = load_json(suite_dir / "policy.json") or {}
-    definitions_by_name = definitions_by_behavior(policy)
-    permissible_by_name = permissible_by_behavior(policy)
-    seed_rows = load_jsonl(suite_dir / "seeds.jsonl")
-    prompt_seed_count, scenario_seed_count = _prompt_seed_counts(seed_rows)
+    taxonomy = load_json(suite_dir / "taxonomy.json") or {}
+    definitions_by_name = definitions_by_behavior(taxonomy)
+    permissible_by_name = permissible_by_behavior(taxonomy)
+    seed_rows = load_jsonl(suite_dir / "test_set.jsonl")
+    prompt_test_case_count, scenario_test_case_count = _test_case_counts(seed_rows)
     run_rows: list[dict[str, Any]] = []
     seed_table = [
         _seed_row(seed_row, suite_id, permissible_by_name, definitions_by_name)
@@ -553,17 +552,17 @@ def load_suite_tables(
     score_node_names: list[str] = []
     seen_node_names: set[str] = set()
 
-    concept_payload = policy.get("concept") if isinstance(policy.get("concept"), dict) else {}
+    concept_payload = taxonomy.get("behavior") if isinstance(taxonomy.get("behavior"), dict) else {}
     concept_name = str(concept_payload.get("name") or "")
     if not concept_name:
-        concept_name = str(seed_rows[0].get("concept") or "") if seed_rows else ""
+        concept_name = str(seed_rows[0].get("behavior") or "") if seed_rows else ""
 
     for run_dir in _run_dirs(suite_dir):
         run_id = run_dir.name
         manifest = load_json(run_dir / "manifest.json") or {}
         transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
-        metrics = _build_score_metrics(score_rows, policy_raw=policy) if score_rows else None
+        metrics = _build_score_metrics(score_rows, policy_raw=taxonomy) if score_rows else None
 
         target = _first_nonempty(score_rows, "target") or _first_nonempty(transcript_rows, "target")
         auditor_model = _first_nonempty(score_rows, "auditor_model") or _first_nonempty(transcript_rows, "auditor_model")
@@ -575,8 +574,8 @@ def load_suite_tables(
                 {
                     "suite_id": suite_id,
                     "run_id": run_id,
-                    "seed_id": str(transcript_row.get("seed_id") or ""),
-                    "kind": str(transcript_row.get("kind") or ""),
+                    "test_case_id": str(transcript_row.get("test_case_id") or ""),
+                    "type": str(transcript_row.get("type") or ""),
                     "behavior": row_behavior(transcript_row),
                     "permissible": _row_permissible(
                         transcript_row,
@@ -644,8 +643,8 @@ def load_suite_tables(
                 "target": target,
                 "auditor_model": auditor_model,
                 "judge_model": judge_model,
-                "prompt_seed_count": prompt_seed_count,
-                "scenario_seed_count": scenario_seed_count,
+                "prompt_test_case_count": prompt_test_case_count,
+                "scenario_test_case_count": scenario_test_case_count,
                 "score_row_count": len(score_rows),
                 "judge_failure_count": _judge_failure_count(score_rows),
                 "policy_violation_rate": _event_rate(score_rows, "policy_violation"),
@@ -696,8 +695,8 @@ def load_suite_tables(
             "target",
             "auditor_model",
             "judge_model",
-            "prompt_seed_count",
-            "scenario_seed_count",
+            "prompt_test_case_count",
+            "scenario_test_case_count",
             "score_row_count",
             "judge_failure_count",
             "policy_violation_rate",
@@ -707,9 +706,8 @@ def load_suite_tables(
         ],
         SEEDS_TABLE: [
             "suite_id",
-            "seed_id",
-            "kind",
-            "concept",
+            "test_case_id",
+            "type",
             "behavior",
             "permissible",
             "definition",
@@ -720,8 +718,8 @@ def load_suite_tables(
         CONVERSATIONS_TABLE: [
             "suite_id",
             "run_id",
-            "seed_id",
-            "kind",
+            "test_case_id",
+            "type",
             "behavior",
             "permissible",
             "stop_reason",
@@ -733,8 +731,8 @@ def load_suite_tables(
         SCORES_TABLE: [
             "suite_id",
             "run_id",
-            "seed_id",
-            "kind",
+            "test_case_id",
+            "type",
             "behavior",
             "permissible",
             "judge_status",
@@ -1023,7 +1021,7 @@ document.addEventListener('keydown',function(e){
   var modal=document.getElementById('content-modal');
   if(e.key==='Escape'&&modal.classList.contains('open')){closeModal();return;}
   if(e.target.tagName==='INPUT')return;
-  var tabs=['runs','seeds','conversations','scores','relevant_nodes'];
+  var tabs=['runs','test_set','conversations','scores','relevant_nodes'];
   var cur=document.querySelector('.tab.active');
   var idx=cur?tabs.indexOf(cur.getAttribute('data-t')):-1;
   if(e.key==='ArrowRight'){e.preventDefault();switchTab(tabs[(idx+1)%tabs.length]);}
@@ -1048,11 +1046,11 @@ def write_html_export(
     # --- summary cards ---
     cards: list[str] = []
     if runs:
-        concept = runs[0].get("concept_name", "")
-        if concept:
+        behavior = runs[0].get("concept_name", "")
+        if behavior:
             cards.append(
-                f'<div class="card"><div class="label">Concept</div>'
-                f'<div class="val sm">{html.escape(str(concept))}</div></div>'
+                f'<div class="card"><div class="label">Behavior</div>'
+                f'<div class="val sm">{html.escape(str(behavior))}</div></div>'
             )
         targets = sorted({str(r.get("target") or "") for r in runs} - {""})
         if targets:
@@ -1061,7 +1059,7 @@ def write_html_export(
                 f'<div class="val sm">{html.escape(", ".join(targets))}</div></div>'
             )
     cards.append(
-        f'<div class="card"><div class="label">Seeds</div>'
+        f'<div class="card"><div class="label">Test Set</div>'
         f'<div class="val">{len(tables[SEEDS_TABLE])}</div></div>'
     )
     cards.append(
@@ -1145,7 +1143,7 @@ def write_html_export(
             lines.append(f"<tr{row_cls}>")
             for header in headers:
                 val = row.get(header, "")
-                if header == "seed_id" and val:
+                if header == "test_case_id" and val:
                     esc_val = html.escape(str(val))
                     cell = (
                         f'<a class="seed-link" data-seed="{esc_val}" '

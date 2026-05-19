@@ -99,13 +99,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             run_dir = suite_dir / "run-a"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -123,9 +123,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "transcripts.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "target": "target-model",
@@ -139,9 +139,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "judge_model": "judge-model",
@@ -186,17 +186,17 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             tmp_root = Path(tmp_dir)
             suite_dir = tmp_root / "suite-a"
             run_dir = suite_dir / "run-a"
-            seeds_path = suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl"
+            test_set_path = suite_dir / "artifacts" / "test_set" / "v0001" / "test_set.jsonl"
             run_dir.mkdir(parents=True, exist_ok=True)
-            seeds_path.parent.mkdir(parents=True, exist_ok=True)
+            test_set_path.parent.mkdir(parents=True, exist_ok=True)
 
-            seeds_path.write_text(
+            test_set_path.write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "versioned behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "versioned behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -209,9 +209,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         "status": "completed",
                         "stages": {"rollout": "completed", "judge": "completed"},
                         "artifact_versions": {
-                            "seeds": {
+                            "test_set": {
                                 "version": "v0001",
-                                "path": "artifacts/seeds/v0001/seeds.jsonl",
+                                "path": "artifacts/test_set/v0001/test_set.jsonl",
                             }
                         },
                     }
@@ -225,9 +225,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "transcripts.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "target": "target-model",
                         "events": [],
                         "llm_calls": [],
@@ -239,9 +239,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "judge_model": "judge-model",
                         "target": "target-model",
                         "judge_status": "ok",
@@ -261,7 +261,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 (run_dir / ".viewer" / "viewer_prompt_rows.json").read_text(encoding="utf-8")
             )
 
-            self.assertEqual(prompt_rows[0]["factors"]["behavior"], "versioned behavior")
+            self.assertEqual(prompt_rows[0]["dimensions"]["behavior"], "versioned behavior")
 
     def test_build_viewer_read_model_rejects_duplicate_transcript_keys(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -270,13 +270,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             run_dir = suite_dir / "run-a"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -292,9 +292,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             transcript_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "target": "target-model",
@@ -302,9 +302,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             score_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "judge_model": "judge-model",
@@ -332,13 +332,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             run_dir = suite_dir / "run-a"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -354,9 +354,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             transcript_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "target": "target-model",
@@ -364,9 +364,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             score_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "judge_model": "judge-model",
@@ -399,13 +399,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             run_dir = suite_dir / "run-a"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "prompt"},
                     }
                 )
@@ -499,9 +499,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}), encoding="utf-8"
             )
 
-            cache_dir = suite_dir / "artifacts" / "seeds" / "v0001"
+            cache_dir = suite_dir / "artifacts" / "test_set" / "v0001"
             cache_dir.mkdir(parents=True, exist_ok=True)
-            (cache_dir / "seeds.jsonl").write_text("", encoding="utf-8")
+            (cache_dir / "test_set.jsonl").write_text("", encoding="utf-8")
 
             env = os.environ.copy()
             env.update(
@@ -549,23 +549,23 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "behavior_categories": [
                             {"name": "behavior", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {
                             "title": "Scenario title",
                             "description": "Scenario description",
@@ -580,10 +580,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             valid_row = {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "type": "scenario",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
                 "stop_reason": "max_turns",
                 "target": "target-model",
                 "auditor_model": "auditor-model",
@@ -616,7 +616,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             (run_dir / "transcripts.jsonl").write_text(
-                json.dumps(valid_row) + "\n" + '{"kind":"scenario"',
+                json.dumps(valid_row) + "\n" + '{"type":"scenario"',
                 encoding="utf-8",
             )
 
@@ -633,7 +633,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const payload = loadRunPageData('suite-a', 'run-a');
                 console.log(JSON.stringify({{
                   previewCount: payload.rolloutPreviewRows.length,
-                  previewSeed: payload.rolloutPreviewRows[0]?.seed_id ?? null,
+                  previewSeed: payload.rolloutPreviewRows[0]?.test_case_id ?? null,
                   previewTurns: payload.rolloutPreviewRows[0]?.turns_count ?? null,
                   previewDrawerTitle: payload.scenarioSeedMap?.['seed-1']?.title ?? null,
                   previewDrawerMessages: payload.scenarioDrawerItems?.['seed-1']?.messages.length ?? 0,
@@ -670,23 +670,23 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "behavior_categories": [
                             {"name": "behavior", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -698,9 +698,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             valid_row = {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "scenario",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "stop_reason": "max_turns",
@@ -759,13 +759,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -779,9 +779,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             valid_row = {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "scenario",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "stop_reason": "max_turns",
@@ -789,7 +789,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             (run_dir / "transcripts.jsonl").write_text(
-                json.dumps(valid_row) + "\n" + '{"kind":"scenario"',
+                json.dumps(valid_row) + "\n" + '{"type":"scenario"',
                 encoding="utf-8",
             )
 
@@ -839,23 +839,23 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "behavior_categories": [
                             {"name": "behavior", "definition": "def", "permissible": False},
                         ]
                     }
                 ),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -873,19 +873,19 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             valid_row = {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "type": "scenario",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
                 "stop_reason": "max_turns",
                 "events": [],
                 "llm_calls": [],
             }
             score_row = {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "type": "scenario",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
                 "judge_model": "judge-model",
                 "judge_status": "ok",
                 "verdict": {
@@ -946,13 +946,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -977,9 +977,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "transcripts.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "target": "target-model",
@@ -999,9 +999,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "judge_model": "judge-model",
@@ -1066,13 +1066,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                 )
@@ -1090,9 +1090,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             transcript_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "target": "target-model",
@@ -1111,9 +1111,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             score_row = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "judge_model": "judge-model",
@@ -1177,10 +1177,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "behaviors": [
+                        "behavior_categories": [
                             {
                                 "name": "prompt-behavior",
                                 "definition": "prompt definition",
@@ -1196,24 +1196,24 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(
                             {
-                                "kind": "prompt",
-                                "seed_id": "seed-prompt",
-                                "concept": "concept",
-                                "factors": {"behavior": "prompt-behavior"},
+                                "type": "prompt",
+                                "test_case_id": "seed-prompt",
+                                "behavior": "behavior",
+                                "dimensions": {"behavior": "prompt-behavior"},
                                 "seed": {"description": "Prompt seed"},
                             }
                         ),
                         json.dumps(
                             {
-                                "kind": "scenario",
-                                "seed_id": "seed-scenario",
-                                "concept": "concept",
-                                "factors": {"behavior": "scenario-behavior"},
+                                "type": "scenario",
+                                "test_case_id": "seed-scenario",
+                                "behavior": "behavior",
+                                "dimensions": {"behavior": "scenario-behavior"},
                                 "seed": {
                                     "title": "Scenario title",
                                     "description": "Scenario description",
@@ -1236,10 +1236,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             prompt_transcript = {
-                "kind": "prompt",
-                "seed_id": "seed-prompt",
-                "concept": "concept",
-                "factors": {"behavior": "prompt-behavior"},
+                "type": "prompt",
+                "test_case_id": "seed-prompt",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "prompt-behavior"},
                 "target": "target-model",
                 "events": [
                     {
@@ -1273,10 +1273,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 ],
             }
             scenario_transcript = {
-                "kind": "scenario",
-                "seed_id": "seed-scenario",
-                "concept": "concept",
-                "factors": {"behavior": "scenario-behavior"},
+                "type": "scenario",
+                "test_case_id": "seed-scenario",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "scenario-behavior"},
                 "target": "target-model",
                 "auditor_model": "auditor-model",
                 "stop_reason": "max_turns",
@@ -1303,10 +1303,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "llm_calls": [],
             }
             prompt_score = {
-                "kind": "prompt",
-                "seed_id": "seed-prompt",
-                "concept": "concept",
-                "factors": {"behavior": "prompt-behavior"},
+                "type": "prompt",
+                "test_case_id": "seed-prompt",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "prompt-behavior"},
                 "judge_model": "judge-model",
                 "target": "target-model",
                 "judge_status": "ok",
@@ -1317,10 +1317,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 },
             }
             scenario_score = {
-                "kind": "scenario",
-                "seed_id": "seed-scenario",
-                "concept": "concept",
-                "factors": {"behavior": "scenario-behavior"},
+                "type": "scenario",
+                "test_case_id": "seed-scenario",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "scenario-behavior"},
                 "judge_model": "judge-model",
                 "target": "target-model",
                 "auditor_model": "auditor-model",
@@ -1395,13 +1395,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed", "system_prompt": "System prompt"},
                     }
                 )
@@ -1421,9 +1421,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "transcripts.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "target": "target-model",
@@ -1456,9 +1456,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "judge_model": "judge-model",
@@ -1518,24 +1518,24 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed"},
                     }
                         ),
                         json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-2",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "prompt",
+                        "test_case_id": "seed-2",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"description": "Prompt seed 2"},
                     }
                         ),
@@ -1555,9 +1555,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             prompt_transcript = {
-                "kind": "prompt",
-                "seed_id": "seed-1",
-                "concept": "concept",
+                "type": "prompt",
+                "test_case_id": "seed-1",
+                "behavior": "behavior",
                 "behavior": "behavior",
                 "permissible": False,
                 "target": "target-model",
@@ -1577,9 +1577,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "prompt",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "prompt",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "judge_model": "judge-model",
@@ -1642,11 +1642,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
                 encoding="utf-8",
             )
-            (suite_dir / "policy.json").write_text(
+            (suite_dir / "taxonomy.json").write_text(
                 json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
-                        "behaviors": [
+                        "behavior": {"name": "Risk", "definition": "Definition"},
+                        "behavior_categories": [
                             {
                                 "name": "behavior",
                                 "definition": "def",
@@ -1658,13 +1658,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (suite_dir / "seeds.jsonl").write_text(
+            (suite_dir / "test_set.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
-                        "factors": {"behavior": "behavior"},
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
                         "seed": {"title": "Scenario title", "description": "Scenario description"},
                     }
                 )
@@ -1680,9 +1680,9 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(
                     {
-                        "kind": "scenario",
-                        "seed_id": "seed-1",
-                        "concept": "concept",
+                        "type": "scenario",
+                        "test_case_id": "seed-1",
+                        "behavior": "behavior",
                         "behavior": "behavior",
                         "permissible": False,
                         "judge_model": "judge-model",
@@ -1736,28 +1736,28 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
             self.assertIsNone(_manifest_relative_path(suite_dir, "../../etc/passwd"))
             self.assertIsNone(_manifest_relative_path(suite_dir, "artifacts/../../escape"))
             self.assertEqual(
-                _manifest_relative_path(suite_dir, "artifacts/seeds/v0001/seeds.jsonl"),
-                suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl",
+                _manifest_relative_path(suite_dir, "artifacts/test_set/v0001/test_set.jsonl"),
+                suite_dir / "artifacts" / "test_set" / "v0001" / "test_set.jsonl",
             )
 
             malicious_manifest = {
                 "artifact_versions": {
-                    "seeds": {"version": "v0001", "path": "../../etc/passwd"}
+                    "test_set": {"version": "v0001", "path": "../../etc/passwd"}
                 }
             }
             self.assertEqual(
                 _seed_artifact_path(suite_dir, malicious_manifest),
-                suite_dir / "seeds.jsonl",
+                suite_dir / "test_set.jsonl",
             )
 
             safe_manifest = {
                 "artifact_versions": {
-                    "seeds": {"version": "v0001", "path": "artifacts/seeds/v0001/seeds.jsonl"}
+                    "test_set": {"version": "v0001", "path": "artifacts/test_set/v0001/test_set.jsonl"}
                 }
             }
             self.assertEqual(
                 _seed_artifact_path(suite_dir, safe_manifest),
-                suite_dir / "artifacts" / "seeds" / "v0001" / "seeds.jsonl",
+                suite_dir / "artifacts" / "test_set" / "v0001" / "test_set.jsonl",
             )
 
     def test_seed_artifact_path_rejects_absolute_paths(self) -> None:
@@ -1779,7 +1779,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
 
             malicious_manifest = {
                 "artifact_versions": {
-                    "seeds": {
+                    "test_set": {
                         "version": "v0001",
                         "path": str(absolute_target),
                     }
@@ -1787,7 +1787,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
             }
             self.assertEqual(
                 _seed_artifact_path(suite_dir, malicious_manifest),
-                suite_dir / "seeds.jsonl",
+                suite_dir / "test_set.jsonl",
             )
 
     def test_seed_artifact_path_rejects_paths_that_normalize_to_directory(self) -> None:
@@ -1812,12 +1812,12 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                 )
                 manifest = {
                     "artifact_versions": {
-                        "seeds": {"version": "v0001", "path": raw_path}
+                        "test_set": {"version": "v0001", "path": raw_path}
                     }
                 }
                 self.assertEqual(
                     _seed_artifact_path(suite_dir, manifest),
-                    suite_dir / "seeds.jsonl",
+                    suite_dir / "test_set.jsonl",
                     msg=f"expected fallback for {raw_path!r}",
                 )
 

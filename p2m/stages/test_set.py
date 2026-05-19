@@ -1,4 +1,4 @@
-"""Generate prompt and scenario seeds for the unified pipeline."""
+"""Generate prompt and scenario test_set for the unified pipeline."""
 
 from __future__ import annotations
 
@@ -39,32 +39,32 @@ from p2m.core.model_client import (
     generate_structured,
 )
 from p2m.core.tools import normalize_tool_defs
-from p2m.stages.design import normalize_design
+from p2m.stages.design import DEFAULT_LEVEL_COUNT, normalize_design, run_design
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-PROMPT_SEED_TEMPLATE = (BASE_DIR / "prompts" / "seeds_direct_single.md").read_text(encoding="utf-8")
-SCENARIO_SEED_TEMPLATE = (BASE_DIR / "prompts" / "seeds_scenario_single.md").read_text(encoding="utf-8")
-SEEDS_FILE = "seeds.jsonl"
+PROMPT_SEED_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
+SCENARIO_SEED_TEMPLATE = (BASE_DIR / "prompts" / "test_set_scenario_single.md").read_text(encoding="utf-8")
+TEST_SET_FILE = "test_set.jsonl"
 SCOPE = "suite"
-SUITE_OUTPUT = SEEDS_FILE
+SUITE_OUTPUT = TEST_SET_FILE
 
-# Cap on the number of seeds requested per LLM call. Each scenario seed
-# carries a system prompt, opening message, and factor metadata
+# Cap on the number of test_set requested per LLM call. Each scenario seed
+# carries a system prompt, opening message, and dimension metadata
 # (≈300-500 output tokens), so a batch of 15 routinely overflows the
 # default 3000-token max_tokens budget and the response truncates mid-JSON.
 # Splitting the per-tuple budget into chunks of MAX_SEEDS_PER_BATCH keeps
 # every batch comfortably inside the budget, lifts effective concurrency
 # (more, smaller jobs run in parallel), and lets per-batch failures lose
-# fewer seeds at a time. Empirically observed at sample_size=1000 with
-# 67 covering-array tuples (≈15 seeds per tuple): 65/67 batches truncated
-# without this cap, only 30 valid seeds survived.
+# fewer test_set at a time. Empirically observed at sample_size=1000 with
+# 67 covering-array tuples (≈15 test_set per tuple): 65/67 batches truncated
+# without this cap, only 30 valid test_set survived.
 MAX_SEEDS_PER_BATCH = 5
 
 TOOL_SOURCE_RUNTIME = "runtime"
 TOOL_SOURCE_PER_SEED = "per_seed"
 
 SEED_ID_PREFIX = {"prompt": "ps", "scenario": "as"}
-GENERATION_GUIDANCE_TEMPLATE = load_prompt_text("seeds_generation_guidance.md")
+GENERATION_GUIDANCE_TEMPLATE = load_prompt_text("test_set_generation_guidance.md")
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -103,24 +103,24 @@ def output_schema_example(
             seed[prop_name] = field_examples[prop_name]
         elif prop_name == "tools":
             seed["tools"] = [TOOL_FIELD_EXAMPLES]
-    return json.dumps({"seeds": [seed]}, indent=2)
+    return json.dumps({"test_set": [seed]}, indent=2)
 
 
 def _validate_tool_source(tool_source: str, target: TargetConfig | None) -> None:
     if tool_source not in {TOOL_SOURCE_RUNTIME, TOOL_SOURCE_PER_SEED}:
-        raise ValueError("seeds.tool_source must be 'runtime' or 'per_seed'")
+        raise ValueError("test_set.tool_source must be 'runtime' or 'per_seed'")
     if tool_source == TOOL_SOURCE_RUNTIME:
         return
     if target is None or not target.model:
-        raise ValueError("seeds.tool_source=per_seed requires target.model")
+        raise ValueError("test_set.tool_source=per_seed requires target.model")
     if target.connector:
-        raise ValueError("seeds.tool_source=per_seed does not support target.connector")
+        raise ValueError("test_set.tool_source=per_seed does not support target.connector")
     if target.tools is None or not target.tools.simulator:
-        raise ValueError("seeds.tool_source=per_seed requires target.tools.simulator")
+        raise ValueError("test_set.tool_source=per_seed requires target.tools.simulator")
     if target.tools.module:
-        raise ValueError("seeds.tool_source=per_seed does not support target.tools.module")
+        raise ValueError("test_set.tool_source=per_seed does not support target.tools.module")
     if target.tools.toolset:
-        raise ValueError("seeds.tool_source=per_seed does not support target.tools.toolset")
+        raise ValueError("test_set.tool_source=per_seed does not support target.tools.toolset")
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +180,10 @@ def seeds_response_schema(
     min_items: int | None = None,
     max_items: int | None = None,
 ) -> dict[str, Any]:
-    """Full response schema wrapping seeds in a ``{"seeds": [...]}`` envelope.
+    """Full response schema wrapping test_set in a ``{"test_set": [...]}`` envelope.
 
     When ``min_items`` is provided, the schema requires the model to return at
-    least that many seeds. Without this lower bound, gpt-5.4-mini frequently
+    least that many test_set. Without this lower bound, gpt-5.4-mini frequently
     returns N-1 items for batches larger than ~10, since the schema previously
     allowed 0-2000 items regardless of the prompt's stated count.
 
@@ -205,9 +205,9 @@ def seeds_response_schema(
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "seeds": seeds_schema,
+            "test_set": seeds_schema,
         },
-        "required": ["seeds"],
+        "required": ["test_set"],
     }
 
 
@@ -231,14 +231,14 @@ def normalize_generated_seed(
     raw_tools = raw_seed.get("tools")
     if tool_source == TOOL_SOURCE_PER_SEED:
         if not isinstance(raw_tools, list) or not raw_tools:
-            raise ValueError("generated seed requires non-empty tools when seeds.tool_source=per_seed")
+            raise ValueError("generated seed requires non-empty tools when test_set.tool_source=per_seed")
         try:
             normalize_tool_defs(raw_tools)
         except (KeyError, TypeError) as exc:
             raise ValueError("generated seed contains invalid tool definitions") from exc
         payload["tools"] = raw_tools
     elif raw_tools:
-        raise ValueError("generated seed.tools is only allowed when seeds.tool_source=per_seed")
+        raise ValueError("generated seed.tools is only allowed when test_set.tool_source=per_seed")
 
     return payload
 
@@ -246,19 +246,19 @@ def normalize_generated_seed(
 def seed_record(
     *,
     kind: str,
-    seed_id: str,
-    concept: str,
+    test_case_id: str,
+    behavior: str,
     seed_payload: dict[str, Any],
-    factors: dict[str, str] | None = None,
+    dimensions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     record = {
-        "kind": kind,
-        "seed_id": seed_id,
-        "concept": concept,
+        "type": kind,
+        "test_case_id": test_case_id,
+        "behavior": behavior,
         "seed": seed_payload,
     }
-    if factors:
-        record["factors"] = factors
+    if dimensions:
+        record["dimensions"] = dimensions
     return record
 
 
@@ -287,8 +287,8 @@ For each seed, define 1-5 realistic tools that the target model would have in th
 }
 
 
-def _render_policy_body(policy: dict[str, Any]) -> str:
-    return json.dumps(policy, indent=2, ensure_ascii=False)
+def _render_taxonomy_body(taxonomy: dict[str, Any]) -> str:
+    return json.dumps(taxonomy, indent=2, ensure_ascii=False)
 
 
 def _template_replacements(
@@ -301,11 +301,10 @@ def _template_replacements(
     *,
     context: str | None,
     batch_guidance: str,
-    policy_body: str,
+    taxonomy_body: str,
     tool_source: str = TOOL_SOURCE_RUNTIME,
 ) -> dict[str, str]:
     return {
-        "concept": concept_name,
         "behavior": behavior_name,
         "definition": behavior_description,
         "count": str(count),
@@ -315,7 +314,7 @@ def _template_replacements(
             if examples
             else "- (no examples provided)"
         ),
-        "policy_body": policy_body,
+        "taxonomy_body": taxonomy_body,
         "tool_instructions": _TOOL_INSTRUCTIONS.get(tool_source, ""),
         "output_schema": output_schema_example(kind, tool_source),
         "batch_guidance": batch_guidance,
@@ -338,7 +337,7 @@ def render_tuple_spec(
         )
     if include_behavior and "behavior" in tuple_spec:
         lines.append(
-            f"- Policy behavior: {tuple_spec['behavior']['name']} — {tuple_spec['behavior']['description']}"
+            f"- Taxonomy behavior: {tuple_spec['behavior']['name']} — {tuple_spec['behavior']['description']}"
         )
     return "\n".join(lines)
 
@@ -346,7 +345,7 @@ def render_tuple_spec(
 def build_generation_prompt(
     *,
     kind: str,
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     behavior: dict[str, Any],
     count: int,
     context: str | None,
@@ -358,13 +357,13 @@ def build_generation_prompt(
 
     *kind*: ``"prompt"`` or ``"scenario"``.
     """
-    concept_name = str(policy.get("concept", {}).get("name") or "concept")
+    concept_name = str(taxonomy.get("behavior", {}).get("name") or "behavior")
     behavior_name = str(behavior.get("name") or "").strip()
     behavior_description = str(behavior.get("description") or "").strip()
     policy_behavior = next(
         (
             entry
-            for entry in policy.get("behaviors", [])
+            for entry in taxonomy.get("behavior_categories", [])
             if str(entry.get("name") or "").strip() == behavior_name
         ),
         None,
@@ -402,7 +401,7 @@ def build_generation_prompt(
         count,
         context=context,
         batch_guidance=batch_guidance,
-        policy_body=_render_policy_body(policy),
+        taxonomy_body=_render_taxonomy_body(taxonomy),
         tool_source=tool_source,
     )
     return fill_template(
@@ -421,21 +420,21 @@ def build_covering_array(
     *,
     axes: tuple[str, ...] | None = None,
 ) -> list[dict[str, str]]:
-    """Build a strength-2 covering array for the design factors.
+    """Build a strength-2 covering array for the design dimensions.
 
-    Returns a set of tuples such that every pair of factors has all
+    Returns a set of tuples such that every pair of dimensions has all
     level-combinations represented at least once.  Each tuple is a
-    flat dict mapping factor name to level name.
+    flat dict mapping dimension name to level name.
 
     Uses IPOG (In-Parameter-Order-General) for construction.
     """
     active_axes = design_factors(design) if axes is None else tuple(axes)
     if not active_axes:
-        raise ValueError("at least one factor is required")
+        raise ValueError("at least one dimension is required")
 
     cardinalities = [len(design[ax]) for ax in active_axes]
     if any(c == 0 for c in cardinalities):
-        raise ValueError("all factors must have at least one level")
+        raise ValueError("all dimensions must have at least one level")
 
     if len(active_axes) < 2:
         return [{active_axes[0]: entry["name"]} for entry in design[active_axes[0]]]
@@ -451,15 +450,15 @@ def _ipog(
     """IPOG (In-Parameter-Order-General) strength-2 covering array.
 
     Builds the array column-by-column: starts with a full cross of the
-    first two factors, then extends one factor at a time. For each new
-    factor, horizontal extension greedily assigns levels to existing
+    first two dimensions, then extends one dimension at a time. For each new
+    dimension, horizontal extension greedily assigns levels to existing
     rows to maximize pair coverage; vertical extension adds rows for any
     remaining uncovered pairs.
     """
     k = len(active_axes)
     levels = [[entry["name"] for entry in design[ax]] for ax in active_axes]
 
-    # Full cross of first two factors
+    # Full cross of first two dimensions
     rows: list[list[str | None]] = [
         [a, b] + [None] * (k - 2)
         for a in levels[0]
@@ -560,7 +559,7 @@ def sample_from_covering_array(
 
 
 @dataclass(frozen=True)
-class SeedJob:
+class TestCaseJob:
     """One covering-array tuple's seed-generation work unit."""
     order: int
     behavior: dict[str, Any]
@@ -571,15 +570,15 @@ class SeedJob:
 
 def build_generation_jobs(
     *,
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     design: dict[str, list[dict[str, Any]]],
     sample_size: int,
     rng: random.Random,
-) -> tuple[list[SeedJob], list[dict[str, str]] | None]:
+) -> tuple[list[TestCaseJob], list[dict[str, str]] | None]:
     """Build generation jobs — one per covering-array tuple.
 
     Budget is spread evenly across tuples via divmod. Each job produces
-    its allocated number of seeds for a single (behavior, factor…) tuple.
+    its allocated number of test_set for a single (behavior, dimension…) tuple.
     """
     behavior_entries = design["behavior"]
     factor_names = design_factors(design)
@@ -606,7 +605,7 @@ def build_generation_jobs(
     base, remainder = divmod(sample_size, len(tuples))
 
     all_assignments: list[dict[str, str]] = []
-    jobs: list[SeedJob] = []
+    jobs: list[TestCaseJob] = []
     next_index = 0
     for i, row in enumerate(tuples):
         count = base + (1 if i < remainder else 0)
@@ -626,14 +625,14 @@ def build_generation_jobs(
 
         # Split the per-tuple budget into chunks ≤ MAX_SEEDS_PER_BATCH so
         # each LLM call stays inside the default max_tokens budget. Each
-        # chunk becomes its own SeedJob with a contiguous start_index slot
+        # chunk becomes its own TestCaseJob with a contiguous start_index slot
         # so generated seed IDs remain stable and unique within the tuple.
         chunk_offset = 0
         remaining = count
         while remaining > 0:
             chunk = min(MAX_SEEDS_PER_BATCH, remaining)
             jobs.append(
-                SeedJob(
+                TestCaseJob(
                     order=len(jobs),
                     behavior=behavior_entry,
                     count=chunk,
@@ -654,7 +653,7 @@ def build_generation_jobs(
 async def _generate_records(
     *,
     kind: str,
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     model: str,
     sample_size: int,
     temperature: float | None,
@@ -673,7 +672,7 @@ async def _generate_records(
     Returns a dict with two keys:
 
     * ``records``: the flattened, in-order list of successfully generated
-      seed records. May be a partial list if some batches failed.
+      test case records. May be a partial list if some batches failed.
     * ``errored_count``: number of batches that failed and produced no
       records. Surfaced upward so the runner / metrics can report
       partial-success runs.
@@ -687,24 +686,24 @@ async def _generate_records(
         raise ValueError("seed generation concurrency must be > 0")
 
     design_data = design or {}
-    seed_id_prefix = SEED_ID_PREFIX[kind]
-    concept_name = policy.get("concept", {}).get("name", "concept")
+    test_case_id_prefix = SEED_ID_PREFIX[kind]
+    concept_name = taxonomy.get("behavior", {}).get("name", "behavior")
 
     jobs, _ = build_generation_jobs(
-        policy=policy,
+        taxonomy=taxonomy,
         design=design_data,
         sample_size=sample_size,
         rng=random.Random(seed),
     )
     factor_names = design_factors(design_data)
 
-    async def _process(job: SeedJob) -> dict[str, Any]:
-        """Generate one batch of seeds for *job*.
+    async def _process(job: TestCaseJob) -> dict[str, Any]:
+        """Generate one batch of test_set for *job*.
 
         Per-batch failures (rate limit / provider 5xx / malformed JSON
-        payloads / fewer-than-requested seeds) are caught and returned
+        payloads / fewer-than-requested test_set) are caught and returned
         as a structured ``error`` sentinel rather than re-raised, so a
-        single bad batch cannot kill the entire seeds stage and discard
+        single bad batch cannot kill the entire test_set stage and discard
         the work the other concurrent batches have already finished.
         Auth errors still propagate immediately — they are never
         transient and continuing only burns tokens.
@@ -714,7 +713,7 @@ async def _generate_records(
         try:
             prompt = build_generation_prompt(
                 kind=kind,
-                policy=policy,
+                taxonomy=taxonomy,
                 behavior=job.behavior,
                 count=job.count,
                 context=context,
@@ -734,17 +733,17 @@ async def _generate_records(
                 options=GenerateOptions(
                     temperature=temperature, max_tokens=max_tokens,
                     reasoning_effort=reasoning_effort, timeout_s=timeout_s,
-                    call_label=f"seeds:{kind}:{slug}",
+                    call_label=f"test_set:{kind}:{slug}",
                 ),
             )
             payload = response.parsed
-            if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):
-                raise ValueError(f"{kind} seed generation returned invalid seeds payload")
+            if not isinstance(payload, dict) or not isinstance(payload.get("test_set"), list):
+                raise ValueError(f"{kind} seed generation returned invalid test_set payload")
 
-            returned_seeds = payload["seeds"]
+            returned_seeds = payload["test_set"]
             if len(returned_seeds) < job.count:
                 raise ValueError(
-                    f"{kind} generation returned {len(returned_seeds)} seeds "
+                    f"{kind} generation returned {len(returned_seeds)} test_set "
                     f"for a batch of {job.count}"
                 )
             returned_seeds = returned_seeds[:job.count]
@@ -753,22 +752,22 @@ async def _generate_records(
             for idx, raw_seed in enumerate(returned_seeds):
                 if not isinstance(raw_seed, dict):
                     raise ValueError(f"{kind} generation returned non-dict seed at index {idx}")
-                factors: dict[str, str] = {"behavior": behavior_name}
+                dimensions: dict[str, str] = {"behavior": behavior_name}
                 if job.tuple_spec:
-                    factors.update({
+                    dimensions.update({
                         factor_name: job.tuple_spec[factor_name]["name"]
                         for factor_name in factor_names
                     })
                 records.append(
                     seed_record(
-                        kind=kind, seed_id=f"{seed_id_prefix}-{slug}-{job.start_index + idx:03d}",
-                        concept=concept_name,
+                        kind=kind, test_case_id=f"{test_case_id_prefix}-{slug}-{job.start_index + idx:03d}",
+                        behavior=concept_name,
                         seed_payload=normalize_generated_seed(
                             raw_seed,
                             tool_source=tool_source,
                             fixed_system_prompt=fixed_system_prompt,
                         ),
-                        factors=factors,
+                        dimensions=dimensions,
                     )
                 )
             return {"order": job.order, "records": records}
@@ -776,19 +775,19 @@ async def _generate_records(
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
             log.warning(
-                "Seeds %s job for behavior %r exhausted retries (%s): %s",
+                "Test Set %s job for behavior %r exhausted retries (%s): %s",
                 kind, behavior_name, type(exc).__name__, exc,
             )
             return {"order": job.order, "records": [], "error": exc}
         except (json.JSONDecodeError, ValueError) as exc:
             log.warning(
-                "Seeds %s job for behavior %r returned invalid payload (%s): %s",
+                "Test Set %s job for behavior %r returned invalid payload (%s): %s",
                 kind, behavior_name, type(exc).__name__, exc,
             )
             return {"order": job.order, "records": [], "error": exc}
         except Exception as exc:
             log.exception(
-                "Seeds %s job for behavior %r failed unexpectedly",
+                "Test Set %s job for behavior %r failed unexpectedly",
                 kind, behavior_name,
             )
             return {"order": job.order, "records": [], "error": exc}
@@ -806,13 +805,13 @@ async def _generate_records(
     # than transient.
     if errors and not records:
         log.error(
-            "Seeds stage failed for kind=%s: all %d batch(es) errored",
+            "Test Set stage failed for kind=%s: all %d batch(es) errored",
             kind, len(errors),
         )
         raise errors[0]
     if errors:
         log.warning(
-            "Seeds %s completed with %d batch failure(s) out of %d; produced %d records",
+            "Test Set %s completed with %d batch failure(s) out of %d; produced %d records",
             kind, len(errors), len(jobs), len(records),
         )
     return {"records": records, "errored_count": len(errors)}
@@ -825,7 +824,7 @@ async def _generate_records(
 
 async def run_seeds(
     *,
-    policy_path: str,
+    taxonomy_path: str,
     save_path: str,
     context: str | None,
     prompt: dict[str, Any] | None,
@@ -836,18 +835,18 @@ async def run_seeds(
     seed: int = 0,
     concurrency: int = 8,
 ) -> dict[str, Any]:
-    """Generate prompt and/or scenario seeds."""
+    """Generate prompt and/or scenario test_set."""
     if prompt is None and scenario is None:
-        raise ValueError("seeds stage requires prompt and/or scenario configuration")
+        raise ValueError("test_set stage requires prompt and/or scenario configuration")
     _validate_tool_source(tool_source, target)
 
-    policy = load_policy(policy_path)
+    taxonomy = load_policy(taxonomy_path)
     out_path = resolve_path(save_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     normalized_context = normalize_seed_context(context)
     fixed_system_prompt = (str(target.system_prompt or "").strip() or None) if target is not None else None
 
-    design = normalize_design(design or {}, policy, inject_behavior=True)
+    design = normalize_design(design or {}, taxonomy, inject_behavior=True)
 
     kinds_cfgs: list[tuple[str, dict[str, Any]]] = []
     if prompt is not None:
@@ -857,7 +856,7 @@ async def run_seeds(
 
     results = await asyncio.gather(*[
         _generate_records(
-            kind=kind, policy=policy, model=str(cfg["model"]),
+            kind=kind, taxonomy=taxonomy, model=str(cfg["model"]),
             sample_size=int(cfg["sample_size"]),
             temperature=(
                 float(cfg["temperature"])
@@ -885,13 +884,13 @@ async def run_seeds(
     all_records = normalize_seed_rows(all_records)
     write_jsonl(out_path, all_records)
     prompt_count = sum(
-        1 for record in all_records if record.get("kind") == "prompt"
+        1 for record in all_records if record.get("type") == "prompt"
     )
     scenario_count = sum(
-        1 for record in all_records if record.get("kind") == "scenario"
+        1 for record in all_records if record.get("type") == "scenario"
     )
     return {
-        "seeds_path": str(out_path),
+        "test_set_path": str(out_path),
         "saved_count": len(all_records),
         "prompt_count": prompt_count,
         "scenario_count": scenario_count,
@@ -908,20 +907,20 @@ def _parse_kind_config(
 ) -> dict[str, Any]:
     """Validate and build a normalized config dict for a seed generation kind."""
     if not isinstance(raw, dict):
-        raise ValueError(f"seeds.{kind} must be a mapping")
+        raise ValueError(f"test_set.{kind} must be a mapping")
     if "budget" in raw:
-        raise ValueError(f"seeds.{kind}.budget was renamed to seeds.{kind}.sample_size")
+        raise ValueError(f"test_set.{kind}.budget was renamed to test_set.{kind}.sample_size")
     reject_unknown_keys(
         raw,
-        field_name=f"seeds.{kind}",
+        field_name=f"test_set.{kind}",
         allowed={"model", "sample_size", "timeout_s"},
     )
     model = raw.get("model") or raw_cfg.get("model")
     if not isinstance(model, dict):
-        raise ValueError(f"seeds.{kind}.model must be a mapping")
+        raise ValueError(f"test_set.{kind}.model must be a mapping")
     model_cfg = parse_model_config(
         model,
-        field_name=f"seeds.{kind}.model",
+        field_name=f"test_set.{kind}.model",
         default_temperature=temperature,
         default_max_tokens=max_tokens,
     )
@@ -942,11 +941,11 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("context must be a string when provided")
     reject_unknown_keys(
         raw_cfg,
-        field_name="seeds",
+        field_name="test_set",
         allowed={
-            "policy_path",
+            "taxonomy_path",
             "save_path",
-            "design_path",
+            "stratify",
             "tool_source",
             "model",
             "timeout_s",
@@ -957,10 +956,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         },
     )
     if "validators" in raw_cfg or "validator_model" in raw_cfg:
-        raise ValueError("seeds validators are no longer supported")
+        raise ValueError("test_set validators are no longer supported")
     tool_source = raw_cfg.get("tool_source", TOOL_SOURCE_RUNTIME)
     if not isinstance(tool_source, str):
-        raise ValueError("seeds.tool_source must be a string")
+        raise ValueError("test_set.tool_source must be a string")
 
     prompt_cfg = None
     scenario_cfg = None
@@ -973,19 +972,38 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
 
     if raw_scenario := raw_cfg.get("scenario"):
         if "modality" in raw_scenario:
-            raise ValueError("seeds.scenario.modality is no longer supported; use seeds.tool_source")
+            raise ValueError("test_set.scenario.modality is no longer supported; use test_set.tool_source")
         scenario_cfg = _parse_kind_config(
             raw_cfg, "scenario", raw_scenario,
             sample_size=100, temperature=DEFAULT_GENERATION_TEMPERATURE, max_tokens=DEFAULT_GENERATION_MAX_TOKENS,
         )
 
     if prompt_cfg is None and scenario_cfg is None:
-        raise ValueError("seeds requires prompt and/or scenario configuration")
+        raise ValueError("test_set requires prompt and/or scenario configuration")
+
+    stratify_raw = raw_cfg.get("stratify") or {}
+    if not isinstance(stratify_raw, dict):
+        raise ValueError("test_set.stratify must be a mapping")
+    reject_unknown_keys(
+        stratify_raw,
+        field_name="test_set.stratify",
+        allowed={"dimensions", "level_count", "model"},
+    )
+    dimensions = stratify_raw.get("dimensions", ctx.get("dimensions"))
+    level_count = stratify_raw.get("level_count", DEFAULT_LEVEL_COUNT)
+    if not isinstance(level_count, int) or level_count <= 0:
+        raise ValueError("test_set.stratify.level_count must be a positive integer")
+    stratify_model_raw = stratify_raw.get("model") or raw_cfg.get("model")
+    stratify_model_cfg = None
+    if stratify_model_raw is not None:
+        stratify_model_cfg = parse_model_config(
+            stratify_model_raw,
+            field_name="test_set.stratify.model",
+        )
 
     path_cfg = {
-        "policy_path": raw_cfg.get("policy_path") or ctx.get("policy_path") or str(Path(ctx["suite_root"]) / "policy.json"),
-        "save_path": raw_cfg.get("save_path") or ctx.get("seeds_path") or str(Path(ctx["suite_root"]) / SEEDS_FILE),
-        "design_path": raw_cfg.get("design_path") or ctx.get("design_path") or str(Path(ctx["suite_root"]) / "design.json"),
+        "taxonomy_path": raw_cfg.get("taxonomy_path") or ctx.get("taxonomy_path") or str(Path(ctx["suite_root"]) / "taxonomy.json"),
+        "save_path": raw_cfg.get("save_path") or ctx.get("test_set_path") or str(Path(ctx["suite_root"]) / TEST_SET_FILE),
     }
 
     cfg = resolve_stage_paths(
@@ -993,27 +1011,30 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
-    policy_path = cfg["policy_path"]
-    design_path = Path(cfg["design_path"])
-    if design_path.exists():
-        raw_design = json.loads(design_path.read_text(encoding="utf-8"))
-    elif ctx.get("factors") in (None, []):
-        raw_design = {}
-    else:
-        raise ValueError(
-            f"seed generation requires a design at {design_path}. "
-            f"Run the design stage first."
-        )
+    taxonomy_path = cfg["taxonomy_path"]
+    design_dir = Path(cfg["save_path"]).parent
+    design_result = await run_design(
+        taxonomy_path=taxonomy_path,
+        out_dir=str(design_dir),
+        dimensions=dimensions,
+        context=context,
+        model=stratify_model_cfg.name if stratify_model_cfg is not None else None,
+        level_count=level_count,
+        reasoning_effort=stratify_model_cfg.reasoning_effort if stratify_model_cfg is not None else None,
+        temperature=stratify_model_cfg.temperature if stratify_model_cfg is not None else None,
+    )
+    design_path = Path(design_result["design_path"])
+    raw_design = json.loads(design_path.read_text(encoding="utf-8"))
 
     kinds = []
     if prompt_cfg is not None:
         kinds.append(f"prompt(n={prompt_cfg['sample_size']})")
     if scenario_cfg is not None:
         kinds.append(f"scenario(n={scenario_cfg['sample_size']})")
-    log.debug(f"seeds: kinds=[{', '.join(kinds)}], tool_source={tool_source}")
+    log.debug(f"test_set: kinds=[{', '.join(kinds)}], tool_source={tool_source}")
 
     result = await run_seeds(
-        policy_path=policy_path,
+        taxonomy_path=taxonomy_path,
         save_path=cfg["save_path"],
         context=context,
         prompt=prompt_cfg,
@@ -1023,13 +1044,15 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         design=raw_design,
     )
     return {
-        "seeds_path": result["seeds_path"],
+        "test_set_path": result["test_set_path"],
+        "design_path": str(design_path),
         "_summary": {
+            "factor_sizes": design_result.get("factor_sizes", {}),
             "total": result.get("saved_count", 0),
             "prompts": result.get("prompt_count", 0),
             "scenarios": result.get("scenario_count", 0),
             # Surfaced so the runner can skip finalize_artifact_plan when
-            # any batch failed: a partial seeds.jsonl must not be cached
+            # any batch failed: a partial test_set.jsonl must not be cached
             # as a complete artifact (a future cache hit would silently
             # reuse the smaller-than-requested file). The runner gates
             # cacheable finalization on this value.

@@ -36,13 +36,13 @@ class SystematizationResponse(BaseModel):
 def _humanize_concept_name(concept_name: str | None) -> str:
     return str(concept_name or "").replace("_", " ").replace("-", " ").strip()
 
-def _build_prompt(*, concept: str, concept_text: str, context: str | None = None) -> str:
+def _build_prompt(*, behavior: str, concept_text: str, context: str | None = None) -> str:
     parts = [
         f"{SYSTEMATIZATION_PROMPT}\n\n",
         "# Input\n",
-        "The following is the actual concept to systematize. Treat the label and body below as the real input, not as examples.\n\n",
-        f"## Concept Label\n{concept}\n\n",
-        f"## Background Concept of Interest\n{concept_text.strip()}\n",
+        "The following is the actual behavior to systematize. Treat the label and body below as the real input, not as examples.\n\n",
+        f"## Behavior Label\n{behavior}\n\n",
+        f"## Background Behavior of Interest\n{concept_text.strip()}\n",
     ]
     if context:
         parts.append(f"\n## Application Context\n{context.strip()}\n")
@@ -101,7 +101,7 @@ def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
 
 async def run_systematization(
     *,
-    concept: str,
+    behavior: str,
     concept_text: str,
     save_path: str,
     model_cfg: ModelConfig,
@@ -111,10 +111,10 @@ async def run_systematization(
 ) -> Path:
     """Generate one systematization artifact and persist it to disk."""
     if not concept_text.strip():
-        raise ValueError("systematization requires non-empty concept text")
+        raise ValueError("systematization requires non-empty behavior text")
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
-    log.debug(f"systematization: concept={concept}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
+    log.debug(f"systematization: behavior={behavior}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
 
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
@@ -123,7 +123,7 @@ async def run_systematization(
 
     response = await generate_structured(
         model_cfg.name,
-        _build_prompt(concept=concept, concept_text=concept_text, context=context),
+        _build_prompt(behavior=behavior, concept_text=concept_text, context=context),
         schema_name="systematization",
         json_schema=SystematizationResponse.model_json_schema(),
         options=GenerateOptions(
@@ -157,7 +157,7 @@ async def run_systematization(
     _validate_summary_items(parsed.summary_items)
 
     artifact = {
-        "concept": concept,
+        "behavior": behavior,
         "systematization": parsed.systematization,
         "summary_items": [item.model_dump() for item in parsed.summary_items],
         "meta": {

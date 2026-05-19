@@ -30,8 +30,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 @dataclass
 class Config:
-    policy_path: str
-    seeds_path: str
+    taxonomy_path: str
+    test_set_path: str
     embed_model: str
     embed_backend: str  # "openai" or "hf"
     k_list: List[int]
@@ -64,9 +64,9 @@ def _require_openai() -> Any:
 
 def load_policy(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    behaviors = data.get("behaviors") or []
+    behavior_categories = data.get("behavior_categories") or []
     flattened = []
-    for idx, sr in enumerate(behaviors):
+    for idx, sr in enumerate(behavior_categories):
         flattened.append(
             {
                 "id": idx,
@@ -75,11 +75,11 @@ def load_policy(path: Path) -> Dict[str, Any]:
                 "examples": sr.get("examples", []) or [],
             }
         )
-    return {"raw": data, "behaviors": flattened}
+    return {"raw": data, "behavior_categories": flattened}
 
 
 def _prompt_seed_text(row: Dict[str, Any]) -> str | None:
-    if row.get("kind") != "prompt":
+    if row.get("type") != "prompt":
         return None
     row_seed = row.get("seed")
     if isinstance(row_seed, dict):
@@ -175,11 +175,11 @@ def embed_texts(
     return embed_texts_openai(client, model, texts)
 
 
-def coverage_at_k(behavior_counts: Dict[str, int], k: int, total_behaviors: int) -> float:
-    if total_behaviors == 0:
+def coverage_at_k(behavior_category_counts: Dict[str, int], k: int, total_behavior_categories: int) -> float:
+    if total_behavior_categories == 0:
         return 0.0
-    hits = sum(1 for c in behavior_counts.values() if c >= k)
-    return hits / total_behaviors
+    hits = sum(1 for c in behavior_category_counts.values() if c >= k)
+    return hits / total_behavior_categories
 
 
 # ---------------------- Main logic ----------------------
@@ -187,17 +187,17 @@ def coverage_at_k(behavior_counts: Dict[str, int], k: int, total_behaviors: int)
 
 def compute_metrics(cfg: Config):
     np_mod = _require_numpy()
-    tax = load_policy(Path(cfg.policy_path))
-    behaviors = tax["behaviors"]
-    behavior_names = [sr["name"] for sr in behaviors]
+    tax = load_policy(Path(cfg.taxonomy_path))
+    behavior_categories = tax["behavior_categories"]
+    behavior_names = [sr["name"] for sr in behavior_categories]
 
-    seeds = load_jsonl(Path(cfg.seeds_path))
+    test_set = load_jsonl(Path(cfg.test_set_path))
 
     client = _require_openai()() if cfg.embed_backend == "openai" else None
 
-    # Embed policy examples for coverage calc
+    # Embed taxonomy examples for coverage calc
     example_texts = []
-    for sr in behaviors:
+    for sr in behavior_categories:
         for ex in sr.get("examples", []):
             example_texts.append(ex)
     example_vecs = embed_texts(
@@ -209,7 +209,7 @@ def compute_metrics(cfg: Config):
     per_behavior_valid: Dict[str, List[bool]] = defaultdict(list)
     per_behavior_len: Dict[str, List[int]] = defaultdict(list)
 
-    prompt_seeds = [entry for entry in seeds if _prompt_seed_text(entry) is not None]
+    prompt_seeds = [entry for entry in test_set if _prompt_seed_text(entry) is not None]
     seed_prompts = [_prompt_seed_text(entry) or "" for entry in prompt_seeds]
     seed_vecs = embed_texts(client, cfg.embed_backend, cfg.embed_model, seed_prompts)
 
@@ -220,23 +220,23 @@ def compute_metrics(cfg: Config):
             return example_vecs.shape[1]
         return 1
 
-    unknown_behavior_counts: Dict[str, int] = defaultdict(int)
+    unknown_behavior_category_counts: Dict[str, int] = defaultdict(int)
     for entry, vec in zip(prompt_seeds, seed_vecs):
         sr = row_behavior(entry)
         if sr not in behavior_names:
-            unknown_behavior_counts[sr] += 1
+            unknown_behavior_category_counts[sr] += 1
             continue
         per_behavior_vecs[sr].append(vec)
         per_behavior_valid[sr].append(True)
         per_behavior_len[sr].append(len(_prompt_seed_text(entry) or ""))
 
-    if unknown_behavior_counts:
+    if unknown_behavior_category_counts:
         summary = ", ".join(
-            f"{name} ({count})" for name, count in sorted(unknown_behavior_counts.items())
+            f"{name} ({count})" for name, count in sorted(unknown_behavior_category_counts.items())
         )
         print(
-            f"[seed_metrics] Skipping {sum(unknown_behavior_counts.values())} seeds "
-            f"with behaviors not in policy.json: {summary}"
+            f"[seed_metrics] Skipping {sum(unknown_behavior_category_counts.values())} test_set "
+            f"with behavior_categories not in taxonomy.json: {summary}"
         )
 
     # Metrics per behavior
@@ -321,7 +321,7 @@ def compute_metrics(cfg: Config):
         "skew": {"gini": skew_gini, "entropy": skew_ent},
         "example_coverage": ex_cov,
         "valid_total": sum(count_vals),
-        "seed_total": len(seeds),
+        "seed_total": len(test_set),
     }
 
     report = {

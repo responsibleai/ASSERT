@@ -5,22 +5,22 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from p2m.core.model_client import ModelResponse
-from p2m.stages.policy import run_policy
+from p2m.stages.systematize import run_systematize
 
 
 class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
-    async def test_run_policy_writes_policy_without_extra_metadata(self) -> None:
+    async def test_run_systematize_writes_policy_without_extra_metadata(self) -> None:
         calls: list[tuple[str, object]] = []
 
         async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
             calls.append((schema_name, messages))
-            self.assertEqual(schema_name, "policy")
+            self.assertEqual(schema_name, "taxonomy")
             return ModelResponse(
                 text=json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
+                        "behavior": {"name": "Risk", "definition": "Definition"},
                         "definition_of_terms": [],
-                        "behaviors": [
+                        "behavior_categories": [
                             {
                                 "name": f"behavior-{idx}",
                                 "definition": f"definition-{idx}",
@@ -32,9 +32,9 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ),
                 parsed={
-                    "concept": {"name": "Risk", "definition": "Definition"},
+                    "behavior": {"name": "Risk", "definition": "Definition"},
                     "definition_of_terms": [],
-                    "behaviors": [
+                    "behavior_categories": [
                         {
                             "name": f"behavior-{idx}",
                             "definition": f"definition-{idx}",
@@ -48,32 +48,32 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            with patch("p2m.stages.policy.generate_structured", new=fake_generate_structured):
-                result = await run_policy(
-                    concept="Harmful advice",
+            with patch("p2m.stages.systematize.generate_structured", new=fake_generate_structured):
+                result = await run_systematize(
+                    behavior="Harmful advice",
                     model="azure/gpt-5.4",
                     save_dir=tmp_dir,
                 )
 
-            policy_path = Path(result["policy_path"])
-            self.assertTrue(policy_path.exists())
-            payload = json.loads(policy_path.read_text(encoding="utf-8"))
+            taxonomy_path = Path(result["taxonomy_path"])
+            self.assertTrue(taxonomy_path.exists())
+            payload = json.loads(taxonomy_path.read_text(encoding="utf-8"))
             self.assertNotIn("meta", payload)
             self.assertNotIn("validation_results", result)
-            self.assertEqual([schema for schema, _ in calls], ["policy"])
+            self.assertEqual([schema for schema, _ in calls], ["taxonomy"])
 
-    async def test_run_policy_generates_once(self) -> None:
+    async def test_run_systematize_generates_once(self) -> None:
         calls: list[str] = []
 
         async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
             calls.append(schema_name)
-            self.assertEqual(schema_name, "policy")
+            self.assertEqual(schema_name, "taxonomy")
             return ModelResponse(
                 text=json.dumps(
                     {
-                        "concept": {"name": "Risk", "definition": "Definition"},
+                        "behavior": {"name": "Risk", "definition": "Definition"},
                         "definition_of_terms": [],
-                        "behaviors": [
+                        "behavior_categories": [
                             {
                                 "name": f"behavior-{idx}",
                                 "definition": f"definition-{idx}",
@@ -85,9 +85,9 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ),
                 parsed={
-                    "concept": {"name": "Risk", "definition": "Definition"},
+                    "behavior": {"name": "Risk", "definition": "Definition"},
                     "definition_of_terms": [],
-                    "behaviors": [
+                    "behavior_categories": [
                         {
                             "name": f"behavior-{idx}",
                             "definition": f"definition-{idx}",
@@ -101,14 +101,14 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            with patch("p2m.stages.policy.generate_structured", new=fake_generate_structured):
-                result = await run_policy(
-                    concept="Harmful advice",
+            with patch("p2m.stages.systematize.generate_structured", new=fake_generate_structured):
+                result = await run_systematize(
+                    behavior="Harmful advice",
                     model="azure/gpt-5.4",
                     save_dir=tmp_dir,
                 )
 
-            self.assertEqual(calls, ["policy"])
-            self.assertEqual(result["policy"]["concept"]["name"], "Risk")
+            self.assertEqual(calls, ["taxonomy"])
+            self.assertEqual(result["taxonomy"]["behavior"]["name"], "Risk")
 if __name__ == "__main__":
     unittest.main()

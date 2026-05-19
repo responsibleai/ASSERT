@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from p2m.core.config_model import DEFAULT_ROLLOUT_MAX_TOKENS, EvaluationConfig, JudgeConfig, TargetConfig
-from p2m.stages import judge, policy, rollout, seeds
+from p2m.stages import judge, systematize, rollout, test_set
 from tests.helpers import StageSmokeCase, run_stage_smoke_case, write_json, write_jsonl
 
 
@@ -13,8 +13,8 @@ def _common_context(root: Path) -> dict[str, object]:
     return {
         "suite_id": "suite-1",
         "run_id": "run-1",
-        "concept": "Harmful advice",
-        "concept_name": "harmful_advice",
+        "behavior": "Harmful advice",
+        "behavior_name": "harmful_advice",
         "suite_root": root,
         "run_root": root / "run-1",
         "artifacts_root": root,
@@ -27,33 +27,31 @@ def _seeds_case() -> StageSmokeCase:
     def cfg_factory(root: Path) -> dict[str, object]:
         return {
             "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 10},
-            "policy_path": str(root / "policy.json"),
-            "save_path": str(root / "seeds.jsonl"),
-            "design_path": str(root / "design.json"),
+            "taxonomy_path": str(root / "taxonomy.json"),
+            "save_path": str(root / "test_set.jsonl"),
         }
 
     def context_factory(root: Path) -> dict[str, object]:
-        (root / "design.json").write_text("{}", encoding="utf-8")
-        (root / "policy.json").write_text(
-            '{"concept":{"name":"concept"},"behaviors":[{"name":"b","definition":"d"}]}',
+        (root / "taxonomy.json").write_text(
+            '{"behavior":{"name":"behavior"},"behavior_categories":[{"name":"b","definition":"d","examples":["e"],"permissible":false}]}',
             encoding="utf-8",
         )
         return _common_context(root)
 
     def result_factory(root: Path, _kwargs: dict[str, object]) -> dict[str, str]:
-        out_path = root / "seeds.jsonl"
+        out_path = root / "test_set.jsonl"
         out_path.write_text("", encoding="utf-8")
-        return {"seeds_path": str(out_path)}
+        return {"test_set_path": str(out_path)}
 
     def assert_fn(calls: dict[str, object], result: object, root: Path) -> None:
         assert calls["prompt"]["model"] == "azure/gpt-5.4"
         assert calls["prompt"]["sample_size"] == 10
-        assert result["seeds_path"] == str(root / "seeds.jsonl")
+        assert result["test_set_path"] == str(root / "test_set.jsonl")
 
     return StageSmokeCase(
-        name="seeds",
-        run=seeds.run,
-        workflow_patch="p2m.stages.seeds.run_seeds",
+        name="test_set",
+        run=test_set.run,
+        workflow_patch="p2m.stages.test_set.run_seeds",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -63,11 +61,11 @@ def _seeds_case() -> StageSmokeCase:
 
 def _rollout_case() -> StageSmokeCase:
     def setup_fn(root: Path) -> None:
-        write_jsonl(root / "seeds.jsonl", [{"kind": "prompt", "seed": {"description": "seed prompt"}}])
+        write_jsonl(root / "test_set.jsonl", [{"type": "prompt", "seed": {"description": "seed prompt"}}])
 
     def cfg_factory(root: Path) -> dict[str, object]:
         return {
-            "seed_path": str(root / "seeds.jsonl"),
+            "test_set_path": str(root / "test_set.jsonl"),
             "save_dir": str(root),
             "strict": False,
         }
@@ -102,13 +100,13 @@ def _rollout_case() -> StageSmokeCase:
 
 def _judge_case() -> StageSmokeCase:
     def setup_fn(root: Path) -> None:
-        write_json(root / "policy.json", {"concept": {"name": "Risk"}, "behaviors": []})
-        write_jsonl(root / "transcripts.jsonl", [{"kind": "prompt", "seed_id": "seed-1"}])
+        write_json(root / "taxonomy.json", {"behavior": {"name": "Risk"}, "behavior_categories": []})
+        write_jsonl(root / "transcripts.jsonl", [{"type": "prompt", "test_case_id": "seed-1"}])
 
     def cfg_factory(root: Path) -> dict[str, object]:
         return {
             "transcripts_path": str(root / "transcripts.jsonl"),
-            "policy_path": str(root / "policy.json"),
+            "taxonomy_path": str(root / "taxonomy.json"),
             "save_dir": str(root),
             "strict": False,
         }
@@ -142,7 +140,7 @@ def _judge_case() -> StageSmokeCase:
 
 class StageRunnerSmokeTest(unittest.TestCase):
     def test_stage_runners_delegate_to_stage_functions(self) -> None:
-        with self.subTest(stage="policy"):
+        with self.subTest(stage="systematize"):
             with TemporaryDirectory() as tmp_dir:
                 root = Path(tmp_dir)
                 calls: dict[str, object] = {}
@@ -164,7 +162,7 @@ class StageRunnerSmokeTest(unittest.TestCase):
                     patch("p2m.stages.systematization_convert.run_systematization_to_policy", new=fake_run_systematization_to_policy),
                 ):
                     result = asyncio.run(
-                        policy.run(
+                        systematize.run(
                             _common_context(root),
                             {
                                 "model": {
@@ -172,17 +170,17 @@ class StageRunnerSmokeTest(unittest.TestCase):
                                     "temperature": 0.0,
                                     "max_tokens": 800,
                                 },
-                                "behavior_count": 5,
+                                "behavior_category_count": 5,
                                 "save_dir": str(root),
                             },
                         )
                     )
 
-                self.assertEqual(calls["systematization"]["concept"], "harmful_advice")
+                self.assertEqual(calls["systematization"]["behavior"], "harmful_advice")
                 self.assertEqual(calls["systematization"]["concept_text"], "Harmful advice")
                 self.assertEqual(calls["systematization"]["model_cfg"].name, "azure/gpt-5.4")
-                self.assertEqual(calls["convert"]["behavior_count_hint"], 5)
-                self.assertEqual(Path(result["policy_path"]).resolve(), (root / "policy.json").resolve())
+                self.assertEqual(calls["convert"]["behavior_category_count_hint"], 5)
+                self.assertEqual(Path(result["taxonomy_path"]).resolve(), (root / "taxonomy.json").resolve())
 
         for case in [
             _seeds_case(),

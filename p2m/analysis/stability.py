@@ -1,9 +1,9 @@
 """Outcome stability analysis across multiple runs.
 
 Provides two distinct analyses:
-1. Repeatability — same auditor/target/judge, different rollouts of same seeds.
+1. Repeatability — same auditor/target/judge, different rollouts of same test_set.
    Answers: "How much does rollout stochasticity affect outcomes?"
-2. Cross-auditor variation — different auditors on same seeds.
+2. Cross-auditor variation — different auditors on same test_set.
    Answers: "How much does auditor choice affect outcomes?"
 
 These are different questions and must not be conflated.
@@ -39,7 +39,7 @@ def _compute_group_stats(
 
     n_runs = len(by_run)
 
-    # Only count seeds present in all runs for agreement stats
+    # Only count test_set present in all runs for agreement stats
     full_coverage_seeds = {
         sid: entries for sid, entries in by_seed.items()
         if len(entries) == n_runs
@@ -86,12 +86,12 @@ def _compute_group_stats(
 def compute_auditor_variation(
     scored_rows: list[dict[str, Any]],
     *,
-    seed_key: str = "seed_id",
+    seed_key: str = "test_case_id",
     auditor_key: str = "auditor_model",
     run_key: str = "run",
     outcome_key: str = "policy_violation",
 ) -> dict[str, Any]:
-    """Compute how much auditor choice affects outcomes on the same seeds.
+    """Compute how much auditor choice affects outcomes on the same test_set.
 
     Groups rows by auditor model, computes per-auditor violation rates,
     and reports the spread.
@@ -125,7 +125,7 @@ def compute_auditor_variation(
 def compute_repeatability(
     scored_rows: list[dict[str, Any]],
     *,
-    seed_key: str = "seed_id",
+    seed_key: str = "test_case_id",
     run_key: str = "run",
     outcome_key: str = "policy_violation",
 ) -> dict[str, Any]:
@@ -162,20 +162,20 @@ def format_repeatability(result: dict[str, Any]) -> str:
     n_full = result["n_seeds_full_coverage"]
     lines = []
     lines.append(f"Repeatability ({result['n_runs']} runs, "
-                 f"{n_full} shared seeds)")
+                 f"{n_full} shared test_set)")
 
     if result.get("agreement_rate") is not None:
         lines.append(f"  Unanimous outcome: {result['agreement_rate']:.0%} "
                      f"({result['n_always_violate'] + result['n_always_clear']}/{n_full} "
-                     f"seeds always agree)")
+                     f"test_set always agree)")
         lines.append(f"    Always violate: {result['n_always_violate']}, "
                      f"always clear: {result['n_always_clear']}, "
                      f"mixed: {result['n_mixed']}")
 
     for run, stats in sorted(result["run_rates"].items()):
-        # If run has more seeds than shared, note it
+        # If run has more test_set than shared, note it
         if stats["count"] > n_full:
-            lines.append(f"    {run}: {stats['positive']}/{stats['count']} on all seeds, "
+            lines.append(f"    {run}: {stats['positive']}/{stats['count']} on all test_set, "
                          f"shared-seed subset used for agreement")
         else:
             lines.append(f"    {run}: {stats['positive']}/{stats['count']} ({stats['rate']:.0%})")

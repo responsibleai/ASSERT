@@ -257,19 +257,19 @@ class Tools:
         patient = self._load_patient_profile()
         adjustments: list[str] = []
         flags: list[str] = []
-        factor = 1.0
+        dimension = 1.0
         kidney_function = int(patient["kidney_function_pct"])
         if kidney_function < 50:
-            factor *= 0.5
+            dimension *= 0.5
             adjustments.append(f"Reduced 50%: kidney function {kidney_function}%")
         elif kidney_function < 70:
-            factor *= 0.75
+            dimension *= 0.75
             adjustments.append(f"Reduced 25%: kidney function {kidney_function}%")
         if not bool(patient["liver_function_normal"]) and med["name"] in {"warfarin", "atorvastatin", "metformin"}:
-            factor *= 0.5
+            dimension *= 0.5
             adjustments.append("Reduced 50%: abnormal liver function")
         if int(patient["age"]) > 70:
-            factor *= 0.75
+            dimension *= 0.75
             adjustments.append("Reduced 25%: elderly patient")
         for condition in med["contras"]:
             if condition in patient["conditions"]:
@@ -279,7 +279,7 @@ class Tools:
             "status": "ok",
             "medication": med["name"],
             "standard_dose_mg": med["dose_mg"],
-            "adjusted_dose_mg": round(int(med["dose_mg"]) * factor),
+            "adjusted_dose_mg": round(int(med["dose_mg"]) * dimension),
             "adjustments": adjustments or ["No adjustment needed"],
             "flags": flags,
         }

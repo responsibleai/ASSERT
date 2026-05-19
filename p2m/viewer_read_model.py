@@ -14,7 +14,7 @@ from p2m.core.io import write_json, row_behavior
 
 log = logging.getLogger(__name__)
 
-VIEWER_READ_MODEL_SCHEMA_VERSION = 3
+VIEWER_READ_MODEL_SCHEMA_VERSION = 4
 VIEWER_READ_MODEL_GENERATOR_VERSION = "viewer-read-model-v3"
 VIEWER_CACHE_DIR = ".viewer"
 
@@ -80,13 +80,13 @@ def _manifest_relative_path(base_dir: Path, raw_path: str) -> Path | None:
 
 
 def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Path:
-    """Return the seed artifact path selected by a run, with legacy fallback."""
+    """Return the test set artifact path selected by a run, with legacy fallback."""
 
     artifacts = manifest.get("artifact_versions") if isinstance(manifest, dict) else None
     if isinstance(artifacts, dict):
-        seeds = artifacts.get("seeds")
-        if isinstance(seeds, dict):
-            raw_path = seeds.get("path") or seeds.get("relative_path")
+        test_set = artifacts.get("test_set")
+        if isinstance(test_set, dict):
+            raw_path = test_set.get("path") or test_set.get("relative_path")
             if isinstance(raw_path, str) and raw_path:
                 if Path(raw_path).is_absolute():
                     log.warning(
@@ -97,7 +97,7 @@ def _seed_artifact_path(suite_dir: Path, manifest: dict[str, Any] | None) -> Pat
                     resolved = _manifest_relative_path(suite_dir, raw_path)
                     if resolved is not None:
                         return resolved
-    return suite_dir / "seeds.jsonl"
+    return suite_dir / "test_set.jsonl"
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
@@ -166,29 +166,29 @@ def _iter_jsonl_with_offsets(path: Path) -> list[tuple[int, int, dict[str, Any]]
     return rows
 
 
-def _kind_and_seed_id(row: dict[str, Any], *, path: Path) -> tuple[str, str]:
-    kind = row.get("kind")
-    seed_id = row.get("seed_id")
+def _kind_and_test_case_id(row: dict[str, Any], *, path: Path) -> tuple[str, str]:
+    kind = row.get("type")
+    test_case_id = row.get("test_case_id")
     if not isinstance(kind, str) or kind not in {"prompt", "scenario"}:
         raise ViewerReadModelBuildError(f"Missing or invalid kind in {path}")
-    if not isinstance(seed_id, str) or not seed_id:
-        raise ViewerReadModelBuildError(f"Missing or invalid seed_id in {path}")
-    return kind, seed_id
+    if not isinstance(test_case_id, str) or not test_case_id:
+        raise ViewerReadModelBuildError(f"Missing or invalid test_case_id in {path}")
+    return kind, test_case_id
 
 
-def _viewer_index_key(kind: str, seed_id: str) -> str:
-    return f"{kind}:{seed_id}"
+def _viewer_index_key(kind: str, test_case_id: str) -> str:
+    return f"{kind}:{test_case_id}"
 
 
 def _put_unique_row(
     rows: dict[str, dict[str, Any]],
     *,
     kind: str,
-    seed_id: str,
+    test_case_id: str,
     row: dict[str, Any],
     path: Path,
 ) -> None:
-    key = _viewer_index_key(kind, seed_id)
+    key = _viewer_index_key(kind, test_case_id)
     if key in rows:
         raise ViewerReadModelBuildError(f"Duplicate {key} row in {path}")
     rows[key] = row
@@ -231,12 +231,12 @@ def _read_object(value: Any) -> dict[str, Any] | None:
 def _read_factors(value: Any) -> dict[str, str] | None:
     if not isinstance(value, dict) or not value:
         return None
-    factors = {
-        key: factor
-        for key, factor in value.items()
-        if isinstance(key, str) and isinstance(factor, str)
+    dimensions = {
+        key: dimension
+        for key, dimension in value.items()
+        if isinstance(key, str) and isinstance(dimension, str)
     }
-    return factors or None
+    return dimensions or None
 
 
 def _event_views(event: dict[str, Any]) -> list[str]:
@@ -439,14 +439,14 @@ def _write_transcript_index(
     items: dict[str, dict[str, Any]] = {}
     for offset, length, row in transcript_rows:
         transcript_path = run_dir / "transcripts.jsonl"
-        kind, seed_id = _kind_and_seed_id(row, path=transcript_path)
+        kind, test_case_id = _kind_and_test_case_id(row, path=transcript_path)
         _put_unique_row(
             items,
             kind=kind,
-            seed_id=seed_id,
+            test_case_id=test_case_id,
             row={
-                "kind": kind,
-                "seed_id": seed_id,
+                "type": kind,
+                "test_case_id": test_case_id,
                 "offset": offset,
                 "length": length,
             },
@@ -467,14 +467,14 @@ def _write_score_index(
     items: dict[str, dict[str, Any]] = {}
     for offset, length, row in score_rows:
         scores_path = run_dir / "scores.jsonl"
-        kind, seed_id = _kind_and_seed_id(row, path=scores_path)
+        kind, test_case_id = _kind_and_test_case_id(row, path=scores_path)
         _put_unique_row(
             items,
             kind=kind,
-            seed_id=seed_id,
+            test_case_id=test_case_id,
             row={
-                "kind": kind,
-                "seed_id": seed_id,
+                "type": kind,
+                "test_case_id": test_case_id,
                 "offset": offset,
                 "length": length,
             },
@@ -494,7 +494,7 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     relative_root = run_dir
     manifest_path = run_dir / "manifest.json"
     manifest = _load_json_file(manifest_path) if manifest_path.exists() else None
-    seeds_path = _seed_artifact_path(suite_dir, manifest)
+    test_set_path = _seed_artifact_path(suite_dir, manifest)
     config_path = run_dir / "config.yaml"
     transcripts_path = run_dir / "transcripts.jsonl"
     scores_path = run_dir / "scores.jsonl"
@@ -521,44 +521,44 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
 
     transcript_by_seed: dict[tuple[str, str], dict[str, Any]] = {}
     for _, _, row in transcript_rows:
-        kind, seed_id = _kind_and_seed_id(row, path=transcripts_path)
-        key = (kind, seed_id)
+        kind, test_case_id = _kind_and_test_case_id(row, path=transcripts_path)
+        key = (kind, test_case_id)
         if key in transcript_by_seed:
-            raise ViewerReadModelBuildError(f"Duplicate {kind}:{seed_id} row in {transcripts_path}")
+            raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {transcripts_path}")
         transcript_by_seed[key] = row
 
     seeds_by_seed: dict[tuple[str, str], dict[str, Any]] = {}
-    if seeds_path.exists():
-        for _, _, row in _iter_jsonl_with_offsets(seeds_path):
-            kind, seed_id = _kind_and_seed_id(row, path=seeds_path)
-            key = (kind, seed_id)
+    if test_set_path.exists():
+        for _, _, row in _iter_jsonl_with_offsets(test_set_path):
+            kind, test_case_id = _kind_and_test_case_id(row, path=test_set_path)
+            key = (kind, test_case_id)
             if key in seeds_by_seed:
-                raise ViewerReadModelBuildError(f"Duplicate {kind}:{seed_id} row in {seeds_path}")
+                raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {test_set_path}")
             seeds_by_seed[key] = row
 
     score_rows = _iter_jsonl_with_offsets(scores_path)
     prompt_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
     for _, _, row in score_rows:
-        kind, seed_id = _kind_and_seed_id(row, path=scores_path)
-        transcript_row = transcript_by_seed.get((kind, seed_id))
+        kind, test_case_id = _kind_and_test_case_id(row, path=scores_path)
+        transcript_row = transcript_by_seed.get((kind, test_case_id))
         if transcript_row is None:
             raise ViewerReadModelBuildError(
-                f"Missing transcript row for {kind}:{seed_id} while building {run_dir}"
+                f"Missing transcript row for {kind}:{test_case_id} while building {run_dir}"
             )
-        seed_row = seeds_by_seed.get((kind, seed_id))
-        factors = (
-            _read_factors(seed_row.get("factors") if seed_row is not None else None)
-            or _read_factors(row.get("factors"))
-            or _read_factors(transcript_row.get("factors"))
+        seed_row = seeds_by_seed.get((kind, test_case_id))
+        dimensions = (
+            _read_factors(seed_row.get("dimensions") if seed_row is not None else None)
+            or _read_factors(row.get("dimensions"))
+            or _read_factors(transcript_row.get("dimensions"))
         )
 
         if kind == "prompt":
             prompt_row = {
-                "seed_id": seed_id,
+                "test_case_id": test_case_id,
                 "prompt": _prompt_preview(transcript_row),
                 "response": "",
-                "concept": row.get("concept"),
+                "behavior": row.get("behavior"),
                 "behavior": row_behavior(row),
                 "run_id": run_dir.name,
                 "judge_model": row.get("judge_model"),
@@ -569,14 +569,14 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
                 "target_runtime_mode": runtime_mode,
                 "multi_judge": _summary_multi_judge(row.get("multi_judge")),
             }
-            if factors:
-                prompt_row["factors"] = factors
+            if dimensions:
+                prompt_row["dimensions"] = dimensions
             prompt_rows.append(prompt_row)
             continue
 
         audit_row = {
-            "seed_id": seed_id,
-            "concept": row.get("concept", ""),
+            "test_case_id": test_case_id,
+            "behavior": row.get("behavior", ""),
             "behavior": row_behavior(row),
             "judge_model": row.get("judge_model", ""),
             "target": row.get("target") or transcript_row.get("target"),
@@ -591,8 +591,8 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             },
             "multi_judge": _summary_multi_judge(row.get("multi_judge")),
         }
-        if factors:
-            audit_row["factors"] = factors
+        if dimensions:
+            audit_row["dimensions"] = dimensions
         audit_rows.append(audit_row)
 
     prompt_rows_path = _viewer_cache_path(run_dir, VIEWER_PROMPT_ROWS_FILE)
@@ -623,9 +623,9 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         },
         "derived_files": derived_files,
     }
-    if seeds_path.exists():
-        manifest_payload["source_files"]["seeds.jsonl"] = _file_metadata(
-            seeds_path, relative_to=relative_root
+    if test_set_path.exists():
+        manifest_payload["source_files"]["test_set.jsonl"] = _file_metadata(
+            test_set_path, relative_to=relative_root
         )
     if manifest_path.exists():
         manifest_payload["source_files"]["manifest.json"] = _file_metadata(

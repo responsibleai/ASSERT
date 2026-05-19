@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import json
@@ -712,7 +713,7 @@ class HTTPEndpointSession:
             raise RuntimeError(
                 f"HTTP endpoint {self._endpoint} returned status {exc.status}: {exc.message}"
             ) from exc
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise RuntimeError(
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc

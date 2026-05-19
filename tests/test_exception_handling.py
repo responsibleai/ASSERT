@@ -32,16 +32,11 @@ class LoadConfigErrorTest(unittest.TestCase):
             self.assertIn(str(path), str(ctx.exception))
 
     def test_permission_denied_raises_config_error(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "locked.yaml"
-            path.write_text("key: value", encoding="utf-8")
-            path.chmod(0o000)
-            try:
-                with self.assertRaises(ConfigError) as ctx:
-                    load_config(path)
-                self.assertIn("Permission denied", str(ctx.exception))
-            finally:
-                path.chmod(0o644)
+        path = Path("locked.yaml")
+        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+        self.assertIn("Permission denied", str(ctx.exception))
 
     def test_valid_yaml_non_mapping_raises_config_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -155,7 +150,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         async def fake_invoke_callable(fn, *args, **kwargs):
             raise FakeLitellmBadRequest(
                 "Invalid prompt: your prompt was flagged as potentially "
-                "violating our usage policy"
+                "violating our usage taxonomy"
             )
 
         session = CallableSession(callable_ref="json:dumps")
@@ -250,12 +245,12 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
 class JudgePolicyParseErrorTest(unittest.TestCase):
     def test_corrupt_policy_json_raises_value_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text("{not valid json", encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text("{not valid json", encoding="utf-8")
             # We can't easily call run_judge without full setup, but we can
             # test the JSON parse path directly
             with self.assertRaises(json.JSONDecodeError):
-                json.loads(policy_path.read_text(encoding="utf-8"))
+                json.loads(taxonomy_path.read_text(encoding="utf-8"))
 
 
 # ── stages/systematization_convert.py ──────────────────────────
@@ -305,11 +300,11 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with TemporaryDirectory() as tmp_dir:
-            seeds_path = Path(tmp_dir) / "seeds.jsonl"
-            seeds_path.write_text(
+            test_set_path = Path(tmp_dir) / "test_set.jsonl"
+            test_set_path.write_text(
                 json.dumps({
-                    "kind": "prompt",
-                    "seed_id": "prompt-fail-001",
+                    "type": "prompt",
+                    "test_case_id": "prompt-fail-001",
                     "content": "test prompt",
                     "seed": {"description": "test", "system_prompt": "be helpful"},
                 }) + "\n",
@@ -335,12 +330,12 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(ConnectionError):
                     await run_rollout(
-                        seed_path=str(seeds_path),
+                        test_set_path=str(test_set_path),
                         save_dir=tmp_dir,
                         run_id="test-run",
                         target=target,
                         evaluation=evaluation,
-                        config_path=str(seeds_path),
+                        config_path=str(test_set_path),
                     )
 
             debug_messages = [r for r in log_cm.output if "Rollout worker" in r]

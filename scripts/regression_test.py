@@ -24,7 +24,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True, help="Baseline commit SHA")
     parser.add_argument("--treatment", required=True, help="Treatment commit SHA")
-    parser.add_argument("--seeds", type=int, default=50, help="Seeds per risk spec")
+    parser.add_argument("--test_set", type=int, default=50, help="Test Set per risk spec")
     parser.add_argument(
         "--artifacts-dir",
         type=Path,
@@ -40,7 +40,7 @@ def _build_report(args: argparse.Namespace) -> dict:
         "status": "not_implemented",
         "baseline_sha": args.baseline,
         "treatment_sha": args.treatment,
-        "seeds_per_spec": args.seeds,
+        "seeds_per_spec": args.test_set,
         "decision": {
             "decision": "PASS",
             "reasons": [

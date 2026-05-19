@@ -1,92 +1,122 @@
-# ═══════════════════════════════════════════════════════════════════════
-# Concurrency / throughput benchmark — base config.
-# ═══════════════════════════════════════════════════════════════════════
-# This config is consumed by `scripts/benchmark.py`, which overrides:
-#   - pipeline.policy.behavior_count
-#   - pipeline.seeds.scenario.sample_size  (scenario-only by design)
-#   - pipeline.rollout.concurrency         (judge re-uses this number)
-#   - run                                  (per-invocation timestamped id)
-#
-# The values left below are placeholders so you can also run this file
-# directly with `p2m run --config examples/benchmark/eval_config.yaml`
-# for a quick sanity check.
-#
-# Target: same LangGraph travel planner as examples/travel_planner_langgraph/.
-# Concept is *quality-only* (see travel_planner_benchmark.md) so the
-# auditor generates realistic, non-adversarial user prompts. That keeps
-# the benchmark focused on throughput rather than safety, and avoids
-# tripping Azure Prompt Shields' jailbreak detection on adversarial
-# auditor turns.
-# ═══════════════════════════════════════════════════════════════════════
-
 suite: travel-planner-benchmark
 run: bench-placeholder
-
-# scripts/benchmark.py copies travel_planner_benchmark.md (a quality-only
-# variant) into the per-run working directory next to this YAML so the
-# config loader's `<config>/<concept_name>.md` lookup resolves cleanly.
-concept:
+behavior:
   name: travel_planner_benchmark
+  description: |-
+    # Travel Planner Quality Benchmark
 
-context: |
-  The target is a multi-agent LangGraph travel planner with tool servers:
+    A travel planning AI must reliably use its tools, respect user constraints,
+    and produce accurate, internally consistent itineraries grounded in real
+    tool output.
+
+    This behavior is **quality-only by design**. It deliberately omits adversarial
+    and safety-themed behavior_categories (prompt-injection probing, jailbreak attempts,
+    sycophancy bait, stereotyping prompts) so that the auditor generates
+    realistic, non-adversarial user prompts. That keeps the benchmark focused
+    on measuring rollout / judge throughput at scale rather than safety
+    robustness, and avoids tripping content filters with adversarial test_set.
+
+    ## Quality failures
+
+    - Calling the wrong tool for the user's request (e.g., calling
+      `search_flights` when the user asked about hotel availability, or
+      skipping `check_weather` for a clearly weather-dependent itinerary).
+    - Skipping a required tool when the user gave specific constraints
+      (e.g., booking-shaped requests without `search_hotels`, budget-bounded
+      trips without `validate_budget`).
+    - Fabricating concrete details — flight numbers, hotel names, prices,
+      flight times — that are not present in the tool results returned in
+      the same conversation.
+    - Producing itineraries that violate explicit budget caps the user
+      stated (e.g., user says "under $1,500" and the plan totals more).
+    - Producing itineraries that violate explicit date or duration
+      constraints (e.g., user asked for 5 days, the plan covers 7).
+    - Producing itineraries that are internally inconsistent: return date
+      before departure date, hotel checkout before checkin, layovers that
+      arrive after the connecting flight has departed, totals that don't
+      match line-item sums.
+    - Mishandling currency or unit conversions when the user mixes currencies
+      or measurement systems (e.g., quoting USD totals for a user who asked
+      for EUR, treating miles as kilometers).
+    - Dropping key constraints from the summary the user actually sees
+      (e.g., the agent fetched a non-stop flight from a tool but the final
+      itinerary loses the "non-stop" qualifier).
+    - Returning vague, non-actionable recommendations ("there are several
+      good hotels in the area") when the user asked for concrete options
+      with names, prices, and links.
+    - Failing to surface a constraint conflict the tools clearly returned
+      (e.g., `validate_budget` flagged the plan as over-budget but the
+      itinerary doesn't mention it).
+context: 'The target is a multi-agent LangGraph travel planner with tool servers:
+
   search_flights, search_hotels, check_weather, check_travel_advisories,
+
   and validate_budget. Evaluate quality only: correct tool selection
+
   and use, faithful grounding in tool output, compliance with explicit
+
   user constraints (budget, dates, duration, currency), and internal
+
   consistency of the itinerary. Adversarial / safety probing is out of
+
   scope for this benchmark.
 
-factors:
-  - name: traveler_type
-    description: |
-      The type of traveler using the travel planner.
-  - name: trip_type
-    description: |
-      The kind of trip being planned.
-
+  '
 default_model:
   name: azure/gpt-5.4-mini
-
 pipeline:
-  policy:
-    model: { name: azure/gpt-5.4-mini, temperature: 0.7, max_tokens: 10000 }
-    behavior_count: 6                 # overridden by scripts/benchmark.py
+  systematize:
+    model:
+      name: azure/gpt-5.4-mini
+      temperature: 0.7
+      max_tokens: 10000
+    behavior_category_count: 6
+  test_set:
+    stratify:
+      dimensions:
+      - name: traveler_type
+        description: 'The type of traveler using the travel planner.
 
-  design:
-    model: { name: azure/gpt-5.4-mini, temperature: 0.7 }
+          '
+      - name: trip_type
+        description: 'The kind of trip being planned.
 
-  # Scenario-only seeds: prompt seeds intentionally omitted. Multi-turn
-  # scenarios are the heavier shape and the one rollout concurrency
-  # actually gates on.
-  seeds:
+          '
+      model:
+        name: azure/gpt-5.4-mini
+        temperature: 0.7
     scenario:
-      model: { name: azure/gpt-5.4-mini, temperature: 0.2 }
-      sample_size: 10                 # overridden by scripts/benchmark.py
-
+      model:
+        name: azure/gpt-5.4-mini
+        temperature: 0.2
+      sample_size: 10
   rollout:
-    concurrency: 10                   # overridden by scripts/benchmark.py
+    concurrency: 10
     target:
       callable: examples.travel_planner_langgraph.agent:chat_sync
-      # Using `agent:chat_sync` (not `auto_trace:chat_sync`) so this
-      # benchmark doesn't unconditionally register Phoenix as the global
-      # OpenTelemetry tracer provider. Tracing isn't needed for
-      # throughput measurement and the auto-instrument retries flood the
-      # log when no Phoenix collector is running.
     auditor:
-      model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
+      model:
+        name: azure/gpt-5.4-mini
+        temperature: 0.0
+        max_tokens: 10000
     max_turns: 6
-
   judge:
     dimensions:
       policy_violation:
-        description: Did the assistant exhibit a quality failure as defined in the policy?
-        rubric: |
-          true = The assistant called the wrong tool, skipped a required tool, fabricated details (flight numbers, hotel names, prices) not grounded in tool output, violated an explicit user constraint (budget, dates, duration, currency), produced an internally inconsistent itinerary, or dropped a constraint the tools clearly returned
+        description: Did the assistant exhibit a quality failure as defined in the taxonomy?
+        rubric: 'true = The assistant called the wrong tool, skipped a required tool, fabricated details (flight numbers, hotel names, prices) not grounded in tool output, violated an explicit user constraint (budget, dates, duration, currency), produced an internally inconsistent itinerary, or dropped a constraint the tools clearly returned
+
           false = The assistant used the right tools, grounded all concrete details in tool output, respected explicit user constraints, and produced an internally consistent itinerary
+
+          '
       overrefusal:
         description: Did the assistant refuse a reasonable request?
-        rubric: |
-          true = The assistant refused a legitimate travel planning request
+        rubric: 'true = The assistant refused a legitimate travel planning request
+
           false = The assistant did not overrefuse
-    model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 12000 }
+
+          '
+    model:
+      name: azure/gpt-5.4-mini
+      temperature: 0.0
+      max_tokens: 12000

@@ -16,10 +16,10 @@ from p2m.viewer_read_model import ViewerReadModelBuildError
 
 class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
     def test_rollout_config_fingerprint_changes_with_seeds_content(self) -> None:
-        """Fingerprint must include seed content so regenerating seeds invalidates cached transcripts.
+        """Fingerprint must include seed content so regenerating test_set invalidates cached transcripts.
 
-        Without this, the resume path keys on seed_id alone, and seed ids
-        are deterministic enough that fresh seeds collide with cached
+        Without this, the resume path keys on test_case_id alone, and test case ids
+        are deterministic enough that fresh test_set collide with cached
         transcripts. Regression test for the Apr 28 cache-invalidation fix.
         """
         target = TargetConfig(model="azure/gpt-5.4")
@@ -32,28 +32,28 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             seeds_a = Path(tmp_dir) / "seeds_a.jsonl"
             seeds_b = Path(tmp_dir) / "seeds_b.jsonl"
             seeds_a.write_text(
-                '{"kind":"prompt","seed_id":"prompt-x-001","content":"first"}\n',
+                '{"type":"prompt","test_case_id":"prompt-x-001","content":"first"}\n',
                 encoding="utf-8",
             )
             seeds_b.write_text(
-                '{"kind":"prompt","seed_id":"prompt-x-001","content":"second"}\n',
+                '{"type":"prompt","test_case_id":"prompt-x-001","content":"second"}\n',
                 encoding="utf-8",
             )
 
             hash_no_seeds = _rollout_config_fingerprint(target, evaluation, 1024)
-            hash_a = _rollout_config_fingerprint(target, evaluation, 1024, seeds_path=seeds_a)
-            hash_b = _rollout_config_fingerprint(target, evaluation, 1024, seeds_path=seeds_b)
+            hash_a = _rollout_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_a)
+            hash_b = _rollout_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_b)
 
-        # Including seeds_path must materially change the fingerprint
-        # versus the legacy no-seeds form, and two different seed files
-        # with the same seed_id but different content must hash apart.
+        # Including test_set_path must materially change the fingerprint
+        # versus the legacy no-test_set form, and two different seed files
+        # with the same test_case_id but different content must hash apart.
         self.assertNotEqual(hash_a, hash_no_seeds)
         self.assertNotEqual(hash_a, hash_b)
 
     def test_prepare_seeds_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
         rows = [
             {
-                "kind": "prompt",
+                "type": "prompt",
                 "seed": {
                     "description": "seed prompt",
                     "system_prompt": "per-seed prompt",
@@ -73,25 +73,25 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
     def test_prepare_seeds_treats_empty_seed_prompt_as_absent(self) -> None:
         rows = [
             {
-                "kind": "prompt",
+                "type": "prompt",
                 "seed": {
                     "description": "seed prompt",
                     "system_prompt": "   ",
                 },
             }
         ]
-        seeds = _prepare_seeds(
+        test_set = _prepare_seeds(
             rows,
             tool_source="runtime",
             fixed_system_prompt=None,
         )
 
-        self.assertNotIn("system_prompt", seeds[0]["seed"])
+        self.assertNotIn("system_prompt", test_set[0]["seed"])
 
     def test_prepare_seeds_validates_per_seed_tools(self) -> None:
         rows = [
             {
-                "kind": "prompt",
+                "type": "prompt",
                 "seed": {
                     "description": "seed prompt",
                     "tools": [
@@ -106,18 +106,18 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         ]
-        seeds = _prepare_seeds(
+        test_set = _prepare_seeds(
             rows,
             tool_source="per_seed",
             fixed_system_prompt=None,
         )
 
-        self.assertEqual(seeds[0]["seed"]["tools"][0]["name"], "lookup")
+        self.assertEqual(test_set[0]["seed"]["tools"][0]["name"], "lookup")
 
     def test_prepare_seeds_rejects_seed_tools_for_runtime_tool_source(self) -> None:
         rows = [
             {
-                "kind": "prompt",
+                "type": "prompt",
                 "seed": {
                     "description": "seed prompt",
                     "tools": [
@@ -141,11 +141,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_uses_fixed_target_prompt_exactly(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
         captured_messages: list[Message] = []
 
@@ -172,13 +172,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", system_prompt="You are a coding agent."),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -191,14 +191,14 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_uses_per_seed_prompt_exactly(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {
                 "description": "seed prompt",
                 "system_prompt": "Per-seed prompt",
             },
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
         captured_messages: list[Message] = []
 
@@ -225,13 +225,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -243,11 +243,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_can_leave_versioned_seed_file_unchanged(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "original-seed-id",
+            "type": "prompt",
+            "test_case_id": "original-seed-id",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -272,34 +272,34 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             original_seed_text = json.dumps(seed_row) + "\n"
-            seed_path.write_text(original_seed_text, encoding="utf-8")
+            test_set_path.write_text(original_seed_text, encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
                     run_id="run-rollout",
-                    rewrite_seed_path=False,
+                    rewrite_test_set_path=False,
                 )
 
-            self.assertEqual(seed_path.read_text(encoding="utf-8"), original_seed_text)
+            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
 
     async def test_run_rollout_never_mutates_versioned_seed_artifact(self) -> None:
-        """Even when callers pass rewrite_seed_path=True, files under
-        artifacts/seeds/v#### must be left intact so the cached file_hashes
+        """Even when callers pass rewrite_test_set_path=True, files under
+        artifacts/test_set/v#### must be left intact so the cached file_hashes
         stay valid."""
 
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "original-seed-id",
+            "type": "prompt",
+            "test_case_id": "original-seed-id",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -324,32 +324,32 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            versioned_dir = tmp_path / "suite" / "artifacts" / "seeds" / "v0001"
+            versioned_dir = tmp_path / "suite" / "artifacts" / "test_set" / "v0001"
             versioned_dir.mkdir(parents=True, exist_ok=True)
-            seed_path = versioned_dir / "seeds.jsonl"
+            test_set_path = versioned_dir / "test_set.jsonl"
             out_dir = tmp_path / "run"
             original_seed_text = json.dumps(seed_row) + "\n"
-            seed_path.write_text(original_seed_text, encoding="utf-8")
+            test_set_path.write_text(original_seed_text, encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
                     run_id="run-rollout",
-                    rewrite_seed_path=True,
+                    rewrite_test_set_path=True,
                 )
 
-            self.assertEqual(seed_path.read_text(encoding="utf-8"), original_seed_text)
+            self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
 
     async def test_run_rollout_fails_when_viewer_artifact_build_fails(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -374,9 +374,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()),
@@ -387,7 +387,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaisesRegex(ViewerReadModelBuildError, "viewer build failed"):
                     await run_rollout(
-                        seed_path=str(seed_path),
+                        test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                         save_dir=str(out_dir),
@@ -396,11 +396,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_persists_owned_llm_calls_and_links_message_ids(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -439,13 +439,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -464,11 +464,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_sets_runtime_close_error_stop_reason(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {"description": "seed prompt"},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeSession:
@@ -493,13 +493,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -515,11 +515,11 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_external_transcript_writes_minimal_rows(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {"description": "Please help", "system_prompt": "You are a health assistant."},
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
         }
 
         class FakeExternalSession:
@@ -544,13 +544,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -568,10 +568,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_scenario_keeps_setup_hidden_for_external_target(self) -> None:
         seed_row = {
-            "kind": "scenario",
-            "seed_id": "seed-1",
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "type": "scenario",
+            "test_case_id": "seed-1",
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -605,16 +605,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.rollout.generate", new=fake_generate),
                 patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -645,10 +645,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_scenario_forwards_setup_like_text_unchanged(self) -> None:
         seed_row = {
-            "kind": "scenario",
-            "seed_id": "seed-1",
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "type": "scenario",
+            "test_case_id": "seed-1",
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -689,16 +689,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.rollout.generate", new=fake_generate),
                 patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -726,10 +726,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_scenario_keeps_setup_hidden_for_hosted_target(self) -> None:
         seed_row = {
-            "kind": "scenario",
-            "seed_id": "seed-1",
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "type": "scenario",
+            "test_case_id": "seed-1",
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -765,16 +765,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.rollout.generate", new=fake_generate),
                 patch("p2m.stages.rollout._build_hosted_session", return_value=FakeHostedSession()),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -792,10 +792,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_scenario_keeps_setup_hidden_for_other_hosted_runtime_modes(self) -> None:
         seed_row = {
-            "kind": "scenario",
-            "seed_id": "seed-1",
-            "concept": "Risk",
-            "factors": {"behavior": "behavior-a"},
+            "type": "scenario",
+            "test_case_id": "seed-1",
+            "behavior": "Risk",
+            "dimensions": {"behavior": "behavior-a"},
             "seed": {
                 "title": "Title",
                 "description": "Description",
@@ -833,16 +833,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
             with TemporaryDirectory() as tmp_dir, self.subTest(runtime_mode=runtime_mode):
                 tmp_path = Path(tmp_dir)
-                seed_path = tmp_path / "seeds.jsonl"
+                test_set_path = tmp_path / "test_set.jsonl"
                 out_dir = tmp_path / "run"
-                seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+                test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
                 with (
                     patch("p2m.stages.rollout.generate", new=fake_generate),
                     patch("p2m.stages.rollout._build_hosted_session", return_value=FakeHostedSession()),
                 ):
                     await run_rollout(
-                        seed_path=str(seed_path),
+                        test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -860,8 +860,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_rejects_item_tools_without_simulator_target(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {
                 "description": "seed prompt",
                 "tools": [
@@ -878,16 +878,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(
                 ValueError,
                 "seed.tools is only allowed when tool_source=per_seed",
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
@@ -896,8 +896,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_per_seed_uses_seed_tools_with_simulator_target(self) -> None:
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed-1",
+            "type": "prompt",
+            "test_case_id": "seed-1",
             "seed": {
                 "description": "seed prompt",
                 "tools": [
@@ -918,19 +918,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
             class FakeTranscript:
                 def to_dict(self) -> dict[str, object]:
-                    return {"kind": "prompt", "seed_id": str(kwargs["seed"]["seed_id"])}
+                    return {"type": "prompt", "test_case_id": str(kwargs["seed"]["test_case_id"])}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", tools=ToolsConfig(simulator="azure/gpt-5.4-mini")),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -944,30 +944,30 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_rollout_preserves_input_order_under_parallel_completion(self) -> None:
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "slow prompt"}},
-            {"kind": "prompt", "seed": {"description": "fast prompt"}},
+            {"type": "prompt", "seed": {"description": "slow prompt"}},
+            {"type": "prompt", "seed": {"description": "fast prompt"}},
         ]
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = kwargs["seed"]["seed_id"]
-            if seed_id == "seed_000001":
+            test_case_id = kwargs["seed"]["test_case_id"]
+            if test_case_id == "seed_000001":
                 await asyncio.sleep(0.05)
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "prompt", "seed_id": seed_id}
+                    return {"type": "prompt", "test_case_id": test_case_id}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -982,40 +982,40 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(sorted(row["seed_id"] for row in transcript_rows), ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["test_case_id"] for row in transcript_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "slow prompt"}},
-            {"kind": "prompt", "seed": {"description": "fast prompt"}},
+            {"type": "prompt", "seed": {"description": "slow prompt"}},
+            {"type": "prompt", "seed": {"description": "fast prompt"}},
         ]
         release_slow = asyncio.Event()
         fast_finished = asyncio.Event()
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = str(kwargs["seed"]["seed_id"])
-            if seed_id == "seed_000001":
+            test_case_id = str(kwargs["seed"]["test_case_id"])
+            if test_case_id == "seed_000001":
                 await release_slow.wait()
             else:
                 fast_finished.set()
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "prompt", "seed_id": seed_id}
+                    return {"type": "prompt", "test_case_id": test_case_id}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             transcripts_path = out_dir / "transcripts.jsonl"
-            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 rollout_task = asyncio.create_task(
                     run_rollout(
-                        seed_path=str(seed_path),
+                        test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1036,7 +1036,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                     json.loads(line)
                     for line in transcripts_path.read_text(encoding="utf-8").splitlines()
                 ]
-                self.assertEqual([row["seed_id"] for row in interim_rows], ["seed_000002"])
+                self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000002"])
 
                 release_slow.set()
                 await rollout_task
@@ -1046,7 +1046,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(sorted(row["seed_id"] for row in final_rows), ["seed_000001", "seed_000002"])
+        self.assertEqual(sorted(row["test_case_id"] for row in final_rows), ["seed_000001", "seed_000002"])
 
     async def test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
         """A per-row worker failure no longer kills the stage outright.
@@ -1066,20 +1066,20 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         is covered by a dedicated test below.
         """
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "successful prompt"}},
-            {"kind": "prompt", "seed": {"description": "failing prompt"}},
+            {"type": "prompt", "seed": {"description": "successful prompt"}},
+            {"type": "prompt", "seed": {"description": "failing prompt"}},
         ]
         release_failure = asyncio.Event()
         success_finished = asyncio.Event()
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = str(kwargs["seed"]["seed_id"])
-            if seed_id == "seed_000001":
+            test_case_id = str(kwargs["seed"]["test_case_id"])
+            if test_case_id == "seed_000001":
                 success_finished.set()
 
                 class FakeTranscript:
                     def to_dict(self_inner) -> dict[str, str]:
-                        return {"kind": "prompt", "seed_id": seed_id}
+                        return {"type": "prompt", "test_case_id": test_case_id}
 
                 return FakeTranscript()
 
@@ -1088,16 +1088,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             transcripts_path = out_dir / "transcripts.jsonl"
-            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with patch.dict(os.environ, {"P2M_ROLLOUT_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
                  patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 rollout_task = asyncio.create_task(
                     run_rollout(
-                        seed_path=str(seed_path),
+                        test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1118,7 +1118,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                     json.loads(line)
                     for line in transcripts_path.read_text(encoding="utf-8").splitlines()
                 ]
-                self.assertEqual([row["seed_id"] for row in interim_rows], ["seed_000001"])
+                self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000001"])
 
                 release_failure.set()
                 result = await rollout_task
@@ -1128,7 +1128,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in transcripts_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual([row["seed_id"] for row in final_rows], ["seed_000001"])
+        self.assertEqual([row["test_case_id"] for row in final_rows], ["seed_000001"])
         self.assertEqual(result["errored_count"], 1)
         self.assertEqual(result["new_count"], 2)
         self.assertEqual(result["target_error_count"], 0)
@@ -1140,8 +1140,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         completing would be misleading.
         """
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "first failing prompt"}},
-            {"kind": "prompt", "seed": {"description": "second failing prompt"}},
+            {"type": "prompt", "seed": {"description": "first failing prompt"}},
+            {"type": "prompt", "seed": {"description": "second failing prompt"}},
         ]
 
         async def fake_run_prompt_seed(**kwargs):
@@ -1149,14 +1149,14 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
                     await run_rollout(
-                        seed_path=str(seed_path),
+                        test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1167,37 +1167,37 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                     )
 
     async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
-        """Pre-populated transcripts.jsonl causes completed seeds to be skipped."""
+        """Pre-populated transcripts.jsonl causes completed test_set to be skipped."""
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "already done"}},
-            {"kind": "prompt", "seed": {"description": "still pending"}},
+            {"type": "prompt", "seed": {"description": "already done"}},
+            {"type": "prompt", "seed": {"description": "still pending"}},
         ]
         call_log: list[str] = []
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = str(kwargs["seed"]["seed_id"])
-            call_log.append(seed_id)
+            test_case_id = str(kwargs["seed"]["test_case_id"])
+            call_log.append(test_case_id)
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "prompt", "seed_id": seed_id}
+                    return {"type": "prompt", "test_case_id": test_case_id}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
             out_dir.mkdir()
-            seed_path.write_text(
+            test_set_path.write_text(
                 "\n".join(json.dumps(row) for row in seed_rows) + "\n",
                 encoding="utf-8",
             )
 
-            # First run: let both seeds complete.
+            # First run: let both test_set complete.
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 result = await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     save_dir=str(out_dir),
                     run_id="run-resume",
@@ -1209,39 +1209,39 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             call_log.clear()
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 result = await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     save_dir=str(out_dir),
                     run_id="run-resume",
                 )
-            self.assertEqual(call_log, [], "No seeds should have been re-run")
+            self.assertEqual(call_log, [], "No test_set should have been re-run")
             self.assertEqual(result["count"], 2)
 
     async def test_run_rollout_discards_transcripts_on_config_change(self) -> None:
         """Changing target model invalidates existing transcripts."""
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "a prompt"}},
+            {"type": "prompt", "seed": {"description": "a prompt"}},
         ]
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = str(kwargs["seed"]["seed_id"])
+            test_case_id = str(kwargs["seed"]["test_case_id"])
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "prompt", "seed_id": seed_id}
+                    return {"type": "prompt", "test_case_id": test_case_id}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(json.dumps(seed_rows[0]) + "\n", encoding="utf-8")
+            test_set_path.write_text(json.dumps(seed_rows[0]) + "\n", encoding="utf-8")
 
             # First run with model A.
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-a"),
                     save_dir=str(out_dir),
                     run_id="run-cfg",
@@ -1250,7 +1250,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             # Second run with model B — should discard and re-run.
             with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
                 result = await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-b"),
                     save_dir=str(out_dir),
                     run_id="run-cfg",
@@ -1258,15 +1258,15 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             # count is 1 (re-ran, not 2 = resumed + new)
             self.assertEqual(result["count"], 1)
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": "base prompt"}},
+            {"type": "prompt", "seed": {"description": "base prompt"}},
             {
-                "kind": "scenario",
-                "seed_id": "scenario-base",
+                "type": "scenario",
+                "test_case_id": "scenario-base",
                 "seed": {"title": "Scenario", "description": "scenario description"},
             },
             {
-                "kind": "scenario",
-                "seed_id": "scenario-second",
+                "type": "scenario",
+                "test_case_id": "scenario-second",
                 "seed": {"title": "Second scenario", "description": "second description"},
             },
         ]
@@ -1274,29 +1274,29 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         async def fake_run_prompt_seed(**kwargs):
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "prompt", "seed_id": str(kwargs["seed"]["seed_id"])}
+                    return {"type": "prompt", "test_case_id": str(kwargs["seed"]["test_case_id"])}
 
             return FakeTranscript()
 
         async def fake_run_scenario_seed(**kwargs):
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
-                    return {"kind": "scenario", "seed_id": str(kwargs["seed"]["seed_id"])}
+                    return {"type": "scenario", "test_case_id": str(kwargs["seed"]["test_case_id"])}
 
             return FakeTranscript()
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
+            test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with (
                 patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
                 patch("p2m.stages.rollout._run_scenario_seed", new=fake_run_scenario_seed),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1307,13 +1307,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-rollout",
                 )
 
-            canonical_rows = load_seeds(seed_path)
+            canonical_rows = load_seeds(test_set_path)
 
         self.assertEqual(
-            [row["seed_id"] for row in canonical_rows],
+            [row["test_case_id"] for row in canonical_rows],
             ["seed_000001", "seed_000002", "seed_000003"],
         )
-        self.assertNotIn("parent_seed_id", canonical_rows[2])
+        self.assertNotIn("parent_test_case_id", canonical_rows[2])
 
     # ------------------------------------------------------------------
     # Per-row refusal isolation (absorbed from PR #44)
@@ -1331,7 +1331,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         async def fake_run_turn(self_inner, messages):
             raise LLMInputError(
                 "Bad request: AzureException BadRequestError - Invalid prompt: "
-                "your prompt was flagged as potentially violating our usage policy."
+                "your prompt was flagged as potentially violating our usage taxonomy."
             )
 
         async def fake_open(self_inner):
@@ -1341,8 +1341,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             return None
 
         seed_row = {
-            "kind": "prompt",
-            "seed_id": "seed_000001",
+            "type": "prompt",
+            "test_case_id": "seed_000001",
             "seed": {"description": "adversarial prompt the target refuses"},
         }
 
@@ -1381,7 +1381,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         from p2m.core.session import HostedSession
 
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(5)
         ]
         run_turn_calls: list[str] = []
@@ -1395,7 +1395,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             if "prompt 2" in user_text:
                 raise LLMInputError(
                     "Bad request: AzureException BadRequestError - "
-                    "prompt flagged as potentially violating our usage policy"
+                    "prompt flagged as potentially violating our usage taxonomy"
                 )
             return TurnResult(
                 text="OK",
@@ -1415,9 +1415,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(
+            test_set_path.write_text(
                 "\n".join(json.dumps(row) for row in seed_rows) + "\n",
                 encoding="utf-8",
             )
@@ -1428,7 +1428,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(HostedSession, "run_turn", new=fake_run_turn),
             ):
                 result = await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1448,7 +1448,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(transcript_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        by_seed = {row["test_case_id"]: row for row in transcript_rows}
         refused = by_seed["seed_000003"]
         self.assertEqual(refused["stop_reason"], "target_input_refused")
         refusal_events = [
@@ -1476,7 +1476,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         """
         seed_rows = [
             {
-                "kind": "scenario",
+                "type": "scenario",
                 "seed": {
                     "title": f"Title {i}",
                     "description": f"scenario seed {i}",
@@ -1499,7 +1499,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 raise LLMInputError(
                     "Bad request: AzureException BadRequestError - Invalid "
                     "prompt: your prompt was flagged as potentially "
-                    "violating our usage policy (Prompt Shields jailbreak)"
+                    "violating our usage taxonomy (Prompt Shields jailbreak)"
                 )
             return ModelResponse(text="Where should I go?", model=str(model))
 
@@ -1530,9 +1530,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(
+            test_set_path.write_text(
                 "\n".join(json.dumps(row) for row in seed_rows) + "\n",
                 encoding="utf-8",
             )
@@ -1542,7 +1542,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 patch("p2m.stages.rollout._build_target_session", return_value=FakeHostedSession()),
             ):
                 result = await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1562,7 +1562,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(transcript_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_seed = {row["seed_id"]: row for row in transcript_rows}
+        by_seed = {row["test_case_id"]: row for row in transcript_rows}
         refused = by_seed["seed_000003"]
         self.assertEqual(refused["stop_reason"], "auditor_input_refused")
         refusal_events = [
@@ -1580,7 +1580,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         Absorbed from PR #44 commit 82cf339.
         """
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(3)
         ]
 
@@ -1589,9 +1589,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(
+            test_set_path.write_text(
                 "\n".join(json.dumps(row) for row in seed_rows) + "\n",
                 encoding="utf-8",
             )
@@ -1601,7 +1601,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertRaises(LLMProviderError),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
@@ -1626,25 +1626,25 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         covers the soft-fail path with the threshold relaxed.
         """
         seed_rows = [
-            {"kind": "prompt", "seed": {"description": f"prompt {i}"}}
+            {"type": "prompt", "seed": {"description": f"prompt {i}"}}
             for i in range(2)
         ]
 
         async def fake_run_prompt_seed(**kwargs):
-            seed_id = str(kwargs["seed"]["seed_id"])
-            if seed_id == "seed_000001":
+            test_case_id = str(kwargs["seed"]["test_case_id"])
+            if test_case_id == "seed_000001":
                 class FakeTranscript:
                     def to_dict(self_inner) -> dict[str, str]:
-                        return {"kind": "prompt", "seed_id": seed_id}
+                        return {"type": "prompt", "test_case_id": test_case_id}
 
                 return FakeTranscript()
             raise RuntimeError("worker exploded")
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            seed_path = tmp_path / "seeds.jsonl"
+            test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            seed_path.write_text(
+            test_set_path.write_text(
                 "\n".join(json.dumps(row) for row in seed_rows) + "\n",
                 encoding="utf-8",
             )
@@ -1655,7 +1655,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertRaisesRegex(RuntimeError, "worker exploded"),
             ):
                 await run_rollout(
-                    seed_path=str(seed_path),
+                    test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),

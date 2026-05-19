@@ -199,12 +199,12 @@ def load_checkpoint_judge_config(
 def transcript_from_row(row: dict[str, Any]) -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            dimensions=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -465,15 +465,15 @@ async def run_checkpoint_judge(
     resolved_run_dir = resolve_path(run_dir)
     transcripts_path = resolved_run_dir / "transcripts.jsonl"
     config_path = resolved_run_dir / "config.yaml"
-    policy_path = resolved_run_dir.parent / "policy.json"
+    taxonomy_path = resolved_run_dir.parent / "taxonomy.json"
     resolved_out_dir = resolve_path(out_dir) if out_dir is not None else (resolved_run_dir / "checkpoint_judge")
 
     if not transcripts_path.exists():
         raise FileNotFoundError(f"Transcript file not found: {transcripts_path}")
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
-    if not policy_path.exists():
-        raise FileNotFoundError(f"Policy file not found: {policy_path}")
+    if not taxonomy_path.exists():
+        raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
 
     config = load_checkpoint_judge_config(
         config_path,
@@ -487,7 +487,7 @@ async def run_checkpoint_judge(
     if not transcript_rows:
         raise ValueError(f"No transcripts found in {transcripts_path}")
 
-    policy_raw = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy_raw = json.loads(taxonomy_path.read_text(encoding="utf-8"))
     permissible_by_name = permissible_by_behavior(policy_raw)
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
@@ -553,9 +553,9 @@ async def run_checkpoint_judge(
                 or ""
             )
             row = {
-                "kind": task.transcript_row.get("kind", ""),
-                "seed_id": task.transcript_row.get("seed_id", ""),
-                "concept": task.transcript_row.get("concept", ""),
+                "type": task.transcript_row.get("kind", ""),
+                "test_case_id": task.transcript_row.get("test_case_id", ""),
+                "behavior": task.transcript_row.get("behavior", ""),
                 "permissible": policy_permissible(
                     permissible_by_name,
                     behavior,
@@ -568,7 +568,7 @@ async def run_checkpoint_judge(
                 "judge_status": judge_result["judge_status"],
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
-                "factors": {"behavior": behavior},
+                "dimensions": {"behavior": behavior},
             }
             if judge_result.get("multi_judge") is not None:
                 row["multi_judge"] = judge_result["multi_judge"]

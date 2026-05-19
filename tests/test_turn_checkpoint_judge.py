@@ -147,10 +147,10 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
     def _meta(self) -> TranscriptMetadata:
         return TranscriptMetadata(
             kind="scenario",
-            seed_id="seed-1",
-            concept="concept",
+            test_case_id="seed-1",
+            behavior="behavior",
             target="target-model",
-            factors={"behavior": "node-a"},
+            dimensions={"behavior": "node-a"},
             auditor_model="auditor-model",
         )
 
@@ -342,8 +342,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -421,8 +421,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -460,7 +460,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_checkpoint_judge_writes_partial_outputs_before_raising_later_failure(self) -> None:
         transcript_a = self._build_transcript(5)
         transcript_b = self._build_transcript(5)
-        transcript_b.metadata.seed_id = "seed-2"
+        transcript_b.metadata.test_case_id = "seed-2"
         call_count = 0
 
         async def fake_run_transcript_judge(**kwargs):
@@ -497,8 +497,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -530,12 +530,12 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 if line.strip()
             ]
             self.assertEqual(len(score_rows), 1)
-            self.assertEqual(score_rows[0]["seed_id"], "seed-1")
+            self.assertEqual(score_rows[0]["test_case_id"], "seed-1")
 
     async def test_run_checkpoint_judge_streams_checkpoint_scores_before_all_work_finishes(self) -> None:
         transcript_a = self._build_transcript(5)
         transcript_b = self._build_transcript(5)
-        transcript_b.metadata.seed_id = "seed-2"
+        transcript_b.metadata.test_case_id = "seed-2"
         first_call_returned = asyncio.Event()
         release_second = asyncio.Event()
         call_count = 0
@@ -588,8 +588,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -624,7 +624,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                     self.fail("checkpoint_scores.jsonl was not streamed before all work finished")
 
                 self.assertFalse(task.done())
-                self.assertEqual(partial_rows[0]["seed_id"], "seed-1")
+                self.assertEqual(partial_rows[0]["test_case_id"], "seed-1")
 
                 release_second.set()
                 result = await task
@@ -635,17 +635,17 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 if line.strip()
             ]
             self.assertEqual(len(final_rows), 2)
-            self.assertEqual([row["seed_id"] for row in final_rows], ["seed-1", "seed-2"])
+            self.assertEqual([row["test_case_id"] for row in final_rows], ["seed-1", "seed-2"])
 
     async def test_run_checkpoint_judge_rewrites_final_scores_in_canonical_order_after_out_of_order_completion(self) -> None:
         transcript_a = self._build_transcript(5)
         transcript_b = self._build_transcript(5)
-        transcript_b.metadata.seed_id = "seed-2"
+        transcript_b.metadata.test_case_id = "seed-2"
         release_first = asyncio.Event()
 
         async def fake_run_transcript_judge(**kwargs):
-            seed_id = kwargs["transcript"].metadata.seed_id
-            if seed_id == "seed-1":
+            test_case_id = kwargs["transcript"].metadata.test_case_id
+            if test_case_id == "seed-1":
                 await release_first.wait()
                 return {
                     "judge_status": "ok",
@@ -689,8 +689,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -717,7 +717,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 for line in Path(result["scores_path"]).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            self.assertEqual([row["seed_id"] for row in final_rows], ["seed-1", "seed-2"])
+            self.assertEqual([row["test_case_id"] for row in final_rows], ["seed-1", "seed-2"])
 
     async def test_run_checkpoint_judge_restores_previous_artifacts_on_early_total_failure(self) -> None:
         transcript = self._build_transcript(5)
@@ -736,8 +736,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -781,7 +781,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_checkpoint_judge_restores_previous_metrics_and_plot_after_partial_failure(self) -> None:
         transcript_a = self._build_transcript(5)
         transcript_b = self._build_transcript(5)
-        transcript_b.metadata.seed_id = "seed-2"
+        transcript_b.metadata.test_case_id = "seed-2"
         call_count = 0
 
         async def fake_run_transcript_judge(**kwargs):
@@ -820,8 +820,8 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (run_dir.parent / "policy.json").write_text(
-                json.dumps({"behaviors": [{"name": "node-a"}]}),
+            (run_dir.parent / "taxonomy.json").write_text(
+                json.dumps({"behavior_categories": [{"name": "node-a"}]}),
                 encoding="utf-8",
             )
             self._write_run_config(
@@ -851,7 +851,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 if line.strip()
             ]
             self.assertEqual(len(score_rows), 1)
-            self.assertEqual(score_rows[0]["seed_id"], "seed-1")
+            self.assertEqual(score_rows[0]["test_case_id"], "seed-1")
             self.assertEqual(
                 (out_dir / "checkpoint_metrics.json").read_text(encoding="utf-8"),
                 old_metrics,

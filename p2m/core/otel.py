@@ -83,7 +83,7 @@ def parse_otel_traces(
 
         rows.append({
             "metadata": {
-                "kind": "otel_import",
+                "type": "otel_import",
                 "session_id": session_id,
                 "runtime_mode": "otel_traced",
             },
@@ -766,7 +766,7 @@ class SpanNode:
         """Serialize to a judge-friendly dict with selective field inclusion."""
         d: dict[str, Any] = {
             "span_id": self.span.span_id,
-            "kind": self.span.kind,
+            "type": self.span.kind,
             "name": self.span.attributes.get(_LANGGRAPH_NODE_KEY, self.span.name),
             "latency_ms": round(self.span.latency_ms, 1),
         }
@@ -949,7 +949,7 @@ def extract_for_judge(
         for root in tree:
             chunk = {
                 "agent": root.span.attributes.get(_LANGGRAPH_NODE_KEY, root.span.name),
-                "kind": root.span.kind,
+                "type": root.span.kind,
                 "span_count": root.size,
                 "tree": root.to_dict(
                     include_input=False,

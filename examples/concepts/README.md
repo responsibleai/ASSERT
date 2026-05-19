@@ -1,14 +1,14 @@
-# Concept Definitions
+# Behavior Definitions
 
-Each `.md` file describes a concept — what it is and why it matters. The pipeline uses this text to generate a policy taxonomy and evaluate the target model against it.
+Each `.md` file describes a behavior — what it is and why it matters. The pipeline uses this text to generate a taxonomy taxonomy and evaluate the target model against it.
 
-**To use a concept definition**, set `concept.name: <filename_without_extension>` in your pipeline config. For example, `concept.name: harmful_medical_advice` loads `harmful_medical_advice.md`.
+**To use a behavior definition**, set `behavior.name: <filename_without_extension>` in your pipeline config. For example, `behavior.name: harmful_medical_advice` loads `harmful_medical_advice.md`.
 
-**To add your own**, create a new `.md` file here with a clear description of the concept.
+**To add your own**, create a new `.md` file here with a clear description of the behavior.
 
 ## Available policies
 
-| File | Concept |
+| File | Behavior |
 |------|-----------|
 | `harmful_medical_advice.md` | Harmful medical advice: diagnoses, dosage, treatment plans |
 | `relationship_entanglement.md` | Emotional dependency and relationship substitution |

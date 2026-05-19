@@ -3,9 +3,9 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { parse as parseYaml } from 'yaml';
 import { ARTIFACTS_ROOT } from './config.js';
-import type { Manifest, Policy, Suite } from '$lib/types.js';
+import type { Manifest, Taxonomy, Suite } from '$lib/types.js';
 
-export const SUITE_SEEDS_FILE = 'seeds.jsonl';
+export const SUITE_TEST_SET_FILE = 'test_set.jsonl';
 export const RUN_TRANSCRIPTS_FILE = 'transcripts.jsonl';
 export const RUN_SCORES_FILE = 'scores.jsonl';
 export const RUN_CONFIG_FILE = 'config.yaml';
@@ -17,50 +17,50 @@ export const VIEWER_AUDIT_ROWS_FILE = 'viewer_audit_rows.json';
 export const VIEWER_TRANSCRIPT_INDEX_FILE = 'viewer_transcript_index.json';
 export const VIEWER_SCORE_INDEX_FILE = 'viewer_score_index.json';
 export const SUITE_METADATA_FILE = 'suite.json';
-export const SUITE_POLICY_FILE = 'policy.json';
+export const SUITE_POLICY_FILE = 'taxonomy.json';
 export const SUITE_SYSTEMATIZATION_FILE = 'systematization.json';
 export const SUITE_ARTIFACTS_DIR = 'artifacts';
-export const VIEWER_READ_MODEL_SCHEMA_VERSION = 3;
+export const VIEWER_READ_MODEL_SCHEMA_VERSION = 4;
 export const VIEWER_READ_MODEL_GENERATOR_VERSION = 'viewer-read-model-v3';
 
 const SAFE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
 export type UnifiedSeedRow = Record<string, unknown> & {
 	kind?: unknown;
-	seed_id?: unknown;
+	test_case_id?: unknown;
 	seed?: unknown;
-	factors?: unknown;
+	dimensions?: unknown;
 };
 
 export type UnifiedTranscriptRow = Record<string, unknown> & {
 	kind?: unknown;
-	seed_id?: unknown;
+	test_case_id?: unknown;
 	events?: unknown;
 	llm_calls?: unknown;
 	stop_reason?: unknown;
-	concept?: unknown;
+	behavior?: unknown;
 	permissible?: unknown;
 	target?: unknown;
 	auditor_model?: unknown;
-	factors?: unknown;
+	dimensions?: unknown;
 };
 
 export type UnifiedScoreRow = Record<string, unknown> & {
 	kind?: unknown;
-	seed_id?: unknown;
+	test_case_id?: unknown;
 	verdict?: unknown;
 	judge_status?: unknown;
 	judge_error?: unknown;
 	target?: unknown;
 	auditor_model?: unknown;
-	factors?: unknown;
+	dimensions?: unknown;
 };
 
 export interface SuiteSnapshot {
 	suiteId: string;
 	suiteDir: string;
 	suite: Suite | null;
-	policy: Policy | null;
+	taxonomy: Taxonomy | null;
 	seedRows: UnifiedSeedRow[];
 	runIds: string[];
 	systematization: Record<string, unknown> | null;
@@ -95,7 +95,7 @@ export interface ViewerRunManifestFile {
 
 export interface ViewerIndexEntry {
 	kind: 'prompt' | 'scenario';
-	seed_id: string;
+	test_case_id: string;
 	offset: number;
 	length: number;
 }
@@ -215,13 +215,13 @@ function manifestArtifactPath(suiteDir: string, rawPath: unknown): string | null
 }
 
 function runSeedArtifactPath(suiteDir: string, manifest: Manifest | null): string {
-	const seedArtifact = manifest?.artifact_versions?.seeds;
+	const seedArtifact = manifest?.artifact_versions?.test_set;
 	const artifactPath = manifestArtifactPath(
 		suiteDir,
 		seedArtifact?.path ?? seedArtifact?.relative_path
 	);
 	if (artifactPath) return artifactPath;
-	return path.join(suiteDir, SUITE_SEEDS_FILE);
+	return path.join(suiteDir, SUITE_TEST_SET_FILE);
 }
 
 function runSeedRows(
@@ -229,11 +229,11 @@ function runSeedRows(
 	manifest: Manifest | null,
 	seedRows: UnifiedSeedRow[] | undefined
 ): UnifiedSeedRow[] {
-	const seedArtifact = manifest?.artifact_versions?.seeds;
+	const seedArtifact = manifest?.artifact_versions?.test_set;
 	if (seedArtifact?.path || seedArtifact?.relative_path) {
 		return readJsonlFile<UnifiedSeedRow>(runSeedArtifactPath(suiteDir, manifest), { missingOk: true });
 	}
-	return seedRows ?? readJsonlFile<UnifiedSeedRow>(path.join(suiteDir, SUITE_SEEDS_FILE), { missingOk: true });
+	return seedRows ?? readJsonlFile<UnifiedSeedRow>(path.join(suiteDir, SUITE_TEST_SET_FILE), { missingOk: true });
 }
 
 function rebuildViewerInstruction(runDir: string): string {
@@ -633,15 +633,15 @@ export function loadViewerRunIndexes(suiteId: string, runId: string): ViewerRunI
 export function loadSuiteSnapshot(suiteId: string): SuiteSnapshot | null {
 	const suiteDir = suiteDirPath(suiteId);
 	const suite = readJsonFile<Suite>(path.join(suiteDir, SUITE_METADATA_FILE), { missingOk: true });
-	const policy = readJsonFile<Policy>(path.join(suiteDir, SUITE_POLICY_FILE), { missingOk: true });
-	if (!suite && !policy) return null;
+	const taxonomy = readJsonFile<Taxonomy>(path.join(suiteDir, SUITE_POLICY_FILE), { missingOk: true });
+	if (!suite && !taxonomy) return null;
 
 	return {
 		suiteId,
 		suiteDir,
 		suite,
-		policy,
-		seedRows: readJsonlFile<UnifiedSeedRow>(path.join(suiteDir, SUITE_SEEDS_FILE), { missingOk: true }),
+		taxonomy,
+		seedRows: readJsonlFile<UnifiedSeedRow>(path.join(suiteDir, SUITE_TEST_SET_FILE), { missingOk: true }),
 		runIds: listRunIds(suiteDir),
 		systematization: readJsonFile<Record<string, unknown>>(
 			path.join(suiteDir, SUITE_SYSTEMATIZATION_FILE),
@@ -664,7 +664,7 @@ export function loadRunSnapshot(
 	const rolloutRunning = manifest?.stages?.rollout === 'running';
 	const includeTranscripts = options.includeTranscripts ?? true;
 	const transcriptLineMatcher = options.transcriptKind
-		? buildJsonStringFieldMatcher('kind', options.transcriptKind)
+		? buildJsonStringFieldMatcher('type', options.transcriptKind)
 		: undefined;
 
 	return {
@@ -696,8 +696,8 @@ export async function loadRunTranscriptRow(
 	seedId: string,
 	kind: 'prompt' | 'scenario'
 ): Promise<UnifiedTranscriptRow | null> {
-	const seedMatcher = buildJsonStringFieldMatcher('seed_id', seedId);
-	const kindMatcher = buildJsonStringFieldMatcher('kind', kind);
+	const seedMatcher = buildJsonStringFieldMatcher('test_case_id', seedId);
+	const kindMatcher = buildJsonStringFieldMatcher('type', kind);
 	const lineMatcher = (line: string) => seedMatcher(line) && kindMatcher(line);
 	const runDir = runDirPath(suiteId, runId);
 	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
@@ -720,8 +720,8 @@ export async function loadRunScoreRow(
 	seedId: string,
 	kind: 'prompt' | 'scenario'
 ): Promise<UnifiedScoreRow | null> {
-	const seedMatcher = buildJsonStringFieldMatcher('seed_id', seedId);
-	const kindMatcher = buildJsonStringFieldMatcher('kind', kind);
+	const seedMatcher = buildJsonStringFieldMatcher('test_case_id', seedId);
+	const kindMatcher = buildJsonStringFieldMatcher('type', kind);
 	const lineMatcher = (line: string) => seedMatcher(line) && kindMatcher(line);
 
 	return readJsonlMatchingRow<UnifiedScoreRow>(
@@ -761,3 +761,4 @@ export function loadIndexedRunScoreRow(
 		entry.length
 	);
 }
+

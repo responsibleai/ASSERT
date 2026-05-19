@@ -109,7 +109,7 @@ def _make_transcript(stop_reason="max_turns", n_auditor_turns=3):
             "actor": "target",
             "edit": {"message": {"role": "assistant", "content": "hi"}},
         })
-    return {"stop_reason": stop_reason, "events": events, "factors": {"behavior": "test_behavior"}}
+    return {"stop_reason": stop_reason, "events": events, "dimensions": {"behavior": "test_behavior"}}
 
 
 class TestCountRolloutTurns:
@@ -156,7 +156,7 @@ def _make_scored_rows(seed_outcomes: dict[str, list[bool]], runs: list[str]):
     rows = []
     for sid, outcomes in seed_outcomes.items():
         for run, outcome in zip(runs, outcomes):
-            rows.append({"seed_id": sid, "run": run, "policy_violation": outcome})
+            rows.append({"test_case_id": sid, "run": run, "policy_violation": outcome})
     return rows
 
 
@@ -189,10 +189,10 @@ class TestComputeRepeatability:
 class TestComputeAuditorVariation:
     def test_two_auditors(self):
         rows = [
-            {"seed_id": "s1", "auditor_model": "a1", "policy_violation": True},
-            {"seed_id": "s2", "auditor_model": "a1", "policy_violation": False},
-            {"seed_id": "s1", "auditor_model": "a2", "policy_violation": False},
-            {"seed_id": "s2", "auditor_model": "a2", "policy_violation": False},
+            {"test_case_id": "s1", "auditor_model": "a1", "policy_violation": True},
+            {"test_case_id": "s2", "auditor_model": "a1", "policy_violation": False},
+            {"test_case_id": "s1", "auditor_model": "a2", "policy_violation": False},
+            {"test_case_id": "s2", "auditor_model": "a2", "policy_violation": False},
         ]
         result = compute_auditor_variation(rows)
         assert result["n_auditors"] == 2
@@ -210,13 +210,13 @@ def _make_suite_dir(tmp_path: Path):
     run.mkdir()
 
     transcripts = [
-        {"seed_id": f"s{i}", "stop_reason": "max_turns", "factors": {"behavior": "b1"},
+        {"test_case_id": f"s{i}", "stop_reason": "max_turns", "dimensions": {"behavior": "b1"},
          "events": [{"view": ["target"], "actor": "auditor",
                      "edit": {"message": {"role": "user", "content": "hi"}}}] * 3}
         for i in range(10)
     ]
     scores = [
-        {"seed_id": f"s{i}", "judge_status": "ok", "factors": {"behavior": "b1"},
+        {"test_case_id": f"s{i}", "judge_status": "ok", "dimensions": {"behavior": "b1"},
          "verdict": {"dimensions": {"policy_violation": i < 4, "overrefusal": False}}}
         for i in range(10)
     ]
@@ -235,7 +235,7 @@ class TestAnalyzeSuite:
         assert "runs" in results
         assert "run1" in results["runs"]
         output = format_suite_summary(results)
-        assert "Policy violations" in output
+        assert "Taxonomy violations" in output
 
     def test_empty_suite_returns_error(self, tmp_path):
         from p2m.analysis.suite_analysis import analyze_suite

@@ -121,7 +121,7 @@ class UsageAccumulator:
     Created by :func:`track_usage` and populated by the model client itself, so
     callers don't have to thread per-call usage objects through their code.
     Per-model breakdowns are tracked under ``per_model`` so a single stage that
-    invokes more than one model (e.g. seeds + design) can be inspected later.
+    invokes more than one model (e.g. test_set + design) can be inspected later.
     """
 
     calls: int = 0

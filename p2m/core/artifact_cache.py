@@ -1,6 +1,6 @@
 """Artifact-level cache and version helpers for suite-scoped outputs.
 
-Cacheable upstream stages (``policy``, ``design``, ``seeds``) write their
+Cacheable upstream stages (``systematize``, ``test_set``) write their
 outputs into versioned directories under ``<suite>/artifacts/<stage>/v0001``,
 ``v0002``, ... Each version directory holds its data files alongside a
 ``artifact.json`` sidecar with a stable input hash. A ``<suite>/latest.json``
@@ -11,15 +11,15 @@ regenerating upstream artifacts.
 Reuse contract:
 
 * On each suite run, ``prepare_artifact_plan`` re-derives an ``input_hash``
-  from the relevant inputs (concept text, stage config, upstream artifact
-  refs, prompt template files, target config for seeds). If a prior version
+  from the relevant inputs (behavior text, stage config, upstream artifact
+  refs, prompt template files, target config for test_set). If a prior version
   has the same hash and complete outputs, that version is reused; otherwise
   the next ``v####`` directory is allocated.
 * ``finalize_artifact_plan`` writes the sidecar, refreshes ``latest.json``,
   and copies primary outputs back to the suite root for legacy readers.
 * Run-scoped stages (rollout, judge) consume the activated ref via
   ``ctx["artifact_versions"]`` and never get their own version directory;
-  they simply record which seed artifact version they ran against.
+  they simply record which test set artifact version they ran against.
 
 Artifact references emitted into manifests/sidecars are always
 POSIX-formatted relative-to-suite paths so they read cleanly on every
@@ -46,7 +46,7 @@ from p2m.core.io import PROMPTS_DIR, write_json
 log = logging.getLogger(__name__)
 
 
-CACHEABLE_STAGES = ("policy", "design", "seeds")
+CACHEABLE_STAGES = ("systematize", "test_set")
 ARTIFACTS_DIR = "artifacts"
 ARTIFACT_METADATA_FILE = "artifact.json"
 LATEST_FILE = "latest.json"
@@ -59,47 +59,42 @@ LATEST_FILE = "latest.json"
 _MAX_VERSION_ALLOCATION_RETRIES = 100
 
 _OUTPUT_FILES: dict[str, dict[str, str]] = {
-    "policy": {
-        "policy": "policy.json",
+    "systematize": {
+        "taxonomy": "taxonomy.json",
         "systematization": "systematization.json",
     },
-    "design": {
+    "test_set": {
+        "test_set": "test_set.jsonl",
         "design": "design.json",
-    },
-    "seeds": {
-        "seeds": "seeds.jsonl",
     },
 }
 
 _CONTEXT_PATH_KEYS: dict[str, dict[str, str]] = {
-    "policy": {
-        "policy": "policy_path",
+    "systematize": {
+        "taxonomy": "taxonomy_path",
         "systematization": "systematization_path",
     },
-    "design": {
+    "test_set": {
+        "test_set": "test_set_path",
         "design": "design_path",
-    },
-    "seeds": {
-        "seeds": "seeds_path",
     },
 }
 
 _CONTEXT_DIR_KEYS = {
-    "policy": "policy_artifact_dir",
-    "design": "design_artifact_dir",
-    "seeds": "seeds_artifact_dir",
+    "systematize": "systematize_artifact_dir",
+    "test_set": "test_set_artifact_dir",
 }
 
 _PROMPT_FILES = {
-    "policy": (
+    "systematize": (
         "systematization_single.md",
         "systematization_convert_single.md",
     ),
-    "design": ("seeds_design.md",),
-    "seeds": (
-        "seeds_direct_single.md",
-        "seeds_scenario_single.md",
-        "seeds_generation_guidance.md",
+    "test_set": (
+        "test_set_design.md",
+        "test_set_direct_single.md",
+        "test_set_scenario_single.md",
+        "test_set_generation_guidance.md",
     ),
 }
 
@@ -202,9 +197,8 @@ def activate_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
 # either the sentinel ``"__artifact_dir__"`` (meaning "the version directory
 # itself") or the name of an entry in ``plan.output_paths``.
 _RAW_CFG_OUTPUT_OVERRIDES: dict[str, list[tuple[str, str]]] = {
-    "policy": [("save_dir", "__artifact_dir__")],
-    "design": [("save_dir", "__artifact_dir__")],
-    "seeds": [("save_path", "seeds")],
+    "systematize": [("save_dir", "__artifact_dir__")],
+    "test_set": [("save_path", "test_set")],
 }
 
 
@@ -665,20 +659,18 @@ def _stage_descriptor(
     stage_name: str,
     raw_cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    # ``concept_hash`` is computed only for the policy stage. Downstream
-    # cacheable stages (design, seeds) do NOT recompute it — they pick the
-    # concept change up transitively via ``_dependency_descriptor``: design
-    # depends on policy's input_hash and seeds depends on design's, so any
-    # change to the concept invalidates policy's input_hash and the cascade
-    # invalidates every stage that consumes it. This relies on the
+    # ``concept_hash`` is computed only for the systematize stage. Downstream
+    # cacheable stages do NOT recompute it — they pick the behavior change up
+    # transitively via ``_dependency_descriptor``: test_set depends on the
+    # systematize artifact, so any behavior edit invalidates the cascade. This relies on the
     # dependency chain being complete; if a future cacheable stage stops
-    # depending on its upstream artifact, hash this concept directly here
-    # too or the cache will reuse stale outputs after a concept edit.
+    # depending on its upstream artifact, hash this behavior directly here
+    # too or the cache will reuse stale outputs after a behavior edit.
     concept_hash = None
-    if stage_name == "policy":
+    if stage_name == "systematize":
         concept_hash = hash_payload({
-            "concept_name": ctx.get("concept_name"),
-            "concept": ctx.get("concept"),
+            "behavior_name": ctx.get("behavior_name"),
+            "behavior": ctx.get("behavior"),
         })
 
     descriptor: dict[str, Any] = {
@@ -706,23 +698,21 @@ def _stage_config_descriptor(
     descriptor: dict[str, Any] = {
         "stage_config": cfg,
     }
-    if stage_name in {"policy", "design", "seeds"}:
+    if stage_name in {"systematize", "test_set"}:
         descriptor["context"] = ctx.get("context")
-    if stage_name in {"design", "seeds"}:
-        descriptor["factors"] = ctx.get("factors")
-    if stage_name == "seeds":
+    if stage_name == "test_set":
+        descriptor["dimensions"] = ctx.get("dimensions")
+    if stage_name == "test_set":
         descriptor["target"] = _normalize_value(ctx.get("target"))
     return descriptor
 
 
 def _dependency_descriptor(ctx: dict[str, Any], stage_name: str) -> dict[str, Any]:
-    if stage_name == "policy":
+    if stage_name == "systematize":
         return {}
     deps: dict[str, Any] = {}
-    if stage_name in {"design", "seeds"}:
-        deps["policy"] = _artifact_or_file_dependency(ctx, "policy", "policy_path")
-    if stage_name == "seeds":
-        deps["design"] = _artifact_or_file_dependency(ctx, "design", "design_path")
+    if stage_name == "test_set":
+        deps["taxonomy"] = _artifact_or_file_dependency(ctx, "systematize", "taxonomy_path")
     return deps
 
 
@@ -742,7 +732,7 @@ def _artifact_or_file_dependency(
     raw_path = ctx.get(context_path_key)
     if not raw_path and ctx.get("suite_root"):
         default_name = {
-            "policy_path": "policy.json",
+            "taxonomy_path": "taxonomy.json",
             "design_path": "design.json",
         }.get(context_path_key)
         if default_name:

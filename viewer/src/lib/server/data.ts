@@ -44,7 +44,7 @@ import type {
 	JudgedSample,
 	Manifest,
 	MultiJudge,
-	Policy,
+	Taxonomy,
 	RunListItem,
 	RunMetrics,
 	ScenarioSeed,
@@ -79,7 +79,7 @@ interface AuditMetricView {
 }
 
 interface RolloutPreviewRow {
-	seed_id: string;
+	test_case_id: string;
 	behavior: string;
 	turns_count: number;
 	stop_reason: string;
@@ -123,7 +123,7 @@ interface BehaviorComparison {
 }
 
 function hasKind(row: Record<string, unknown>, expected: 'prompt' | 'scenario'): boolean {
-	return row.kind === expected;
+	return (row.type ?? row.kind) === expected;
 }
 
 function readObject(value: unknown): Record<string, unknown> | null {
@@ -147,26 +147,25 @@ function normalizeFactorValue(value: string): string {
 function readFactors(value: unknown): Record<string, string> | undefined {
 	const record = readObject(value);
 	if (!record) return undefined;
-	const factors = Object.fromEntries(Object.entries(record).filter((entry): entry is [string, string] => {
-		const [name, factor] = entry;
-		return typeof name === 'string' && typeof factor === 'string';
-	}).map(([name, factor]) => [name, name === 'behavior' ? factor : normalizeFactorValue(factor)]));
-	return Object.keys(factors).length > 0 ? factors : undefined;
+	const dimensions = Object.fromEntries(Object.entries(record).filter((entry): entry is [string, string] => {
+		const [name, dimension] = entry;
+		return typeof name === 'string' && typeof dimension === 'string';
+	}).map(([name, dimension]) => [name, name === 'behavior' ? dimension : normalizeFactorValue(dimension)]));
+	return Object.keys(dimensions).length > 0 ? dimensions : undefined;
 }
 
 function readBehavior(value: unknown): string {
-	const factors = readFactors(value);
-	return typeof factors?.behavior === 'string' ? factors.behavior : '';
+	const dimensions = readFactors(value);
+	return typeof dimensions?.behavior === 'string' ? dimensions.behavior : '';
 }
 
-function readRowBehavior(row: { behavior?: unknown; factors?: unknown } | undefined): string {
-	if (typeof row?.behavior === 'string' && row.behavior.trim()) return row.behavior;
-	return readBehavior(row?.factors);
+function readRowBehavior(row: { behavior?: unknown; dimensions?: unknown } | undefined): string {
+	return readBehavior(row?.dimensions);
 }
 
-function behaviorDefinition(policy: Policy | null, behavior: string): string {
-	const entry = policy?.behaviors?.find((item) => item.name === behavior);
-	if (!entry) throw new Error(`behavior '${behavior}' is missing from policy.behaviors`);
+function behaviorDefinition(taxonomy: Taxonomy | null, behavior: string): string {
+	const entry = taxonomy?.behavior_categories?.find((item) => item.name === behavior);
+	if (!entry) throw new Error(`behavior '${behavior}' is missing from taxonomy.behavior_categories`);
 	return entry.definition;
 }
 
@@ -175,28 +174,28 @@ function normalizeBehavior(b: Behavior): Behavior {
 	return { ...b, permissible: b.permissible ?? false };
 }
 
-function normalizePolicy(policy: Policy | null | undefined): Policy | null {
-	if (!policy) return null;
-	const concept = policy.concept ?? policy.risk;
+function normalizePolicy(taxonomy: Taxonomy | null | undefined): Taxonomy | null {
+	if (!taxonomy) return null;
+	const behavior = taxonomy.behavior ?? taxonomy.risk;
 	return {
-		...policy,
-		concept: concept ?? { name: '', definition: '' },
-		behaviors: (policy.behaviors ?? []).map(normalizeBehavior)
+		...taxonomy,
+		behavior: behavior ?? { name: '', definition: '' },
+		behavior_categories: (taxonomy.behavior_categories ?? []).map(normalizeBehavior)
 	};
 }
 
-function normalizePromptSeed(item: PromptSeed, policy: Policy | null): PromptSeed {
-	const factors = readFactors(item.factors);
+function normalizePromptSeed(item: PromptSeed, taxonomy: Taxonomy | null): PromptSeed {
+	const dimensions = readFactors(item.dimensions);
 	const behavior = readRowBehavior(item);
-	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
-	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
+	if (!behavior) throw new Error(`seed '${item.test_case_id}' is missing dimensions.behavior`);
+	return { ...item, behavior, definition: behaviorDefinition(taxonomy, behavior), dimensions };
 }
 
-function normalizeScenarioSeed(item: ScenarioSeed, policy: Policy | null): ScenarioSeed {
-	const factors = readFactors(item.factors);
+function normalizeScenarioSeed(item: ScenarioSeed, taxonomy: Taxonomy | null): ScenarioSeed {
+	const dimensions = readFactors(item.dimensions);
 	const behavior = readRowBehavior(item);
-	if (!behavior) throw new Error(`seed '${item.seed_id}' is missing factors.behavior`);
-	return { ...item, behavior, definition: behaviorDefinition(policy, behavior), factors };
+	if (!behavior) throw new Error(`seed '${item.test_case_id}' is missing dimensions.behavior`);
+	return { ...item, behavior, definition: behaviorDefinition(taxonomy, behavior), dimensions };
 }
 
 function normalizeJudgedSample(sample: JudgedSample): JudgedSample {
@@ -211,7 +210,7 @@ function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript 
 	return {
 		...transcript,
 		behavior: readRowBehavior(transcript),
-		factors: readFactors(transcript.factors)
+		dimensions: readFactors(transcript.dimensions)
 	};
 }
 
@@ -432,10 +431,9 @@ function buildJudgedSampleRow(
 			: null;
 
 	return normalizeJudgedSample({
-		seed_id: typeof scoreRow.seed_id === 'string' ? scoreRow.seed_id : undefined,
+		test_case_id: typeof scoreRow.test_case_id === 'string' ? scoreRow.test_case_id : undefined,
 		prompt,
 		response,
-		concept: typeof scoreRow.concept === 'string' ? scoreRow.concept : null,
 		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		run_id: runId,
 		judge_model: typeof scoreRow.judge_model === 'string' ? scoreRow.judge_model : undefined,
@@ -453,7 +451,7 @@ function buildJudgedSampleRow(
 		messages,
 		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
 		target_runtime_mode: runtimeMode,
-		factors: readFactors(scoreRow.factors) ?? readFactors(transcriptRow?.factors) ?? readFactors(seedRow?.factors),
+		dimensions: readFactors(scoreRow.dimensions) ?? readFactors(transcriptRow?.dimensions) ?? readFactors(seedRow?.dimensions),
 		multi_judge:
 			scoreRow.multi_judge &&
 			typeof scoreRow.multi_judge === 'object' &&
@@ -481,18 +479,18 @@ function buildJudgedSamplesByKind(
 
 	const seedById = new Map<string, UnifiedSeedRow>();
 	for (const seedRow of seedRows) {
-		const seedId = typeof seedRow.seed_id === 'string' ? seedRow.seed_id : '';
+		const seedId = typeof seedRow.test_case_id === 'string' ? seedRow.test_case_id : '';
 		if (seedId) seedById.set(seedId, seedRow);
 	}
 
 	const transcriptBySeedId = new Map<string, UnifiedTranscriptRow>();
 	for (const transcriptRow of transcriptRows) {
-		const seedId = typeof transcriptRow.seed_id === 'string' ? transcriptRow.seed_id : '';
+		const seedId = typeof transcriptRow.test_case_id === 'string' ? transcriptRow.test_case_id : '';
 		if (seedId) transcriptBySeedId.set(seedId, transcriptRow);
 	}
 
 	return scoreRows.map((row) => {
-		const seedId = typeof row.seed_id === 'string' ? row.seed_id : '';
+		const seedId = typeof row.test_case_id === 'string' ? row.test_case_id : '';
 		return buildJudgedSampleRow(
 			snapshot.runId,
 			snapshot.runtimeMode,
@@ -510,13 +508,13 @@ function buildAuditScoreRow(
 ): AuditScore {
 	const turnsCount = transcriptRow ? countTargetConversationMessages(transcriptRow) : 0;
 	const stopReason = typeof transcriptRow?.stop_reason === 'string' ? transcriptRow.stop_reason : '';
-	const factors = readFactors(scoreRow.factors) ?? readFactors(transcriptRow?.factors);
+	const dimensions = readFactors(scoreRow.dimensions) ?? readFactors(transcriptRow?.dimensions);
 
 	return normalizeAuditScore({
 		...(scoreRow as AuditScore & UnifiedScoreRow),
 		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		target_runtime_mode: runtimeMode,
-		factors,
+		dimensions,
 		metadata: {
 			turns_count: turnsCount,
 			stop_reason: stopReason
@@ -528,14 +526,14 @@ function buildAuditScoresFromSnapshot(snapshot: RunSnapshot): AuditScore[] {
 	const transcriptRows = snapshot.transcriptRows.filter((row) => hasKind(row, 'scenario'));
 	const transcriptBySeedId = new Map<string, UnifiedTranscriptRow>();
 	for (const transcriptRow of transcriptRows) {
-		const seedId = typeof transcriptRow.seed_id === 'string' ? transcriptRow.seed_id : '';
+		const seedId = typeof transcriptRow.test_case_id === 'string' ? transcriptRow.test_case_id : '';
 		if (seedId) transcriptBySeedId.set(seedId, transcriptRow);
 	}
 
 	return snapshot.scoreRows
 		.filter((row): row is AuditScore & UnifiedScoreRow => hasKind(row, 'scenario'))
 		.map((row) => {
-			const seedId = typeof row.seed_id === 'string' ? row.seed_id : '';
+			const seedId = typeof row.test_case_id === 'string' ? row.test_case_id : '';
 			return buildAuditScoreRow(snapshot.runtimeMode, row, transcriptBySeedId.get(seedId));
 		});
 }
@@ -571,12 +569,12 @@ function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPrev
 	return snapshot.transcriptRows
 		.filter((row): row is UnifiedTranscriptRow => hasKind(row, 'scenario'))
 		.flatMap((row) => {
-			const seedId = typeof row.seed_id === 'string' ? row.seed_id : '';
+			const seedId = typeof row.test_case_id === 'string' ? row.test_case_id : '';
 			if (!seedId) return [];
 
 			const messages = materializeTargetMessages(row);
 			return [{
-				seed_id: seedId,
+				test_case_id: seedId,
 				behavior: readRowBehavior(row),
 				turns_count: countConversationMessages(messages),
 				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
@@ -590,7 +588,7 @@ function buildScenarioDrawerItem(
 	scoreRow: UnifiedScoreRow | undefined,
 	seedInfo: ScenarioSeedInfo | undefined
 ): ViewerResultItem | null {
-	const seedId = typeof transcriptRow.seed_id === 'string' ? transcriptRow.seed_id : '';
+	const seedId = typeof transcriptRow.test_case_id === 'string' ? transcriptRow.test_case_id : '';
 	if (!seedId) return null;
 
 	const turnsCount = countTargetConversationMessages(transcriptRow);
@@ -599,8 +597,7 @@ function buildScenarioDrawerItem(
 	const score: AuditScore = matchedScore
 		? matchedScore
 		: {
-				seed_id: seedId,
-				concept: typeof transcriptRow.concept === 'string' ? transcriptRow.concept : '',
+				test_case_id: seedId,
 				behavior: readRowBehavior(transcriptRow),
 				judge_model: '',
 				target: typeof transcriptRow.target === 'string' ? transcriptRow.target : undefined,
@@ -610,7 +607,7 @@ function buildScenarioDrawerItem(
 				judge_status: null,
 				judge_error: null,
 				target_runtime_mode: runtimeMode,
-				factors: readFactors(transcriptRow.factors) ?? seedInfo?.factors,
+				dimensions: readFactors(transcriptRow.dimensions) ?? seedInfo?.dimensions,
 				metadata: {
 					turns_count: turnsCount,
 					stop_reason: stopReason
@@ -729,18 +726,18 @@ function buildScenarioSeedMap(
 	scenarioSeeds: ScenarioSeed[],
 	auditScores: AuditScore[]
 ): Record<string, ScenarioSeedInfo> {
-	const auditScoresBySeedId = new Map(auditScores.map((score) => [score.seed_id, score]));
+	const auditScoresBySeedId = new Map(auditScores.map((score) => [score.test_case_id, score]));
 
 	return Object.fromEntries(
 		scenarioSeeds.map((scenarioSeed) => {
-			const score = auditScoresBySeedId.get(scenarioSeed.seed_id);
+			const score = auditScoresBySeedId.get(scenarioSeed.test_case_id);
 			return [
-				scenarioSeed.seed_id,
+				scenarioSeed.test_case_id,
 				{
 					title: scenarioSeed.seed.title,
 					description: scenarioSeed.seed.description,
 					tools: scenarioSeed.seed.tools,
-					factors: scenarioSeed.factors,
+					dimensions: scenarioSeed.dimensions,
 					target_runtime_mode:
 						typeof score?.target_runtime_mode === 'string' ? score.target_runtime_mode : null
 				}
@@ -754,14 +751,14 @@ function buildScenarioSeedInfo(
 	seedId: string,
 	auditScores: AuditScore[]
 ): ScenarioSeedInfo | undefined {
-	const scenarioSeed = scenarioSeeds.find((item) => item.seed_id === seedId);
+	const scenarioSeed = scenarioSeeds.find((item) => item.test_case_id === seedId);
 	if (!scenarioSeed) return undefined;
-	const score = auditScores.find((item) => item.seed_id === seedId);
+	const score = auditScores.find((item) => item.test_case_id === seedId);
 	return {
 		title: scenarioSeed.seed.title,
 		description: scenarioSeed.seed.description,
 		tools: scenarioSeed.seed.tools,
-		factors: scenarioSeed.factors,
+		dimensions: scenarioSeed.dimensions,
 		target_runtime_mode: typeof score?.target_runtime_mode === 'string' ? score.target_runtime_mode : null
 	};
 }
@@ -936,16 +933,16 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		if (hasData) hasResults = true;
 	}
 
-	let status: SuiteStatus = 'policy_only';
+	let status: SuiteStatus = 'systematized';
 	if (hasResults) status = 'has_results';
-	else if (itemCounts.prompt > 0 || itemCounts.scenario > 0) status = 'seeds_ready';
+	else if (itemCounts.prompt > 0 || itemCounts.scenario > 0) status = 'test_set_ready';
 
 	return {
 		suite_id: suiteId,
-		concept_name: normalizePolicy(snapshot.policy)?.concept?.name || suiteId,
-		behavior_count: snapshot.policy?.behaviors?.length ?? 0,
-		seed_count: itemCounts.prompt,
-		scenario_seed_count: itemCounts.scenario,
+		concept_name: normalizePolicy(snapshot.taxonomy)?.behavior?.name || suiteId,
+		behavior_category_count: snapshot.taxonomy?.behavior_categories?.length ?? 0,
+		prompt_test_case_count: itemCounts.prompt,
+		scenario_test_case_count: itemCounts.scenario,
 		run_count: evalRunCount,
 		runs: snapshot.runIds,
 		status,
@@ -957,7 +954,7 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 function buildPromptSeeds(snapshot: SuiteSnapshot | null): PromptSeed[] {
 	if (!snapshot) return [];
 	return promptSeedRows(snapshot.seedRows).map((row) =>
-		normalizePromptSeed(row as unknown as PromptSeed, snapshot.policy)
+		normalizePromptSeed(row as unknown as PromptSeed, snapshot.taxonomy)
 	);
 }
 
@@ -966,7 +963,7 @@ function buildPromptSeedTitleMap(snapshot: SuiteSnapshot | null): Record<string,
 	const map: Record<string, string> = {};
 	for (const row of promptSeedRows(snapshot.seedRows)) {
 		const seed = row as unknown as PromptSeed;
-		if (seed.seed_id && seed.seed?.title) map[seed.seed_id] = seed.seed.title;
+		if (seed.test_case_id && seed.seed?.title) map[seed.test_case_id] = seed.seed.title;
 	}
 	return map;
 }
@@ -974,13 +971,13 @@ function buildPromptSeedTitleMap(snapshot: SuiteSnapshot | null): Record<string,
 function buildScenarioSeeds(snapshot: SuiteSnapshot | null): ScenarioSeed[] {
 	if (!snapshot) return [];
 	return scenarioSeedRows(snapshot.seedRows).map((row) =>
-		normalizeScenarioSeed(row as unknown as ScenarioSeed, snapshot.policy)
+		normalizeScenarioSeed(row as unknown as ScenarioSeed, snapshot.taxonomy)
 	);
 }
 
-export function loadPolicy(suiteId: string): Policy | null {
+export function loadPolicy(suiteId: string): Taxonomy | null {
 	const snapshot = loadSuiteSnapshot(suiteId);
-	return normalizePolicy(snapshot?.policy);
+	return normalizePolicy(snapshot?.taxonomy);
 }
 
 export function loadPromptSeeds(suiteId: string): PromptSeed[] {
@@ -1061,7 +1058,7 @@ export function loadSuitePageData(suiteId: string) {
 	return {
 		suite_id: suiteId,
 		suite: snapshot.suite,
-		policy: normalizePolicy(snapshot.policy),
+		taxonomy: normalizePolicy(snapshot.taxonomy),
 		promptSeeds,
 		scenarioSeeds,
 		runs,
@@ -1130,7 +1127,7 @@ function loadCompletedRunPageData(
 		auditCount,
 		hasAuditContent,
 		manifest,
-		policy: normalizePolicy(suiteSnapshot?.policy),
+		taxonomy: normalizePolicy(suiteSnapshot?.taxonomy),
 		samples,
 		auditScores,
 		rolloutPreviewRows: [],
@@ -1197,7 +1194,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		auditCount,
 		hasAuditContent,
 		manifest: runSnapshot.manifest,
-		policy: normalizePolicy(suiteSnapshot?.policy),
+		taxonomy: normalizePolicy(suiteSnapshot?.taxonomy),
 		samples,
 		auditScores,
 		rolloutPreviewRows,
@@ -1213,7 +1210,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 }
 
 function findSeedRowById(seedRows: UnifiedSeedRow[], seedId: string): UnifiedSeedRow | undefined {
-	return seedRows.find((row) => row.seed_id === seedId);
+	return seedRows.find((row) => row.test_case_id === seedId);
 }
 
 function loadPromptDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
@@ -1324,7 +1321,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 
 export function loadComparePageData(suiteId: string, runIds: string[]) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const policy = normalizePolicy(suiteSnapshot?.policy);
+	const taxonomy = normalizePolicy(suiteSnapshot?.taxonomy);
 
 	const runSummaries: CompareRunSummary[] = [];
 	const metricNames = new Set<string>();
@@ -1344,7 +1341,7 @@ export function loadComparePageData(suiteId: string, runIds: string[]) {
 
 	return {
 		suite_id: suiteId,
-		policy,
+		taxonomy,
 		runs: runSummaries.map(({ samples, ...summary }) => summary),
 		comparisons,
 		samplesByBehavior,

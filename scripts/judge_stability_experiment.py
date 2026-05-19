@@ -24,12 +24,12 @@ from p2m.stages.judge import JUDGE_SYSTEM_PROMPT
 def transcript_from_row(row: dict) -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
             auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            dimensions=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -120,8 +120,8 @@ async def score_transcripts(
                 response_schema=judge_contract["response_schema"],
             )
             score_row = {
-                "seed_id": row.get("seed_id", ""),
-                "concept": row.get("concept", ""),
+                "test_case_id": row.get("test_case_id", ""),
+                "behavior": row.get("behavior", ""),
                 "target": row.get("target", ""),
                 "auditor_model": row.get("auditor_model", ""),
                 "judge_model": config.judge_model,
@@ -132,7 +132,7 @@ async def score_transcripts(
                 "verdict": judge_result["verdict"],
             }
             behavior = row_behavior(row)
-            score_row["factors"] = {"behavior": behavior}
+            score_row["dimensions"] = {"behavior": behavior}
             score_row["permissible"] = policy_permissible(permissible_by_name, behavior)
             if judge_result.get("multi_judge") is not None:
                 score_row["multi_judge"] = judge_result["multi_judge"]
@@ -143,11 +143,11 @@ async def score_transcripts(
         result = await coro
         results.append(result)
         status = result.get("judge_status", "?")
-        sid = result.get("seed_id", "?")
+        sid = result.get("test_case_id", "?")
         print(f"  {sid}: {status}")
 
-    # Sort by seed_id for deterministic output
-    results.sort(key=lambda r: r.get("seed_id", ""))
+    # Sort by test_case_id for deterministic output
+    results.sort(key=lambda r: r.get("test_case_id", ""))
     return results
 
 
@@ -169,7 +169,7 @@ async def run_experiment(
     print(f"  model={config.judge_model} temp={config.temperature} n={config.judge_n}")
 
     transcripts = load_jsonl(run_dir / "transcripts.jsonl")
-    policy_raw = json.loads((run_dir.parent / "policy.json").read_text())
+    policy_raw = json.loads((run_dir.parent / "taxonomy.json").read_text())
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         configs = ALL_CONFIGS
 
     total_calls = len(configs) * len(RUN_DIRS) * 50
-    print(f"Judge stability experiment: {len(configs)} configs × {len(RUN_DIRS)} run dirs × 50 seeds")
+    print(f"Judge stability experiment: {len(configs)} configs × {len(RUN_DIRS)} run dirs × 50 test_set")
     print(f"Total judge calls: ~{total_calls}")
     print(f"Concurrency: {args.concurrency}")
     print()

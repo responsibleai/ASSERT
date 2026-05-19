@@ -1,4 +1,4 @@
-"""Generate a policy artifact from a concept description."""
+"""Generate a taxonomy artifact from a behavior description."""
 
 from __future__ import annotations
 
@@ -10,24 +10,24 @@ log = logging.getLogger(__name__)
 
 from p2m.config import parse_model_config, resolve_stage_paths
 from p2m.core.config_model import (
-    DEFAULT_POLICY_MAX_TOKENS,
-    DEFAULT_POLICY_TEMPERATURE,
+    DEFAULT_SYSTEMATIZE_MAX_TOKENS,
+    DEFAULT_SYSTEMATIZE_TEMPERATURE,
 )
 from p2m.core.io import write_json
 from p2m.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-GEN_PROMPT = (BASE_DIR / "prompts" / "policy_system.md").read_text()
-DEFAULT_BEHAVIOR_COUNT = 25
-MIN_POLICY_BEHAVIORS = 5
+GEN_PROMPT = (BASE_DIR / "prompts" / "systematize_system.md").read_text()
+DEFAULT_BEHAVIOR_CATEGORY_COUNT = 25
+MIN_TAXONOMY_BEHAVIOR_CATEGORIES = 5
 
 SCOPE = "suite"
-SUITE_OUTPUT = "policy.json"
+SUITE_OUTPUT = "taxonomy.json"
 
 
-def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
-    """JSON schema for a risk policy with behaviors and term definitions."""
-    behaviors_prop: Dict[str, Any] = {
+def taxonomy_schema(*, min_behavior_categories: int = 0) -> Dict[str, Any]:
+    """JSON schema for a risk taxonomy with behavior_categories and term definitions."""
+    behavior_categories_prop: Dict[str, Any] = {
         "type": "array",
         "items": {
             "type": "object",
@@ -41,13 +41,13 @@ def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
             "required": ["name", "definition", "examples", "permissible"],
         },
     }
-    if min_behaviors > 0:
-        behaviors_prop["minItems"] = min_behaviors
+    if min_behavior_categories > 0:
+        behavior_categories_prop["minItems"] = min_behavior_categories
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "concept": {
+            "behavior": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
@@ -69,37 +69,37 @@ def policy_schema(*, min_behaviors: int = 0) -> Dict[str, Any]:
                     "required": ["term", "definition", "examples"],
                 },
             },
-            "behaviors": behaviors_prop,
+            "behavior_categories": behavior_categories_prop,
         },
-        "required": ["concept", "definition_of_terms", "behaviors"],
+        "required": ["behavior", "definition_of_terms", "behavior_categories"],
     }
 
 
-POLICY_SCHEMA = policy_schema(min_behaviors=MIN_POLICY_BEHAVIORS)
+TAXONOMY_SCHEMA = taxonomy_schema(min_behavior_categories=MIN_TAXONOMY_BEHAVIOR_CATEGORIES)
 
 
-async def run_policy(
+async def run_systematize(
     *,
-    concept: str,
+    behavior: str,
     model: str,
-    behavior_count: int = DEFAULT_BEHAVIOR_COUNT,
+    behavior_category_count: int = DEFAULT_BEHAVIOR_CATEGORY_COUNT,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
     save_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Generate one policy JSON artifact from the provided concept text."""
-    if not concept:
-        raise ValueError("concept text is required")
+    """Generate one taxonomy JSON artifact from the provided behavior text."""
+    if not behavior:
+        raise ValueError("behavior text is required")
 
-    concept_text = concept.strip()
-    temperature = temperature if temperature is not None else DEFAULT_POLICY_TEMPERATURE
-    max_tokens = max_tokens if max_tokens is not None else DEFAULT_POLICY_MAX_TOKENS
+    concept_text = behavior.strip()
+    temperature = temperature if temperature is not None else DEFAULT_SYSTEMATIZE_TEMPERATURE
+    max_tokens = max_tokens if max_tokens is not None else DEFAULT_SYSTEMATIZE_MAX_TOKENS
     # Reasoning models don't support temperature
     if reasoning_effort is not None:
         temperature = None
     save_path = Path(save_dir) if save_dir else Path("artifacts/outputs")
-    system_prompt = GEN_PROMPT.replace("{{BEHAVIOR_TARGET}}", str(behavior_count))
+    system_prompt = GEN_PROMPT.replace("{{BEHAVIOR_TARGET}}", str(behavior_category_count))
     messages = [
         Message(role="system", content=system_prompt),
         Message(role="user", content=concept_text),
@@ -108,57 +108,57 @@ async def run_policy(
     response = await generate_structured(
         model,
         messages,
-        schema_name="policy",
-        json_schema=POLICY_SCHEMA,
+        schema_name="taxonomy",
+        json_schema=TAXONOMY_SCHEMA,
         options=GenerateOptions(
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         ),
     )
-    policy_json = response.parsed
-    if not isinstance(policy_json, dict):
+    taxonomy_json = response.parsed
+    if not isinstance(taxonomy_json, dict):
         raise ValueError(
-            f"policy generation returned non-JSON output (model: {model}). "
+            f"taxonomy generation returned non-JSON output (model: {model}). "
             f"Raw text (first 500 chars): {(response.text or '')[:500]}"
         )
 
     save_path.mkdir(parents=True, exist_ok=True)
-    policy_path = save_path / "policy.json"
-    write_json(policy_path, policy_json)
+    taxonomy_path = save_path / "taxonomy.json"
+    write_json(taxonomy_path, taxonomy_json)
 
     return {
-        "policy_path": str(policy_path),
-        "policy": policy_json,
+        "taxonomy_path": str(taxonomy_path),
+        "taxonomy": taxonomy_json,
     }
 
 
 async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Validate config and run policy generation via systematization."""
+    """Validate config and run taxonomy generation via systematization."""
     if "validators" in raw_cfg or "validator_models" in raw_cfg:
-        raise ValueError("policy validators are no longer supported")
+        raise ValueError("taxonomy validators are no longer supported")
 
     model = raw_cfg.get("model")
     if not isinstance(model, dict):
-        raise ValueError("policy.model must be a mapping")
+        raise ValueError("systematize.model must be a mapping")
     model_cfg = parse_model_config(
         model,
-        field_name="policy.model",
-        default_temperature=DEFAULT_POLICY_TEMPERATURE,
-        default_max_tokens=DEFAULT_POLICY_MAX_TOKENS,
+        field_name="systematize.model",
+        default_temperature=DEFAULT_SYSTEMATIZE_TEMPERATURE,
+        default_max_tokens=DEFAULT_SYSTEMATIZE_MAX_TOKENS,
     )
 
-    behavior_count = raw_cfg.get("behavior_count", DEFAULT_BEHAVIOR_COUNT)
-    if not isinstance(behavior_count, int) or behavior_count < 1:
-        raise ValueError("policy.behavior_count must be a positive integer")
+    behavior_category_count = raw_cfg.get("behavior_category_count", DEFAULT_BEHAVIOR_CATEGORY_COUNT)
+    if not isinstance(behavior_category_count, int) or behavior_category_count < 1:
+        raise ValueError("systematize.behavior_category_count must be a positive integer")
 
     web_search_raw = raw_cfg.get("web_search")
     if web_search_raw is not None and not isinstance(web_search_raw, bool):
-        raise ValueError("policy.web_search must be a boolean")
+        raise ValueError("systematize.web_search must be a boolean")
     web_search = web_search_raw if web_search_raw is not None else True
 
     suite_root = Path(ctx["suite_root"])
-    save_dir = raw_cfg.get("save_dir") or ctx.get("policy_artifact_dir") or str(suite_root)
+    save_dir = raw_cfg.get("save_dir") or ctx.get("systematize_artifact_dir") or str(suite_root)
 
     cfg = resolve_stage_paths(
         {"save_dir": save_dir},
@@ -166,8 +166,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         artifacts_root=ctx["artifacts_root"],
     )
 
-    concept_name = ctx.get("concept_name") or "concept"
-    concept_text = ctx.get("concept") or ""
+    behavior_name = ctx.get("behavior_name") or "behavior"
+    behavior_description = ctx.get("behavior") or ""
     context = ctx.get("context")
 
     from p2m.core.async_utils import log_heartbeat
@@ -178,40 +178,40 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     sys_model_cfg = SysModelConfig(
         name=model_cfg.name,
         temperature=model_cfg.temperature,
-        max_tokens=model_cfg.max_tokens or DEFAULT_POLICY_MAX_TOKENS,
+        max_tokens=model_cfg.max_tokens or DEFAULT_SYSTEMATIZE_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
-    log.debug(f"policy: model={model_cfg.name}, behavior_count={behavior_count}, web_search={web_search}")
-    log.info("[policy] [1/2] Researching risk taxonomy...")
-    async with log_heartbeat("[policy] [1/2] Researching risk taxonomy"):
+    log.debug(f"systematize: model={model_cfg.name}, behavior_category_count={behavior_category_count}, web_search={web_search}")
+    log.info("[systematize] [1/2] Researching behavior taxonomy...")
+    async with log_heartbeat("[systematize] [1/2] Researching behavior taxonomy"):
         await run_systematization(
-            concept=concept_name,
-            concept_text=concept_text,
+            behavior=behavior_name,
+            concept_text=behavior_description,
             save_path=sys_path,
             model_cfg=sys_model_cfg,
             web_search=web_search,
             context=context,
         )
-    log.info("[policy] [1/2] Risk taxonomy complete")
+    log.info("[systematize] [1/2] Behavior taxonomy complete")
 
-    policy_path_str = str(Path(cfg["save_dir"]) / "policy.json")
+    taxonomy_path_str = str(Path(cfg["save_dir"]) / "taxonomy.json")
     convert_model_cfg = SysModelConfig(
         name=model_cfg.name,
         temperature=model_cfg.temperature,
-        max_tokens=model_cfg.max_tokens or DEFAULT_POLICY_MAX_TOKENS,
+        max_tokens=model_cfg.max_tokens or DEFAULT_SYSTEMATIZE_MAX_TOKENS,
         reasoning_effort=model_cfg.reasoning_effort,
     )
-    log.info("[policy] [2/2] Converting to structured policy...")
-    async with log_heartbeat("[policy] [2/2] Converting to structured policy"):
+    log.info("[systematize] [2/2] Converting to structured taxonomy...")
+    async with log_heartbeat("[systematize] [2/2] Converting to structured taxonomy"):
         await run_systematization_to_policy(
             systematization_path=sys_path,
-            save_path=policy_path_str,
+            save_path=taxonomy_path_str,
             model_cfg=convert_model_cfg,
-            behavior_count_hint=behavior_count,
+            behavior_category_count_hint=behavior_category_count,
         )
 
     return {
-        "policy_dir": cfg["save_dir"],
-        "policy_path": policy_path_str,
+        "systematize_dir": cfg["save_dir"],
+        "taxonomy_path": taxonomy_path_str,
     }

@@ -34,8 +34,8 @@ class ArtifactCacheTest(unittest.TestCase):
             "config_path": config_path,
             "artifacts_root": root / "artifacts",
             "suite_root": suite_root,
-            "concept_name": "travel_planner_eval",
-            "concept": "Travel planner must produce grounded itineraries.",
+            "behavior_name": "travel_planner_eval",
+            "behavior": "Travel planner must produce grounded itineraries.",
             "context": "Travel planner with flight and hotel tools.",
             "artifact_versions": {},
         }
@@ -43,13 +43,13 @@ class ArtifactCacheTest(unittest.TestCase):
     def _finalize_policy(self, ctx: dict, raw_cfg: dict) -> "object":
         plan = prepare_artifact_plan(
             ctx=ctx,
-            stage_name="policy",
+            stage_name="systematize",
             raw_cfg=raw_cfg,
             forced=False,
         )
         activate_artifact_plan(ctx, plan)
-        plan.output_paths["policy"].parent.mkdir(parents=True, exist_ok=True)
-        plan.output_paths["policy"].write_text('{"behaviors":[]}', encoding="utf-8")
+        plan.output_paths["taxonomy"].parent.mkdir(parents=True, exist_ok=True)
+        plan.output_paths["taxonomy"].write_text('{"behavior_categories":[]}', encoding="utf-8")
         plan.output_paths["systematization"].write_text("{}", encoding="utf-8")
         finalize_artifact_plan(ctx, plan)
         return plan
@@ -64,13 +64,13 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 5}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 5}
             self._finalize_policy(ctx, raw_cfg)
 
             second_ctx = self._ctx(root)
             second = prepare_artifact_plan(
                 ctx=second_ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -82,14 +82,14 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 5}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 5}
             self._finalize_policy(ctx, raw_cfg)
 
             changed_ctx = self._ctx(root)
-            changed_ctx["concept"] = "Changed concept text."
+            changed_ctx["behavior"] = "Changed behavior text."
             second = prepare_artifact_plan(
                 ctx=changed_ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -98,23 +98,23 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertEqual(second.version, "v0002")
 
     def test_revert_to_prior_config_reuses_existing_version(self) -> None:
-        """v0001 -> change concept -> v0002 -> revert -> reuse v0001 (not v0002)."""
+        """v0001 -> change behavior -> v0002 -> revert -> reuse v0001 (not v0002)."""
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             base_ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 5}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 5}
 
             self._finalize_policy(base_ctx, raw_cfg)
 
             changed_ctx = self._ctx(root)
-            changed_ctx["concept"] = "Changed concept text."
+            changed_ctx["behavior"] = "Changed behavior text."
             self._finalize_policy(changed_ctx, raw_cfg)
 
             reverted_ctx = self._ctx(root)
             reverted_plan = prepare_artifact_plan(
                 ctx=reverted_ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -126,21 +126,22 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg_policy = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg_policy = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             self._finalize_policy(ctx, raw_cfg_policy)
 
-            design_plan = prepare_artifact_plan(
+            test_set_plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="design",
-                raw_cfg={"model": {"name": "azure/gpt-5.4"}, "level_count": 3},
+                stage_name="test_set",
+                raw_cfg={"prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1}},
                 forced=False,
             )
-            activate_artifact_plan(ctx, design_plan)
-            design_plan.output_paths["design"].parent.mkdir(parents=True, exist_ok=True)
-            design_plan.output_paths["design"].write_text("{}", encoding="utf-8")
-            ref = finalize_artifact_plan(ctx, design_plan)
+            activate_artifact_plan(ctx, test_set_plan)
+            test_set_plan.output_paths["test_set"].parent.mkdir(parents=True, exist_ok=True)
+            test_set_plan.output_paths["test_set"].write_text("", encoding="utf-8")
+            test_set_plan.output_paths["design"].write_text("{}", encoding="utf-8")
+            ref = finalize_artifact_plan(ctx, test_set_plan)
 
-            metadata = (design_plan.artifact_dir / "artifact.json").read_text(encoding="utf-8")
+            metadata = (test_set_plan.artifact_dir / "artifact.json").read_text(encoding="utf-8")
             self.assertNotIn("concept_hash", metadata)
             self.assertNotIn("concept_hash", ref)
 
@@ -148,7 +149,7 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = self._finalize_policy(ctx, raw_cfg)
             ref = artifact_ref(ctx=ctx, plan=plan, metadata=None)
 
@@ -165,23 +166,23 @@ class ArtifactCacheTest(unittest.TestCase):
             root = Path(tmp_dir)
             suite_root = root / "results" / "suite-a"
             suite_root.mkdir(parents=True, exist_ok=True)
-            outside = root / "elsewhere" / "policy.json"
+            outside = root / "elsewhere" / "taxonomy.json"
             outside.parent.mkdir(parents=True, exist_ok=True)
             outside.write_text("{}", encoding="utf-8")
 
             relative = _relative_to_suite(outside, suite_root)
             self.assertNotIn("\\", relative)
-            self.assertTrue(relative.startswith("../") or relative.endswith("policy.json"))
+            self.assertTrue(relative.startswith("../") or relative.endswith("taxonomy.json"))
 
     def test_activate_latest_recovers_when_referenced_artifact_dir_is_missing(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             v0001_plan = self._finalize_policy(ctx, raw_cfg)
 
             changed_ctx = self._ctx(root)
-            changed_ctx["concept"] = "Changed concept text."
+            changed_ctx["behavior"] = "Changed behavior text."
             v0002_plan = self._finalize_policy(changed_ctx, raw_cfg)
 
             # latest.json now points at v0002. Wipe v0002 to simulate a stale pointer.
@@ -191,7 +192,7 @@ class ArtifactCacheTest(unittest.TestCase):
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
 
-            recovered = recovery_ctx.get("artifact_versions", {}).get("policy")
+            recovered = recovery_ctx.get("artifact_versions", {}).get("systematize")
             self.assertIsNotNone(recovered)
             self.assertEqual(recovered["version"], v0001_plan.version)
 
@@ -199,15 +200,15 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             self._finalize_policy(ctx, raw_cfg)
 
             import shutil
-            shutil.rmtree(Path(ctx["suite_root"]) / "artifacts" / "policy")
+            shutil.rmtree(Path(ctx["suite_root"]) / "artifacts" / "systematize")
 
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
-            self.assertNotIn("policy", recovery_ctx.get("artifact_versions", {}))
+            self.assertNotIn("systematize", recovery_ctx.get("artifact_versions", {}))
 
     def test_activate_latest_rebuilds_ref_when_recorded_paths_are_stale(self) -> None:
         """Regression for Copilot review #001 (round 2).
@@ -225,21 +226,21 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = self._finalize_policy(ctx, raw_cfg)
 
             suite_root = Path(ctx["suite_root"])
             latest_path = suite_root / "latest.json"
             latest = _json.loads(latest_path.read_text(encoding="utf-8"))
-            policy_ref = latest["artifacts"]["policy"]
-            policy_ref["artifact_dir"] = "artifacts/policy/MISSING"
-            policy_ref["metadata_path"] = "artifacts/policy/MISSING/artifact.json"
+            policy_ref = latest["artifacts"]["systematize"]
+            policy_ref["artifact_dir"] = "artifacts/systematize/MISSING"
+            policy_ref["metadata_path"] = "artifacts/systematize/MISSING/artifact.json"
             latest_path.write_text(_json.dumps(latest), encoding="utf-8")
 
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
 
-            recovered = recovery_ctx.get("artifact_versions", {}).get("policy")
+            recovered = recovery_ctx.get("artifact_versions", {}).get("systematize")
             self.assertIsNotNone(recovered)
             self.assertEqual(recovered["version"], plan.version)
             self.assertNotIn("MISSING", recovered.get("artifact_dir", ""))
@@ -247,7 +248,7 @@ class ArtifactCacheTest(unittest.TestCase):
             # The corrected ref must also be persisted to latest.json so the
             # next run does not have to re-recover.
             persisted = _json.loads(latest_path.read_text(encoding="utf-8"))
-            persisted_ref = persisted["artifacts"]["policy"]
+            persisted_ref = persisted["artifacts"]["systematize"]
             self.assertNotIn("MISSING", persisted_ref.get("artifact_dir", ""))
             self.assertNotIn("MISSING", persisted_ref.get("metadata_path", ""))
 
@@ -256,7 +257,7 @@ class ArtifactCacheTest(unittest.TestCase):
 
         ``_metadata_output_paths`` previously returned only the keys explicitly
         listed in ``metadata['files']``. If the primary output key (e.g.
-        ``"policy"``) was missing from a corrupt or legacy metadata file,
+        ``"taxonomy"``) was missing from a corrupt or legacy metadata file,
         ``activate_latest_artifacts`` would raise ``KeyError`` while indexing
         ``output_paths[next(iter(_OUTPUT_FILES[stage_name]))]``. The merged
         path map must always include every expected key so recovery never
@@ -268,7 +269,7 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = self._finalize_policy(ctx, raw_cfg)
 
             metadata_path = plan.artifact_dir / "artifact.json"
@@ -276,17 +277,17 @@ class ArtifactCacheTest(unittest.TestCase):
             metadata["files"] = {
                 key: value
                 for key, value in metadata.get("files", {}).items()
-                if key != "policy"
+                if key != "taxonomy"
             }
             metadata_path.write_text(_json.dumps(metadata), encoding="utf-8")
 
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
 
-            recovered = recovery_ctx.get("artifact_versions", {}).get("policy")
+            recovered = recovery_ctx.get("artifact_versions", {}).get("systematize")
             self.assertIsNotNone(recovered)
             self.assertEqual(recovered["version"], plan.version)
-            self.assertTrue(Path(recovery_ctx["policy_path"]).exists())
+            self.assertTrue(Path(recovery_ctx["taxonomy_path"]).exists())
 
     def test_activate_latest_skips_when_canonical_primary_output_missing(self) -> None:
         """Regression for Copilot review (round 4).
@@ -302,7 +303,7 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = self._finalize_policy(ctx, raw_cfg)
 
             metadata_path = plan.artifact_dir / "artifact.json"
@@ -310,15 +311,15 @@ class ArtifactCacheTest(unittest.TestCase):
             metadata["files"] = {
                 key: value
                 for key, value in metadata.get("files", {}).items()
-                if key != "policy"
+                if key != "taxonomy"
             }
             metadata_path.write_text(_json.dumps(metadata), encoding="utf-8")
-            (plan.artifact_dir / "policy.json").unlink()
+            (plan.artifact_dir / "taxonomy.json").unlink()
 
             recovery_ctx = self._ctx(root)
             activate_latest_artifacts(recovery_ctx)
 
-            self.assertNotIn("policy", recovery_ctx.get("artifact_versions", {}))
+            self.assertNotIn("systematize", recovery_ctx.get("artifact_versions", {}))
 
     def test_load_json_object_ignores_corrupt_json_gracefully(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -338,9 +339,9 @@ class ArtifactCacheTest(unittest.TestCase):
             suite_root.mkdir()
             self.assertIsNone(_resolve_ref_path(suite_root, "../../etc/passwd"))
             self.assertIsNone(_resolve_ref_path(suite_root, "artifacts/../../escape"))
-            inside = _resolve_ref_path(suite_root, "artifacts/policy/v0001/policy.json")
+            inside = _resolve_ref_path(suite_root, "artifacts/systematize/v0001/taxonomy.json")
             assert inside is not None
-            self.assertEqual(inside, suite_root / "artifacts" / "policy" / "v0001" / "policy.json")
+            self.assertEqual(inside, suite_root / "artifacts" / "systematize" / "v0001" / "taxonomy.json")
 
     def test_override_cacheable_output_paths_redirects_user_save_dir(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -348,17 +349,17 @@ class ArtifactCacheTest(unittest.TestCase):
             ctx = self._ctx(root)
             raw_cfg = {
                 "model": {"name": "azure/gpt-5.4"},
-                "behavior_count": 2,
+                "behavior_category_count": 2,
                 "save_dir": "user/elsewhere",
             }
             plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, plan)
-            overridden = override_cacheable_output_paths("policy", raw_cfg, plan)
+            overridden = override_cacheable_output_paths("systematize", raw_cfg, plan)
 
             self.assertNotEqual(overridden["save_dir"], "user/elsewhere")
             self.assertEqual(Path(overridden["save_dir"]), plan.artifact_dir)
@@ -370,33 +371,22 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            self._finalize_policy(ctx, {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2})
-            design_plan = prepare_artifact_plan(
-                ctx=ctx,
-                stage_name="design",
-                raw_cfg={"model": {"name": "azure/gpt-5.4"}, "level_count": 3},
-                forced=False,
-            )
-            activate_artifact_plan(ctx, design_plan)
-            design_plan.output_paths["design"].parent.mkdir(parents=True, exist_ok=True)
-            design_plan.output_paths["design"].write_text("{}", encoding="utf-8")
-            finalize_artifact_plan(ctx, design_plan)
-
+            self._finalize_policy(ctx, {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2})
             seeds_cfg = {
                 "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1},
-                "save_path": "user/elsewhere/seeds.jsonl",
+                "save_path": "user/elsewhere/test_set.jsonl",
             }
             seeds_plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="seeds",
+                stage_name="test_set",
                 raw_cfg=seeds_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, seeds_plan)
-            overridden = override_cacheable_output_paths("seeds", seeds_cfg, seeds_plan)
+            overridden = override_cacheable_output_paths("test_set", seeds_cfg, seeds_plan)
 
-            self.assertEqual(Path(overridden["save_path"]), seeds_plan.output_paths["seeds"])
-            self.assertEqual(seeds_cfg["save_path"], "user/elsewhere/seeds.jsonl")
+            self.assertEqual(Path(overridden["save_path"]), seeds_plan.output_paths["test_set"])
+            self.assertEqual(seeds_cfg["save_path"], "user/elsewhere/test_set.jsonl")
 
     def test_override_cacheable_output_paths_returns_input_for_unknown_stage(self) -> None:
         raw_cfg = {"foo": "bar"}
@@ -437,24 +427,24 @@ class ArtifactCacheTest(unittest.TestCase):
             ctx = self._ctx(root)
             raw_cfg = {
                 "model": {"name": "azure/gpt-5.4"},
-                "behavior_count": 2,
+                "behavior_category_count": 2,
                 "save_dir": "/home/user/my_runs/foo",
             }
             plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, plan)
 
             with self.assertLogs("p2m.core.artifact_cache", level="WARNING") as cm:
-                override_cacheable_output_paths("policy", raw_cfg, plan)
+                override_cacheable_output_paths("systematize", raw_cfg, plan)
 
             joined = "\n".join(cm.output)
             self.assertIn("save_dir", joined)
             self.assertIn("/home/user/my_runs/foo", joined)
-            self.assertIn("policy", joined)
+            self.assertIn("systematize", joined)
 
     def test_override_cacheable_output_paths_silent_when_no_user_value(
         self,
@@ -465,10 +455,10 @@ class ArtifactCacheTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -479,7 +469,7 @@ class ArtifactCacheTest(unittest.TestCase):
             logger.setLevel(logging.WARNING)
             try:
                 with self.assertNoLogs("p2m.core.artifact_cache", level="WARNING"):
-                    override_cacheable_output_paths("policy", raw_cfg, plan)
+                    override_cacheable_output_paths("systematize", raw_cfg, plan)
             finally:
                 logger.setLevel(previous_level)
 
@@ -503,8 +493,8 @@ class DiscardArtifactPlanTest(unittest.TestCase):
             "config_path": config_path,
             "artifacts_root": root / "artifacts",
             "suite_root": suite_root,
-            "concept_name": "travel_planner_eval",
-            "concept": "Travel planner must produce grounded itineraries.",
+            "behavior_name": "travel_planner_eval",
+            "behavior": "Travel planner must produce grounded itineraries.",
             "context": "Travel planner with flight and hotel tools.",
             "artifact_versions": {},
         }
@@ -513,26 +503,26 @@ class DiscardArtifactPlanTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, plan)
             plan.artifact_dir.mkdir(parents=True, exist_ok=True)
-            (plan.artifact_dir / "policy.json").write_text(
-                '{"behaviors":["partial"]}', encoding="utf-8"
+            (plan.artifact_dir / "taxonomy.json").write_text(
+                '{"behavior_categories":["partial"]}', encoding="utf-8"
             )
 
             self.assertTrue(plan.artifact_dir.exists())
-            self.assertIn("policy", ctx.get("artifact_versions", {}))
+            self.assertIn("systematize", ctx.get("artifact_versions", {}))
 
             discard_artifact_plan(ctx, plan)
 
             self.assertFalse(plan.artifact_dir.exists())
-            self.assertNotIn("policy", ctx.get("artifact_versions", {}))
+            self.assertNotIn("systematize", ctx.get("artifact_versions", {}))
 
     def test_discard_handles_missing_directory_silently(self) -> None:
         """A sibling cleanup or external rmtree between prepare and discard
@@ -546,10 +536,10 @@ class DiscardArtifactPlanTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
             plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -560,7 +550,7 @@ class DiscardArtifactPlanTest(unittest.TestCase):
             self.assertFalse(plan.artifact_dir.exists())
 
             discard_artifact_plan(ctx, plan)
-            self.assertNotIn("policy", ctx.get("artifact_versions", {}))
+            self.assertNotIn("systematize", ctx.get("artifact_versions", {}))
 
     def test_discard_leaves_reused_plan_untouched(self) -> None:
         """A reused plan points at a healthy on-disk artifact predating this
@@ -569,18 +559,18 @@ class DiscardArtifactPlanTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
 
             first_plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, first_plan)
-            first_plan.output_paths["policy"].parent.mkdir(parents=True, exist_ok=True)
-            first_plan.output_paths["policy"].write_text(
-                '{"behaviors":[]}', encoding="utf-8"
+            first_plan.output_paths["taxonomy"].parent.mkdir(parents=True, exist_ok=True)
+            first_plan.output_paths["taxonomy"].write_text(
+                '{"behavior_categories":[]}', encoding="utf-8"
             )
             first_plan.output_paths["systematization"].write_text(
                 "{}", encoding="utf-8"
@@ -590,7 +580,7 @@ class DiscardArtifactPlanTest(unittest.TestCase):
             reused_ctx = self._ctx(root)
             reused_plan = prepare_artifact_plan(
                 ctx=reused_ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
@@ -617,18 +607,18 @@ class DiscardArtifactPlanTest(unittest.TestCase):
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             ctx = self._ctx(root)
-            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_count": 2}
+            raw_cfg = {"model": {"name": "azure/gpt-5.4"}, "behavior_category_count": 2}
 
             first_plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
+                stage_name="systematize",
                 raw_cfg=raw_cfg,
                 forced=False,
             )
             activate_artifact_plan(ctx, first_plan)
             first_plan.artifact_dir.mkdir(parents=True, exist_ok=True)
-            (first_plan.artifact_dir / "policy.json").write_text(
-                '{"behaviors":["partial"]}', encoding="utf-8"
+            (first_plan.artifact_dir / "taxonomy.json").write_text(
+                '{"behavior_categories":["partial"]}', encoding="utf-8"
             )
             self.assertEqual(first_plan.version, "v0001")
 
@@ -636,8 +626,8 @@ class DiscardArtifactPlanTest(unittest.TestCase):
 
             retry_plan = prepare_artifact_plan(
                 ctx=ctx,
-                stage_name="policy",
-                raw_cfg={**raw_cfg, "behavior_count": 5},
+                stage_name="systematize",
+                raw_cfg={**raw_cfg, "behavior_category_count": 5},
                 forced=False,
             )
             self.assertEqual(retry_plan.version, "v0001")
@@ -655,7 +645,7 @@ class AllocateVersionDirTest(unittest.TestCase):
 
     def test_allocates_v0001_on_empty_stage_root(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            stage_root = Path(tmp_dir) / "policy"
+            stage_root = Path(tmp_dir) / "systematize"
             version, artifact_dir = _allocate_version_dir(stage_root)
             self.assertEqual(version, "v0001")
             self.assertEqual(artifact_dir, stage_root / "v0001")
@@ -663,7 +653,7 @@ class AllocateVersionDirTest(unittest.TestCase):
 
     def test_allocates_after_existing_versions(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            stage_root = Path(tmp_dir) / "policy"
+            stage_root = Path(tmp_dir) / "systematize"
             stage_root.mkdir(parents=True)
             (stage_root / "v0001").mkdir()
             (stage_root / "v0002").mkdir()
@@ -680,7 +670,7 @@ class AllocateVersionDirTest(unittest.TestCase):
         from p2m.core import artifact_cache
 
         with TemporaryDirectory() as tmp_dir:
-            stage_root = Path(tmp_dir) / "policy"
+            stage_root = Path(tmp_dir) / "systematize"
             stage_root.mkdir(parents=True)
 
             scan_calls = {"n": 0}
@@ -714,7 +704,7 @@ class AllocateVersionDirTest(unittest.TestCase):
         from p2m.core import artifact_cache
 
         with TemporaryDirectory() as tmp_dir:
-            stage_root = Path(tmp_dir) / "policy"
+            stage_root = Path(tmp_dir) / "systematize"
             stage_root.mkdir(parents=True)
 
             real_mkdir = Path.mkdir
@@ -741,7 +731,7 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
     """Suite-root copies must preserve user edits.
 
     ``refresh_compatibility_files`` runs on every reuse, finalize, and
-    activate-latest path. If a user hand-edits ``<suite>/policy.json``
+    activate-latest path. If a user hand-edits ``<suite>/taxonomy.json``
     between runs, the next cache hit must not silently destroy those edits.
     The implementation hashes the destination and only overwrites when
     either (a) it matches the source, or (b) it matches a previously cached
@@ -795,15 +785,15 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             suite_root = ctx["suite_root"]
             version_dir = self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0001",
-                {"policy": ("policy.json", '{"a":1}')},
+                {"taxonomy": ("taxonomy.json", '{"a":1}')},
             )
 
-            output_paths = {"policy": version_dir / "policy.json"}
-            refresh_compatibility_files(ctx, "policy", output_paths)
+            output_paths = {"taxonomy": version_dir / "taxonomy.json"}
+            refresh_compatibility_files(ctx, "systematize", output_paths)
 
-            dest = suite_root / "policy.json"
+            dest = suite_root / "taxonomy.json"
             self.assertTrue(dest.exists())
             self.assertEqual(dest.read_text(encoding="utf-8"), '{"a":1}')
 
@@ -814,15 +804,15 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             suite_root = ctx["suite_root"]
             version_dir = self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0001",
-                {"policy": ("policy.json", '{"identical":true}')},
+                {"taxonomy": ("taxonomy.json", '{"identical":true}')},
             )
-            (suite_root / "policy.json").write_text(
+            (suite_root / "taxonomy.json").write_text(
                 '{"identical":true}', encoding="utf-8"
             )
 
-            output_paths = {"policy": version_dir / "policy.json"}
+            output_paths = {"taxonomy": version_dir / "taxonomy.json"}
             logger = logging.getLogger("p2m.core.artifact_cache")
             previous_level = logger.level
             logger.setLevel(logging.WARNING)
@@ -830,18 +820,18 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
                 with self.assertNoLogs(
                     "p2m.core.artifact_cache", level="WARNING"
                 ):
-                    refresh_compatibility_files(ctx, "policy", output_paths)
+                    refresh_compatibility_files(ctx, "systematize", output_paths)
             finally:
                 logger.setLevel(previous_level)
 
             self.assertEqual(
-                (suite_root / "policy.json").read_text(encoding="utf-8"),
+                (suite_root / "taxonomy.json").read_text(encoding="utf-8"),
                 '{"identical":true}',
             )
 
     def test_preserves_user_edits_and_warns(self) -> None:
         """Regression for the silent-overwrite footgun: a user who hand-edits
-        ``<suite>/policy.json`` between runs must see their edit preserved
+        ``<suite>/taxonomy.json`` between runs must see their edit preserved
         and a warning explaining what just happened."""
 
         with TemporaryDirectory() as tmp_dir:
@@ -850,33 +840,33 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             suite_root = ctx["suite_root"]
             version_dir = self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0001",
-                {"policy": ("policy.json", '{"cached":true}')},
+                {"taxonomy": ("taxonomy.json", '{"cached":true}')},
             )
             user_edit = '{"user":"manually edited this between runs"}'
-            (suite_root / "policy.json").write_text(user_edit, encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text(user_edit, encoding="utf-8")
 
-            output_paths = {"policy": version_dir / "policy.json"}
+            output_paths = {"taxonomy": version_dir / "taxonomy.json"}
             with self.assertLogs(
                 "p2m.core.artifact_cache", level="WARNING"
             ) as captured:
-                refresh_compatibility_files(ctx, "policy", output_paths)
+                refresh_compatibility_files(ctx, "systematize", output_paths)
 
             # User's edit preserved on disk.
             self.assertEqual(
-                (suite_root / "policy.json").read_text(encoding="utf-8"),
+                (suite_root / "taxonomy.json").read_text(encoding="utf-8"),
                 user_edit,
             )
             joined = "\n".join(captured.output)
             self.assertIn("Preserving local edits", joined)
-            self.assertIn("policy.json", joined)
+            self.assertIn("taxonomy.json", joined)
             self.assertIn("--force-stage", joined)
 
     def test_overwrites_when_destination_matches_prior_cached_version(
         self,
     ) -> None:
-        """``--force-stage policy`` regenerates a fresh ``v0002``. The
+        """``--force-stage systematize`` regenerates a fresh ``v0002``. The
         suite-root copy still holds ``v0001`` content (user did not edit it),
         so ``refresh_compatibility_files`` must overwrite it with ``v0002``
         rather than warn-and-skip — the destination matches a cached version,
@@ -888,21 +878,21 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             suite_root = ctx["suite_root"]
             self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0001",
-                {"policy": ("policy.json", '{"v":1}')},
+                {"taxonomy": ("taxonomy.json", '{"v":1}')},
             )
             v0002 = self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0002",
-                {"policy": ("policy.json", '{"v":2}')},
+                {"taxonomy": ("taxonomy.json", '{"v":2}')},
             )
             # Suite-root copy still holds the v0001 payload byte-for-byte
             # (no user edit happened between v0001 finalize and v0002).
-            (suite_root / "policy.json").write_text('{"v":1}', encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text('{"v":1}', encoding="utf-8")
 
-            output_paths = {"policy": v0002 / "policy.json"}
+            output_paths = {"taxonomy": v0002 / "taxonomy.json"}
             logger = logging.getLogger("p2m.core.artifact_cache")
             previous_level = logger.level
             logger.setLevel(logging.WARNING)
@@ -910,12 +900,12 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
                 with self.assertNoLogs(
                     "p2m.core.artifact_cache", level="WARNING"
                 ):
-                    refresh_compatibility_files(ctx, "policy", output_paths)
+                    refresh_compatibility_files(ctx, "systematize", output_paths)
             finally:
                 logger.setLevel(previous_level)
 
             self.assertEqual(
-                (suite_root / "policy.json").read_text(encoding="utf-8"),
+                (suite_root / "taxonomy.json").read_text(encoding="utf-8"),
                 '{"v":2}',
             )
 
@@ -929,33 +919,33 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             suite_root = ctx["suite_root"]
             version_dir = self._seed_cached_version(
                 suite_root,
-                "policy",
+                "systematize",
                 "v0001",
                 {
-                    "policy": ("policy.json", '{"cached":true}'),
+                    "taxonomy": ("taxonomy.json", '{"cached":true}'),
                     "systematization": (
                         "systematization.json",
                         '{"cached":"sys"}',
                     ),
                 },
             )
-            # User edits policy.json but leaves systematization.json alone.
-            (suite_root / "policy.json").write_text(
+            # User edits taxonomy.json but leaves systematization.json alone.
+            (suite_root / "taxonomy.json").write_text(
                 '{"user":"edit"}', encoding="utf-8"
             )
 
             output_paths = {
-                "policy": version_dir / "policy.json",
+                "taxonomy": version_dir / "taxonomy.json",
                 "systematization": version_dir / "systematization.json",
             }
             with self.assertLogs(
                 "p2m.core.artifact_cache", level="WARNING"
             ) as captured:
-                refresh_compatibility_files(ctx, "policy", output_paths)
+                refresh_compatibility_files(ctx, "systematize", output_paths)
 
-            # User edit on policy.json preserved.
+            # User edit on taxonomy.json preserved.
             self.assertEqual(
-                (suite_root / "policy.json").read_text(encoding="utf-8"),
+                (suite_root / "taxonomy.json").read_text(encoding="utf-8"),
                 '{"user":"edit"}',
             )
             # systematization.json was missing → copied unconditionally.
@@ -963,11 +953,12 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
                 (suite_root / "systematization.json").read_text(encoding="utf-8"),
                 '{"cached":"sys"}',
             )
-            # Exactly one warning, scoped to policy.json.
+            # Exactly one warning, scoped to taxonomy.json.
             joined = "\n".join(captured.output)
-            self.assertIn("policy.json", joined)
+            self.assertIn("taxonomy.json", joined)
             self.assertNotIn("systematization.json", joined)
 
 
 if __name__ == "__main__":
     unittest.main()
+

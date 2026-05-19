@@ -62,11 +62,11 @@ p2m results status travel-planner-langgraph-v1 demo-1
 
 What the quickstart does:
 
-| Step | Developer concept | Current YAML / artifact |
+| Step | Developer behavior | Current YAML / artifact |
 |---|---|---|
-| 1 | **Eval spec**: plain-English behavior requirements | `concept.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
-| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.policy` writes `policy.json` |
-| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.seeds` writes `seeds.jsonl` |
+| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
+| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
+| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
 | 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + `target.trace` write `transcripts.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
@@ -81,11 +81,11 @@ your eval spec (.md)
 behavior categories  ->  test cases + variations  ->  execute target  ->  judge
         |                         |                         |              |
         v                         v                         v              v
-   policy.json                seeds.jsonl          transcripts.jsonl   scores.jsonl
+   taxonomy.json                test_set.jsonl          transcripts.jsonl   scores.jsonl
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
+Today the YAML still uses implementation names such as `behavior`, `dimensions`, `taxonomy`, `test_set`, and `rollout`. The docs use the developer-facing behaviors - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each behavior appears. See [`docs/behaviors.md`](docs/behaviors.md) for the bridge.
 
 ## Choose your target
 
@@ -117,8 +117,8 @@ Every run writes a self-contained directory under `artifacts/results/<suite>/<ru
 ```text
 artifacts/results/<suite>/
 ├── suite.json
-├── policy.json
-├── seeds.jsonl
+├── taxonomy.json
+├── test_set.jsonl
 └── <run>/
     ├── manifest.json
     ├── config.yaml
@@ -129,8 +129,8 @@ artifacts/results/<suite>/
 
 These artifacts are portable and inspectable:
 
-- `policy.json` - generated behavior taxonomy from your spec.
-- `seeds.jsonl` - generated prompts and scenarios.
+- `taxonomy.json` - generated behavior taxonomy from your spec.
+- `test_set.jsonl` - generated prompts and scenarios.
 - `transcripts.jsonl` - target conversations and trace references.
 - `scores.jsonl` - per-conversation verdicts with reasoning and evidence.
 - `metrics.json` - aggregate rates by judge dimension and behavior category.
@@ -139,7 +139,7 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 
 ## Documentation map
 
-- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
+- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/behaviors.md`](docs/behaviors.md)
 - **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)

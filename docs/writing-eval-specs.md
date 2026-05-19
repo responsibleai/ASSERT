@@ -1,6 +1,6 @@
 # Writing Eval Specs
 
-An eval spec is a short markdown file that describes the behaviors you want to measure.
+An eval spec is a short markdown file that describes the behavior_categories you want to measure.
 
 Good specs are:
 
@@ -53,10 +53,10 @@ context: |
 
 ## Add variations for coverage
 
-Use `factors` when you care about systematic coverage across user types, scenarios, products, or constraints.
+Use `dimensions` when you care about systematic coverage across user types, scenarios, products, or constraints.
 
 ```yaml
-factors:
+dimensions:
   - name: traveler_type
     description: Type of traveler using the planner.
   - name: trip_type

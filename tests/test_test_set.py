@@ -14,7 +14,7 @@ from p2m.stages.design import (
     build_behavior_factor,
     normalize_design,
 )
-from p2m.stages.seeds import (
+from p2m.stages.test_set import (
     build_covering_array,
     build_generation_jobs,
     build_generation_prompt,
@@ -26,18 +26,18 @@ FACTOR_NAMES = ("domain", "user_context")
 
 
 def _make_policy(
-    behaviors: list[tuple[str, str, bool]] | None = None,
+    behavior_categories: list[tuple[str, str, bool]] | None = None,
 ) -> dict[str, object]:
-    if behaviors is None:
-        behaviors = [
+    if behavior_categories is None:
+        behavior_categories = [
             ("Behavior A", "Definition of A", True),
             ("Behavior B", "Definition of B", False),
         ]
     return {
-        "concept": {"name": "test-concept"},
-        "behaviors": [
+        "behavior": {"name": "test-behavior"},
+        "behavior_categories": [
             {"name": name, "definition": definition, "permissible": permissible}
-            for name, definition, permissible in behaviors
+            for name, definition, permissible in behavior_categories
         ],
     }
 
@@ -101,14 +101,14 @@ class NormalizeDesignTest(unittest.TestCase):
             "behavior": [
                 {
                     "name": "Behavior A",
-                    "description": "A refined definition that differs from policy",
+                    "description": "A refined definition that differs from taxonomy",
                 },
             ],
         }
         design = normalize_design(raw_design, _make_policy())
         self.assertEqual(
             design["behavior"][0]["description"],
-            "A refined definition that differs from policy",
+            "A refined definition that differs from taxonomy",
         )
 
     def test_normalize_design_rejects_factor_mismatch_against_configured_order(self) -> None:
@@ -128,30 +128,30 @@ class NormalizeDesignTest(unittest.TestCase):
 
 class BuildGenerationJobsDisentangledTest(unittest.TestCase):
     def test_custom_behavior_without_policy_entry_produces_jobs(self) -> None:
-        policy = _make_policy()
+        taxonomy = _make_policy()
         raw_design = {
             "behavior": [
                 {
                     "name": "custom_probe",
-                    "description": "A custom probe not in policy",
+                    "description": "A custom probe not in taxonomy",
                 },
             ],
             **_make_factor_design(2),
         }
-        design = normalize_design(raw_design, policy)
+        design = normalize_design(raw_design, taxonomy)
         jobs, _ = build_generation_jobs(
-            policy=policy, design=design, sample_size=4, rng=random.Random(0),
+            taxonomy=taxonomy, design=design, sample_size=4, rng=random.Random(0),
         )
         self.assertTrue(jobs)
         for job in jobs:
             self.assertEqual(job.behavior["name"], "custom_probe")
             self.assertEqual(
                 job.behavior["description"],
-                "A custom probe not in policy",
+                "A custom probe not in taxonomy",
             )
 
     def test_renamed_description_is_used_verbatim(self) -> None:
-        policy = _make_policy(behaviors=[("Behavior A", "policy definition", True)])
+        taxonomy = _make_policy(behavior_categories=[("Behavior A", "taxonomy definition", True)])
         raw_design = {
             "behavior": [
                 {
@@ -161,9 +161,9 @@ class BuildGenerationJobsDisentangledTest(unittest.TestCase):
             ],
             **_make_factor_design(2),
         }
-        design = normalize_design(raw_design, policy)
+        design = normalize_design(raw_design, taxonomy)
         jobs, _ = build_generation_jobs(
-            policy=policy, design=design, sample_size=2, rng=random.Random(0),
+            taxonomy=taxonomy, design=design, sample_size=2, rng=random.Random(0),
         )
         self.assertEqual(
             jobs[0].behavior["description"],
@@ -229,12 +229,12 @@ class LabelerRetestAgreementTest(unittest.TestCase):
         design = _make_design_with_behavior(2)
         factor_order = tuple(key for key in design if not key.startswith("_"))
         labels_a = [
-            {"seed_id": "s1", **{key: design[key][0]["name"] for key in factor_order}},
-            {"seed_id": "s2", **{key: design[key][0]["name"] for key in factor_order}},
+            {"test_case_id": "s1", **{key: design[key][0]["name"] for key in factor_order}},
+            {"test_case_id": "s2", **{key: design[key][0]["name"] for key in factor_order}},
         ]
         labels_b = [
-            {"seed_id": "s1", **{key: design[key][0]["name"] for key in factor_order}},
-            {"seed_id": "s2", **{key: design[key][1]["name"] for key in factor_order}},
+            {"test_case_id": "s1", **{key: design[key][0]["name"] for key in factor_order}},
+            {"test_case_id": "s2", **{key: design[key][1]["name"] for key in factor_order}},
         ]
         result = labeler_retest_agreement(labels_a, labels_b, design)
         for factor_name in factor_order:
@@ -245,42 +245,42 @@ class SeedRecordTest(unittest.TestCase):
     def test_seed_record_tags_prompt_kind(self) -> None:
         record = seed_record(
             kind="prompt",
-            seed_id="ps-001",
-            concept="test-concept",
+            test_case_id="ps-001",
+            behavior="test-behavior",
             seed_payload={"title": "t", "description": "d"},
         )
-        self.assertEqual(record["kind"], "prompt")
-        self.assertEqual(record["seed_id"], "ps-001")
+        self.assertEqual(record["type"], "prompt")
+        self.assertEqual(record["test_case_id"], "ps-001")
         self.assertNotIn("permissible", record)
 
     def test_seed_record_omits_empty_factors(self) -> None:
         record = seed_record(
             kind="prompt",
-            seed_id="ps-001",
-            concept="test-concept",
+            test_case_id="ps-001",
+            behavior="test-behavior",
             seed_payload={"title": "t", "description": "d"},
-            factors={},
+            dimensions={},
         )
-        self.assertNotIn("factors", record)
+        self.assertNotIn("dimensions", record)
 
     def test_seed_record_persists_factors(self) -> None:
         record = seed_record(
             kind="prompt",
-            seed_id="ps-001",
-            concept="test-concept",
+            test_case_id="ps-001",
+            behavior="test-behavior",
             seed_payload={"title": "t", "description": "d"},
-            factors={"domain": "domain 0"},
+            dimensions={"domain": "domain 0"},
         )
-        self.assertEqual(record["factors"], {"domain": "domain 0"})
+        self.assertEqual(record["dimensions"], {"domain": "domain 0"})
 
 
 class BuildGenerationPromptTest(unittest.TestCase):
     def _make_args(self, **overrides: object) -> dict[str, object]:
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(3)
         defaults = {
             "kind": "prompt",
-            "policy": policy,
+            "taxonomy": taxonomy,
             "behavior": design["behavior"][0],
             "count": 4,
             "context": None,
@@ -299,14 +299,14 @@ class BuildGenerationPromptTest(unittest.TestCase):
         self.assertIn("Exact Design Assignment", prompt)
         self.assertIn("Behavior A", prompt)
 
-    def test_build_generation_prompt_injects_policy_body(self) -> None:
-        policy = _make_policy(behaviors=[("Behavior A", "A-specific definition", True)])
+    def test_build_generation_prompt_injects_taxonomy_body(self) -> None:
+        taxonomy = _make_policy(behavior_categories=[("Behavior A", "A-specific definition", True)])
         design = _make_design_with_behavior(3)
-        # Override the behavior level so it matches the policy.
+        # Override the behavior level so it matches the taxonomy.
         design["behavior"] = [{"name": "Behavior A", "description": "A-specific definition"}]
         args = {
             "kind": "scenario",
-            "policy": policy,
+            "taxonomy": taxonomy,
             "behavior": design["behavior"][0],
             "count": 2,
             "context": None,
@@ -318,25 +318,25 @@ class BuildGenerationPromptTest(unittest.TestCase):
             },
         }
         prompt = build_generation_prompt(**args)
-        self.assertIn("Policy context", prompt)
+        self.assertIn("Taxonomy context", prompt)
         self.assertIn("A-specific definition", prompt)
-        self.assertNotIn("{{policy_body}}", prompt)
+        self.assertNotIn("{{taxonomy_body}}", prompt)
         self.assertNotIn("permissible_status", prompt)
         self.assertNotIn("seed_strategy", prompt)
 
 
 class BuildGenerationJobsTest(unittest.TestCase):
     def test_generation_jobs_cover_behavior_subset(self) -> None:
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = normalize_design(
             {
                 "behavior": [{"name": "Behavior B", "description": "Definition of B"}],
                 **_make_factor_design(2),
             },
-            policy,
+            taxonomy,
         )
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=4,
             rng=random.Random(42),
@@ -346,10 +346,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
         self.assertEqual({row["behavior"] for row in assignments or []}, {"Behavior B"})
 
     def test_generation_jobs_always_include_behavior_in_assignments(self) -> None:
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+        taxonomy = _make_policy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_behavior=True)
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=6,
             rng=random.Random(42),
@@ -362,10 +362,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
         )
 
     def test_generation_jobs_with_behavior_only_design(self) -> None:
-        policy = _make_policy()
+        taxonomy = _make_policy()
         jobs, assignments = build_generation_jobs(
-            policy=policy,
-            design={"behavior": build_behavior_factor(policy)},
+            taxonomy=taxonomy,
+            design={"behavior": build_behavior_factor(taxonomy)},
             sample_size=3,
             rng=random.Random(0),
         )
@@ -377,10 +377,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
         MAX_SEEDS_PER_BATCH (here count == 1). Tuples whose count exceeds
         the cap are split into multiple jobs (covered by
         ``test_generation_jobs_split_when_per_tuple_count_exceeds_cap``)."""
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=len(build_covering_array(design, random.Random(42), axes=("behavior",) + FACTOR_NAMES)),
             rng=random.Random(42),
@@ -392,13 +392,13 @@ class BuildGenerationJobsTest(unittest.TestCase):
         """Budget spreads evenly with remainder going to first tuples.
         Counts here (2 or 3) all fit inside MAX_SEEDS_PER_BATCH so each
         tuple still produces exactly one job."""
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
         ca = build_covering_array(design, random.Random(42), axes=("behavior",) + FACTOR_NAMES)
         num_tuples = len(ca)
         sample_size = num_tuples * 2 + 3
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -411,11 +411,11 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_sample_size_smaller_than_array(self) -> None:
         """When sample_size < covering array, some tuples get 0 and are skipped."""
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
         sample_size = 3
         jobs, assignments = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -426,10 +426,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_start_index_contiguous(self) -> None:
         """start_index values are contiguous across all jobs."""
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+        taxonomy = _make_policy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_behavior=True)
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=10,
             rng=random.Random(42),
@@ -441,10 +441,10 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
     def test_generation_jobs_singular_tuple_spec(self) -> None:
         """Each job carries a singular tuple_spec dict, not a list."""
-        policy = _make_policy()
-        design = normalize_design(_make_factor_design(2), policy, inject_behavior=True)
+        taxonomy = _make_policy()
+        design = normalize_design(_make_factor_design(2), taxonomy, inject_behavior=True)
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=6,
             rng=random.Random(42),
@@ -459,9 +459,9 @@ class BuildGenerationJobsTest(unittest.TestCase):
         """When a covering-array tuple's budget exceeds MAX_SEEDS_PER_BATCH,
         the tuple produces multiple jobs whose counts are each ≤ the cap and
         whose start_index slots remain contiguous within the tuple."""
-        from p2m.stages.seeds import MAX_SEEDS_PER_BATCH
+        from p2m.stages.test_set import MAX_SEEDS_PER_BATCH
 
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
         ca = build_covering_array(
             design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
@@ -470,7 +470,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
         per_tuple = MAX_SEEDS_PER_BATCH * 3 + 2
         sample_size = num_tuples * per_tuple
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -492,9 +492,9 @@ class BuildGenerationJobsTest(unittest.TestCase):
     def test_generation_jobs_no_split_when_count_within_cap(self) -> None:
         """When per-tuple count fits inside MAX_SEEDS_PER_BATCH, each tuple
         still produces exactly one job (covers the small-batch case)."""
-        from p2m.stages.seeds import MAX_SEEDS_PER_BATCH
+        from p2m.stages.test_set import MAX_SEEDS_PER_BATCH
 
-        policy = _make_policy()
+        taxonomy = _make_policy()
         design = _make_design_with_behavior(2)
         ca = build_covering_array(
             design, random.Random(42), axes=("behavior",) + FACTOR_NAMES
@@ -502,7 +502,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
         num_tuples = len(ca)
         sample_size = num_tuples * MAX_SEEDS_PER_BATCH
         jobs, _ = build_generation_jobs(
-            policy=policy,
+            taxonomy=taxonomy,
             design=design,
             sample_size=sample_size,
             rng=random.Random(42),
@@ -512,20 +512,20 @@ class BuildGenerationJobsTest(unittest.TestCase):
 
 
 class BuildPolicyNodeFactorTest(unittest.TestCase):
-    def test_build_behavior_factor_creates_entries_from_behaviors(self) -> None:
-        factor = build_behavior_factor(_make_policy())
+    def test_build_behavior_factor_creates_entries_from_behavior_categories(self) -> None:
+        dimension = build_behavior_factor(_make_policy())
         self.assertEqual(
-            [entry["name"] for entry in factor],
+            [entry["name"] for entry in dimension],
             ["Behavior A", "Behavior B"],
         )
 
     def test_build_behavior_factor_raises_on_missing_name(self) -> None:
         with self.assertRaises(ValueError):
-            build_behavior_factor({"behaviors": [{"name": "", "definition": "def"}]})
+            build_behavior_factor({"behavior_categories": [{"name": "", "definition": "def"}]})
 
     def test_build_behavior_factor_returns_name_and_description_only(self) -> None:
-        policy = {
-            "behaviors": [
+        taxonomy = {
+            "behavior_categories": [
                 {
                     "name": "B1",
                     "definition": "d1",
@@ -534,8 +534,8 @@ class BuildPolicyNodeFactorTest(unittest.TestCase):
                 },
             ],
         }
-        factor = build_behavior_factor(policy)
-        self.assertEqual(factor[0], {"name": "B1", "description": "d1"})
+        dimension = build_behavior_factor(taxonomy)
+        self.assertEqual(dimension[0], {"name": "B1", "description": "d1"})
 
 
 if __name__ == "__main__":

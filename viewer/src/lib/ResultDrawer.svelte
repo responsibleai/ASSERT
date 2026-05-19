@@ -162,10 +162,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level policy violation is flagged, but no policy node is marked violated';
+			return 'top-level taxonomy violation is flagged, but no taxonomy node is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a policy node is marked violated, but the top-level policy verdict is clear';
+			return 'a taxonomy node is marked violated, but the top-level taxonomy verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -790,9 +790,9 @@
 				{:else if judgeStatus(item) === 'unjudged'}
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
 				{/if}
-				{#if item.factors}
+				{#if item.dimensions}
 					<span class="flex flex-wrap items-center gap-1.5">
-						{#each Object.entries(item.factors) as [name, value]}
+						{#each Object.entries(item.dimensions) as [name, value]}
 							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
 								{formatFactorLabel(name)}: {value}
 							</span>
@@ -896,7 +896,7 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Node-level taxonomy findings and the top-level taxonomy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
 						</p>
 					</div>
 				{/if}
@@ -933,7 +933,7 @@
 							{/each}
 						</div>
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
-							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
+							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, taxonomy reasoning, and transcript highlights follow this verdict.
 						</p>
 					</div>
 				{/if}
@@ -978,9 +978,9 @@
 													<div class="min-w-0 flex-1">
 														<div
 															class="truncate text-xs font-semibold text-text"
-															title={nodeName ?? 'Unnamed policy node'}
+															title={nodeName ?? 'Unnamed taxonomy node'}
 														>
-															{nodeName ?? 'Unnamed policy node'}
+															{nodeName ?? 'Unnamed taxonomy node'}
 														</div>
 													</div>
 													<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">

@@ -8,7 +8,7 @@ Post-hoc analysis of pipeline results. Each module computes metrics from the JSO
 
 **rollout_metrics.py** — Rollout-stage health metrics from `transcripts.jsonl`. Stop-reason distribution, turn counts (mean/median/p95), completion rate, invalid-auditor-turn rate, per-behavior breakdowns.
 
-**stability.py** — Outcome stability across runs. Two analyses that must not be conflated: *repeatability* (same auditor, same seeds, different rollouts — measures rollout stochasticity) and *cross-auditor variation* (different auditors, same seeds — measures how much auditor choice affects results).
+**stability.py** — Outcome stability across runs. Two analyses that must not be conflated: *repeatability* (same auditor, same test_set, different rollouts — measures rollout stochasticity) and *cross-auditor variation* (different auditors, same test_set — measures how much auditor choice affects results).
 
 **suite_analysis.py** — Orchestrator that loads a suite directory, computes rollout, judge, and stability metrics for all runs, and formats a human-readable terminal summary. The summary is structured: comparison table → cross-auditor variation → repeatability → non-main runs → per-run behavior detail.
 
@@ -27,11 +27,11 @@ The `results` dict contains structured data for programmatic use. The `format_su
 
 The summary answers four questions about a suite of evaluation runs:
 
-1. **How often does the target violate policy?** Per-run violation rates with 90% Wilson CIs. Only behaviors with n≥5 are shown individually; sparse behaviors are collapsed.
+1. **How often does the target violate taxonomy?** Per-run violation rates with 90% Wilson CIs. Only behavior_categories with n≥5 are shown individually; sparse behavior_categories are collapsed.
 
-2. **How much does auditor choice matter?** Cross-auditor variation shows the spread in violation rates across different auditor models on the same seeds (main runs only).
+2. **How much does auditor choice matter?** Cross-auditor variation shows the spread in violation rates across different auditor models on the same test_set (main runs only).
 
-3. **How stable are results across reruns?** Repeatability shows what fraction of shared seeds produce the same outcome across runs of the same configuration. Agreement is computed on shared seeds only.
+3. **How stable are results across reruns?** Repeatability shows what fraction of shared test_set produce the same outcome across runs of the same configuration. Agreement is computed on shared test_set only.
 
 4. **Is the run data trustworthy?** Run quality flags (high/medium/low) surface invalid-auditor-turn rates, target errors, and judge failures.
 

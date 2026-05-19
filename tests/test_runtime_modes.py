@@ -13,9 +13,9 @@ from p2m.stages.rollout import _build_hosted_session as build_hosted_session
 
 class ConfigAndHandlerFoundationTest(unittest.TestCase):
     def test_parse_pipeline_config_rejects_old_target_fields_and_missing_target(self) -> None:
-        with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): kind"):
+        with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): type"):
             parse_pipeline_config(
-                {"pipeline": {"rollout": {"target": {"kind": "unknown", "model": {"name": "azure/gpt-5.4"}}}}},
+                {"pipeline": {"rollout": {"target": {"type": "unknown", "model": {"name": "azure/gpt-5.4"}}}}},
             )
 
         with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): toolset"):
@@ -128,7 +128,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                             "model": {"name": "azure/gpt-5.4"},
                             "tools": {"module": "examples.agents.health_assistant"},
                         },
-                        "seed_path": "examples/agents/health_assistant_tools.yaml",
+                        "test_set_path": "examples/agents/health_assistant_tools.yaml",
                     }
                 },
             },
@@ -392,12 +392,12 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         transcript = Transcript(
             metadata=TranscriptMetadata(
                 kind="prompt",
-                seed_id="s1",
-                concept="r",
+                test_case_id="s1",
+                behavior="r",
                 target="azure/o3",
                 auditor_model="",
                 target_reasoning_effort="high",
-                factors={"behavior": "sr"},
+                dimensions={"behavior": "sr"},
             ),
         )
         d = transcript.to_dict()
@@ -411,8 +411,8 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
     def test_transcript_metadata_defaults_missing_reasoning_fields_to_none(self) -> None:
         from p2m.core.transcript import _metadata_from_dict
         old_data = {
-            "kind": "prompt", "seed_id": "s1", "concept": "r",
-            "factors": {"behavior": "sr"},
+            "type": "prompt", "test_case_id": "s1", "behavior": "r",
+            "dimensions": {"behavior": "sr"},
             "target": "m", "auditor_model": "",
         }
         meta = _metadata_from_dict(old_data)

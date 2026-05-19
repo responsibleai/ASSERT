@@ -1,4 +1,4 @@
-"""Design: factor normalization, generation, and catalog rendering."""
+"""Design: dimension normalization, generation, and catalog rendering."""
 
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ from p2m.core.model_client import GenerateOptions, generate_structured
 
 DEFAULT_LEVEL_COUNT = 3
 
-DESIGN_PROMPT_TEMPLATE = load_prompt_text("seeds_design.md")
+DESIGN_PROMPT_TEMPLATE = load_prompt_text("test_set_design.md")
 
 SCOPE = "suite"
 SUITE_OUTPUT = DESIGN_FILE
 
 
-def render_behaviors(policy: dict[str, Any]) -> str:
+def render_behavior_categories(taxonomy: dict[str, Any]) -> str:
     lines = []
-    for behavior in policy.get("behaviors", []):
+    for behavior in taxonomy.get("behavior_categories", []):
         permissible = get_permissible_flag(behavior, default=True)
         status = "PERMISSIBLE" if permissible else "NOT PERMISSIBLE"
         lines.append(
@@ -42,28 +42,28 @@ def render_behaviors(policy: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_behavior_factor(policy: dict[str, Any]) -> list[dict[str, Any]]:
+def build_behavior_factor(taxonomy: dict[str, Any]) -> list[dict[str, Any]]:
     levels: list[dict[str, Any]] = []
     seen_names: set[str] = set()
-    for behavior in policy.get("behaviors", []):
+    for behavior in taxonomy.get("behavior_categories", []):
         name = str(behavior.get("name") or "").strip()
         definition = str(behavior.get("definition") or "").strip()
         if not name or not definition:
             raise ValueError(
-                "policy behaviors must include non-empty name and definition"
+                "taxonomy behavior_categories must include non-empty name and definition"
             )
         if name in seen_names:
-            raise ValueError(f"duplicate policy behavior name: {name}")
+            raise ValueError(f"duplicate taxonomy behavior name: {name}")
         seen_names.add(name)
         levels.append({"name": name, "description": definition})
     if not levels:
-        raise ValueError("policy must contain at least one behavior")
+        raise ValueError("taxonomy must contain at least one behavior")
     return levels
 
 
-def render_factors_section(factors: list[dict[str, str]]) -> str:
+def render_factors_section(dimensions: list[dict[str, str]]) -> str:
     return "\n".join(
-        f"  - `{factor['name']}`: {factor['description']}" for factor in factors
+        f"  - `{dimension['name']}`: {dimension['description']}" for dimension in dimensions
     )
 
 
@@ -124,7 +124,7 @@ def _normalize_behavior_levels(entries: Any) -> list[dict[str, str]]:
 
 def normalize_design(
     raw_design: dict[str, Any],
-    policy: dict[str, Any],
+    taxonomy: dict[str, Any],
     *,
     factor_order: list[str] | None = None,
     inject_behavior: bool = False,
@@ -148,14 +148,14 @@ def normalize_design(
         actual = list(raw_factors)
         if set(actual) != set(expected):
             raise ValueError(
-                "design factors must match the configured factor list exactly"
+                "design dimensions must match the configured dimension list exactly"
             )
     else:
         expected = list(raw_factors)
 
     normalized: dict[str, Any] = {}
 
-    behavior_entries = build_behavior_factor(policy)
+    behavior_entries = build_behavior_factor(taxonomy)
     if raw_behavior is not None:
         normalized["behavior"] = _normalize_behavior_levels(raw_behavior)
     elif inject_behavior:
@@ -164,12 +164,12 @@ def normalize_design(
     for factor_name in expected:
         if factor_name.startswith("_"):
             raise ValueError(
-                f"design factor names must not start with '_': {factor_name}"
+                f"design dimension names must not start with '_': {factor_name}"
             )
         if factor_name == "behavior":
-            raise ValueError("behavior is reserved for policy behaviors")
+            raise ValueError("behavior is reserved for taxonomy behavior_categories")
         if factor_name not in raw_factors:
-            raise ValueError(f"missing design factor: {factor_name}")
+            raise ValueError(f"missing design dimension: {factor_name}")
         normalized[factor_name] = _normalize_factor_levels(
             factor_name, raw_factors[factor_name]
         )
@@ -183,14 +183,14 @@ def render_design_catalog(
     *,
     include_behavior: bool = True,
 ) -> str:
-    factors = [
+    dimensions = [
         key
         for key in design
         if not key.startswith("_")
         and (include_behavior or key != "behavior")
     ]
     blocks = []
-    for factor_name in factors:
+    for factor_name in dimensions:
         title = factor_name.replace("_", " ").capitalize()
         text_field = "description" if factor_name == "behavior" else "definition"
         body = "\n".join(
@@ -204,7 +204,7 @@ def render_design_catalog(
 def _design_response_schema(
     level_count: int,
     *,
-    factors: tuple[str, ...],
+    dimensions: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "type": "object",
@@ -224,17 +224,17 @@ def _design_response_schema(
                     "required": ["name", "definition"],
                 },
             }
-            for factor_name in factors
+            for factor_name in dimensions
         },
-        "required": list(factors),
+        "required": list(dimensions),
     }
 
 
 async def run_design(
     *,
-    policy_path: str,
+    taxonomy_path: str,
     out_dir: str,
-    factors: list[dict] | None = None,
+    dimensions: list[dict] | None = None,
     context: str | None = None,
     model: str | None = None,
     level_count: int = DEFAULT_LEVEL_COUNT,
@@ -243,81 +243,81 @@ async def run_design(
 ) -> dict[str, Any]:
     if level_count <= 0:
         raise ValueError("level_count must be > 0")
-    policy = load_policy(policy_path)
+    taxonomy = load_policy(taxonomy_path)
     output_dir = resolve_path(out_dir)
     normalized_context = normalize_seed_context(context) if context else None
-    raw_factors = [] if factors is None else factors
+    raw_factors = [] if dimensions is None else dimensions
     if not isinstance(raw_factors, list):
-        raise ValueError("factors must be a list when provided")
+        raise ValueError("dimensions must be a list when provided")
 
     normalized_factors: list[dict[str, Any]] = []
     seen_names: set[str] = set()
-    for index, factor in enumerate(raw_factors, start=1):
-        if not isinstance(factor, dict):
-            raise ValueError(f"factors[{index}] must be a mapping")
-        name = str(factor.get("name") or "").strip()
-        description = str(factor.get("description") or "").strip()
-        raw_levels = factor.get("levels")
+    for index, dimension in enumerate(raw_factors, start=1):
+        if not isinstance(dimension, dict):
+            raise ValueError(f"dimensions[{index}] must be a mapping")
+        name = str(dimension.get("name") or "").strip()
+        description = str(dimension.get("description") or "").strip()
+        raw_levels = dimension.get("levels")
         if not name:
-            raise ValueError(f"factors[{index}]: name is required")
+            raise ValueError(f"dimensions[{index}]: name is required")
         if isinstance(raw_levels, list) and len(raw_levels) == 0:
-            raise ValueError(f"factors[{index}] '{name}': levels must not be empty")
+            raise ValueError(f"dimensions[{index}] '{name}': levels must not be empty")
         has_levels = isinstance(raw_levels, list) and len(raw_levels) > 0
         if not description and not has_levels:
             raise ValueError(
-                f"factors[{index}] '{name}': description is required when levels are not provided"
+                f"dimensions[{index}] '{name}': description is required when levels are not provided"
             )
         if name.startswith("_"):
-            raise ValueError(f"factor names must not start with '_': {name}")
+            raise ValueError(f"dimension names must not start with '_': {name}")
         if name == "behavior":
-            raise ValueError("behavior is reserved and cannot appear in factors")
+            raise ValueError("behavior is reserved and cannot appear in dimensions")
         if name in seen_names:
-            raise ValueError(f"duplicate factor name: {name}")
+            raise ValueError(f"duplicate dimension name: {name}")
         seen_names.add(name)
         normalized_factor: dict[str, Any] = {"name": name}
         if description:
             normalized_factor["description"] = description
         if raw_levels is not None:
             if not isinstance(raw_levels, list):
-                raise ValueError(f"factors[{index}].levels must be a list")
+                raise ValueError(f"dimensions[{index}].levels must be a list")
             if not raw_levels:
-                raise ValueError(f"factors[{index}] '{name}': levels must not be empty")
+                raise ValueError(f"dimensions[{index}] '{name}': levels must not be empty")
             normalized_factor["levels"] = _normalize_factor_levels(name, raw_levels)
         normalized_factors.append(normalized_factor)
 
-    factor_names = [factor["name"] for factor in normalized_factors]
+    factor_names = [dimension["name"] for dimension in normalized_factors]
     if not factor_names:
-        design = normalize_design({}, policy, inject_behavior=True)
+        design = normalize_design({}, taxonomy, inject_behavior=True)
     else:
         provided_design = {
-            factor["name"]: factor["levels"]
-            for factor in normalized_factors
-            if factor.get("levels")
+            dimension["name"]: dimension["levels"]
+            for dimension in normalized_factors
+            if dimension.get("levels")
         }
         factors_to_generate = [
-            {"name": factor["name"], "description": factor["description"]}
-            for factor in normalized_factors
-            if not factor.get("levels")
+            {"name": dimension["name"], "description": dimension["description"]}
+            for dimension in normalized_factors
+            if not dimension.get("levels")
         ]
         if not factors_to_generate:
             design = normalize_design(
                 provided_design,
-                policy,
+                taxonomy,
                 factor_order=factor_names,
                 inject_behavior=True,
             )
         else:
             if not model:
                 raise ValueError(
-                    "design.model is required when any design factor is missing levels"
+                    "design.model is required when any design dimension is missing levels"
                 )
             if reasoning_effort is not None:
                 temperature = None
             prompt = fill_template(
                 DESIGN_PROMPT_TEMPLATE,
                 {
-                    "concept_name": str(policy.get("concept", {}).get("name") or "concept"),
-                    "behaviors": render_behaviors(policy),
+                    "concept_name": str(taxonomy.get("behavior", {}).get("name") or "behavior"),
+                    "behavior_categories": render_behavior_categories(taxonomy),
                     "context": normalized_context or "- (no additional context provided)",
                     "factors_section": render_factors_section(factors_to_generate),
                 },
@@ -328,7 +328,7 @@ async def run_design(
                 schema_name="policy_design",
                 json_schema=_design_response_schema(
                     level_count,
-                    factors=tuple(factor["name"] for factor in factors_to_generate),
+                    dimensions=tuple(dimension["name"] for dimension in factors_to_generate),
                 ),
                 options=GenerateOptions(
                     temperature=temperature,
@@ -342,7 +342,7 @@ async def run_design(
                 raise ValueError("design generation returned invalid payload")
             design = normalize_design(
                 {**provided_design, **parsed},
-                policy,
+                taxonomy,
                 factor_order=factor_names,
                 inject_behavior=True,
             )
@@ -367,7 +367,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(level_count, int) or level_count <= 0:
         raise ValueError("design.level_count must be a positive integer")
 
-    factors = ctx.get("factors")
+    dimensions = ctx.get("dimensions")
     context = ctx.get("context")
     if context is not None and not isinstance(context, str):
         raise ValueError("context must be a string when provided")
@@ -377,18 +377,18 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     if model_raw is not None:
         model_cfg = parse_model_config(model_raw, field_name="design.model")
     if any(
-        isinstance(factor, dict)
-        and not factor.get("levels")
-        for factor in (factors or [])
+        isinstance(dimension, dict)
+        and not dimension.get("levels")
+        for dimension in (dimensions or [])
     ) and model_cfg is None:
         raise ValueError(
-            "design.model is required when any design factor is missing levels"
+            "design.model is required when any design dimension is missing levels"
         )
 
     suite_root = Path(ctx["suite_root"])
     cfg = resolve_stage_paths(
         {
-            "policy_path": raw_cfg.get("policy_path") or ctx.get("policy_path") or str(suite_root / "policy.json"),
+            "taxonomy_path": raw_cfg.get("taxonomy_path") or ctx.get("taxonomy_path") or str(suite_root / "taxonomy.json"),
             "save_dir": raw_cfg.get("save_dir") or ctx.get("design_artifact_dir") or str(suite_root),
         },
         cfg_path=ctx["config_path"],
@@ -396,9 +396,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     )
 
     result = await run_design(
-        policy_path=cfg["policy_path"],
+        taxonomy_path=cfg["taxonomy_path"],
         out_dir=cfg["save_dir"],
-        factors=factors,
+        dimensions=dimensions,
         context=context,
         model=model_cfg.name if model_cfg is not None else None,
         level_count=level_count,

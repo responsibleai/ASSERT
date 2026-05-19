@@ -113,7 +113,7 @@ class TestOTelParser(unittest.TestCase):
             self.assertIn("events", row)
             self.assertIn("raw", row)
             self.assertEqual(row["metadata"]["runtime_mode"], "otel_traced")
-            self.assertEqual(row["metadata"]["kind"], "otel_import")
+            self.assertEqual(row["metadata"]["type"], "otel_import")
 
 
 class TestFlattenAttributes(unittest.TestCase):
@@ -1752,7 +1752,7 @@ class TestEndToEndIntegration(unittest.TestCase):
             self.assertIn("metadata", row)
             self.assertIn("events", row)
             self.assertIn("raw", row)
-            self.assertEqual(row["metadata"]["kind"], "otel_import")
+            self.assertEqual(row["metadata"]["type"], "otel_import")
 
     def test_all_session_types_have_consistent_interface(self):
         """All session types should have open/close/run_turn/runtime_mode."""

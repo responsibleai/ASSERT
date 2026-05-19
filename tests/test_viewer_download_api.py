@@ -67,7 +67,7 @@ class ViewerDownloadApiTest(unittest.TestCase):
             artifacts_root = tmp_root / "artifacts" / "results"
             sibling_root = tmp_root / "artifacts" / "results-evil" / "suite-a"
             sibling_root.mkdir(parents=True, exist_ok=True)
-            (sibling_root / "policy.json").write_text('{"secret": true}', encoding="utf-8")
+            (sibling_root / "taxonomy.json").write_text('{"secret": true}', encoding="utf-8")
 
             env = os.environ.copy()
             env.update(
@@ -80,7 +80,7 @@ class ViewerDownloadApiTest(unittest.TestCase):
                 f"""\
                 try {{
                   const mod = await import({json.dumps(route_path.as_uri())});
-                  await mod.GET({{ params: {{ path: '../results-evil/suite-a/policy.json' }} }});
+                  await mod.GET({{ params: {{ path: '../results-evil/suite-a/taxonomy.json' }} }});
                   console.log(JSON.stringify({{ ok: true }}));
                 }} catch (error) {{
                   console.log(JSON.stringify({{
@@ -109,7 +109,7 @@ class ViewerDownloadApiTest(unittest.TestCase):
             suite_dir = artifacts_root / "suite-a"
             suite_dir.mkdir(parents=True, exist_ok=True)
             expected_body = '{"ok": true}\n'
-            (suite_dir / "policy.json").write_text(expected_body, encoding="utf-8")
+            (suite_dir / "taxonomy.json").write_text(expected_body, encoding="utf-8")
 
             env = os.environ.copy()
             env.update(
@@ -121,7 +121,7 @@ class ViewerDownloadApiTest(unittest.TestCase):
             script = textwrap.dedent(
                 f"""\
                 const mod = await import({json.dumps(route_path.as_uri())});
-                const response = await mod.GET({{ params: {{ path: 'suite-a/policy.json' }} }});
+                const response = await mod.GET({{ params: {{ path: 'suite-a/taxonomy.json' }} }});
                 console.log(JSON.stringify({{
                   status: response.status,
                   body: await response.text(),
@@ -136,7 +136,7 @@ class ViewerDownloadApiTest(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], 200)
             self.assertEqual(payload["body"].replace("\r\n", "\n"), expected_body)
-            self.assertEqual(payload["disposition"], 'attachment; filename="policy.json"')
+            self.assertEqual(payload["disposition"], 'attachment; filename="taxonomy.json"')
             actual_body_bytes = payload["body"].encode("utf-8")
             self.assertEqual(payload["contentLength"], str(len(actual_body_bytes)))
 
