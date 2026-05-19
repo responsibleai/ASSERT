@@ -1,19 +1,1325 @@
 <script lang="ts">
-	// Placeholder for the new evaluation run wizard.
-	// The visual entry point matches viewer-next; the wizard itself is not yet ported to Svelte.
+	/*
+	 * New evaluation wizard — ported from the legacy React/Next prototype.
+	 *
+	 * Status: UI complete. Read-only data hooks wired to /api/behaviors,
+	 * /api/suites, and /api/dimensions. The submit handler is currently a STUB
+	 * that logs the full form payload to the console and routes back to the
+	 * landing page.
+	 *
+	 * TODO(engineer): wire `handleSubmit` to an actual run-creation endpoint
+	 * (e.g. POST /api/runs) that writes a `config.yaml` to disk and triggers
+	 * `p2m run --config <generated.yaml>`. See `payload` shape inside
+	 * `handleSubmit` below for the wizard's collected state.
+	 */
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
+
+	// ── Constants ───────────────────────────────────────────────────
+	const STEPS = [
+		{ id: 1, label: 'Input specification' },
+		{ id: 2, label: 'Category & evaluation set' },
+		{ id: 3, label: 'Summary & submit' }
+	] as const;
+
+	const MODEL_OPTIONS = [
+		'openai/gpt-5.2',
+		'openai/gpt-4.1',
+		'openai/gpt-4.1-mini',
+		'openai/gpt-4.1-nano',
+		'openai/o3',
+		'openai/o4-mini'
+	];
+
+	interface KnownBehavior { name: string; definition: string; suiteId: string }
+	interface KnownSuite { suite_id: string; risk_name: string; behavior_count: number }
+	interface JudgeDimension { name: string; description: string; rubric: string }
+	interface EvalFactor { name: string; levels: string[] }
+
+	// ── Catalog data ────────────────────────────────────────────────
+	let knownBehaviors = $state<KnownBehavior[]>([]);
+	let behaviorsLoading = $state(true);
+	let knownSuites = $state<KnownSuite[]>([]);
+	let suitesLoading = $state(true);
+
+	// ── Wizard state ────────────────────────────────────────────────
+	let currentStep = $state(1);
+
+	// Step 1
+	let step1Mode = $state<'select' | 'create'>('select');
+	let behaviorSearch = $state('');
+	let selectedBehavior = $state<KnownBehavior | null>(null);
+	let showDropdown = $state(false);
+	let newBehavior = $state({ name: '', definition: '' });
+	let step1Touched = $state(false);
+	let applicationContext = $state('');
+	let evaluationTarget = $state<'model' | 'agent'>('model');
+	let systemPrompt = $state('');
+	let toolsMode = $state<'simulated' | 'real'>('simulated');
+	let simulatedToolsDescription = $state('');
+	let realToolsYaml = $state('');
+	let realToolsFileName = $state('');
+	let realToolsAcknowledged = $state(false);
+
+	// Step 2
+	let step2Source = $state<'new' | 'existing' | null>(null);
+	let querySeedsEnabled = $state(true);
+	let promptEvalEnabled = $state(true);
+	let auditSeedsEnabled = $state(false);
+	let scenarioEvalEnabled = $state(false);
+	let taxonomyConfig = $state({ model: 'openai/gpt-5.2', subRisks: 25, temperature: 1, maxTokens: 16000, deepResearchAgent: false });
+	let taxonomyExpanded = $state(true);
+	let factorBasedExpanded = $state(false);
+	let evalFactors = $state<EvalFactor[]>([]);
+	let newFactorName = $state('');
+	let selectedCategories = $state<Set<string>>(new Set());
+	let querySeedsExpanded = $state(true);
+	let promptEvalExpanded = $state(true);
+	let auditSeedsExpanded = $state(false);
+	let scenarioEvalExpanded = $state(false);
+	let querySeedsConfig = $state({ model: 'openai/gpt-4.1', budget: 100, temperature: 1, maxTokens: 4000 });
+	let promptEvalConfig = $state({ targetModel: 'openai/gpt-4.1', judgeModel: 'openai/gpt-5.2' });
+	let auditSeedsConfig = $state({
+		modality: 'conversation' as 'conversation' | 'agentic',
+		model: 'openai/gpt-4.1',
+		budget: 5,
+		temperature: 0.2,
+		maxTokens: 4000
+	});
+	let variationDimensions = $state<{ name: string }[]>([
+		{ name: 'authority claim' },
+		{ name: 'justification' },
+		{ name: 'emotional distress' },
+		{ name: 'urgency level' },
+		{ name: 'authority framing' },
+		{ name: 'resource constraints' },
+		{ name: 'demographic proxy' }
+	]);
+	let showAddVariationDim = $state(false);
+	let newVariationDim = $state({ name: '', description: '' });
+	let scenarioEvalConfig = $state({
+		target: { model: 'openai/gpt-4.1', temperature: 0.2, maxTokens: 8000 },
+		auditor: { model: 'openai/gpt-4.1', temperature: 0.2, maxTokens: 8000 },
+		judge: { model: 'openai/gpt-5.2', temperature: 0, maxTokens: 12000, judgePasses: 1 },
+		maxTurns: 10
+	});
+	let judgeDimensions = $state<JudgeDimension[]>([
+		{ name: 'overrefusal', description: '', rubric: '' },
+		{ name: 'harm actionability', description: '', rubric: '' },
+		{ name: 'one sided', description: '', rubric: '' },
+		{ name: 'profiling', description: '', rubric: '' }
+	]);
+	let showAddDimension = $state(false);
+	let newDimension = $state({ name: '', description: '', rubric: '' });
+	let suiteSearch = $state('');
+	let selectedSuite = $state<KnownSuite | null>(null);
+	let showSuiteDropdown = $state(false);
+
+	// Step 3
+	let suiteId = $state('');
+	let runId = $state('v1');
+	let submitting = $state(false);
+	let submitError = $state('');
+	let showDiscardModal = $state(false);
+	let isDirty = $state(false);
+
+	function markDirty() {
+		isDirty = true;
+	}
+
+	// ── Data loading ────────────────────────────────────────────────
+	onMount(async () => {
+		try {
+			const [bRes, sRes, dRes] = await Promise.all([
+				fetch('/api/behaviors'),
+				fetch('/api/suites'),
+				fetch('/api/dimensions')
+			]);
+			if (bRes.ok) knownBehaviors = await bRes.json();
+			behaviorsLoading = false;
+			if (sRes.ok) knownSuites = await sRes.json();
+			suitesLoading = false;
+			if (dRes.ok) {
+				const dims = (await dRes.json()) as Record<string, { description?: string; rubric?: string }>;
+				const merged = [...judgeDimensions];
+				for (const [name, def] of Object.entries(dims)) {
+					if (!merged.find((d) => d.name === name)) {
+						merged.push({ name, description: def.description ?? '', rubric: def.rubric ?? '' });
+					}
+				}
+				judgeDimensions = merged;
+			}
+		} catch {
+			behaviorsLoading = false;
+			suitesLoading = false;
+		}
+
+		const handler = (e: BeforeUnloadEvent) => {
+			if (isDirty) {
+				e.preventDefault();
+				e.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', handler);
+		return () => window.removeEventListener('beforeunload', handler);
+	});
+
+	// ── Derived ─────────────────────────────────────────────────────
+	let filteredBehaviors = $derived.by(() => {
+		const q = behaviorSearch.trim().toLowerCase();
+		if (!q) return knownBehaviors;
+		return knownBehaviors.filter(
+			(b) => b.name.toLowerCase().includes(q) || b.definition.toLowerCase().includes(q)
+		);
+	});
+
+	let filteredSuites = $derived.by(() => {
+		const q = suiteSearch.trim().toLowerCase();
+		if (!q) return knownSuites;
+		return knownSuites.filter(
+			(s) => s.suite_id.toLowerCase().includes(q) || s.risk_name.toLowerCase().includes(q)
+		);
+	});
+
+	let step1BehaviorValid = $derived(
+		step1Mode === 'select'
+			? selectedBehavior !== null
+			: newBehavior.name.trim().length > 0 && newBehavior.definition.trim().length > 0
+	);
+	let step1ContextValid = $derived(applicationContext.trim().length > 0);
+	let step1ToolsValid = $derived(
+		toolsMode === 'simulated'
+			? simulatedToolsDescription.trim().length > 0
+			: realToolsYaml.trim().length > 0 && realToolsAcknowledged
+	);
+	let step1Valid = $derived(step1BehaviorValid && step1ContextValid && step1ToolsValid);
+	let step2Valid = $derived.by(() => {
+		if (!step2Source) return false;
+		if (!querySeedsEnabled || !promptEvalEnabled) return false;
+		if (step2Source === 'new') return true;
+		return selectedSuite !== null;
+	});
+	let step3Valid = $derived(runId.trim().length > 0);
+
+	function stepValid(s: number) {
+		return s === 1 ? step1Valid : s === 2 ? step2Valid : s === 3 ? step3Valid : false;
+	}
+	function stepReachable(s: number) {
+		for (let i = 1; i < s; i++) if (!stepValid(i)) return false;
+		return true;
+	}
+
+	let summaryRisk = $derived(
+		step1Mode === 'select' && selectedBehavior
+			? selectedBehavior.name
+			: step1Mode === 'create' && newBehavior.name.trim()
+				? `${newBehavior.name} (custom)`
+				: '— (custom)'
+	);
+	let summaryTaxonomy = $derived(
+		step2Source === 'existing' && selectedSuite
+			? `Copied from ${selectedSuite.risk_name}`
+			: step2Source === 'new'
+				? 'Taxonomy'
+				: '—'
+	);
+	let summaryQueryPipeline = $derived(
+		querySeedsEnabled
+			? `Query seeds → ${querySeedsConfig.model.split('/')[1]}${factorBasedExpanded ? ' (dimension-based)' : ''}`
+			: '—'
+	);
+	let summaryAuditPipeline = $derived(
+		auditSeedsEnabled || scenarioEvalEnabled
+			? [auditSeedsEnabled && 'Audit seeds', scenarioEvalEnabled && 'Scenario eval']
+					.filter(Boolean)
+					.join(' → ') || '—'
+			: '—'
+	);
+
+	let factorCrossProduct = $derived.by(() => {
+		if (!factorBasedExpanded) return null;
+		const categoryCount = selectedCategories.size || taxonomyConfig.subRisks;
+		const parts: { name: string; count: number }[] = [
+			{ name: 'behavior categories', count: categoryCount }
+		];
+		for (const f of evalFactors) {
+			const validLevels = f.levels.filter((l) => l.trim().length > 0);
+			if (validLevels.length > 0) parts.push({ name: f.name, count: validLevels.length });
+		}
+		const combinations = parts.reduce((acc, p) => acc * p.count, 1);
+		const budget = querySeedsConfig.budget;
+		const perCombo = combinations > 0 ? Math.max(1, Math.round(budget / combinations)) : budget;
+		return { parts, combinations, budget, perCombo };
+	});
+
+	// ── Handlers ────────────────────────────────────────────────────
+	function goToStep(s: number) {
+		if (s >= 1 && s <= 3 && stepReachable(s)) currentStep = s;
+	}
+	function handleBack() {
+		if (currentStep > 1) currentStep -= 1;
+	}
+	function handleContinue() {
+		if (currentStep === 1) step1Touched = true;
+		if (currentStep < 3 && stepValid(currentStep)) currentStep += 1;
+	}
+	function handleCancel() {
+		if (isDirty) showDiscardModal = true;
+		else goto('/');
+	}
+
+	function handleScenarioEvalChange(checked: boolean) {
+		scenarioEvalEnabled = checked;
+		if (checked) auditSeedsEnabled = true;
+		if (!checked) scenarioEvalExpanded = false;
+		markDirty();
+	}
+	function handleAuditSeedsChange(checked: boolean) {
+		auditSeedsEnabled = checked;
+		if (!checked) {
+			scenarioEvalEnabled = false;
+			auditSeedsExpanded = false;
+			scenarioEvalExpanded = false;
+		}
+		markDirty();
+	}
+
+	async function handleSubmit() {
+		if (submitting) return;
+		submitting = true;
+		submitError = '';
+
+		const payload = {
+			behavior:
+				step1Mode === 'select'
+					? { mode: 'existing', name: selectedBehavior?.name, suiteId: selectedBehavior?.suiteId }
+					: { mode: 'create', name: newBehavior.name, definition: newBehavior.definition },
+			...(applicationContext.trim() ? { applicationContext: applicationContext.trim() } : {}),
+			evaluationTarget,
+			...(evaluationTarget === 'model' && systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
+			source: step2Source,
+			...(step2Source === 'existing'
+				? { existingSuiteId: selectedSuite?.suite_id }
+				: { taxonomization: { mode: 'quick', config: taxonomyConfig } }),
+			queryPipeline: {
+				querySeeds: querySeedsEnabled,
+				config: querySeedsConfig,
+				...(factorBasedExpanded
+					? {
+						factorBased: true,
+						factors: evalFactors
+							.map((f) => ({ name: f.name, levels: f.levels.filter((l) => l.trim()) }))
+							.filter((f) => f.levels.length > 0),
+						selectedCategories: [...selectedCategories]
+					}
+					: {})
+			},
+			rolloutPipeline: { promptEval: promptEvalEnabled, config: promptEvalConfig },
+			auditPipeline: {
+				auditSeeds: auditSeedsEnabled,
+				scenarioEval: scenarioEvalEnabled,
+				auditSeedsConfig,
+				scenarioEvalConfig,
+				variationDimensions,
+				judgeDimensions
+			},
+			suiteId: suiteId.trim() || undefined,
+			runId: runId.trim()
+		};
+
+		// TODO(engineer): replace this stub with a POST to /api/runs that
+		// (1) serializes `payload` into eval_config.yaml under artifacts/results/<suite>/<run>/
+		// (2) spawns `p2m run --config <that file>` (or calls the Python entrypoint directly)
+		// (3) returns { suite_id, run_id } on success.
+		// eslint-disable-next-line no-console
+		console.log('[new-eval wizard] submit payload (stub):', payload);
+		await new Promise((r) => setTimeout(r, 400));
+
+		isDirty = false;
+		submitting = false;
+		submitError = 'Submit is not yet wired to the backend. Payload logged to the browser console.';
+	}
+
+	function addLevel(fIdx: number) {
+		const next = evalFactors.map((f, i) => (i === fIdx ? { ...f, levels: [...f.levels, ''] } : f));
+		evalFactors = next;
+	}
+	function removeLevel(fIdx: number, lIdx: number) {
+		evalFactors = evalFactors.map((f, i) =>
+			i === fIdx ? { ...f, levels: f.levels.filter((_, li) => li !== lIdx) } : f
+		);
+	}
+	function updateLevel(fIdx: number, lIdx: number, value: string) {
+		evalFactors = evalFactors.map((f, i) =>
+			i === fIdx ? { ...f, levels: f.levels.map((l, li) => (li === lIdx ? value : l)) } : f
+		);
+	}
+	function trimLevels(fIdx: number) {
+		evalFactors = evalFactors.map((f, i) =>
+			i === fIdx ? { ...f, levels: f.levels.filter((l) => l.trim()) } : f
+		);
+	}
+	function removeFactor(fIdx: number) {
+		evalFactors = evalFactors.filter((_, i) => i !== fIdx);
+	}
+	function addFactor() {
+		const name = newFactorName.trim();
+		if (!name) return;
+		evalFactors = [...evalFactors, { name, levels: [''] }];
+		newFactorName = '';
+	}
+	function removeCategory(cat: string) {
+		const next = new Set(selectedCategories);
+		next.delete(cat);
+		selectedCategories = next;
+	}
 </script>
 
-<div class="mb-6">
-	<a href="/" class="text-sm text-interactive no-underline hover:underline">← Measurement suites</a>
+<!-- Breadcrumb -->
+<nav class="mb-4" aria-label="Breadcrumb">
+	<ol class="Breadcrumb">
+		<li class="Breadcrumb-item">
+			<a href="/" onclick={(e) => { e.preventDefault(); handleCancel(); }}>Evaluation suites</a>
+		</li>
+		<li class="Breadcrumb-item" aria-current="page">New evaluation run</li>
+	</ol>
+</nav>
+
+<div class="wizard-layout">
+	<!-- Left nav -->
+	<nav class="wizard-nav" aria-label="Wizard steps">
+		<ul class="wizard-nav-list" role="list">
+			{#each STEPS as step}
+				{@const isComplete = stepValid(step.id) && step.id < currentStep}
+				{@const isCurrent = step.id === currentStep}
+				{@const isReachable = stepReachable(step.id)}
+				{@const hasWarning = step.id < currentStep && !stepValid(step.id)}
+				<li>
+					<button
+						class="wizard-nav-item"
+						class:wizard-nav-item--active={isCurrent}
+						disabled={!isReachable}
+						onclick={() => goToStep(step.id)}
+						aria-current={isCurrent ? 'step' : undefined}
+					>
+						<span class="wizard-nav-icon">
+							{#if hasWarning}
+								<svg class="h-4 w-4 text-score-fail" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 9v2m0 4h.01M10.29 3.86l-8.6 14.86A1 1 0 002.54 20h18.92a1 1 0 00.85-1.28l-8.6-14.86a1 1 0 00-1.72 0z"/></svg>
+							{:else if isComplete}
+								<svg class="h-4 w-4 text-score-pass" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg>
+							{:else}
+								<span class="inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold {isCurrent ? 'bg-interactive text-white' : 'bg-surface-2 text-text-muted'}">{step.id}</span>
+							{/if}
+						</span>
+						<span class="wizard-nav-label">{step.label}</span>
+					</button>
+				</li>
+			{/each}
+		</ul>
+	</nav>
+
+	<!-- Main content -->
+	<div class="wizard-main">
+		<div class="w-full rounded-lg border border-border bg-surface p-6">
+			<!-- ═════════ STEP 1 ═════════ -->
+			{#if currentStep === 1}
+				<p class="mb-1 text-[16px] font-semibold text-text">Step 1</p>
+				<h2 class="mb-1 text-lg font-semibold text-text">Input specification</h2>
+				<p class="mb-5 text-sm text-text-muted">Define what is being evaluated and the context in which the evaluation runs.</p>
+
+				<p class="mb-2 text-[16px] font-semibold text-text">Behavior specification</p>
+
+				{#if step1Mode === 'select'}
+					<div class="mb-4">
+						<label for="behavior-search" class="mb-1 block text-xs font-semibold text-text-secondary">Search behaviors <span class="text-score-fail">*</span></label>
+						<div class="flex items-center gap-3">
+							<div class="relative flex-1">
+								<div class="relative">
+									<svg class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/></svg>
+									<input
+										id="behavior-search"
+										type="text"
+										class="form-control form-control-compact w-full"
+										style="padding-left: 2rem;"
+										placeholder={behaviorsLoading ? 'Loading behaviors…' : 'Type to search existing behaviors…'}
+										value={behaviorSearch}
+										oninput={(e) => { behaviorSearch = e.currentTarget.value; showDropdown = true; selectedBehavior = null; step1Touched = true; markDirty(); }}
+										onfocus={() => (showDropdown = true)}
+										disabled={behaviorsLoading}
+										autocomplete="off"
+									/>
+								</div>
+								{#if showDropdown && !selectedBehavior}
+									<div class="wizard-dropdown absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+										{#if filteredBehaviors.length === 0}
+											<div class="px-3 py-3 text-sm text-text-muted">No matching behaviors found.</div>
+										{:else}
+											<ul class="ActionList" role="listbox">
+												{#each filteredBehaviors as b}
+													<li class="ActionList-item" role="option" aria-selected="false">
+														<button
+															class="ActionList-content w-full text-left"
+															onclick={() => { selectedBehavior = b; behaviorSearch = b.name; showDropdown = false; step1Touched = true; markDirty(); }}
+														>
+															<span class="block">
+																<span class="text-sm font-medium text-text">{b.name}</span>
+																{#if b.definition}
+																	<span class="mt-0.5 block line-clamp-1 text-xs text-text-muted">{b.definition}</span>
+																{/if}
+															</span>
+														</button>
+													</li>
+												{/each}
+											</ul>
+										{/if}
+									</div>
+								{/if}
+							</div>
+							<button
+								type="button"
+								class="btn shrink-0 whitespace-nowrap"
+								onclick={() => { step1Mode = 'create'; selectedBehavior = null; behaviorSearch = ''; showDropdown = false; }}
+							>+ New behavior specification</button>
+						</div>
+					</div>
+					{#if selectedBehavior}
+						<div class="rounded-md border border-border bg-bg p-4">
+							<div class="mb-3 flex items-center justify-between">
+								<span class="text-sm font-semibold text-text">{selectedBehavior.name}</span>
+								<button class="text-xs text-interactive hover:underline" onclick={() => { selectedBehavior = null; behaviorSearch = ''; step1Touched = false; }}>Clear</button>
+							</div>
+							<span class="mb-1 block text-[10px] font-semibold text-text-muted">Definition</span>
+							<p class="whitespace-pre-wrap text-sm text-text-secondary">{selectedBehavior.definition || 'No definition provided.'}</p>
+						</div>
+					{:else if step1Touched}
+						<p class="mt-1 text-xs text-score-fail">Select an existing behavior, or create a new specification.</p>
+					{/if}
+					{#if showDropdown}
+						<div
+							class="fixed inset-0 z-10"
+							role="presentation"
+							onclick={() => (showDropdown = false)}
+						></div>
+					{/if}
+				{:else}
+					<div class="mb-4 flex items-center gap-2">
+						<button class="text-xs text-interactive hover:underline" onclick={() => { step1Mode = 'select'; newBehavior = { name: '', definition: '' }; step1Touched = false; }}>← Back to search</button>
+					</div>
+					<div class="mb-4">
+						<label for="new-behavior-name" class="mb-1 block text-xs font-semibold text-text-secondary">Name <span class="text-score-fail">*</span></label>
+						<input
+							id="new-behavior-name"
+							type="text"
+							class="form-control w-full text-sm {step1Touched && !newBehavior.name.trim() ? 'border-score-fail' : ''}"
+							placeholder="e.g., Harmful content generation"
+							value={newBehavior.name}
+							oninput={(e) => { newBehavior = { ...newBehavior, name: e.currentTarget.value }; step1Touched = true; markDirty(); }}
+						/>
+						{#if step1Touched && !newBehavior.name.trim()}<p class="mt-1 text-xs text-score-fail">Name is required.</p>{/if}
+					</div>
+					<div>
+						<label for="new-behavior-definition" class="mb-1 block text-xs font-semibold text-text-secondary">Definition <span class="text-score-fail">*</span></label>
+						<textarea
+							id="new-behavior-definition"
+							class="form-control w-full text-sm {step1Touched && !newBehavior.definition.trim() ? 'border-score-fail' : ''}"
+							rows="6"
+							placeholder="Describe the behavior specification…"
+							value={newBehavior.definition}
+							oninput={(e) => { newBehavior = { ...newBehavior, definition: e.currentTarget.value }; step1Touched = true; markDirty(); }}
+						></textarea>
+						{#if step1Touched && !newBehavior.definition.trim()}<p class="mt-1 text-xs text-score-fail">Definition is required.</p>{/if}
+					</div>
+				{/if}
+
+				<!-- Evaluation target -->
+				<div class="mb-1 mt-6">
+					<p class="mb-2 text-[16px] font-semibold text-text">Evaluation target</p>
+					<div class="mb-1 flex gap-3" style="max-width: 480px;">
+						<button
+							type="button"
+							class="flex-1 rounded-lg border p-3 text-left transition-colors {evaluationTarget === 'model' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+							onclick={() => { evaluationTarget = 'model'; markDirty(); }}
+						>
+							<span class="text-sm font-medium text-text">Model</span>
+							<span class="block text-xs text-text-muted">Evaluate a model directly.</span>
+						</button>
+						<button
+							type="button"
+							class="flex-1 rounded-lg border p-3 text-left transition-colors {evaluationTarget === 'agent' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+							onclick={() => { evaluationTarget = 'agent'; markDirty(); }}
+						>
+							<span class="text-sm font-medium text-text">Prompt Agent</span>
+							<span class="block text-xs text-text-muted">Evaluate an agent or system.</span>
+						</button>
+					</div>
+				</div>
+
+				<!-- Application context -->
+				<div class="mt-6">
+					<label for="application-context" class="mb-1 block text-[16px] font-semibold text-text">Application context</label>
+					<p class="mb-2 text-xs text-text-muted">Describe the application or agent this evaluation targets (purpose, users, typical interactions). This context is used to ground the evaluation. <span class="text-score-fail">*</span></p>
+					<textarea
+						id="application-context"
+						class="form-control w-full text-sm"
+						rows="4"
+						placeholder="A conversational medical assistant that provides general health education and safe referral guidance."
+						value={applicationContext}
+						oninput={(e) => { applicationContext = e.currentTarget.value; step1Touched = true; markDirty(); }}
+					></textarea>
+					{#if step1Touched && !step1ContextValid}
+						<p class="mt-1 text-xs text-score-fail">Application context is required.</p>
+					{/if}
+				</div>
+
+				<!-- System prompt -->
+				{#if evaluationTarget === 'model'}
+					<div class="mt-6">
+						<label for="system-prompt" class="mb-1 block text-[16px] font-semibold text-text">System prompt <span class="font-normal text-text-muted">(optional)</span></label>
+						<p class="mb-2 text-xs text-text-muted">Required when evaluating a model directly. Optional if the prompt is already defined inside the agent.</p>
+						<textarea
+							id="system-prompt"
+							class="form-control w-full text-sm"
+							rows="6"
+							placeholder="You are a helpful assistant that…"
+							value={systemPrompt}
+							oninput={(e) => { systemPrompt = e.currentTarget.value; markDirty(); }}
+						></textarea>
+					</div>
+				{/if}
+
+				<!-- Tools -->
+				<div class="mt-6">
+					<p class="mb-1 text-[16px] font-semibold text-text">Tools</p>
+					<p class="mb-2 text-xs text-text-muted">Choose how the target's tools are made available during evaluation.</p>
+					<div class="mb-3 flex gap-3" style="max-width: 560px;">
+						<button
+							type="button"
+							class="flex-1 rounded-lg border p-3 text-left transition-colors {toolsMode === 'simulated' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+							onclick={() => { toolsMode = 'simulated'; markDirty(); }}
+						>
+							<span class="text-sm font-medium text-text">Simulated tools</span>
+							<span class="block text-xs text-text-muted">Describe tools in natural language; the auditor simulates results.</span>
+						</button>
+						<button
+							type="button"
+							class="flex-1 rounded-lg border p-3 text-left transition-colors {toolsMode === 'real' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+							onclick={() => { toolsMode = 'real'; markDirty(); }}
+						>
+							<span class="text-sm font-medium text-text">Real tools</span>
+							<span class="block text-xs text-text-muted">Upload a YAML file defining real tool implementations.</span>
+						</button>
+					</div>
+
+					{#if toolsMode === 'simulated'}
+						<div>
+							<label for="simulated-tools" class="mb-1 block text-xs text-text-muted">Describe the tools the agent has access to (one per line or freeform). <span class="text-score-fail">*</span></label>
+							<textarea
+								id="simulated-tools"
+								class="form-control w-full text-sm font-mono"
+								rows="6"
+								placeholder={`e.g. tool_name(arg): short description of what it does and any side effects.`}
+								value={simulatedToolsDescription}
+								oninput={(e) => { simulatedToolsDescription = e.currentTarget.value; step1Touched = true; markDirty(); }}
+							></textarea>
+							{#if step1Touched && !step1ToolsValid}
+								<p class="mt-1 text-xs text-score-fail">Describe at least one tool, or switch to a different mode.</p>
+							{/if}
+						</div>
+					{:else if toolsMode === 'real'}
+						<div
+							class="mb-3"
+							role="status"
+							aria-label="Warning"
+							style="display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.5rem 0.75rem; border: 1px solid var(--borderColor-attention-emphasis, #d4a72c); background: var(--bgColor-attention-muted, rgba(212,167,44,0.10)); color: var(--fgColor-default, var(--color-text)); border-radius: 6px; font-size: 0.85rem; line-height: 1.45;"
+						>
+							<div style="flex: 1 1 auto;">
+								<span style="font-weight: 600;">Real tools will be provisioned for your agent.</span>
+								<span> The agent may be prompted to take possibly consequential actions. We strongly recommend provisioning the agent in a non-production or sandboxed environment before running this evaluation.</span>
+							</div>
+						</div>
+						<div>
+							<label class="mb-1 block text-xs text-text-muted">Upload a YAML file defining your tools (name, description, parameters, boundaries / side-effects).</label>
+							<div class="flex items-center gap-3">
+								<label class="btn btn-sm cursor-pointer">
+									Choose file
+									<input
+										type="file"
+										accept=".yaml,.yml,application/x-yaml,text/yaml,text/plain"
+										class="sr-only"
+										onchange={async (e) => {
+											const file = e.currentTarget.files?.[0];
+											if (!file) return;
+											realToolsFileName = file.name;
+											realToolsYaml = await file.text();
+											markDirty();
+										}}
+									/>
+								</label>
+								<span class="text-xs text-text-muted">
+									{realToolsFileName ? realToolsFileName : 'No file chosen'}
+								</span>
+								{#if realToolsFileName}
+									<button type="button" class="text-xs text-text-muted hover:text-score-fail" onclick={() => { realToolsFileName = ''; realToolsYaml = ''; markDirty(); }}>Clear</button>
+								{/if}
+							</div>
+							{#if realToolsYaml}
+								<pre class="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-bg/50 p-3 text-[11px] font-mono text-text-secondary">{realToolsYaml}</pre>
+							{/if}
+						</div>
+						<label class="mt-3 flex items-start gap-2 text-xs text-text-secondary">
+							<input
+								type="checkbox"
+								class="primer-checkbox shrink-0 mt-0.5"
+								checked={realToolsAcknowledged}
+								onchange={(e) => { realToolsAcknowledged = e.currentTarget.checked; step1Touched = true; markDirty(); }}
+							/>
+							<span>I understand the agent will be granted access to these real tools during evaluation and accept responsibility for the environment it runs in.</span>
+						</label>
+						{#if step1Touched && !step1ToolsValid}
+							<p class="mt-2 text-xs text-score-fail">
+								{#if !realToolsYaml.trim()}Upload a YAML file describing your tools.{:else}Confirm the acknowledgement above to continue.{/if}
+							</p>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+
+			<!-- ═════════ STEP 2 ═════════ -->
+			{#if currentStep === 2}
+				<p class="mb-1 text-[16px] font-semibold text-text">Step 2</p>
+				<h2 class="mb-1 text-lg font-semibold text-text">Category & evaluation set</h2>
+				<p class="mb-5 text-sm text-text-muted">Choose how to generate behavior categories and configure evaluation pipelines.</p>
+
+				<div class="mb-6 flex gap-3">
+					<button
+						class="flex-1 rounded-lg border p-4 text-left transition-colors {step2Source === 'new' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+						onclick={() => { step2Source = 'new'; markDirty(); }}
+					>
+						<span class="block text-sm font-semibold text-text">Create new</span>
+						<span class="mt-0.5 block text-xs text-text-muted">Generate new categories from behavior specification using AI pipelines.</span>
+					</button>
+					<button
+						class="flex-1 rounded-lg border p-4 text-left transition-colors {step2Source === 'existing' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+						onclick={() => { step2Source = 'existing'; markDirty(); }}
+					>
+						<span class="block text-sm font-semibold text-text">Create from existing suite</span>
+						<span class="mt-0.5 block text-xs text-text-muted">Select models for pipeline staging from an existing suite's categories.</span>
+					</button>
+				</div>
+
+				{#if step2Source}
+					<!-- Suite picker (existing) -->
+					{#if step2Source === 'existing'}
+						<div class="mb-6">
+							<p class="mb-4 text-sm text-text-muted">Generate new evaluation set (seed prompts only) from behavior categories in a pre-existing suite.</p>
+							<div class="relative mb-4">
+								<label for="suite-search" class="mb-1 block text-xs font-semibold text-text-secondary">Select suite <span class="text-score-fail">*</span></label>
+								<div class="relative">
+									<svg class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/></svg>
+									<input
+										id="suite-search"
+										type="text"
+										class="form-control w-full"
+										style="padding-left: 2rem;"
+										placeholder={suitesLoading ? 'Loading suites…' : 'Search suites…'}
+										value={suiteSearch}
+										oninput={(e) => { suiteSearch = e.currentTarget.value; showSuiteDropdown = true; selectedSuite = null; markDirty(); }}
+										onfocus={() => (showSuiteDropdown = true)}
+										disabled={suitesLoading}
+										autocomplete="off"
+									/>
+								</div>
+								{#if showSuiteDropdown && !selectedSuite}
+									<div class="wizard-dropdown absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+										{#if filteredSuites.length === 0}
+											<div class="px-3 py-3 text-sm text-text-muted">No matching suites found.</div>
+										{:else}
+											<ul class="ActionList" role="listbox">
+												{#each filteredSuites as s}
+													<li class="ActionList-item" role="option" aria-selected="false">
+														<button class="ActionList-content w-full text-left" onclick={() => { selectedSuite = s; suiteSearch = s.risk_name; showSuiteDropdown = false; markDirty(); }}>
+															<span class="block">
+																<span class="text-sm font-medium text-text">{s.risk_name}</span>
+																<span class="mt-0.5 block text-xs text-text-muted">{s.suite_id} · {s.behavior_count} categories</span>
+															</span>
+														</button>
+													</li>
+												{/each}
+											</ul>
+										{/if}
+									</div>
+								{/if}
+							</div>
+							{#if selectedSuite}
+								<div class="rounded-md border border-border bg-bg p-4">
+									<div class="mb-2 flex items-center justify-between">
+										<span class="text-sm font-semibold text-text">{selectedSuite.risk_name}</span>
+										<button class="text-xs text-interactive hover:underline" onclick={() => { selectedSuite = null; suiteSearch = ''; }}>Clear</button>
+									</div>
+									<p class="text-xs text-text-muted">{selectedSuite.suite_id} · {selectedSuite.behavior_count} behavior categories</p>
+								</div>
+							{/if}
+							{#if showSuiteDropdown}
+								<div class="fixed inset-0 z-10" role="presentation" onclick={() => (showSuiteDropdown = false)}></div>
+							{/if}
+						</div>
+					{/if}
+
+					<!-- Taxonomy pipeline (new mode) -->
+					<p class="mb-2 text-[16px] font-semibold text-text">Evaluation pipeline</p>
+					{#if step2Source === 'new'}
+						<div class="mb-5">
+							<p class="mb-2 text-xs font-semibold text-text-muted">Behavior systematization</p>
+							<div class="rounded-lg border border-border">
+								<div class="p-3">
+									<div
+										class="pipeline-row"
+										role="button"
+										tabindex="0"
+										aria-expanded={taxonomyExpanded}
+										onclick={() => (taxonomyExpanded = !taxonomyExpanded)}
+										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); taxonomyExpanded = !taxonomyExpanded; } }}
+									>
+										<div class="pipeline-row-label">
+											<span class="flex items-center gap-1.5 text-sm font-medium text-text">
+												Taxonomy
+												{#if taxonomyConfig.deepResearchAgent}
+													<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" class="text-interactive" aria-label="Deep Research Agent enabled"><title>Deep Research Agent enabled</title><path d="M7.53 1.282a.5.5 0 0 1 .94 0l.478 1.306a4 4 0 0 0 2.384 2.385l1.307.478a.5.5 0 0 1 0 .938l-1.307.478a4 4 0 0 0-2.384 2.385l-.478 1.306a.5.5 0 0 1-.94 0l-.478-1.306a4 4 0 0 0-2.385-2.385L3.36 6.389a.5.5 0 0 1 0-.938l1.307-.478A4 4 0 0 0 7.053 2.59l.478-1.307Zm5.49 7.078a.25.25 0 0 1 .47 0l.279.763a2.25 2.25 0 0 0 1.342 1.342l.762.279a.25.25 0 0 1 0 .469l-.762.279a2.25 2.25 0 0 0-1.342 1.342l-.28.762a.25.25 0 0 1-.469 0l-.279-.762a2.25 2.25 0 0 0-1.342-1.342l-.762-.28a.25.25 0 0 1 0-.469l.762-.279a2.25 2.25 0 0 0 1.342-1.342l.28-.762Z"/></svg>
+												{/if}
+											</span>
+											<span class="text-xs text-text-muted">Generate behavior categories from risk definition.</span>
+										</div>
+										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{taxonomyConfig.model.split('/')[1]}</span>
+										<span class="pipeline-row-chevron">
+											<svg class="h-4 w-4 transition-transform {taxonomyExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+										</span>
+									</div>
+									{#if taxonomyExpanded}
+										<div class="mt-3 grid gap-3" style="max-width: 560px; grid-template-columns: 1.8fr 1fr 1fr 1fr;">
+											<div>
+												<label for="tax-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+												<select id="tax-model" class="form-select w-full text-sm" value={taxonomyConfig.model} onchange={(e) => { taxonomyConfig = { ...taxonomyConfig, model: e.currentTarget.value }; markDirty(); }}>
+													{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												</select>
+											</div>
+											<div>
+												<label for="tax-budget" class="mb-0.5 block text-[10px] text-text-muted">Categories</label>
+												<input id="tax-budget" type="number" step="1" min="1" class="form-control w-full text-sm" value={taxonomyConfig.subRisks} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, subRisks: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+											<div>
+												<label for="tax-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+												<input id="tax-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={taxonomyConfig.temperature} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+											<div>
+												<label for="tax-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+												<input id="tax-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={taxonomyConfig.maxTokens} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+										</div>
+										<label class="mt-3 flex items-start gap-2 text-xs text-text-secondary" style="max-width: 560px;">
+											<input
+												type="checkbox"
+												class="primer-checkbox shrink-0 mt-0.5"
+												checked={taxonomyConfig.deepResearchAgent}
+												onchange={(e) => { taxonomyConfig = { ...taxonomyConfig, deepResearchAgent: e.currentTarget.checked }; markDirty(); }}
+											/>
+											<span class="flex flex-col gap-0.5">
+												<span class="flex items-center gap-1.5 text-text">
+													<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" class="text-interactive shrink-0" aria-hidden="true"><path d="M7.53 1.282a.5.5 0 0 1 .94 0l.478 1.306a4 4 0 0 0 2.384 2.385l1.307.478a.5.5 0 0 1 0 .938l-1.307.478a4 4 0 0 0-2.384 2.385l-.478 1.306a.5.5 0 0 1-.94 0l-.478-1.306a4 4 0 0 0-2.385-2.385L3.36 6.389a.5.5 0 0 1 0-.938l1.307-.478A4 4 0 0 0 7.053 2.59l.478-1.307Zm5.49 7.078a.25.25 0 0 1 .47 0l.279.763a2.25 2.25 0 0 0 1.342 1.342l.762.279a.25.25 0 0 1 0 .469l-.762.279a2.25 2.25 0 0 0-1.342 1.342l-.28.762a.25.25 0 0 1-.469 0l-.279-.762a2.25 2.25 0 0 0-1.342-1.342l-.762-.28a.25.25 0 0 1 0-.469l.762-.279a2.25 2.25 0 0 0 1.342-1.342l.28-.762Z"/></svg>
+													<span class="font-medium">Use Deep Research Agent</span>
+													<InfoTooltip direction="se" label="Systematize risk by 1) combining a research-grounded analysis, 2) a simulated expert (Delphi-style) discussion to surface how risks manifest in GenAI, and 3) a validator that refines outputs using social science–based criteria. The output is a taxonomy." />
+												</span>
+												<span class="text-text-muted">Slower and more expensive, but produces a more thorough, research-grounded taxonomy.</span>
+											</span>
+										</label>
+									{/if}
+								</div>
+							</div>
+						</div>
+					{/if}
+
+					<!-- Evaluation set generation pipeline -->
+					<div class="mb-5">
+						<p class="mb-2 text-xs font-semibold text-text-muted">Evaluation set generation</p>
+						<div class="rounded-lg border border-border">
+							<div class="p-3">
+								<div
+									class="pipeline-row"
+									role="button"
+									tabindex="0"
+									aria-expanded={querySeedsExpanded}
+									onclick={() => (querySeedsExpanded = !querySeedsExpanded)}
+									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); querySeedsExpanded = !querySeedsExpanded; } }}
+								>
+									<div class="pipeline-row-label">
+										<span class="block text-sm font-medium text-text">Query seeds</span>
+										<span class="text-xs text-text-muted">Create test prompts across categories.</span>
+									</div>
+									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{querySeedsConfig.model.split('/')[1]}</span>
+									<span class="pipeline-row-chevron">
+										<svg class="h-4 w-4 transition-transform {querySeedsExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+									</span>
+								</div>
+								{#if querySeedsExpanded}
+									<div class="mt-3 grid gap-3" style="max-width: 560px; grid-template-columns: 1.8fr 1fr 1fr 1fr;">
+										<div>
+											<label for="qs-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+											<select id="qs-model" class="form-select w-full text-sm" value={querySeedsConfig.model} onchange={(e) => { querySeedsConfig = { ...querySeedsConfig, model: e.currentTarget.value }; markDirty(); }}>
+												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+											</select>
+										</div>
+										<div>
+											<label for="qs-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
+											<input id="qs-budget" type="number" step="10" min="1" class="form-control w-full text-sm" value={querySeedsConfig.budget} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
+										</div>
+										<div>
+											<label for="qs-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+											<input id="qs-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={querySeedsConfig.temperature} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+										</div>
+										<div>
+											<label for="qs-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+											<input id="qs-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={querySeedsConfig.maxTokens} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+										</div>
+									</div>
+
+									<!-- Advanced: factor-based -->
+									<div class="mt-3" style="max-width: 600px;">
+										<button type="button" class="flex items-center gap-1.5 text-xs font-medium text-text transition-colors hover:text-text" onclick={() => (factorBasedExpanded = !factorBasedExpanded)}>
+											<svg class="h-3.5 w-3.5 transition-transform {factorBasedExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+											Advanced: Test set dimension-based prompt generation
+										</button>
+										{#if factorBasedExpanded}
+											<div class="mt-3 space-y-4 rounded-lg border border-border bg-bg p-4">
+												<p class="text-xs text-text-muted">Generate prompts as a cross-product of test set dimensions. Each dimension defines axes of variation; prompts are generated for every combination.</p>
+												{#each evalFactors as factor, fIdx}
+													<div class="rounded-md border border-border p-3">
+														<div class="mb-2 flex items-center justify-between">
+															<span class="text-xs font-semibold text-text">{factor.name}</span>
+															<button type="button" class="text-xs text-text-muted transition-colors hover:text-score-fail" onclick={() => removeFactor(fIdx)}>
+																<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
+															</button>
+														</div>
+														<div class="mb-2 flex flex-wrap gap-1.5">
+															{#each factor.levels as level, lIdx}
+																{#if level.trim()}
+																	<span class="dim-chip cursor-pointer">
+																		{level}
+																		<button type="button" class="ml-0.5 text-text-muted transition-colors hover:text-score-fail" onclick={() => removeLevel(fIdx, lIdx)}>
+																			<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
+																		</button>
+																	</span>
+																{:else}
+																	<span class="level-edit-wrap">
+																		<!-- svelte-ignore a11y_autofocus -->
+																		<input
+																			type="text"
+																			class="form-control"
+																			placeholder={`Level ${lIdx + 1}`}
+																			autofocus
+																			value={level}
+																			oninput={(e) => updateLevel(fIdx, lIdx, e.currentTarget.value)}
+																			onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); if (e.key === 'Escape') removeLevel(fIdx, lIdx); }}
+																			onblur={() => trimLevels(fIdx)}
+																		/>
+																	</span>
+																{/if}
+															{/each}
+															<button type="button" class="dim-chip dim-chip-new" onclick={() => addLevel(fIdx)}>+ Level</button>
+														</div>
+													</div>
+												{/each}
+												<div class="flex items-center gap-2">
+													<input
+														type="text"
+														class="form-control text-sm"
+														style="min-width: 240px;"
+														placeholder="Test set dimension name"
+														value={newFactorName}
+														oninput={(e) => (newFactorName = e.currentTarget.value)}
+														onkeydown={(e) => { if (e.key === 'Enter' && newFactorName.trim()) addFactor(); }}
+													/>
+													<button class="btn" disabled={!newFactorName.trim()} onclick={addFactor}>Add</button>
+												</div>
+											</div>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						</div>
+					</div>
+
+					<!-- Rollout and judge pipeline -->
+					<div class="mb-5">
+						<p class="mb-2 text-xs font-semibold text-text-muted">Inference and score</p>
+						<div class="rounded-lg border border-border">
+							<div class="p-3">
+								<div
+									class="pipeline-row"
+									role="button"
+									tabindex="0"
+									aria-expanded={promptEvalExpanded}
+									onclick={() => (promptEvalExpanded = !promptEvalExpanded)}
+									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); promptEvalExpanded = !promptEvalExpanded; } }}
+								>
+									<div class="pipeline-row-label">
+										<span class="block text-sm font-medium text-text">Prompt evaluation</span>
+										<span class="text-xs text-text-muted">Run seeds against target model and judge responses.</span>
+									</div>
+									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{promptEvalConfig.targetModel.split('/')[1]}</span>
+									<span class="pipeline-row-chevron">
+										<svg class="h-4 w-4 transition-transform {promptEvalExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+									</span>
+								</div>
+								{#if promptEvalExpanded}
+									<div class="mt-3 grid grid-cols-2 gap-3" style="max-width: 360px;">
+										<div>
+											<label for="pe-target" class="mb-0.5 block text-[10px] text-text-muted">Target model</label>
+											<select id="pe-target" class="form-select w-full text-sm" value={promptEvalConfig.targetModel} onchange={(e) => { promptEvalConfig = { ...promptEvalConfig, targetModel: e.currentTarget.value }; markDirty(); }}>
+												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+											</select>
+										</div>
+										<div>
+											<label for="pe-judge" class="mb-0.5 block text-[10px] text-text-muted">Judge model</label>
+											<select id="pe-judge" class="form-select w-full text-sm" value={promptEvalConfig.judgeModel} onchange={(e) => { promptEvalConfig = { ...promptEvalConfig, judgeModel: e.currentTarget.value }; markDirty(); }}>
+												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+											</select>
+										</div>
+									</div>
+								{/if}
+							</div>
+						</div>
+					</div>
+
+					<!-- Audit pipeline -->
+					<div class="mb-5">
+						<div class="divide-y divide-border rounded-lg border border-border">
+							<!-- Audit seeds row -->
+							<div class="p-3">
+								<div class="flex items-center gap-3">
+									<input
+										type="checkbox"
+										class="primer-checkbox shrink-0"
+										checked={auditSeedsEnabled}
+										onchange={(e) => { handleAuditSeedsChange(e.currentTarget.checked); if (e.currentTarget.checked) auditSeedsExpanded = true; }}
+										onclick={(e) => e.stopPropagation()}
+									/>
+									<div
+										class="pipeline-row"
+										role="button"
+										tabindex="0"
+										aria-expanded={auditSeedsExpanded}
+										onclick={() => (auditSeedsExpanded = !auditSeedsExpanded)}
+										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); auditSeedsExpanded = !auditSeedsExpanded; } }}
+									>
+										<div class="pipeline-row-label">
+											<span class="block text-sm font-medium text-text">Prompt seeds <span class="font-normal text-text-muted">(optional)</span></span>
+											<span class="text-xs text-text-muted">Generate audit-style multi-turn seed prompts.</span>
+										</div>
+										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{auditSeedsConfig.model.split('/')[1]}</span>
+										<span class="pipeline-row-chevron">
+											<svg class="h-4 w-4 transition-transform {auditSeedsExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+										</span>
+									</div>
+								</div>
+								{#if auditSeedsExpanded}
+									<div class="ml-7 mt-3 space-y-4" style="max-width: 600px;">
+										<div>
+											<div class="mb-1 block text-[10px] text-text-muted">Modality</div>
+											<div class="wizard-seg" style="max-width: 240px;" role="radiogroup" aria-label="Modality">
+												{#each ['conversation', 'agentic'] as m}
+													<button
+														type="button"
+														role="radio"
+														aria-checked={auditSeedsConfig.modality === m}
+														class="wizard-seg-btn"
+														class:selected={auditSeedsConfig.modality === m}
+														onclick={() => { auditSeedsConfig = { ...auditSeedsConfig, modality: m as 'conversation' | 'agentic' }; markDirty(); }}
+													>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
+												{/each}
+											</div>
+											<p class="mt-1 text-[10px] text-text-muted">
+												{auditSeedsConfig.modality === 'conversation'
+													? 'Standard multi-turn conversation between auditor and target.'
+													: 'Agentic multi-turn interaction with tool-use capabilities.'}
+											</p>
+										</div>
+										<div class="grid grid-cols-4 gap-3">
+											<div>
+												<label for="as-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+												<select id="as-model" class="form-select w-full text-sm" value={auditSeedsConfig.model} onchange={(e) => { auditSeedsConfig = { ...auditSeedsConfig, model: e.currentTarget.value }; markDirty(); }}>
+													{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												</select>
+											</div>
+											<div>
+												<label for="as-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
+												<input id="as-budget" type="number" min="1" class="form-control w-full text-sm" value={auditSeedsConfig.budget} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+											<div>
+												<label for="as-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+												<input id="as-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={auditSeedsConfig.temperature} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+											<div>
+												<label for="as-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+												<input id="as-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={auditSeedsConfig.maxTokens} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+											</div>
+										</div>
+										<div>
+											<div class="mb-1 block text-[10px] text-text-muted">Variation dimensions <span class="opacity-60">(optional — generate seed variants along each axis)</span></div>
+											<div class="flex flex-wrap gap-1.5">
+												{#each variationDimensions as dim, i}
+													<span class="dim-chip">
+														{dim.name}
+														<button type="button" class="ml-0.5 text-text-muted transition-colors hover:text-score-fail" onclick={() => (variationDimensions = variationDimensions.filter((_, idx) => idx !== i))}>
+															<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
+														</button>
+													</span>
+												{/each}
+												<button type="button" class="dim-chip dim-chip-new" onclick={() => (showAddVariationDim = true)}>+ New</button>
+											</div>
+											{#if showAddVariationDim}
+												<div class="mt-3 space-y-2 rounded-lg border border-border bg-bg p-3">
+													<div>
+														<label for="vdim-name" class="mb-1 block text-xs font-semibold text-text-secondary">Name</label>
+														<!-- svelte-ignore a11y_autofocus -->
+														<input id="vdim-name" type="text" class="form-control w-full text-sm" placeholder="e.g. emotional_pressure" autofocus value={newVariationDim.name} oninput={(e) => (newVariationDim = { ...newVariationDim, name: e.currentTarget.value })} />
+													</div>
+													<div>
+														<label for="vdim-desc" class="mb-1 block text-xs font-semibold text-text-secondary">Description</label>
+														<textarea id="vdim-desc" class="form-control w-full text-sm" rows="3" placeholder="What to vary and what to keep fixed." value={newVariationDim.description} oninput={(e) => (newVariationDim = { ...newVariationDim, description: e.currentTarget.value })}></textarea>
+													</div>
+													<div class="flex items-center gap-2">
+														<button class="btn btn-primary" disabled={!newVariationDim.name.trim()} onclick={() => { variationDimensions = [...variationDimensions, { name: newVariationDim.name.trim() }]; newVariationDim = { name: '', description: '' }; showAddVariationDim = false; }}>Add dimension</button>
+														<button class="btn" onclick={() => { showAddVariationDim = false; newVariationDim = { name: '', description: '' }; }}>Cancel</button>
+													</div>
+												</div>
+											{/if}
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<!-- Scenario eval row -->
+							<div class="p-3">
+								<div class="flex items-center gap-3">
+									<input
+										type="checkbox"
+										class="primer-checkbox shrink-0"
+										checked={scenarioEvalEnabled}
+										onchange={(e) => { handleScenarioEvalChange(e.currentTarget.checked); if (e.currentTarget.checked) scenarioEvalExpanded = true; }}
+										onclick={(e) => e.stopPropagation()}
+									/>
+									<div
+										class="pipeline-row"
+										role="button"
+										tabindex="0"
+										aria-expanded={scenarioEvalExpanded}
+										onclick={() => (scenarioEvalExpanded = !scenarioEvalExpanded)}
+										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scenarioEvalExpanded = !scenarioEvalExpanded; } }}
+									>
+										<div class="pipeline-row-label">
+											<span class="block text-sm font-medium text-text">Scenario evaluation <span class="font-normal text-text-muted">(optional)</span></span>
+											<span class="text-xs text-text-muted">Multi-turn red-team tester against target model.</span>
+										</div>
+										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{scenarioEvalConfig.target.model.split('/')[1]}</span>
+										<span class="pipeline-row-chevron">
+											<svg class="h-4 w-4 transition-transform {scenarioEvalExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+										</span>
+									</div>
+								</div>
+								{#if scenarioEvalExpanded}
+									<div class="ml-7 mt-3 space-y-4" style="max-width: 620px;">
+										<div style="max-width: 120px;">
+											<label for="se-max-turns" class="mb-0.5 block text-[10px] text-text-muted">Max turns</label>
+											<input id="se-max-turns" type="number" step="1" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.maxTurns} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, maxTurns: Number(e.currentTarget.value) }; markDirty(); }} />
+										</div>
+										<div>
+											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Target</span>
+											<div class="grid gap-3" style="grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr;">
+												<div>
+													<label for="se-target-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+													<select id="se-target-model" class="form-select w-full text-sm" value={scenarioEvalConfig.target.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, target: { ...scenarioEvalConfig.target, model: e.currentTarget.value } }; markDirty(); }}>
+														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+													</select>
+												</div>
+												<div>
+													<label for="se-target-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+													<input id="se-target-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioEvalConfig.target.temperature} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, target: { ...scenarioEvalConfig.target, temperature: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+												<div>
+													<label for="se-target-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+													<input id="se-target-tokens" type="number" step="1000" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.target.maxTokens} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, target: { ...scenarioEvalConfig.target, maxTokens: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+											</div>
+										</div>
+										<div>
+											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Auditor</span>
+											<div class="grid gap-3" style="grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr;">
+												<div>
+													<label for="se-auditor-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+													<select id="se-auditor-model" class="form-select w-full text-sm" value={scenarioEvalConfig.auditor.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, model: e.currentTarget.value } }; markDirty(); }}>
+														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+													</select>
+												</div>
+												<div>
+													<label for="se-auditor-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+													<input id="se-auditor-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioEvalConfig.auditor.temperature} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, temperature: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+												<div>
+													<label for="se-auditor-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+													<input id="se-auditor-tokens" type="number" step="1000" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.auditor.maxTokens} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, maxTokens: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+											</div>
+										</div>
+										<div>
+											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Judge</span>
+											<div class="grid gap-3" style="grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr 1fr;">
+												<div>
+													<label for="se-judge-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+													<select id="se-judge-model" class="form-select w-full text-sm" value={scenarioEvalConfig.judge.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, judge: { ...scenarioEvalConfig.judge, model: e.currentTarget.value } }; markDirty(); }}>
+														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+													</select>
+												</div>
+												<div>
+													<label for="se-judge-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+													<input id="se-judge-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioEvalConfig.judge.temperature} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, judge: { ...scenarioEvalConfig.judge, temperature: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+												<div>
+													<label for="se-judge-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+													<input id="se-judge-tokens" type="number" step="1000" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.judge.maxTokens} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, judge: { ...scenarioEvalConfig.judge, maxTokens: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+												<div>
+													<label for="se-judge-passes" class="mb-0.5 block text-[10px] text-text-muted">Judge passes</label>
+													<input id="se-judge-passes" type="number" step="1" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.judge.judgePasses} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, judge: { ...scenarioEvalConfig.judge, judgePasses: Number(e.currentTarget.value) } }; markDirty(); }} />
+												</div>
+											</div>
+											<div class="mt-2">
+												<span class="mb-1.5 block text-[10px] text-text-muted">Dimensions <span class="opacity-60">(optional)</span></span>
+												<div class="flex flex-wrap gap-1.5">
+													{#each judgeDimensions as dim, idx}
+														<span class="dim-chip">
+															{dim.name}
+															<button type="button" class="ml-0.5 text-text-muted transition-colors hover:text-score-fail" onclick={() => (judgeDimensions = judgeDimensions.filter((_, i) => i !== idx))} aria-label={`Remove ${dim.name}`}>
+																<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
+															</button>
+														</span>
+													{/each}
+													<button type="button" class="dim-chip dim-chip-new" onclick={() => (showAddDimension = true)}>+ New</button>
+												</div>
+												{#if showAddDimension}
+													<div class="mt-3 space-y-2 rounded-lg border border-border bg-bg p-3">
+														<div>
+															<label for="dim-name" class="mb-1 block text-xs font-semibold text-text-secondary">Name</label>
+															<input id="dim-name" type="text" class="form-control w-full text-sm" placeholder="e.g. helpfulness" value={newDimension.name} oninput={(e) => (newDimension = { ...newDimension, name: e.currentTarget.value })} />
+														</div>
+														<div>
+															<label for="dim-desc" class="mb-1 block text-xs font-semibold text-text-secondary">Description</label>
+															<input id="dim-desc" type="text" class="form-control w-full text-sm" placeholder="How helpful the response is" value={newDimension.description} oninput={(e) => (newDimension = { ...newDimension, description: e.currentTarget.value })} />
+														</div>
+														<div>
+															<label for="dim-rubric" class="mb-1 block text-xs font-semibold text-text-secondary">Rubric (1-3 scale)</label>
+															<textarea id="dim-rubric" class="form-control w-full text-sm" rows="3" placeholder={"1 = unhelpful\n2 = somewhat helpful\n3 = very helpful"} value={newDimension.rubric} oninput={(e) => (newDimension = { ...newDimension, rubric: e.currentTarget.value })}></textarea>
+														</div>
+														<div class="flex items-center gap-2">
+															<button class="btn btn-primary" disabled={!newDimension.name.trim()} onclick={() => { judgeDimensions = [...judgeDimensions, { ...newDimension }]; newDimension = { name: '', description: '', rubric: '' }; showAddDimension = false; }}>Add dimension</button>
+															<button class="btn" onclick={() => { showAddDimension = false; newDimension = { name: '', description: '', rubric: '' }; }}>Cancel</button>
+														</div>
+													</div>
+												{/if}
+											</div>
+										</div>
+									</div>
+								{/if}
+							</div>
+						</div>
+					</div>
+				{/if}
+			{/if}
+
+			<!-- ═════════ STEP 3 ═════════ -->
+			{#if currentStep === 3}
+				<p class="mb-1 text-[16px] font-semibold text-text">Step 3</p>
+				<h2 class="mb-1 text-lg font-semibold text-text">Summary & submit</h2>
+				<p class="mb-5 text-sm text-text-muted">Review your configuration and submit the evaluation run.</p>
+
+				<div class="mb-6">
+					<h3 class="mb-3 text-base font-semibold text-text">Summary</h3>
+					<div class="space-y-2.5 rounded-md border border-border bg-bg p-4 text-sm">
+						<div class="flex justify-between"><span class="text-text-muted">Risk</span><span class="font-medium text-text">{summaryRisk}</span></div>
+						{#if applicationContext.trim()}
+							<div><span class="mb-0.5 block text-text-muted">Application context</span><span class="whitespace-pre-wrap text-text">{applicationContext.trim()}</span></div>
+						{/if}
+						{#if evaluationTarget === 'model' && systemPrompt.trim()}
+							<div><span class="mb-0.5 block text-text-muted">System prompt</span><span class="whitespace-pre-wrap text-text">{systemPrompt.trim()}</span></div>
+						{/if}
+						<div class="flex justify-between"><span class="text-text-muted">Taxonomy</span><span class="font-medium text-text">{summaryTaxonomy}</span></div>
+						<div class="flex justify-between"><span class="text-text-muted">Measurement suite</span><span class="font-medium text-text">{suiteId.trim() || '(new)'}</span></div>
+						<div class="flex justify-between"><span class="text-text-muted">Run</span><span class="font-medium text-text">{runId.trim() || 'v1'}</span></div>
+						{#if step2Source === 'new'}
+							<div class="flex justify-between"><span class="text-text-muted">Query pipeline</span><span class="font-medium text-text">{summaryQueryPipeline}</span></div>
+							{#if auditSeedsEnabled || scenarioEvalEnabled}
+								<div class="flex justify-between"><span class="text-text-muted">Audit pipeline</span><span class="font-medium text-text">{summaryAuditPipeline}</span></div>
+							{/if}
+						{/if}
+					</div>
+				</div>
+
+				<div class="mb-5">
+					<h3 class="mb-1 text-base font-semibold text-text">Measurement suite & run identity</h3>
+					<p class="mb-3 text-xs text-text-muted">Measurement suites group policy + seeds; runs hold measurement results.</p>
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Measurement suite ID</label>
+							<input id="suite-id" type="text" class="form-control w-full text-sm" placeholder="Auto-generated if blank" value={suiteId} oninput={(e) => { suiteId = e.currentTarget.value; markDirty(); }} disabled={submitting} />
+						</div>
+						<div>
+							<label for="run-id" class="mb-1 block text-xs font-semibold text-text-secondary">Run ID <span class="text-score-fail">*</span></label>
+							<input id="run-id" type="text" class="form-control w-full text-sm {!runId.trim() ? 'border-score-fail' : ''}" placeholder="e.g., v1" value={runId} oninput={(e) => { runId = e.currentTarget.value; markDirty(); }} disabled={submitting} />
+							{#if !runId.trim()}<p class="mt-1 text-xs text-score-fail">Run ID is required.</p>{/if}
+						</div>
+					</div>
+				</div>
+
+				{#if submitError}
+					<div class="mb-4 rounded-md border border-score-fail/30 bg-score-fail/5 p-3 text-sm text-score-fail">{submitError}</div>
+				{/if}
+			{/if}
+		</div>
+
+		<!-- Footer buttons -->
+		<div class="mt-4 flex items-center justify-between">
+			<button class="btn" onclick={handleCancel} disabled={submitting}>Cancel</button>
+			<div class="flex items-center gap-2">
+				{#if currentStep > 1}
+					<button class="btn" onclick={handleBack} disabled={submitting}>Back</button>
+				{/if}
+				{#if currentStep < 3}
+					<button class="btn btn-primary" disabled={!stepValid(currentStep)} onclick={handleContinue}>Continue</button>
+				{:else}
+					<button class="btn btn-primary" disabled={!step1Valid || !step2Valid || !step3Valid || submitting} onclick={handleSubmit}>
+						{#if submitting}
+							<svg class="-ml-0.5 mr-1.5 inline-block h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+							Submitting…
+						{:else}
+							Submit evaluation
+						{/if}
+					</button>
+				{/if}
+			</div>
+		</div>
+	</div>
 </div>
 
-<div class="rounded-lg border border-border bg-surface p-6">
-	<h1 class="text-xl font-semibold tracking-tight">New evaluation run</h1>
-	<p class="mt-2 text-sm text-text-muted">
-		The new-run wizard is still managed via the CLI. To create a new evaluation run, use:
-	</p>
-	<pre class="mt-3 rounded-md bg-bg/60 px-3 py-2 font-mono text-xs text-text-secondary">uv run p2m run --config &lt;config.yaml&gt;</pre>
-	<p class="mt-4 text-sm text-text-muted">
-		Once the run starts it will appear in the active runs section on the home page.
-	</p>
-</div>
+<!-- Discard modal -->
+{#if showDiscardModal}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="discard-title">
+		<div class="fixed inset-0" role="presentation" onclick={() => (showDiscardModal = false)}></div>
+		<div class="relative z-10 w-full max-w-sm rounded-lg border border-border bg-surface p-5 shadow-xl">
+			<h3 id="discard-title" class="text-base font-semibold text-text">Discard changes?</h3>
+			<p class="mt-2 text-sm text-text-secondary">You have unsaved changes. Leaving will discard your setup.</p>
+			<div class="mt-5 flex items-center justify-end gap-2">
+				<button class="btn" onclick={() => (showDiscardModal = false)}>Stay</button>
+				<button class="btn btn-danger" onclick={() => { isDirty = false; showDiscardModal = false; goto('/'); }}>Discard</button>
+			</div>
+		</div>
+	</div>
+{/if}

@@ -88,11 +88,18 @@ export interface ViewerSeedGroup {
 
 export type StageStatus = 'running' | 'completed' | 'failed';
 
+export interface StageTiming {
+	started_at?: string;
+	ended_at?: string;
+	duration_secs?: number;
+}
+
 export interface Manifest {
 	status?: 'running' | 'completed' | 'failed';
 	started_at?: string;
 	ended_at?: string;
 	stages?: Record<string, StageStatus>;
+	stage_timings?: Record<string, StageTiming>;
 	pid?: number;
 	host?: string;
 	heartbeat_at?: string;

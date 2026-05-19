@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { activeRuns } from '$lib/active-runs.js';
+	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
+	import PrimerPagination from '$lib/PrimerPagination.svelte';
 
 	let { data } = $props();
 	let search = $state('');
@@ -8,11 +10,11 @@
 	let viewMode = $state<'card' | 'list'>('card');
 	let listPage = $state(1);
 
-	const PAGE_SIZE = 10;
+	const PAGE_SIZE = 12;
 	const statusConfig: Record<string, { icon: string; label: string; class: string }> = {
-		systematized: { icon: '○', label: 'Behavior Categories Ready', class: 'text-text-muted' },
-		test_set_ready: { icon: '●', label: 'Test Set Generated', class: 'text-score-border' },
-		has_results: { icon: '◉', label: 'Has Run Result', class: 'text-score-pass' }
+		policy_only: { icon: '○', label: 'Behavior Categories Defined', class: 'text-text-muted' },
+		seeds_ready: { icon: '●', label: 'Evaluation Test Set Generated', class: 'text-score-border' },
+		has_results: { icon: '◉', label: 'Has Evaluation Result', class: 'text-score-pass' }
 	};
 
 	let filtered = $derived.by(() => {
@@ -20,14 +22,14 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') items = items.filter((s) => s.status === statusFilter);
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.behavior_name.localeCompare(b.behavior_name);
+			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -49,16 +51,19 @@
 	});
 </script>
 
-<div class="mb-6 flex items-start justify-between">
+<div class="mb-6 flex items-start justify-between gap-3">
 	<div>
-		<h1 class="text-xl font-semibold tracking-tight">Measurement suites</h1>
-		<p class="mt-0.5 text-sm text-text-muted">Browse behavior categories, test cases, and measurement results.</p>
+		<h1 class="text-xl font-semibold tracking-tight">Evaluation suites</h1>
+		<p class="mt-0.5 text-sm text-text-muted">View evaluation test sets and results aligned to policy-defined behavior categories.</p>
 	</div>
 	<a
 		href="/new"
-		class="btn btn-primary btn-small no-underline"
+		class="btn btn-primary shrink-0 no-underline"
 	>
-		+ New evaluation run
+		<span class="inline-flex items-center gap-1.5 whitespace-nowrap">
+			<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
+			<span>New evaluation</span>
+		</span>
 	</a>
 </div>
 
@@ -105,29 +110,39 @@
 			<input
 				id="suite-search"
 				type="text"
-				placeholder="Search measurement suites…"
+				placeholder="Search evaluation suites…"
 				bind:value={search}
 				class="form-control w-full"
 				style="padding-left: 2rem;"
 			/>
 		</div>
 		<div class="flex-shrink-0">
-			<label for="suite-status-filter" class="sr-only">Status</label>
-			<select id="suite-status-filter" bind:value={statusFilter} class="form-select">
-				<option value="all">All statuses</option>
-				<option value="systematized">○ Behavior Categories Ready</option>
-				<option value="test_set_ready">● Test Set Generated</option>
-				<option value="has_results">◉ Has Run Result</option>
-			</select>
+			<PrimerDropdown
+				label="Status"
+				ariaLabel="Filter by evaluation status"
+				options={[
+					{ value: 'all', label: 'All statuses' },
+					{ value: 'policy_only', label: '○ Behavior Categories Defined' },
+					{ value: 'seeds_ready', label: '● Evaluation Test Set Generated' },
+					{ value: 'has_results', label: '◉ Has Evaluation Result' }
+				]}
+				selected={statusFilter}
+				onSelect={(v) => statusFilter = v}
+			/>
 		</div>
 		<div class="flex-shrink-0">
-			<label for="suite-sort" class="sr-only">Sort</label>
-			<select id="suite-sort" bind:value={sortBy} class="form-select">
-				<option value="newest">Newest first</option>
-				<option value="oldest">Oldest first</option>
-				<option value="name">Name A–Z</option>
-				<option value="runs">Most runs</option>
-			</select>
+			<PrimerDropdown
+				label="Sort"
+				ariaLabel="Sort evaluation suites"
+				options={[
+					{ value: 'newest', label: 'Newest first' },
+					{ value: 'oldest', label: 'Oldest first' },
+					{ value: 'name', label: 'Name A–Z' },
+					{ value: 'runs', label: 'Most runs' }
+				]}
+				selected={sortBy}
+				onSelect={(v) => sortBy = v}
+			/>
 		</div>
 		<span class="flex-shrink-0 text-[11px] text-text-muted">{filtered.length} suites</span>
 	</div>
@@ -167,41 +182,44 @@
 		<svg class="mx-auto mb-3 h-8 w-8 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 			<path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
 		</svg>
-		<p class="text-sm text-text-secondary">No measurement suites found</p>
+		<p class="text-sm text-text-secondary">No evaluation suites found</p>
 		<p class="mt-1 text-xs text-text-muted">Try a different search or filter.</p>
 	</div>
 {:else if viewMode === 'card'}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#each filtered as suite (suite.suite_id)}
-			{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
+			{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
 			<div class="card-hover group rounded-lg border border-border bg-surface p-4 no-underline">
-				<div class="flex items-center justify-between gap-3">
-					<p class="truncate font-mono text-[10px] uppercase tracking-wider text-text-muted">{suite.suite_id}</p>
-					<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}">
+				<div class="flex items-start justify-between gap-3">
+					<p class="min-w-0 flex-1 flex items-center gap-1.5 pt-0.5 font-mono text-[10px] uppercase leading-4 tracking-wider text-text-muted">
+						<svg class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+						<span class="truncate">{suite.suite_id}</span>
+					</p>
+					<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] leading-4 {sc.class}">
 						<span>{sc.icon}</span> {sc.label}
 					</span>
 				</div>
 				<a href="/suite/{suite.suite_id}" class="card-heading mt-1 block text-base font-semibold text-text no-underline">
-					{suite.behavior_name}
+					{suite.concept_name}
 				</a>
 				<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
-					<a href="/suite/{suite.suite_id}?section=taxonomy" class="no-underline hover:text-interactive">
-						<div class="text-[10px] text-text-muted">Categories</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_category_count}</div>
+					<a href="/suite/{suite.suite_id}?section=policy" class="no-underline hover:text-interactive">
+						<div class="text-[10px] text-text-muted">Behavior categories</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_count}</div>
 					</a>
-					<a href="/suite/{suite.suite_id}?section=test_set" class="no-underline hover:text-interactive">
-						<div class="text-[10px] text-text-muted">Test cases</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.prompt_test_case_count + suite.scenario_test_case_count}</div>
+					<a href="/suite/{suite.suite_id}?section=seeds" class="no-underline hover:text-interactive">
+						<div class="text-[10px] text-text-muted">Evaluation test set</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.seed_count + suite.scenario_seed_count}</div>
 					</a>
 					<a href="/suite/{suite.suite_id}?section=results" class="no-underline hover:text-interactive">
-						<div class="text-[10px] text-text-muted">Evaluations</div>
+						<div class="text-[10px] text-text-muted">Evaluation results</div>
 						<div class="mt-1 text-sm text-text-secondary">{suite.run_count}</div>
 					</a>
 				</div>
 				{#if suite.created_at}
 					<div class="mt-2 flex items-center gap-1 text-[11px] text-text-muted">
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-						{new Date(suite.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}
+						Created {new Date(suite.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}
 					</div>
 				{/if}
 			</div>
@@ -213,23 +231,25 @@
 			<thead>
 				<tr class="border-b border-border bg-surface text-left text-[11px] text-text-muted">
 					<th class="px-4 py-2 font-semibold">Suite name</th>
-					<th class="px-4 py-2 font-semibold">Categories</th>
-					<th class="px-4 py-2 font-semibold">Test cases</th>
-					<th class="px-4 py-2 font-semibold">Evaluations</th>
+					<th class="px-4 py-2 font-semibold">Suite created at</th>
+					<th class="px-4 py-2 font-semibold">Behavior categories</th>
+					<th class="px-4 py-2 font-semibold">Evaluation test set</th>
+					<th class="px-4 py-2 font-semibold">Evaluation results</th>
 					<th class="px-4 py-2 font-semibold">Status</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each paginatedList as suite}
-					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
+					{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="px-4 py-2.5 align-middle">
-							<a href="/suite/{suite.suite_id}" class="card-heading text-base font-semibold no-underline hover:text-interactive hover:underline">{suite.behavior_name}</a>
-							<p class="mt-0.5 truncate font-mono text-[10px] text-text-muted">{suite.suite_id}</p>
+							<a href="/suite/{suite.suite_id}" class="card-heading mt-1.5 block text-base font-semibold text-text no-underline hover:text-interactive hover:underline">{suite.concept_name}</a>
+							<p class="truncate font-mono text-[10px] text-text-muted" style="margin:0 0 6px;">{suite.suite_id}</p>
 						</td>
-						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=taxonomy" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.behavior_category_count}</a></td>
-						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=test_set" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.prompt_test_case_count + suite.scenario_test_case_count}</a></td>
-						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=results" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.run_count}</a></td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.created_at ? new Date(suite.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.behavior_count}</td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.seed_count + suite.scenario_seed_count}</td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.run_count}</td>
 						<td class="px-4 py-2.5 align-middle">
 							<span class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}"><span>{sc.icon}</span> {sc.label}</span>
 						</td>
@@ -239,15 +259,6 @@
 		</table>
 	</div>
 	{#if totalPages > 1}
-		<nav class="mt-4 flex items-center justify-between" aria-label="Pagination">
-			<span class="text-xs text-text-muted">Showing {(listPage - 1) * PAGE_SIZE + 1}-{Math.min(listPage * PAGE_SIZE, filtered.length)} of {filtered.length}</span>
-			<div class="flex items-center gap-1">
-				<button class="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-50" disabled={listPage <= 1} onclick={() => listPage -= 1}>Previous</button>
-				{#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
-					<button class="rounded-md border border-border px-2 py-1 text-xs {pageNum === listPage ? 'bg-interactive text-white' : 'text-text-muted'}" onclick={() => listPage = pageNum}>{pageNum}</button>
-				{/each}
-				<button class="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-50" disabled={listPage >= totalPages} onclick={() => listPage += 1}>Next</button>
-			</div>
-		</nav>
+		<PrimerPagination page={listPage} {totalPages} onPageChange={(n) => (listPage = n)} />
 	{/if}
 {/if}

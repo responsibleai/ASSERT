@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
+	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
 	import { quintOut } from 'svelte/easing';
 	import type { BinaryCounts, DimensionDef } from '$lib/types.js';
@@ -108,11 +109,11 @@ function summaryGridTemplate(): string {
 }
 
 function comparisonGridTemplate(runCount: number): string {
-	return `minmax(14rem, 1fr) repeat(${runCount}, 100px) 80px`;
+	return `minmax(14rem, 1fr) repeat(${runCount}, 120px)`;
 }
 
 function comparisonTableMinWidth(runCount: number): string {
-	return `${14 + runCount * 6.25 + 5}rem`;
+	return `${14 + runCount * 7.5}rem`;
 }
 
 function sampleGridTemplate(runCount: number): string {
@@ -122,73 +123,68 @@ function sampleGridTemplate(runCount: number): string {
 function sampleGridMinWidth(runCount: number): string {
 	return `${runCount * 16}rem`;
 }
+
+function capitalize(s: string): string {
+	return s.charAt(0).toUpperCase() + s.slice(1);
+}
 </script>
 
-<!-- Back link -->
-<div class="mx-auto max-w-5xl px-6 pt-6">
-	<a href="/suite/{data.suite_id}?section=results" class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-interactive transition-colors">
-		<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
-		Back to {data.suite_id}
-	</a>
-</div>
-
-<div class="mx-auto max-w-5xl px-6 pt-4 pb-24 space-y-12">
+<div class="mb-6">
+	<nav aria-label="Breadcrumb">
+		<ol class="Breadcrumb">
+			<li class="Breadcrumb-item"><a href="/">Evaluation suites</a></li>
+			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.policy?.concept?.name ?? data.suite_id}</a></li>
+			<li class="Breadcrumb-item" aria-current="page">Compare runs</li>
+		</ol>
+	</nav>
 
 	<!-- ═══ SECTION 1: Header ═══ -->
-	<header class="space-y-5">
-		<h1 class="text-lg font-semibold text-text">
-			Comparing {data.runs.length} runs
-			<span class="text-text-muted font-normal">on</span>
-			<span class="text-interactive">{data.taxonomy?.behavior?.name ?? data.suite_id}</span>
+	<div class="mt-5">
+		<div class="text-[12px] font-medium text-text-muted">Comparison</div>
+		<h1 class="text-2xl font-semibold leading-tight text-text" style="margin-top:2px;">
+			Comparing {data.runs.length} runs on {data.policy?.concept?.name ?? data.suite_id}
 		</h1>
 
-		<div class="flex flex-wrap gap-3">
-			{#each data.runs as run, i}
-				<button
-					onclick={() => { baselineIdx = i; }}
-					class="group relative flex items-center gap-3 rounded-xl border px-4 py-3 transition-all duration-150
-						{i === baselineIdx
-							? 'border-white/20 bg-white/[0.04] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]'
-							: 'border-border bg-surface hover:border-white/10 hover:bg-white/[0.02]'}"
-				>
-					<!-- Color dot -->
-					<span class="h-3 w-3 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
-
-					<div class="text-left">
-						<div class="text-sm font-medium" style="color: {RUN_COLORS[i]}">{run.display_name}</div>
-						<div class="text-[10px] text-text-muted mt-0.5">{run.run_id} · {run.date}</div>
-					</div>
-
-					{#if i === baselineIdx}
-						<span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-muted">
-							baseline
-						</span>
-					{/if}
-				</button>
-			{/each}
+		<div class="mt-4">
+			<!-- Baseline dropdown -->
+			<label for="baseline-select" class="block text-xs font-medium text-text-muted mb-1.5">Baseline</label>
+			<PrimerDropdown
+				ariaLabel="Select baseline run"
+				selected={String(baselineIdx)}
+				options={data.runs.map((run, i) => ({
+					value: String(i),
+					label: `${run.display_name} · ${run.date}`
+				}))}
+				onSelect={(value) => { baselineIdx = Number(value); }}
+			/>
 		</div>
-	</header>
+	</div>
+</div>
 
+<div class="space-y-8">
 	<!-- ═══ SECTION 2: Metric Picker + Summary Cards ═══ -->
-	<section class="space-y-3">
-		<!-- Metric picker -->
-		{#if data.allMetrics.length > 1}
-			<div class="flex items-center gap-1.5">
-				{#each data.allMetrics as metric}
-					<button
-						onclick={() => { activeMetric = metric; }}
-						class="rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150
-							{activeMetric === metric
-								? 'bg-interactive text-white'
-								: 'text-text-muted hover:text-text hover:bg-surface-2'}"
-					>
-						{metricLabel(metric)}
-					</button>
-				{/each}
-			</div>
-		{:else}
-			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{metricLabel(activeMetric)}</h2>
-		{/if}
+	<section class="space-y-4">
+		<div class="flex items-center justify-between gap-3 flex-wrap">
+			<h2 class="text-lg font-semibold text-text">Summary</h2>
+			{#if data.allMetrics.length > 1}
+				<div class="SegmentedControl" role="tablist" aria-label="Metric">
+					{#each data.allMetrics as metric}
+						<button
+							type="button"
+							role="tab"
+							aria-selected={activeMetric === metric}
+							class="SegmentedControl-item"
+							class:SegmentedControl-item--selected={activeMetric === metric}
+							onclick={() => { activeMetric = metric; }}
+						>
+							<span class="SegmentedControl-content">{capitalize(metricLabel(metric))}</span>
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<span class="text-xs text-text-muted">{capitalize(metricLabel(activeMetric))}</span>
+			{/if}
+		</div>
 
 		<div class="grid gap-4" style="grid-template-columns: {summaryGridTemplate()};">
 			{#each data.runs as run, i}
@@ -198,64 +194,67 @@ function sampleGridMinWidth(runCount: number): string {
 				{@const delta = i !== baselineIdx ? avg - baselineAvg : 0}
 				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
 				{@const pct = pctBar(runScores)}
-				<div class="rounded-xl border border-border bg-surface p-5 space-y-4">
-					<!-- Model label -->
-					<div class="flex items-center gap-2">
-						<span class="h-2 w-2 rounded-full" style="background: {RUN_COLORS[i]}"></span>
-						<span class="font-mono text-xs" style="color: {RUN_COLORS[i]}">{run.model}</span>
+				{@const totalSamples = runScores[0] + runScores[1]}
+				<div class="rounded-lg border border-border bg-surface px-5 py-4">
+					<!-- Header: run name + sample count -->
+					<div class="flex items-start justify-between gap-3">
+						<div class="flex items-center gap-2 min-w-0">
+							<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
+							<span class="text-sm font-medium text-text truncate">{run.display_name}</span>
+							{#if i === baselineIdx}
+								<span class="inline-flex items-center rounded-full bg-interactive/15 px-2 py-0.5 text-[10px] font-semibold text-interactive ring-1 ring-interactive/40">Baseline</span>
+							{/if}
+						</div>
+						<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{run.total} samples</span>
 					</div>
 
+					<!-- Model name -->
+					<div class="mt-1 font-mono text-xs text-text-muted truncate">{run.model}</div>
+
 					<!-- Big number -->
-					<div class="flex items-end gap-2">
-						<span class="text-3xl font-bold tabular-nums {rateTextClass(avg)}">{(avg * 100).toFixed(0)}%</span>
-						{#if i !== baselineIdx}
-							<span class="mb-1 text-sm font-semibold tabular-nums {deltaClass(delta)}">
+					<div class="mt-3 flex items-baseline gap-1.5">
+						<span class="text-3xl font-bold tabular-nums text-text">{(avg * 100).toFixed(0)}%</span>
+						<span class="text-sm text-text-muted">Flagged</span>
+						{#if i !== baselineIdx && Math.abs(delta) >= 0.005}
+							<span class="ml-1 text-sm font-semibold tabular-nums {deltaClass(delta)}">
 								{deltaText(delta)} {deltaArrow(delta)}
 							</span>
 						{/if}
 					</div>
 
-					<!-- Pass rate -->
-					<div class="space-y-1.5">
-						<div class="flex justify-between text-[10px]">
-							<span class="text-text-muted">Flagged rate</span>
-							<span class="font-semibold tabular-nums text-text-secondary">{(avg * 100).toFixed(0)}%</span>
-						</div>
-
-						<!-- Score distribution bar -->
-						<div class="flex h-2 w-full overflow-hidden rounded-full bg-surface-2">
-							{#if pct.clear > 0}
-								<div class="h-full bg-score-pass transition-all duration-300" style="width: {pct.clear}%"></div>
-							{/if}
+					<!-- Score distribution bar (matches run detail summary card) -->
+					{#if totalSamples > 0}
+						<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
 							{#if pct.flagged > 0}
-								<div class="h-full bg-score-fail transition-all duration-300" style="width: {pct.flagged}%"></div>
+								<div class="bg-score-fail" style="width: {pct.flagged}%"></div>
+							{/if}
+							{#if pct.clear > 0}
+								<div class="bg-score-pass" style="width: {pct.clear}%"></div>
 							{/if}
 						</div>
-
-						<!-- Legend -->
-						<div class="flex gap-3 text-[9px] text-text-muted">
-							<span><span class="inline-block h-1.5 w-1.5 rounded-full bg-score-pass mr-0.5"></span> {runScores[0]} clear</span>
-							<span><span class="inline-block h-1.5 w-1.5 rounded-full bg-score-fail mr-0.5"></span> {runScores[1]} flagged</span>
+						<div class="mt-1 flex justify-between text-[12px] tabular-nums text-text-muted">
+							<span>{runScores[1]}/{totalSamples} Flagged</span>
+							<span>{runScores[0]}/{totalSamples} Pass</span>
 						</div>
-					</div>
+					{/if}
 
-					<div class="text-[10px] text-text-muted">
+					<div class="mt-3 text-xs text-text-muted">
 						{#if run.judgeFailures > 0}
-							{run.scoredTotal} scored / {run.total} total · {run.judgeFailures} judge failures · judge: <span class="font-mono">{run.judge_model}</span>
+							{run.scoredTotal} scored / {run.total} total · {run.judgeFailures} judge failures · Judge: <span class="font-mono">{run.judge_model}</span>
 						{:else}
-							{run.total} samples · judge: <span class="font-mono">{run.judge_model}</span>
+							Judge: <span class="font-mono">{run.judge_model}</span>
 						{/if}
 					</div>
 
 					<!-- Multi-judge agreement (only when data exists) -->
 					{#if run.meanAgreement !== null}
-						<div class="space-y-1 pt-2 border-t border-border/30">
-							<div class="flex justify-between text-[10px]">
+						<div class="space-y-1 pt-2 border-t border-border">
+							<div class="flex justify-between text-xs">
 								<span class="text-text-muted">Judge agreement</span>
 								<span class="font-semibold tabular-nums {run.meanAgreement >= 0.8 ? 'text-score-pass' : run.meanAgreement >= 0.6 ? 'text-score-border' : 'text-score-fail'}">{(run.meanAgreement * 100).toFixed(0)}%</span>
 							</div>
 							{#if run.highVarianceCount > 0}
-								<div class="text-[9px] text-amber-500/70">{run.highVarianceCount} sample{run.highVarianceCount > 1 ? 's' : ''} with high variance</div>
+								<div class="text-xs text-score-border">{run.highVarianceCount} sample{run.highVarianceCount > 1 ? 's' : ''} with high variance</div>
 							{/if}
 						</div>
 					{/if}
@@ -266,34 +265,42 @@ function sampleGridMinWidth(runCount: number): string {
 
 	<!-- ═══ SECTION 3: Behavior Heatmap ═══ -->
 	<section class="space-y-3">
-		<div class="flex items-center justify-between">
-			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">By Behavior</h2>
+		<div class="flex items-center justify-between gap-3 flex-wrap">
+			<h2 class="text-lg font-semibold text-text">By behavior category</h2>
 
 			<!-- Disagreements toggle -->
-			<label class="flex items-center gap-2 cursor-pointer select-none">
-				<span class="text-[11px] text-text-muted">Disagreements only</span>
+			<span class="ToggleSwitch ToggleSwitch--small">
+				<span class="ToggleSwitch-statusLabel ToggleSwitch-statusLabel--muted">Disagreements only</span>
 				<button
+					type="button"
 					role="switch"
 					aria-checked={disagreementsOnly}
 					aria-label="Show disagreements only"
+					class="ToggleSwitch-track"
 					onclick={() => { disagreementsOnly = !disagreementsOnly; }}
-					class="relative h-5 w-9 rounded-full transition-colors duration-150 {disagreementsOnly ? 'bg-interactive' : 'bg-surface-2'}"
 				>
-					<span class="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-150 {disagreementsOnly ? 'translate-x-4' : ''}"></span>
+					<span class="ToggleSwitch-icons" aria-hidden="true">
+						<span class="ToggleSwitch-lineIcon">
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 7.25h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Z"/></svg>
+						</span>
+						<span class="ToggleSwitch-circleIcon">
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3.25"/></svg>
+						</span>
+					</span>
+					<span class="ToggleSwitch-knob"></span>
 				</button>
-			</label>
+			</span>
 		</div>
 
-		<!-- Table header -->
-		<div class="overflow-x-auto rounded-xl border border-border">
+		<!-- Table -->
+		<div class="overflow-x-auto rounded-lg border border-border">
 			<div class="min-w-max" style="min-width: {comparisonTableMinWidth(data.runs.length)};">
-				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-[10px] font-semibold uppercase tracking-wider text-text-muted border-b border-border"
+				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-xs font-semibold text-text-muted border-b border-border"
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
 					{#each data.runs as run, i}
-						<span class="text-center" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
+						<span class="text-center font-mono font-medium" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
 					{/each}
-					<span class="text-right">Delta</span>
 				</div>
 
 				<!-- Rows -->
@@ -304,65 +311,60 @@ function sampleGridMinWidth(runCount: number): string {
 					{@const displaySamples = showAll ? matched : matched.slice(0, 3)}
 					{@const rowDelta = row.deltas[activeMetric] ?? 0}
 
-					<div class="border-b border-border/50 last:border-b-0">
+					<div class="border-b border-border last:border-b-0">
 						<!-- Row -->
 						<button
 							onclick={() => toggleRow(row.behavior)}
-							class="w-full grid items-center gap-2 px-4 py-3 text-left transition-colors duration-150 hover:bg-white/[0.02] cursor-pointer"
+							class="w-full grid items-center gap-2 px-4 py-3 text-left transition-colors duration-150 hover:bg-surface-2 cursor-pointer"
 							style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};"
 						>
 						<!-- Behavior name -->
 						<div class="flex items-center gap-2 min-w-0">
-							<svg class="h-3 w-3 flex-shrink-0 text-text-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
 							</svg>
-							<span class="text-xs text-text-secondary truncate">{row.behavior}</span>
+							<span class="text-sm text-text truncate">{row.behavior}</span>
 						</div>
 
 						<!-- Score cells -->
 						{#each data.runs as run, i}
 							{@const cell = row.metrics[activeMetric]?.[run.run_id]}
+							{@const hasFlagged = cell && cell.counts[1] > 0}
+							{@const cellColor = hasFlagged ? 'var(--color-score-fail, #cf222e)' : 'var(--color-score-pass, #1a7f37)'}
 							<div class="flex justify-center">
 								{#if cell}
-									<span class="inline-flex items-center justify-center rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums min-w-[52px]"
-										style="background: color-mix(in srgb, {rateColor(cell.rate)} 12%, transparent); color: {rateColor(cell.rate)}">
-										{(cell.rate * 100).toFixed(0)}%
+									<span class="inline-flex items-center justify-center rounded-full px-2.5 py-0.5 text-xs font-semibold tabular-nums"
+										style="background: color-mix(in srgb, {cellColor} 12%, transparent); color: {cellColor}">
+										{cell.counts[1]}/{cell.n} flagged
 									</span>
 								{:else}
-									<span class="text-[10px] text-text-muted">—</span>
+									<span class="text-xs text-text-muted">—</span>
 								{/if}
 							</div>
 						{/each}
-
-						<!-- Delta -->
-						<div class="text-right">
-							<span class="text-xs font-semibold tabular-nums {deltaClass(rowDelta)}">
-								{deltaText(rowDelta)} {deltaArrow(rowDelta)}
-							</span>
-						</div>
 						</button>
 
 						<!-- Expanded sample pairs -->
 						{#if isExpanded}
 							<div transition:slide={{ duration: 200, easing: quintOut }}>
-								<div class="border-t border-border/30 bg-white/[0.01] px-4 py-4 space-y-3">
+								<div class="border-t border-border bg-surface-2/40 px-4 py-4 space-y-3">
 									{#if matched.length === 0}
 										<div class="text-xs text-text-muted text-center py-4">
 											{disagreementsOnly ? 'No disagreements for this behavior' : 'No samples'}
 										</div>
 									{:else}
 										{#each displaySamples as pair, pairIdx (pair.prompt)}
-											<div class="rounded-lg border border-border/50 overflow-hidden">
+											<div class="rounded-lg border border-border bg-surface overflow-hidden">
 												<!-- Prompt -->
-												<div class="px-4 py-2.5 bg-surface-2/30 border-b border-border/30">
-													<span class="text-[10px] font-semibold uppercase tracking-wider text-text-muted mr-2">Prompt</span>
-													<span class="text-xs text-text-secondary">{pair.prompt.length > 200 ? pair.prompt.slice(0, 200) + '…' : pair.prompt}</span>
+												<div class="px-4 py-2.5 bg-surface-2 border-b border-border">
+													<div class="text-[12px] font-medium text-text-muted mb-0.5">Test prompt</div>
+													<div class="text-sm text-text leading-relaxed">{pair.prompt.length > 200 ? pair.prompt.slice(0, 200) + '…' : pair.prompt}</div>
 												</div>
 
 												<!-- Responses side by side -->
 												<div class="overflow-x-auto">
 													<div
-														class="grid divide-x divide-border/30"
+														class="grid divide-x divide-border"
 														style="grid-template-columns: {sampleGridTemplate(data.runs.length)}; min-width: {sampleGridMinWidth(data.runs.length)};"
 													>
 														{#each data.runs as run, i}
@@ -370,19 +372,19 @@ function sampleGridMinWidth(runCount: number): string {
 															<div class="p-3 space-y-2">
 														<!-- Model + score -->
 														<div class="flex items-center justify-between">
-															<div class="flex items-center gap-1.5">
-																<span class="h-1.5 w-1.5 rounded-full" style="background: {RUN_COLORS[i]}"></span>
-																<span class="text-[10px] font-mono" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
+															<div class="flex items-center gap-1.5 min-w-0">
+																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
+																<span class="text-xs font-mono truncate" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
 															</div>
 															{#if sample}
 																{@const sampleScore = getRecordFlag(sample, activeMetric)}
 																{#if sampleScore !== null}
-																	<span class="rounded px-1.5 py-0.5 text-[10px] font-bold tabular-nums {scoreBadgeClass(sampleScore)}">
-																		{sampleScore ? 'flagged' : 'clear'}
+																	<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold {scoreBadgeClass(sampleScore)}">
+																		{sampleScore ? 'Flagged' : 'Clear'}
 																	</span>
 																{:else if judgeStatus(sample) === 'judge_failed'}
-																	<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">
-																		judge failed
+																	<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-500/10 text-amber-500">
+																		Judge failed
 																	</span>
 																{/if}
 															{/if}
@@ -390,20 +392,20 @@ function sampleGridMinWidth(runCount: number): string {
 
 														<!-- Response text -->
 														{#if sample}
-															<p class="text-[11px] leading-relaxed text-text-secondary">
+															<p class="text-sm leading-relaxed text-text-secondary">
 																{sample.response.length > 300 ? sample.response.slice(0, 300) + '…' : sample.response}
 															</p>
 															{#if typeof sample.verdict?.justification === 'string'}
-																<p class="text-[10px] text-text-muted italic leading-relaxed border-t border-border/20 pt-2 mt-2">
+																<p class="text-xs text-text-muted italic leading-relaxed border-t border-border pt-2 mt-2">
 																	{sample.verdict.justification.length > 200 ? sample.verdict.justification.slice(0, 200) + '…' : sample.verdict.justification}
 																</p>
 															{:else if judgeStatus(sample) === 'judge_failed'}
-																<p class="text-[10px] text-amber-400 italic leading-relaxed border-t border-border/20 pt-2 mt-2">
+																<p class="text-xs text-amber-500 italic leading-relaxed border-t border-border pt-2 mt-2">
 																	Judge failed{getJudgeError(sample) ? `: ${getJudgeError(sample)}` : ''}
 																</p>
 															{/if}
 														{:else}
-															<p class="text-[10px] text-text-muted italic">No sample for this run</p>
+															<p class="text-xs text-text-muted italic">No sample for this run</p>
 														{/if}
 															</div>
 														{/each}
@@ -415,8 +417,9 @@ function sampleGridMinWidth(runCount: number): string {
 										<!-- Show all toggle -->
 										{#if matched.length > 3 && !showAll}
 											<button
+												type="button"
+												class="btn btn-invisible btn-small w-full"
 												onclick={() => { showAllMap[row.behavior] = true; }}
-												class="w-full rounded-lg border border-border/30 py-2 text-[11px] text-text-muted hover:text-interactive hover:border-interactive/30 transition-colors"
 											>
 												Show all {matched.length} samples
 											</button>
@@ -429,7 +432,7 @@ function sampleGridMinWidth(runCount: number): string {
 				{/each}
 
 				{#if data.comparisons.length === 0}
-					<div class="px-4 py-10 text-center text-xs text-text-muted">
+					<div class="px-4 py-10 text-center text-sm text-text-muted">
 						No behavior data to compare
 					</div>
 				{/if}

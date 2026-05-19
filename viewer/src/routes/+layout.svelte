@@ -43,7 +43,7 @@
 	<div class="Header">
 		<div class="Header-item">
 			<a href="/" class="Header-link inline-flex items-center text-sm font-semibold">
-				Adaptive Evaluation
+				ASSERT
 			</a>
 		</div>
 

@@ -65,6 +65,8 @@ interface PromptMetricView {
 	policyViolationRate: number;
 	overrefusalRate: number;
 	dimensions: Record<string, DimensionMetrics>;
+	target: string;
+	judge_model: string;
 }
 
 interface AuditMetricView {
@@ -76,6 +78,9 @@ interface AuditMetricView {
 	policyViolationRate: number;
 	overrefusalRate: number;
 	dimensions: Record<string, DimensionMetrics>;
+	target: string;
+	auditor_model: string;
+	judge_model: string;
 }
 
 interface InferencePreviewRow {
@@ -677,7 +682,9 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		counts: emptyScoreCounts(),
 		policyViolationRate: 0,
 		overrefusalRate: 0,
-		dimensions: {}
+		dimensions: {},
+		target: '',
+		judge_model: ''
 	};
 }
 
@@ -690,7 +697,10 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		counts: emptyScoreCounts(),
 		policyViolationRate: 0,
 		overrefusalRate: 0,
-		dimensions: {}
+		dimensions: {},
+		target: '',
+		auditor_model: '',
+		judge_model: ''
 	};
 }
 
@@ -704,7 +714,9 @@ function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
 		counts: metrics.counts,
 		policyViolationRate: metrics.policy_violation_rate,
 		overrefusalRate: metrics.overrefusal_rate,
-		dimensions: metrics.dimensions
+		dimensions: metrics.dimensions,
+		target: metrics.target,
+		judge_model: metrics.judge_model
 	};
 }
 
@@ -718,7 +730,10 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		counts: metrics.counts,
 		policyViolationRate: metrics.policy_violation_rate,
 		overrefusalRate: metrics.overrefusal_rate,
-		dimensions: metrics.dimensions
+		dimensions: metrics.dimensions,
+		target: metrics.target,
+		auditor_model: metrics.auditor_model,
+		judge_model: metrics.judge_model
 	};
 }
 
