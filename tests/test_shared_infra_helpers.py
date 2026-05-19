@@ -346,7 +346,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_build_judge_contract_uses_highlight_citations(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
             policy_raw={"behavior_categories": []},
             judge_dimensions=[],
             schema_name="xml_judgment",
@@ -363,7 +363,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_build_judge_contract_uses_behavior_names_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
             policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
             judge_dimensions=[],
             schema_name="xml_judgment",
@@ -379,14 +379,14 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
     def test_build_judge_contract_rejects_duplicate_behavior_names(self) -> None:
         with self.assertRaisesRegex(ValueError, "duplicate name"):
             build_judge_contract(
-                template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+                template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
                 policy_raw={"behavior_categories": [{"name": "a"}, {"name": "a"}]},
                 judge_dimensions=[],
             )
 
     def test_build_judge_contract_strips_behavior_names_in_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
             policy_raw={"behavior_categories": [{"name": "  a  "}, {"name": "b"}]},
             judge_dimensions=[],
         )

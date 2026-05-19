@@ -173,7 +173,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     from p2m.core.async_utils import log_heartbeat
     from p2m.core.config_model import ModelConfig as SysModelConfig
     from p2m.stages.systematization import run_systematization
-    from p2m.stages.systematization_convert import run_systematization_to_policy
+    from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
     sys_model_cfg = SysModelConfig(
         name=model_cfg.name,
@@ -204,7 +204,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     )
     log.info("[systematize] [2/2] Converting to structured taxonomy...")
     async with log_heartbeat("[systematize] [2/2] Converting to structured taxonomy"):
-        await run_systematization_to_policy(
+        await run_systematization_to_taxonomy(
             systematization_path=sys_path,
             save_path=taxonomy_path_str,
             model_cfg=convert_model_cfg,

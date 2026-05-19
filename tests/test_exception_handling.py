@@ -243,7 +243,7 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
 # ── stages/judge.py ────────────────────────────────────────────
 
 class JudgePolicyParseErrorTest(unittest.TestCase):
-    def test_corrupt_policy_json_raises_value_error(self) -> None:
+    def test_corrupt_taxonomy_json_raises_value_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text("{not valid json", encoding="utf-8")
@@ -257,22 +257,22 @@ class JudgePolicyParseErrorTest(unittest.TestCase):
 
 class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_file_raises_file_not_found(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_policy
+        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
         with self.assertRaises(FileNotFoundError) as ctx:
-            await run_systematization_to_policy(
+            await run_systematization_to_taxonomy(
                 systematization_path="/tmp/nonexistent_syst_abc123.json",
             )
         self.assertIn("Systematization file not found", str(ctx.exception))
 
     async def test_corrupt_json_raises_value_error(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_policy
+        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "bad_syst.json"
             path.write_text("{not valid", encoding="utf-8")
             with self.assertRaises(ValueError) as ctx:
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(path),
                 )
             self.assertIn("Invalid JSON", str(ctx.exception))

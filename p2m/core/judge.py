@@ -45,7 +45,7 @@ __all__ = [
     "normalize_transcript_judge_verdict",
     "render_dimensions_prompt",
     "render_output_schema",
-    "render_policy_json",
+    "render_taxonomy_json",
     "run_judge",
     "run_transcript_judge",
 ]
@@ -210,7 +210,7 @@ def render_dimensions_prompt(dimensions: list[JudgeDimension]) -> str:
     return "\n".join(lines)
 
 
-def render_policy_json(taxonomy: Dict[str, Any]) -> str:
+def render_taxonomy_json(taxonomy: Dict[str, Any]) -> str:
     """Render taxonomy as structured JSON for judge consumption."""
     return json.dumps(taxonomy or {}, indent=2, ensure_ascii=True)
 
@@ -261,7 +261,7 @@ def build_judge_system_prompt(
     """Assemble the judge system prompt with taxonomy and dimension sections."""
     return (
         template
-        .replace("{{policy_json}}", render_policy_json(policy_raw))
+        .replace("{{taxonomy_json}}", render_taxonomy_json(policy_raw))
         .replace("{{dimensions_section}}", render_dimensions_prompt(dimensions))
         .replace("{{output_schema}}", render_output_schema(dimensions, include_citations=True))
     )

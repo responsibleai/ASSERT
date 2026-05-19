@@ -10,7 +10,7 @@ from p2m.stages.stratification import normalize_stratification
 from p2m.stages.test_set import run as run_stage, run_test_set
 
 
-class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
+class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
     async def test_stage_rejects_removed_validator_keys(self) -> None:
         with self.assertRaisesRegex(ValueError, "test_set validators are no longer supported"):
             await run_stage(

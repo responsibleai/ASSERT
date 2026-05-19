@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from p2m.core.model_client import ModelResponse
 from p2m.core.config_model import ModelConfig
-from p2m.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_policy
+from p2m.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
 
 _FIXTURE_SYSTEMATIZATION = (
     "# Systematization\n\n## Scope\nText\n\n## Coverage notes\nText\n\n"
@@ -51,7 +51,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("4–8 concrete text snippets", GUIDELINE_PROMPT)
         self.assertIn("slot_components", GUIDELINE_PROMPT)
 
-    async def test_run_systematization_to_policy_writes_policy(self) -> None:
+    async def test_run_systematization_to_taxonomy_writes_policy(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             self.assertEqual(schema_name, "taxonomy")
             self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
@@ -100,7 +100,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured):
-                result_path = await run_systematization_to_policy(
+                result_path = await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
@@ -115,7 +115,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["meta"]["source"], "systematization")
             self.assertEqual(payload["meta"]["systematization_path"], str(systematization_path))
 
-    async def test_run_systematization_to_policy_raises_on_model_failure(self) -> None:
+    async def test_run_systematization_to_taxonomy_raises_on_model_failure(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             raise RuntimeError("boom")
 
@@ -137,13 +137,13 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(RuntimeError, "boom"),
             ):
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
-    async def test_run_systematization_to_policy_rejects_non_boolean_permissible(self) -> None:
+    async def test_run_systematization_to_taxonomy_rejects_non_boolean_permissible(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             return ModelResponse(
                 model=model,
@@ -179,13 +179,13 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "behavior_categories.permissible"),
             ):
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
-    async def test_run_systematization_to_policy_rejects_missing_behavior_name(self) -> None:
+    async def test_run_systematization_to_taxonomy_rejects_missing_behavior_name(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             return ModelResponse(
                 model=model,
@@ -220,13 +220,13 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "behavior_categories.name"),
             ):
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
-    async def test_run_systematization_to_policy_rejects_missing_systematization(self) -> None:
+    async def test_run_systematization_to_taxonomy_rejects_missing_systematization(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
@@ -241,7 +241,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "systematization"):
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),

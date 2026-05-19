@@ -151,7 +151,7 @@ class StageRunnerSmokeTest(unittest.TestCase):
                     out_path.write_text("{}", encoding="utf-8")
                     return out_path
 
-                async def fake_run_systematization_to_policy(**kwargs: object) -> Path:
+                async def fake_run_systematization_to_taxonomy(**kwargs: object) -> Path:
                     calls["convert"] = kwargs
                     out_path = Path(str(kwargs["save_path"]))
                     out_path.write_text("{}", encoding="utf-8")
@@ -159,7 +159,7 @@ class StageRunnerSmokeTest(unittest.TestCase):
 
                 with (
                     patch("p2m.stages.systematization.run_systematization", new=fake_run_systematization),
-                    patch("p2m.stages.systematization_convert.run_systematization_to_policy", new=fake_run_systematization_to_policy),
+                    patch("p2m.stages.systematization_convert.run_systematization_to_taxonomy", new=fake_run_systematization_to_taxonomy),
                 ):
                     result = asyncio.run(
                         systematize.run(

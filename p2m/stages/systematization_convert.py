@@ -97,7 +97,7 @@ def _normalize_behavior_categories(payload: Any) -> list[dict[str, Any]]:
     return behavior_categories
 
 
-async def run_systematization_to_policy(
+async def run_systematization_to_taxonomy(
     *,
     systematization_path: str,
     save_path: str = "artifacts/taxonomies/taxonomy.json",
