@@ -105,7 +105,7 @@ class TestOTelParser(unittest.TestCase):
         self.assertIn("abc123", trace_ids)
         self.assertIn("def456", trace_ids)
 
-    def test_transcript_row_schema(self):
+    def test_inference_row_schema(self):
         """Each row should have metadata, events, and raw keys."""
         rows = parse_otel_traces(SAMPLE_TRACES, group_by="session.id")
         for row in rows:
@@ -1744,7 +1744,7 @@ class TestEndToEndIntegration(unittest.TestCase):
         self.assertIn("representation", result)
         self.assertGreater(len(result["representation"]), 0)
 
-    def test_parse_otel_traces_produces_valid_transcript_rows(self):
+    def test_parse_otel_traces_produces_valid_inference_rows(self):
         """parse_otel_traces should produce rows with metadata, events, raw."""
         from p2m.core.otel import parse_otel_traces
         rows = parse_otel_traces(self.FIXTURES / "sample_otel_traces.json")

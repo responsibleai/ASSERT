@@ -451,17 +451,17 @@ def _single_target(rows: dict[str, dict[str, Any]], *, run_dir: Path) -> str:
 
 def load_run_bundle(run_dir: str | Path) -> RunBundle:
     resolved_run_dir = resolve_path(run_dir)
-    transcripts_path = resolved_run_dir / "transcripts.jsonl"
-    if not transcripts_path.exists():
-        raise FileNotFoundError(f"Transcript file not found: {transcripts_path}")
+    inference_set_path = resolved_run_dir / "inference_set.jsonl"
+    if not inference_set_path.exists():
+        raise FileNotFoundError(f"Inference set file not found: {inference_set_path}")
 
-    transcript_rows = load_jsonl(transcripts_path)
+    inference_rows = load_jsonl(inference_set_path)
     transcripts_by_test_case = _index_rows_by_test_case(
-        transcript_rows,
+        inference_rows,
         label=f"transcript in {resolved_run_dir}",
     )
     if not transcripts_by_test_case:
-        raise ValueError(f"No scenario transcripts found in {transcripts_path}")
+        raise ValueError(f"No scenario inference rows found in {inference_set_path}")
 
     scores_by_test_case = _index_rows_by_test_case(
         load_jsonl(resolved_run_dir / "scores.jsonl"),

@@ -110,7 +110,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_transcript_jsonl_round_trip_preserves_raw_event_data(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "transcripts.jsonl"
+            path = Path(tmp_dir) / "inference_set.jsonl"
             transcript = Transcript(metadata=self._meta())
             transcript.add_event(
                 TranscriptEvent(
@@ -128,7 +128,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_transcript_jsonl_round_trip_preserves_llm_calls(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "transcripts.jsonl"
+            path = Path(tmp_dir) / "inference_set.jsonl"
             transcript = Transcript(metadata=self._meta())
             call_id = transcript.append_llm_call(
                 source="target",
@@ -875,7 +875,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -886,12 +886,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 result = asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -961,13 +961,13 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(
                 json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}),
                 encoding="utf-8",
             )
-            with transcripts_path.open("w", encoding="utf-8") as handle:
+            with inference_set_path.open("w", encoding="utf-8") as handle:
                 for sid, body in (("seed-ok", "Hello"), ("seed-refused", "Hello REFUSE-ME"), ("seed-ok-2", "Hello")):
                     meta = TranscriptMetadata(
                         kind="prompt",
@@ -990,7 +990,7 @@ class MeasurementFixesTest(unittest.TestCase):
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 result = asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1017,8 +1017,8 @@ class MeasurementFixesTest(unittest.TestCase):
         for ok_seed in ("seed-ok", "seed-ok-2"):
             self.assertEqual(by_test_case[ok_seed]["judge_status"], "ok")
 
-    def _make_minimal_transcripts(self, transcripts_path: Path, test_case_ids: list[str]) -> None:
-        with transcripts_path.open("w", encoding="utf-8") as handle:
+    def _make_minimal_transcripts(self, inference_set_path: Path, test_case_ids: list[str]) -> None:
+        with inference_set_path.open("w", encoding="utf-8") as handle:
             for sid in test_case_ids:
                 meta = TranscriptMetadata(
                     kind="scenario",
@@ -1060,10 +1060,10 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_run_judge_streams_rows_to_disk_during_execution(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "c", "definition": "d"}, "behavior_categories": []}), encoding="utf-8")
-            self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
+            self._make_minimal_transcripts(inference_set_path, ["a", "b", "c"])
 
             scores_path = Path(tmp_dir) / "scores.jsonl"
             ok_attempts = self._ok_attempts_factory()
@@ -1083,7 +1083,7 @@ class MeasurementFixesTest(unittest.TestCase):
                  patch("p2m.stages.judge.append_jsonl_row", new=spy_append):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1098,10 +1098,10 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_run_judge_resumes_from_existing_scores_with_unchanged_config(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "c", "definition": "d"}, "behavior_categories": []}), encoding="utf-8")
-            self._make_minimal_transcripts(transcripts_path, ["a", "b", "c"])
+            self._make_minimal_transcripts(inference_set_path, ["a", "b", "c"])
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
@@ -1117,7 +1117,7 @@ class MeasurementFixesTest(unittest.TestCase):
             with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
@@ -1127,7 +1127,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
                 result = asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
@@ -1141,10 +1141,10 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_run_judge_discards_prior_scores_when_transcripts_change(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "c", "definition": "d"}, "behavior_categories": []}), encoding="utf-8")
-            self._make_minimal_transcripts(transcripts_path, ["a", "b"])
+            self._make_minimal_transcripts(inference_set_path, ["a", "b"])
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
@@ -1160,7 +1160,7 @@ class MeasurementFixesTest(unittest.TestCase):
             with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
@@ -1168,13 +1168,13 @@ class MeasurementFixesTest(unittest.TestCase):
                 )
                 self.assertEqual(call_count["n"], 2)
 
-                self._make_minimal_transcripts(transcripts_path, ["a", "b"])
-                with transcripts_path.open("a", encoding="utf-8") as handle:
+                self._make_minimal_transcripts(inference_set_path, ["a", "b"])
+                with inference_set_path.open("a", encoding="utf-8") as handle:
                     handle.write(" \n")  # mutate file bytes without changing test_case_ids
 
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=evaluation,
@@ -1185,16 +1185,16 @@ class MeasurementFixesTest(unittest.TestCase):
 
     def test_run_judge_discards_prior_scores_when_judge_config_changes(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "c", "definition": "d"}, "behavior_categories": []}), encoding="utf-8")
-            self._make_minimal_transcripts(transcripts_path, ["a", "b"])
+            self._make_minimal_transcripts(inference_set_path, ["a", "b"])
 
             ok_attempts = self._ok_attempts_factory()
             with patch("p2m.core.judge._run_judge_attempts", new=ok_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1206,7 +1206,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
                 result = asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1244,7 +1244,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1255,7 +1255,7 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with (
                 patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts),
@@ -1267,7 +1267,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 with self.assertRaisesRegex(ViewerReadModelBuildError, "viewer build failed"):
                     asyncio.run(
                         run_judge(
-                            transcripts_path=str(transcripts_path),
+                            inference_set_path=str(inference_set_path),
                             taxonomy_path=str(taxonomy_path),
                             save_dir=tmp_dir,
                             evaluation=EvaluationConfig(
@@ -1306,7 +1306,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(
                 json.dumps(
@@ -1333,12 +1333,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     ),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1399,7 +1399,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1410,12 +1410,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1459,7 +1459,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1470,12 +1470,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content=long_response)),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1517,7 +1517,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1528,12 +1528,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1575,7 +1575,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(
                 json.dumps(
@@ -1594,12 +1594,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     edit=AddMessageEdit(message=Message(role="assistant", content="Call your clinician today.")),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1652,7 +1652,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(
                 json.dumps(
@@ -1676,12 +1676,12 @@ class MeasurementFixesTest(unittest.TestCase):
                     ),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1738,7 +1738,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1749,12 +1749,12 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                     edit=AddMessageEdit(message=Message(role="assistant", content=long_response)),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
@@ -1801,7 +1801,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
             )
 
         with TemporaryDirectory() as tmp_dir:
-            transcripts_path = Path(tmp_dir) / "transcripts.jsonl"
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
             taxonomy_path = Path(tmp_dir) / "taxonomy.json"
             taxonomy_path.write_text(json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}), encoding="utf-8")
             transcript = Transcript(metadata=self._meta())
@@ -1812,12 +1812,12 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                     edit=AddMessageEdit(message=Message(role="assistant", content=short_response)),
                 )
             )
-            transcript.save_jsonl(transcripts_path)
+            transcript.save_jsonl(inference_set_path)
 
             with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
-                        transcripts_path=str(transcripts_path),
+                        inference_set_path=str(inference_set_path),
                         taxonomy_path=str(taxonomy_path),
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(

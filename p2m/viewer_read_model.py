@@ -258,7 +258,7 @@ def _agent_label_from_raw(raw: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[str, Any]]:
+def _materialize_target_messages(inference_row: dict[str, Any]) -> list[dict[str, Any]]:
     """Materialize transcript events into viewer messages with turn labels.
 
     Turn semantics: only the tester (user) and the target (assistant) emit
@@ -273,7 +273,7 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
     messages: list[dict[str, Any]] = []
     judge_turn = 0
     last_principal_role: str | None = None
-    for event_index, event in enumerate(transcript_row.get("events", [])):
+    for event_index, event in enumerate(inference_row.get("events", [])):
         if not isinstance(event, dict):
             continue
         if "target" not in _event_views(event):
@@ -354,11 +354,11 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
     return messages
 
 
-def _count_target_conversation_messages(transcript_row: dict[str, Any]) -> int:
+def _count_target_conversation_messages(inference_row: dict[str, Any]) -> int:
     """Return the number of target turns (one per tester message + one per
     consecutive assistant block). Mirrors :func:`_materialize_target_messages`.
     """
-    messages = _materialize_target_messages(transcript_row)
+    messages = _materialize_target_messages(inference_row)
     turns: set[int] = set()
     for message in messages:
         turn = message.get("judgeTurn")
@@ -367,9 +367,9 @@ def _count_target_conversation_messages(transcript_row: dict[str, Any]) -> int:
     return len(turns)
 
 
-def _prompt_preview(transcript_row: dict[str, Any]) -> str:
+def _prompt_preview(inference_row: dict[str, Any]) -> str:
     prompt = ""
-    for message in _materialize_target_messages(transcript_row):
+    for message in _materialize_target_messages(inference_row):
         if message.get("role") == "user":
             prompt = str(message.get("content") or "")
             break
@@ -434,12 +434,12 @@ def _write_transcript_index(
     *,
     run_dir: Path,
     relative_root: Path,
-    transcript_rows: list[tuple[int, int, dict[str, Any]]],
+    inference_rows: list[tuple[int, int, dict[str, Any]]],
 ) -> dict[str, Any]:
     items: dict[str, dict[str, Any]] = {}
-    for offset, length, row in transcript_rows:
-        transcript_path = run_dir / "transcripts.jsonl"
-        kind, test_case_id = _kind_and_test_case_id(row, path=transcript_path)
+    for offset, length, row in inference_rows:
+        inference_set_path = run_dir / "inference_set.jsonl"
+        kind, test_case_id = _kind_and_test_case_id(row, path=inference_set_path)
         _put_unique_row(
             items,
             kind=kind,
@@ -450,7 +450,7 @@ def _write_transcript_index(
                 "offset": offset,
                 "length": length,
             },
-            path=transcript_path,
+            path=inference_set_path,
         )
 
     out_path = _viewer_cache_path(run_dir, VIEWER_TRANSCRIPT_INDEX_FILE)
@@ -496,17 +496,17 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     manifest = _load_json_file(manifest_path) if manifest_path.exists() else None
     test_set_path = _test_set_artifact_path(suite_dir, manifest)
     config_path = run_dir / "config.yaml"
-    transcripts_path = run_dir / "transcripts.jsonl"
+    inference_set_path = run_dir / "inference_set.jsonl"
     scores_path = run_dir / "scores.jsonl"
     viewer_dir = run_dir / VIEWER_CACHE_DIR
     viewer_dir.mkdir(parents=True, exist_ok=True)
     _remove_legacy_viewer_files(run_dir)
 
-    transcript_rows = _iter_jsonl_with_offsets(transcripts_path)
+    inference_rows = _iter_jsonl_with_offsets(inference_set_path)
     transcript_index_meta = _write_transcript_index(
         run_dir=run_dir,
         relative_root=relative_root,
-        transcript_rows=transcript_rows,
+        inference_rows=inference_rows,
     )
 
     if not scores_path.exists():
@@ -519,13 +519,13 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     config = _load_yaml_file(config_path)
     runtime_mode = _runtime_mode(config)
 
-    transcript_by_test_case: dict[tuple[str, str], dict[str, Any]] = {}
-    for _, _, row in transcript_rows:
-        kind, test_case_id = _kind_and_test_case_id(row, path=transcripts_path)
+    inference_by_test_case: dict[tuple[str, str], dict[str, Any]] = {}
+    for _, _, row in inference_rows:
+        kind, test_case_id = _kind_and_test_case_id(row, path=inference_set_path)
         key = (kind, test_case_id)
-        if key in transcript_by_test_case:
-            raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {transcripts_path}")
-        transcript_by_test_case[key] = row
+        if key in inference_by_test_case:
+            raise ViewerReadModelBuildError(f"Duplicate {kind}:{test_case_id} row in {inference_set_path}")
+        inference_by_test_case[key] = row
 
     test_cases_by_id: dict[tuple[str, str], dict[str, Any]] = {}
     if test_set_path.exists():
@@ -541,28 +541,28 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     audit_rows: list[dict[str, Any]] = []
     for _, _, row in score_rows:
         kind, test_case_id = _kind_and_test_case_id(row, path=scores_path)
-        transcript_row = transcript_by_test_case.get((kind, test_case_id))
-        if transcript_row is None:
+        inference_row = inference_by_test_case.get((kind, test_case_id))
+        if inference_row is None:
             raise ViewerReadModelBuildError(
-                f"Missing transcript row for {kind}:{test_case_id} while building {run_dir}"
+                f"Missing inference row for {kind}:{test_case_id} while building {run_dir}"
             )
         test_case_row = test_cases_by_id.get((kind, test_case_id))
         dimensions = (
             _read_factors(test_case_row.get("dimensions") if test_case_row is not None else None)
             or _read_factors(row.get("dimensions"))
-            or _read_factors(transcript_row.get("dimensions"))
+            or _read_factors(inference_row.get("dimensions"))
         )
 
         if kind == "prompt":
             prompt_row = {
                 "test_case_id": test_case_id,
-                "prompt": _prompt_preview(transcript_row),
+                "prompt": _prompt_preview(inference_row),
                 "response": "",
                 "behavior": row.get("behavior"),
                 "behavior": row_behavior(row),
                 "run_id": run_dir.name,
                 "judge_model": row.get("judge_model"),
-                "target": row.get("target") or transcript_row.get("target"),
+                "target": row.get("target") or inference_row.get("target"),
                 "verdict": _summary_verdict(row.get("verdict")),
                 "judge_status": row.get("judge_status"),
                 "judge_error": row.get("judge_error"),
@@ -579,15 +579,15 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             "behavior": row.get("behavior", ""),
             "behavior": row_behavior(row),
             "judge_model": row.get("judge_model", ""),
-            "target": row.get("target") or transcript_row.get("target"),
-            "tester_model": row.get("tester_model") or transcript_row.get("tester_model"),
+            "target": row.get("target") or inference_row.get("target"),
+            "tester_model": row.get("tester_model") or inference_row.get("tester_model"),
             "verdict": _summary_verdict(row.get("verdict")),
             "judge_status": row.get("judge_status"),
             "judge_error": row.get("judge_error"),
             "target_runtime_mode": runtime_mode,
             "metadata": {
-                "turns_count": _count_target_conversation_messages(transcript_row),
-                "stop_reason": transcript_row.get("stop_reason", ""),
+                "turns_count": _count_target_conversation_messages(inference_row),
+                "stop_reason": inference_row.get("stop_reason", ""),
             },
             "multi_judge": _summary_multi_judge(row.get("multi_judge")),
         }
@@ -618,7 +618,7 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         "suite_id": suite_dir.name,
         "run_id": run_dir.name,
         "source_files": {
-            "transcripts.jsonl": _file_metadata(transcripts_path, relative_to=relative_root),
+            "inference_set.jsonl": _file_metadata(inference_set_path, relative_to=relative_root),
             "scores.jsonl": _file_metadata(scores_path, relative_to=relative_root),
         },
         "derived_files": derived_files,

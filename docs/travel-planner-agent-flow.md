@@ -16,15 +16,15 @@ flowchart TD
     Seed["generated test case"]
     Tester["tester LLM<br/>next user turn"]
     Runtime["CallableSession.run_turn<br/>calls target callable"]
-    Transcript["transcripts.jsonl<br/>conversation + trace refs"]
+    InferenceSet["inference_set.jsonl<br/>conversation or agent actions + trace refs"]
     Judge["judge stage<br/>scores against spec"]
 
     Seed --> Tester
     Tester -->|"user turn"| Runtime
     Runtime -->|"target response"| Tester
-    Tester --> Transcript
-    Runtime --> Transcript
-    Transcript --> Judge
+    Tester --> InferenceSet
+    Runtime --> InferenceSet
+    InferenceSet --> Judge
   end
 
   subgraph AutoTrace["examples.travel_planner_langgraph.auto_trace"]

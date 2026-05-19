@@ -6,7 +6,7 @@ Post-hoc analysis of pipeline results. Each module computes metrics from the JSO
 
 **stats.py** — Confidence intervals and rate aggregation. Wilson score intervals for single-run proportions, cluster bootstrap when observations are grouped (e.g. multiple inferences per seed). Also provides macro-averaging across behavior groups with configurable minimum support.
 
-**inference_metrics.py** — Inference-stage health metrics from `transcripts.jsonl`. Stop-reason distribution, turn counts (mean/median/p95), completion rate, invalid-tester-turn rate, per-behavior breakdowns.
+**inference_metrics.py** — Inference-stage health metrics from `inference_set.jsonl`. Stop-reason distribution, turn counts (mean/median/p95), completion rate, invalid-tester-turn rate, per-behavior breakdowns.
 
 **stability.py** — Outcome stability across runs. Two analyses that must not be conflated: *repeatability* (same tester, same test_set, different inferences — measures inference stochasticity) and *cross-tester variation* (different testers, same test_set — measures how much tester choice affects results).
 

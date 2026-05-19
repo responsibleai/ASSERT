@@ -65,7 +65,7 @@ _OUTPUT_FILES: dict[str, dict[str, str]] = {
     },
     "test_set": {
         "test_set": "test_set.jsonl",
-        "design": "design.json",
+        "stratification": "stratification.json",
     },
 }
 
@@ -76,7 +76,7 @@ _CONTEXT_PATH_KEYS: dict[str, dict[str, str]] = {
     },
     "test_set": {
         "test_set": "test_set_path",
-        "design": "design_path",
+        "stratification": "stratification_path",
     },
 }
 
@@ -91,7 +91,7 @@ _PROMPT_FILES = {
         "systematization_convert_single.md",
     ),
     "test_set": (
-        "test_set_design.md",
+        "test_set_stratification.md",
         "test_set_direct_single.md",
         "test_set_scenario_single.md",
         "test_set_generation_guidance.md",
@@ -733,7 +733,7 @@ def _artifact_or_file_dependency(
     if not raw_path and ctx.get("suite_root"):
         default_name = {
             "taxonomy_path": "taxonomy.json",
-            "design_path": "design.json",
+            "stratification_path": "stratification.json",
         }.get(context_path_key)
         if default_name:
             raw_path = str(Path(ctx["suite_root"]) / default_name)

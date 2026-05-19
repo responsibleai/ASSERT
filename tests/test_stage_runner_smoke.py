@@ -77,14 +77,14 @@ def _inference_case() -> StageSmokeCase:
         return context
 
     def result_factory(root: Path, _kwargs: dict[str, object]) -> dict[str, str]:
-        transcripts = root / "transcripts.jsonl"
+        transcripts = root / "inference_set.jsonl"
         transcripts.write_text("", encoding="utf-8")
-        return {"transcripts_path": str(transcripts)}
+        return {"inference_set_path": str(transcripts)}
 
     def assert_fn(calls: dict[str, object], result: object, root: Path) -> None:
         assert calls["target"].model == "azure/gpt-5.4"
         assert calls["max_tokens"] == DEFAULT_INFERENCE_MAX_TOKENS
-        assert result["transcripts_path"] == str(root / "transcripts.jsonl")
+        assert result["inference_set_path"] == str(root / "inference_set.jsonl")
 
     return StageSmokeCase(
         name="inference",
@@ -101,11 +101,11 @@ def _inference_case() -> StageSmokeCase:
 def _judge_case() -> StageSmokeCase:
     def setup_fn(root: Path) -> None:
         write_json(root / "taxonomy.json", {"behavior": {"name": "Risk"}, "behavior_categories": []})
-        write_jsonl(root / "transcripts.jsonl", [{"type": "prompt", "test_case_id": "test-case-1"}])
+        write_jsonl(root / "inference_set.jsonl", [{"type": "prompt", "test_case_id": "test-case-1"}])
 
     def cfg_factory(root: Path) -> dict[str, object]:
         return {
-            "transcripts_path": str(root / "transcripts.jsonl"),
+            "inference_set_path": str(root / "inference_set.jsonl"),
             "taxonomy_path": str(root / "taxonomy.json"),
             "save_dir": str(root),
             "strict": False,

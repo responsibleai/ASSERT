@@ -1,4 +1,4 @@
-# Exact Design Assignment
+# Exact Stratification Assignment
 
 Produce exactly {{count}} test_set for the assignment below. The dimensions below describe the characteristics of the test_set that you are expected to generate.
 

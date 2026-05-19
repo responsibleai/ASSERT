@@ -16,8 +16,8 @@ class RunnerProgressTest(unittest.TestCase):
             cfg_path = root / "config.yaml"
             suite_root = root / "results" / "suite-a"
             suite_root.mkdir(parents=True)
-            transcripts_path = suite_root / "transcripts.jsonl"
-            transcripts_path.write_text('{"type":"prompt","test_case_id":"test-case-1"}\n', encoding="utf-8")
+            inference_set_path = suite_root / "inference_set.jsonl"
+            inference_set_path.write_text('{"type":"prompt","test_case_id":"test-case-1"}\n', encoding="utf-8")
             (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             cfg_path.write_text(
                 "\n".join(
@@ -31,7 +31,7 @@ class RunnerProgressTest(unittest.TestCase):
                         "  judge:",
                         "    model:",
                         "      name: azure/gpt-5.4",
-                        f"    transcripts_path: {transcripts_path}",
+                        f"    inference_set_path: {inference_set_path}",
                     ]
                 ),
                 encoding="utf-8",
@@ -140,8 +140,8 @@ class RunnerProgressTest(unittest.TestCase):
         cfg_path = root / "config.yaml"
         suite_root = root / "results" / "suite-a"
         suite_root.mkdir(parents=True)
-        transcripts_path = suite_root / "transcripts.jsonl"
-        transcripts_path.write_text(
+        inference_set_path = suite_root / "inference_set.jsonl"
+        inference_set_path.write_text(
             '{"type":"prompt","test_case_id":"test-case-1"}\n', encoding="utf-8"
         )
         (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
@@ -157,7 +157,7 @@ class RunnerProgressTest(unittest.TestCase):
                     "  judge:",
                     "    model:",
                     "      name: azure/gpt-5.4",
-                    f"    transcripts_path: {transcripts_path}",
+                    f"    inference_set_path: {inference_set_path}",
                 ]
             ),
             encoding="utf-8",

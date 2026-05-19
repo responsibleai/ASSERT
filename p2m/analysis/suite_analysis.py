@@ -172,10 +172,10 @@ def analyze_suite(
 
     for run_dir in run_dirs:
         run_id = run_dir.name
-        transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
+        inference_rows = load_jsonl(run_dir / "inference_set.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
 
-        inference = compute_inference_metrics(transcript_rows)
+        inference = compute_inference_metrics(inference_rows)
         judge = compute_judge_metrics(score_rows, n_boot=n_boot)
 
         label = _parse_run_label(run_id)
@@ -321,7 +321,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
 
         # Inference (compact — only show stop reasons if there are issues)
         sr = inference.get("stop_reasons", {})
-        lines.append(f"  Inference: {inference['total']} transcripts, "
+        lines.append(f"  Inference: {inference['total']} inference rows, "
                      f"{inference['completion_rate']:.0%} non-error termination")
         if inference.get("invalid_tester_rate", 0) > 0 or inference.get("error_rate", 0) > 0:
             sr_parts = [f"{k}={v}" for k, v in sorted(sr.items())]

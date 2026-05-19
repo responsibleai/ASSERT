@@ -6,7 +6,7 @@ import { ARTIFACTS_ROOT } from './config.js';
 import type { Manifest, Taxonomy, Suite } from '$lib/types.js';
 
 export const SUITE_TEST_SET_FILE = 'test_set.jsonl';
-export const RUN_TRANSCRIPTS_FILE = 'transcripts.jsonl';
+export const RUN_INFERENCE_SET_FILE = 'inference_set.jsonl';
 export const RUN_SCORES_FILE = 'scores.jsonl';
 export const RUN_CONFIG_FILE = 'config.yaml';
 export const RUN_MANIFEST_FILE = 'manifest.json';
@@ -342,7 +342,7 @@ function readJsonRowByOffset<T>(filePath: string, offset: number, length: number
 	}
 }
 
-export function readLiveTranscriptJsonlFile<T>(
+export function readLiveInferenceJsonlFile<T>(
 	filePath: string,
 	{ missingOk = false, lineMatcher }: JsonlReadOptions = {}
 ): T[] {
@@ -514,7 +514,7 @@ function listRunIds(suiteDir: string): string[] {
 		return (
 			fs.existsSync(path.join(runDir, RUN_MANIFEST_FILE)) ||
 			fs.existsSync(path.join(runDir, RUN_CONFIG_FILE)) ||
-			fs.existsSync(path.join(runDir, RUN_TRANSCRIPTS_FILE)) ||
+			fs.existsSync(path.join(runDir, RUN_INFERENCE_SET_FILE)) ||
 			fs.existsSync(path.join(runDir, RUN_SCORES_FILE))
 		);
 	});
@@ -678,11 +678,11 @@ export function loadRunSnapshot(
 		transcriptRows: !includeTranscripts
 			? []
 			: inferenceRunning
-				? readLiveTranscriptJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
+				? readLiveInferenceJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_INFERENCE_SET_FILE), {
 						missingOk: true,
 						lineMatcher: transcriptLineMatcher
 					})
-				: readJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
+				: readJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_INFERENCE_SET_FILE), {
 						missingOk: true,
 						lineMatcher: transcriptLineMatcher
 					}),
@@ -704,11 +704,11 @@ export async function loadRunTranscriptRow(
 	const inferenceRunning = manifest?.stages?.inference === 'running';
 
 	return inferenceRunning
-		? readLiveJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
+		? readLiveJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_INFERENCE_SET_FILE), {
 				missingOk: true,
 				lineMatcher
 			})
-		: readJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
+		: readJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_INFERENCE_SET_FILE), {
 				missingOk: true,
 				lineMatcher
 			});
@@ -740,7 +740,7 @@ export function loadIndexedRunTranscriptRow(
 	const entry = indexFile.items?.[viewerIndexKey(kind, seedId)];
 	if (!entry) return null;
 	return readJsonRowByOffset<UnifiedTranscriptRow>(
-		path.join(runDirPath(suiteId, runId), RUN_TRANSCRIPTS_FILE),
+		path.join(runDirPath(suiteId, runId), RUN_INFERENCE_SET_FILE),
 		entry.offset,
 		entry.length
 	);

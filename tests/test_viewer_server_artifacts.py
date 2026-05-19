@@ -120,7 +120,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(
                     {
                         "type": "prompt",
@@ -222,7 +222,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(
                     {
                         "type": "prompt",
@@ -291,7 +291,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            transcript_row = {
+            inference_row = {
                 "type": "prompt",
                 "test_case_id": "test-case-1",
                 "behavior": "behavior",
@@ -316,8 +316,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     "node_judgments": [],
                 },
             }
-            (run_dir / "transcripts.jsonl").write_text(
-                json.dumps(transcript_row) + "\n" + json.dumps(transcript_row) + "\n",
+            (run_dir / "inference_set.jsonl").write_text(
+                json.dumps(inference_row) + "\n" + json.dumps(inference_row) + "\n",
                 encoding="utf-8",
             )
             (run_dir / "scores.jsonl").write_text(json.dumps(score_row) + "\n", encoding="utf-8")
@@ -353,7 +353,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            transcript_row = {
+            inference_row = {
                 "type": "prompt",
                 "test_case_id": "test-case-1",
                 "behavior": "behavior",
@@ -378,7 +378,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     "node_judgments": [],
                 },
             }
-            (run_dir / "transcripts.jsonl").write_text(json.dumps(transcript_row) + "\n", encoding="utf-8")
+            (run_dir / "inference_set.jsonl").write_text(json.dumps(inference_row) + "\n", encoding="utf-8")
             (run_dir / "scores.jsonl").write_text(
                 json.dumps(score_row) + "\n" + json.dumps(score_row) + "\n",
                 encoding="utf-8",
@@ -615,7 +615,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 ],
                 "llm_calls": [],
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(valid_row) + "\n" + '{"type":"scenario"',
                 encoding="utf-8",
             )
@@ -707,7 +707,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "events": [],
                 "llm_calls": [],
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(valid_row) + "\n{bad jsonl\n" + json.dumps(valid_row) + "\n",
                 encoding="utf-8",
             )
@@ -740,7 +740,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["name"], "ArtifactParseError")
-            self.assertIn("transcripts.jsonl", payload["message"])
+            self.assertIn("inference_set.jsonl", payload["message"])
             self.assertIn("line 2", payload["message"])
 
     def test_load_run_page_data_rejects_truncated_trailing_line_after_inference(self) -> None:
@@ -788,7 +788,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "events": [],
                 "llm_calls": [],
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(valid_row) + "\n" + '{"type":"scenario"',
                 encoding="utf-8",
             )
@@ -821,7 +821,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["name"], "ArtifactParseError")
-            self.assertIn("transcripts.jsonl", payload["message"])
+            self.assertIn("inference_set.jsonl", payload["message"])
 
     def test_load_run_page_data_skips_preview_once_scores_exist(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
@@ -894,7 +894,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     "node_judgments": [],
                 },
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(valid_row) + "\n",
                 encoding="utf-8",
             )
@@ -974,7 +974,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(
                     {
                         "type": "prompt",
@@ -1089,7 +1089,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            transcript_row = {
+            inference_row = {
                 "type": "prompt",
                 "test_case_id": "test-case-1",
                 "behavior": "behavior",
@@ -1125,11 +1125,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     "node_judgments": [],
                 },
             }
-            (run_dir / "transcripts.jsonl").write_text(json.dumps(transcript_row) + "\n", encoding="utf-8")
+            (run_dir / "inference_set.jsonl").write_text(json.dumps(inference_row) + "\n", encoding="utf-8")
             (run_dir / "scores.jsonl").write_text(json.dumps(score_row) + "\n", encoding="utf-8")
             self._build_viewer_read_model(run_dir)
-            (run_dir / "transcripts.jsonl").write_text(
-                json.dumps(transcript_row) + "\n" + json.dumps(transcript_row) + "\n",
+            (run_dir / "inference_set.jsonl").write_text(
+                json.dumps(inference_row) + "\n" + json.dumps(inference_row) + "\n",
                 encoding="utf-8",
             )
 
@@ -1331,7 +1331,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     "node_judgments": [],
                 },
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(prompt_transcript) + "\n" + json.dumps(scenario_transcript) + "\n",
                 encoding="utf-8",
             )
@@ -1418,7 +1418,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(
                     {
                         "type": "prompt",
@@ -1570,7 +1570,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 ],
                 "llm_calls": [],
             }
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(prompt_transcript) + "\n" + "{bad jsonl\n",
                 encoding="utf-8",
             )
@@ -1624,7 +1624,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["name"], "ArtifactParseError")
-            self.assertIn("transcripts.jsonl", payload["message"])
+            self.assertIn("inference_set.jsonl", payload["message"])
 
     def test_list_suites_marks_scenario_only_scored_suite_as_has_results(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:

@@ -133,7 +133,7 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         log.info(f'{tag} Generating behavior taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
         log.info(f"{tag} Refining taxonomy structure...")
-    elif stage_name == "__legacy_design":
+    elif stage_name == "__legacy_stratification":
         level_count = raw_cfg.get("level_count")
         factor_count = 0
         dimensions = ctx.get("dimensions") or []
@@ -143,16 +143,16 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         # Surface it in the count for accuracy.
         synthetic_behavior_factor = 1
         total_factors = factor_count + synthetic_behavior_factor
-        design_model = ""
+        stratification_model = ""
         if isinstance(raw_cfg.get("model"), dict):
-            design_model = raw_cfg["model"].get("name", "")
-        model_suffix = f" ({design_model})" if design_model else ""
+            stratification_model = raw_cfg["model"].get("name", "")
+        model_suffix = f" ({stratification_model})" if stratification_model else ""
         if level_count and factor_count:
-            log.info(f"{tag} Designing test-case coverage grid: {total_factors} dimensions x {level_count} levels each{model_suffix}...")
+            log.info(f"{tag} Building stratification coverage grid: {total_factors} dimensions x {level_count} levels each{model_suffix}...")
         elif factor_count:
-            log.info(f"{tag} Designing test-case coverage grid: {total_factors} dimensions{model_suffix}...")
+            log.info(f"{tag} Building stratification coverage grid: {total_factors} dimensions{model_suffix}...")
         else:
-            log.info(f"{tag} Designing test-case coverage grid (behavior dimension only){model_suffix}...")
+            log.info(f"{tag} Building stratification coverage grid (behavior dimension only){model_suffix}...")
     elif stage_name == "test_set":
         prompt_budget = 0
         scenario_budget = 0
@@ -215,9 +215,9 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         else:
             judge_model = ""
         if judge_model:
-            log.info(f"{tag} Scoring transcripts with judge ({judge_model})...")
+            log.info(f"{tag} Scoring inference rows with judge ({judge_model})...")
         else:
-            log.info(f"{tag} Scoring transcripts...")
+            log.info(f"{tag} Scoring inference rows...")
     else:
         log.info(f"{tag} Starting...")
 
@@ -314,15 +314,15 @@ def _print_stage_done(
             log.info(f"{tag} \u2713 Generated {count} behavior_categories: {preview} ({elapsed:.1f}s){suffix}")
         else:
             log.info(f"{tag} \u2713 Generated taxonomy ({elapsed:.1f}s){suffix}")
-    elif stage_name == "__legacy_design":
+    elif stage_name == "__legacy_stratification":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
             sizes_text = ", ".join(
                 f"{name}={size}" for name, size in factor_sizes.items()
             )
-            log.info(f"{tag} \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s){suffix}")
+            log.info(f"{tag} \u2713 Built stratification coverage grid ({sizes_text}) ({elapsed:.1f}s){suffix}")
         else:
-            log.info(f"{tag} \u2713 Designed coverage grid ({elapsed:.1f}s){suffix}")
+            log.info(f"{tag} \u2713 Built stratification coverage grid ({elapsed:.1f}s){suffix}")
     elif stage_name == "test_set":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
@@ -361,7 +361,7 @@ def _print_stage_done(
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        log.info(f"{tag} \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s){suffix}")
+        log.info(f"{tag} \u2713 Scored {count} inference rows{cache_extra}{extra} ({elapsed:.1f}s){suffix}")
     else:
         log.info(f"{tag} \u2713 Done ({elapsed:.1f}s){suffix}")
 
@@ -426,7 +426,7 @@ def run_pipeline(
 
     # Cascade: forcing an upstream stage logically invalidates every stage
     # downstream of it. Without this, `--force-stage test_set` regenerates test_set
-    # but inference silently keeps the old transcripts (its resume cache keys on
+    # but inference silently keeps the old inference rows (its resume cache keys on
     # test_case_id, and test case ids are deterministic so they collide with the prior
     # run's content). Same hazard for judge against scores.jsonl. Computing
     # the closure here keeps the workflow `--force-stage <upstream>` honest
@@ -549,7 +549,7 @@ def run_pipeline(
                     # but no artifact.json sidecar is written, so
                     # _latest_matching_metadata will not match this dir
                     # on a future run with the same input hash. Without
-                    # this gate, a partial test_set.jsonl / transcripts.jsonl
+                    # this gate, a partial test_set.jsonl / inference_set.jsonl
                     # / scores.jsonl would silently masquerade as a
                     # complete artifact and be reused forever.
                     log.warning(

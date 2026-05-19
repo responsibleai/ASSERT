@@ -12,7 +12,7 @@ artifacts/results/<suite>/
 └── <run>/
     ├── manifest.json
     ├── config.yaml
-    ├── transcripts.jsonl
+    ├── inference_set.jsonl
     ├── scores.jsonl
     └── metrics.json
 ```
@@ -21,7 +21,7 @@ artifacts/results/<suite>/
 
 1. `metrics.json` - aggregate pass/fail rates by judge dimension and behavior category.
 2. `scores.jsonl` - individual verdicts with justification and evidence.
-3. `transcripts.jsonl` - the actual conversations, plus trace references when configured.
+3. `inference_set.jsonl` - inference outputs (conversations or agent actions), plus trace references when configured.
 4. `config.yaml` - the exact config snapshot for reproducibility.
 
 ## How to debug a failure

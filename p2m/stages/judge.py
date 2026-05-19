@@ -1,4 +1,4 @@
-"""Score unified transcript inference artifacts."""
+"""Score unified inference-set artifacts."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 from p2m.config import resolve_stage_paths
-from p2m.core.io import SCORES_FILE, TRANSCRIPTS_FILE, row_factors
+from p2m.core.io import SCORES_FILE, INFERENCE_SET_FILE, row_factors
 from p2m.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
 from p2m.core.judge import (
     build_judge_contract,
@@ -42,10 +42,10 @@ def _judge_config_fingerprint(
     judge_dimensions: list[dict[str, Any]],
     policy_raw: dict[str, Any],
     system_prompt: str,
-    transcripts_path: Path,
+    inference_set_path: Path,
 ) -> str:
     """Deterministic hash of inputs that affect judge output."""
-    transcripts_sha = hashlib.sha256(transcripts_path.read_bytes()).hexdigest()
+    inference_set_sha = hashlib.sha256(inference_set_path.read_bytes()).hexdigest()
     key = json.dumps(
         {
             "judge_model": judge_model,
@@ -56,7 +56,7 @@ def _judge_config_fingerprint(
             "judge_dimensions": judge_dimensions,
             "taxonomy": policy_raw,
             "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
-            "transcripts_sha": transcripts_sha,
+            "inference_set_sha": inference_set_sha,
         },
         sort_keys=True,
     )
@@ -65,25 +65,25 @@ def _judge_config_fingerprint(
 
 async def run_judge(
     *,
-    transcripts_path: str,
+    inference_set_path: str,
     taxonomy_path: str | None = None,
     save_dir: str | None = None,
     evaluation: Any,
     judge_dimensions: list[dict[str, Any]] | None = None,
     forced: bool = False,
 ) -> dict[str, Any]:
-    """Score transcript rows and write score artifacts."""
+    """Score inference rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
     judge_temperature = evaluation.judge.model.temperature
     judge_max_tokens = evaluation.judge.model.max_tokens
     judge_reasoning_effort = evaluation.judge.model.reasoning_effort
     judge_n = evaluation.judge.n
-    resolved_transcripts_path = resolve_path(transcripts_path)
-    rows = load_jsonl(resolved_transcripts_path)
+    resolved_inference_set_path = resolve_path(inference_set_path)
+    rows = load_jsonl(resolved_inference_set_path)
     if not rows:
-        raise ValueError(f"No transcripts found in {transcripts_path}")
+        raise ValueError(f"No inference rows found in {inference_set_path}")
 
-    out_dir = resolve_path(save_dir or str(resolved_transcripts_path.parent))
+    out_dir = resolve_path(save_dir or str(resolved_inference_set_path.parent))
     out_dir.mkdir(parents=True, exist_ok=True)
     if not taxonomy_path:
         raise ValueError("judge stage requires taxonomy_path")
@@ -104,7 +104,7 @@ async def run_judge(
     )
 
     async def score_row(row: dict[str, Any]) -> dict[str, Any]:
-        """Score a single transcript row with the judge model."""
+        """Score a single inference row with the judge model."""
         transcript_metadata = TranscriptMetadata(
             kind=str(row.get("type") or ""),
             test_case_id=str(row.get("test_case_id") or ""),
@@ -248,7 +248,7 @@ async def run_judge(
     scores_path = out_dir / SCORES_FILE
 
     # Resume: load already-scored (kind, test_case_id) pairs and skip them, but only
-    # if the judge configuration and transcripts file haven't changed since the
+    # if the judge configuration and inference-set file hasn't changed since the
     # last run.
     completed_keys: set[tuple[str, str]] = set()
     config_hash = _judge_config_fingerprint(
@@ -260,7 +260,7 @@ async def run_judge(
         judge_dimensions=judge_dimensions or [],
         policy_raw=policy_raw,
         system_prompt=judge_contract["system_prompt"],
-        transcripts_path=resolved_transcripts_path,
+        inference_set_path=resolved_inference_set_path,
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
     if scores_path.exists():
@@ -268,14 +268,14 @@ async def run_judge(
             # User explicitly forced this stage (directly or via the runner's
             # --force-stage cascade). Discard the cached output unconditionally
             # rather than relying on a hash mismatch; regenerated upstream
-            # transcripts may produce byte-identical scores under stable
+            # inference rows may produce byte-identical scores under stable
             # judge config, which would otherwise leave the cache intact.
             scores_path.unlink()
         else:
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    f"Judge config or transcripts changed since last run - discarding {scores_path} and starting fresh"
+                    f"Judge config or inference set changed since last run - discarding {scores_path} and starting fresh"
                 )
                 scores_path.unlink()
             else:
@@ -285,7 +285,7 @@ async def run_judge(
                         completed_keys.add((str(prior.get("type") or ""), str(sid)))
     if completed_keys:
         log.info(
-            f"Resuming judge: {len(completed_keys)} transcripts already scored, skipping"
+            f"Resuming judge: {len(completed_keys)} inference rows already scored, skipping"
         )
     config_hash_path.write_text(config_hash, encoding="utf-8")
 
@@ -362,7 +362,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     judge_dimensions = evaluation.judge.dimensions if evaluation.judge is not None else []
     cfg = resolve_stage_paths(
         {
-            "transcripts_path": raw_cfg.get("transcripts_path") or str(Path(ctx["run_root"]) / TRANSCRIPTS_FILE),
+            "inference_set_path": raw_cfg.get("inference_set_path") or str(Path(ctx["run_root"]) / INFERENCE_SET_FILE),
             "taxonomy_path": raw_cfg.get("taxonomy_path") or ctx.get("taxonomy_path") or str(Path(ctx["suite_root"]) / "taxonomy.json"),
             "save_dir": raw_cfg.get("save_dir") or str(ctx["run_root"]),
         },
@@ -370,7 +370,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         artifacts_root=ctx["artifacts_root"],
     )
     result = await run_judge(
-        transcripts_path=cfg["transcripts_path"],
+        inference_set_path=cfg["inference_set_path"],
         taxonomy_path=cfg.get("taxonomy_path"),
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from p2m.core.config_model import TargetConfig, ToolsConfig
 from p2m.core.model_client import LLMRateLimitError, ModelResponse
-from p2m.stages.design import normalize_design
+from p2m.stages.stratification import normalize_stratification
 from p2m.stages.test_set import run as run_stage, run_test_set
 
 
@@ -102,7 +102,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     target=TargetConfig(model="azure/gpt-5.4"),
                     tool_source="runtime",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                 )
 
             rows = [json.loads(line) for line in test_set_path.read_text(encoding="utf-8").splitlines()]
@@ -160,7 +160,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4", system_prompt="fixed prompt"),
                     tool_source="runtime",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                 )
 
             [row] = [json.loads(line) for line in test_set_path.read_text(encoding="utf-8").splitlines()]
@@ -255,14 +255,14 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                         tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                     ),
                     tool_source="per_seed",
-                    design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                    stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                 )
 
             [row] = [json.loads(line) for line in test_set_path.read_text(encoding="utf-8").splitlines()]
 
         self.assertEqual(row["seed"]["tools"][0]["name"], "lookup")
 
-    async def test_run_test_set_injects_behavior_when_design_empty(self) -> None:
+    async def test_run_test_set_injects_behavior_when_stratification_empty(self) -> None:
         prompts: list[str] = []
 
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
@@ -300,7 +300,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4"),
-                    design={},
+                    stratification={},
                 )
 
         self.assertEqual(result["saved_count"], 1)
@@ -324,7 +324,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                 {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
-        design = normalize_design(
+        stratification = normalize_stratification(
             {
                 "tone": [
                     {"name": "Neutral", "definition": "Neutral tone."},
@@ -354,7 +354,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4"),
-                    design=design,
+                    stratification=stratification,
                     seed=7,
                     concurrency=1,
                 )
@@ -367,14 +367,14 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(row["dimensions"]), {"behavior", "tone"})
         self.assertIn(row["dimensions"]["tone"], prompts[0])
 
-    async def test_stage_passes_design_to_run_test_set(self) -> None:
+    async def test_stage_passes_stratification_to_run_test_set(self) -> None:
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
             "behavior_categories": [
                 {"name": "behavior-a", "definition": "definition", "examples": ["example"], "permissible": False},
             ],
         }
-        design_payload = {
+        stratification_payload = {
             "tone": [
                 {"name": "Neutral", "definition": "Neutral tone."},
                 {"name": "Urgent", "definition": "Urgent tone."},
@@ -402,7 +402,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     {
                         "stratify": {
                             "dimensions": [
-                                {"name": "tone", "levels": design_payload["tone"]},
+                                {"name": "tone", "levels": stratification_payload["tone"]},
                             ],
                         },
                         "prompt": {"model": {"name": "azure/gpt-5.4"}, "sample_size": 1},
@@ -412,11 +412,11 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["test_set_path"], str(suite_root / "test_set.jsonl"))
         self.assertEqual(run_test_set_mock.await_args.kwargs["context"], "Runtime application context")
         self.assertEqual(
-            run_test_set_mock.await_args.kwargs["design"]["tone"][0]["name"],
+            run_test_set_mock.await_args.kwargs["stratification"]["tone"][0]["name"],
             "Neutral",
         )
 
-    async def test_stage_uses_behavior_only_design_when_design_file_missing(self) -> None:
+    async def test_stage_uses_behavior_only_stratification_when_stratification_file_missing(self) -> None:
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
             "behavior_categories": [
@@ -447,7 +447,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["test_set_path"], str(suite_root / "test_set.jsonl"))
         self.assertEqual(
-            run_test_set_mock.await_args.kwargs["design"]["behavior"][0]["name"],
+            run_test_set_mock.await_args.kwargs["stratification"]["behavior"][0]["name"],
             "behavior-a",
         )
 
@@ -467,7 +467,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
             config_path.write_text("suite: demo\n", encoding="utf-8")
             (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with self.assertRaisesRegex(ValueError, "design.model is required"):
+            with self.assertRaisesRegex(ValueError, "stratification.model is required"):
                 await run_stage(
                     {
                         "suite_root": suite_root,
@@ -534,7 +534,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                             tools=ToolsConfig(simulator="azure/gpt-5.4-mini"),
                         ),
                         tool_source="per_seed",
-                        design={"behavior": [{"name": "behavior-a", "description": "definition"}]},
+                        stratification={"behavior": [{"name": "behavior-a", "description": "definition"}]},
                     )
 
     async def test_run_test_set_keeps_partial_records_when_one_batch_errors(self) -> None:
@@ -590,7 +590,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4"),
-                    design={
+                    stratification={
                         "behavior": [
                             {"name": "behavior-a", "description": "def-a"},
                             {"name": "behavior-b", "description": "def-b"},
@@ -645,7 +645,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                         },
                         scenario=None,
                         target=TargetConfig(model="azure/gpt-5.4"),
-                        design={
+                        stratification={
                             "behavior": [
                                 {"name": "behavior-a", "description": "def-a"},
                                 {"name": "behavior-b", "description": "def-b"},
@@ -696,7 +696,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
                     },
                     scenario=None,
                     target=TargetConfig(model="azure/gpt-5.4"),
-                    design={
+                    stratification={
                         "behavior": [
                             {"name": "behavior-a", "description": "def-a"},
                             {"name": "behavior-b", "description": "def-b"},

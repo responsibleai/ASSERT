@@ -101,7 +101,7 @@ CSV_FIELDS = [
 
 # Module-level placeholder kept so older external scripts that reference
 # this attribute don't crash. The actual counting is now done by scanning
-# transcripts.jsonl / scores.jsonl after the run completes (see
+# inference_set.jsonl / scores.jsonl after the run completes (see
 # ``_scan_run_artifacts`` below). Product code records typed refusals as
 # ``stop_reason='target_input_refused'`` / ``'tester_input_refused'``
 # (inference) and ``judge_status='filter_skipped'`` (judge).
@@ -126,9 +126,9 @@ def _scan_run_artifacts(suite_id: str, run_id: str) -> dict[str, int]:
         return counts
     run_dir = REPO_ROOT / "artifacts" / "results" / suite_id / run_id
 
-    transcripts_path = run_dir / "transcripts.jsonl"
-    if transcripts_path.exists():
-        for line in transcripts_path.read_text(encoding="utf-8").splitlines():
+    inference_set_path = run_dir / "inference_set.jsonl"
+    if inference_set_path.exists():
+        for line in inference_set_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -167,7 +167,7 @@ def _silence_asyncio_close_noise() -> None:
     ``RuntimeError: Event loop is closed`` and asyncio prints
     ``Task exception was never retrieved`` plus the full traceback —
     once per orphaned connection. It happens *after* the run is
-    logically finished, so the exit code, transcripts, scores, metrics
+    logically finished, so the exit code, inference rows, scores, metrics
     and CSV row are already written.
 
     We attach a filter to the ``asyncio`` logger that only drops records
@@ -573,7 +573,7 @@ def main(argv: list[str] | None = None) -> int:
     # natively by product code (target_input_refused / tester_input_refused
     # in inference, judge_status='filter_skipped' in judge). The legacy
     # monkey-patches are gone; we count typed refusals after the run by
-    # scanning transcripts.jsonl + scores.jsonl. The
+    # scanning inference_set.jsonl + scores.jsonl. The
     # --no-tolerate-content-filter flag is preserved for back-compat but
     # is now a no-op (the typed handlers always run).
     if args.no_tolerate_content_filter:

@@ -242,7 +242,7 @@ def iter_run_dirs_for_viewer_rebuild(
 
     def is_run_dir(path: Path) -> bool:
         return path.is_dir() and (
-            (path / "transcripts.jsonl").exists()
+            (path / "inference_set.jsonl").exists()
             or (path / "scores.jsonl").exists()
             or (path / "manifest.json").exists()
         )

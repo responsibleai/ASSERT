@@ -135,7 +135,7 @@ class TesterPairwiseEvalHelpersTest(unittest.TestCase):
             },
         }
 
-    def _transcript_row(
+    def _inference_row(
         self,
         *,
         test_case_id: str,
@@ -182,8 +182,8 @@ class TesterPairwiseEvalHelpersTest(unittest.TestCase):
     def test_build_pairwise_prompt_includes_metadata_and_both_transcripts(self) -> None:
         prompt = tester_pairwise_eval.build_pairwise_prompt(
             test_case_row=self._test_case_row(test_case_id="test-case-1"),
-            transcript_a_row=self._transcript_row(test_case_id="test-case-1", run_label="A"),
-            transcript_b_row=self._transcript_row(test_case_id="test-case-1", run_label="B"),
+            transcript_a_row=self._inference_row(test_case_id="test-case-1", run_label="A"),
+            transcript_b_row=self._inference_row(test_case_id="test-case-1", run_label="B"),
         )
 
         self.assertIn("Seed ID: test-case-1", prompt)
@@ -387,7 +387,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-    def _transcript_row(
+    def _inference_row(
         self,
         *,
         test_case_id: str,
@@ -474,7 +474,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
         suite_dir: Path,
         run_id: str,
         *,
-        transcript_rows: list[dict],
+        inference_rows: list[dict],
         score_rows: list[dict],
         judge_model: str = "saved-judge-model",
     ) -> Path:
@@ -482,7 +482,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             behavior_names = sorted(
                 {
                     row_behavior(row)
-                    for row in [*transcript_rows, *score_rows]
+                    for row in [*inference_rows, *score_rows]
                     if row_behavior(row)
                 }
             )
@@ -499,7 +499,7 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             )
         run_dir = suite_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        self._write_jsonl(run_dir / "transcripts.jsonl", transcript_rows)
+        self._write_jsonl(run_dir / "inference_set.jsonl", inference_rows)
         self._write_jsonl(run_dir / "scores.jsonl", score_rows)
         (run_dir / "config.yaml").write_text(
             yaml.safe_dump(
@@ -535,9 +535,9 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[
-                    self._transcript_row(test_case_id="test-case-1", run_label="A"),
-                    self._transcript_row(test_case_id="test-case-2", run_label="A"),
+                inference_rows=[
+                    self._inference_row(test_case_id="test-case-1", run_label="A"),
+                    self._inference_row(test_case_id="test-case-2", run_label="A"),
                 ],
                 score_rows=[
                     self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False),
@@ -547,9 +547,9 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[
-                    self._transcript_row(test_case_id="test-case-2", run_label="B"),
-                    self._transcript_row(test_case_id="test-case-3", run_label="B"),
+                inference_rows=[
+                    self._inference_row(test_case_id="test-case-2", run_label="B"),
+                    self._inference_row(test_case_id="test-case-3", run_label="B"),
                 ],
                 score_rows=[
                     self._score_row(test_case_id="test-case-2", policy_violation=False, overrefusal=False),
@@ -601,13 +601,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=True)],
             )
 
@@ -656,13 +656,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
 
@@ -708,13 +708,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -747,13 +747,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -807,14 +807,14 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
                 judge_model="saved-pairwise-judge",
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -843,13 +843,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -889,13 +889,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -938,13 +938,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=True, overrefusal=False)],
             )
 
@@ -987,13 +987,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -1037,13 +1037,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=True)],
             )
 
@@ -1084,13 +1084,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 
@@ -1125,13 +1125,13 @@ class TesterPairwiseEvalRunTest(unittest.IsolatedAsyncioTestCase):
             run_a = self._write_run(
                 suite_dir,
                 "run-a",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="A")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="A")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
             run_b = self._write_run(
                 suite_dir,
                 "run-b",
-                transcript_rows=[self._transcript_row(test_case_id="test-case-1", run_label="B")],
+                inference_rows=[self._inference_row(test_case_id="test-case-1", run_label="B")],
                 score_rows=[self._score_row(test_case_id="test-case-1", policy_violation=False, overrefusal=False)],
             )
 

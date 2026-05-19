@@ -1,6 +1,6 @@
-"""Post-generation labeling of test_set against design dimensions.
+"""Post-generation labeling of test_set against stratification dimensions.
 
-LLM-driven classification: given generated test_set and a design catalog,
+LLM-driven classification: given generated test_set and a stratification catalog,
 assign one level per dimension to each test case.
 """
 
@@ -11,7 +11,7 @@ from typing import Any
 from p2m.core.async_utils import gather_limited
 from p2m.core.model_client import GenerateOptions, generate_structured
 from p2m.core.io import fill_template
-from p2m.stages.design import render_design_catalog
+from p2m.stages.stratification import render_stratification_catalog
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -32,7 +32,7 @@ the level names from the catalog below.
 
 # Catalog
 
-{{design_catalog}}
+{{stratification_catalog}}
 
 # Test Set
 
@@ -62,16 +62,16 @@ with exactly {{count}} objects in test-case order.
 
 
 def _label_entry_schema(
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
 ) -> dict[str, Any]:
-    dimensions = tuple(key for key in design if not key.startswith("_"))
+    dimensions = tuple(key for key in stratification if not key.startswith("_"))
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             factor_name: {
                 "type": "string",
-                "enum": [entry["name"] for entry in design[factor_name]],
+                "enum": [entry["name"] for entry in stratification[factor_name]],
             }
             for factor_name in dimensions
         },
@@ -80,7 +80,7 @@ def _label_entry_schema(
 
 
 def _labels_response_schema(
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
     count: int,
 ) -> dict[str, Any]:
     return {
@@ -91,7 +91,7 @@ def _labels_response_schema(
                 "type": "array",
                 "minItems": count,
                 "maxItems": count,
-                "items": _label_entry_schema(design),
+                "items": _label_entry_schema(stratification),
             }
         },
         "required": ["labels"],
@@ -126,17 +126,17 @@ def build_labeling_prompt(
     *,
     kind: str,
     behavior_name: str,
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
 ) -> str:
-    dimensions = tuple(key for key in design if not key.startswith("_"))
+    dimensions = tuple(key for key in stratification if not key.startswith("_"))
     axis_list = ", ".join(f"`{dimension}`" for dimension in dimensions)
     return fill_template(
         LABELING_PROMPT_TEMPLATE,
         {
             "behavior_name": behavior_name,
-            "design_catalog": render_design_catalog(
-                design, include_behavior="behavior" in design
+            "stratification_catalog": render_stratification_catalog(
+                stratification, include_behavior="behavior" in stratification
             ),
             "test_case_batch": _render_labeling_batch(rows, kind=kind),
             "count": str(len(rows)),
@@ -152,11 +152,11 @@ def build_labeling_prompt(
 
 def _normalize_observed_label_entry(
     entry: Any,
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
 ) -> dict[str, str]:
     if not isinstance(entry, dict):
         raise ValueError("observed label entry must be a JSON object")
-    dimensions = tuple(key for key in design if not key.startswith("_"))
+    dimensions = tuple(key for key in stratification if not key.startswith("_"))
     extra_keys = set(entry) - set(dimensions)
     if extra_keys:
         raise ValueError(
@@ -166,7 +166,7 @@ def _normalize_observed_label_entry(
     normalized: dict[str, str] = {}
     for factor_name in dimensions:
         value = str(entry.get(factor_name) or "").strip()
-        valid_names = {d["name"] for d in design[factor_name]}
+        valid_names = {d["name"] for d in stratification[factor_name]}
         if value not in valid_names:
             raise ValueError(
                 f"observed label entry has invalid {factor_name}: {value}"
@@ -185,7 +185,7 @@ async def label_generated_rows(
     kind: str,
     model: str,
     behavior_name: str,
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
     rows: list[dict[str, Any]],
     labeling_batch_size: int,
     concurrency: int,
@@ -204,14 +204,14 @@ async def label_generated_rows(
         prompt = build_labeling_prompt(
             kind=kind,
             behavior_name=behavior_name,
-            design=design,
+            stratification=stratification,
             rows=batch_rows,
         )
         response = await generate_structured(
             model,
             prompt,
             schema_name="test_case_labels",
-            json_schema=_labels_response_schema(design, len(batch_rows)),
+            json_schema=_labels_response_schema(stratification, len(batch_rows)),
             options=GenerateOptions(
                 temperature=None,
                 max_tokens=DEFAULT_GENERATION_MAX_TOKENS,
@@ -234,7 +234,7 @@ async def label_generated_rows(
             labeled.append(
                 {
                     "test_case_id": str(row["test_case_id"]),
-                    **_normalize_observed_label_entry(raw_label, design),
+                    **_normalize_observed_label_entry(raw_label, stratification),
                 }
             )
         return {"order": batch_index, "rows": labeled}

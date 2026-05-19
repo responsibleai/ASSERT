@@ -171,7 +171,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        transcript_rows = [
+        inference_rows = [
             {
                 "type": "scenario",
                 "test_case_id": "test-case-1",
@@ -186,11 +186,11 @@ class SuiteResultsExportTest(unittest.TestCase):
                 ],
             }
         ]
-        (run_a_dir / "transcripts.jsonl").write_text(
-            "\n".join(json.dumps(row) for row in transcript_rows) + "\n",
+        (run_a_dir / "inference_set.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in inference_rows) + "\n",
             encoding="utf-8",
         )
-        (run_b_dir / "transcripts.jsonl").write_text(
+        (run_b_dir / "inference_set.jsonl").write_text(
             json.dumps(
                 {
                     "type": "scenario",

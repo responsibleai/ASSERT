@@ -177,22 +177,22 @@ def get_permissible_flag(payload: dict[str, Any], default: bool | None = None) -
 
 # ── Output filenames (written by run stages, read by viewer) ──
 
-TRANSCRIPTS_FILE = "transcripts.jsonl"
+INFERENCE_SET_FILE = "inference_set.jsonl"
 SCORES_FILE = "scores.jsonl"
 
-# ── Design helpers ────────────────────────────────────────────
+# ── Stratification helpers ────────────────────────────────────────────
 
 
-def design_factors(design: dict[str, Any]) -> tuple[str, ...]:
-    """Return user-defined design dimensions in stable order.
+def stratification_dimensions(stratification: dict[str, Any]) -> tuple[str, ...]:
+    """Return user-defined stratification dimensions in stable order.
 
     Excludes metadata keys and the reserved ``behavior`` dimension.
     """
     return tuple(
-        key for key in design if not key.startswith("_") and key != "behavior"
+        key for key in stratification if not key.startswith("_") and key != "behavior"
     )
 
-DESIGN_FILE = "design.json"
+STRATIFICATION_FILE = "stratification.json"
 
 
 # ── Template rendering ────────────────────────────────────────────

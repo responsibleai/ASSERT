@@ -1,4 +1,4 @@
-"""Design: dimension normalization, generation, and catalog rendering."""
+"""Stratification: dimension normalization, generation, and catalog rendering."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ log = logging.getLogger(__name__)
 
 from p2m.config import parse_model_config, resolve_stage_paths
 from p2m.core.io import (
-    DESIGN_FILE,
-    design_factors,
+    STRATIFICATION_FILE,
+    stratification_dimensions,
     fill_template,
     get_permissible_flag,
     load_policy,
@@ -24,10 +24,10 @@ from p2m.core.model_client import GenerateOptions, generate_structured
 
 DEFAULT_LEVEL_COUNT = 3
 
-DESIGN_PROMPT_TEMPLATE = load_prompt_text("test_set_design.md")
+STRATIFICATION_PROMPT_TEMPLATE = load_prompt_text("test_set_stratification.md")
 
 SCOPE = "suite"
-SUITE_OUTPUT = DESIGN_FILE
+SUITE_OUTPUT = STRATIFICATION_FILE
 
 
 def render_behavior_categories(taxonomy: dict[str, Any]) -> str:
@@ -122,33 +122,33 @@ def _normalize_behavior_levels(entries: Any) -> list[dict[str, str]]:
     return normalized
 
 
-def normalize_design(
-    raw_design: dict[str, Any],
+def normalize_stratification(
+    raw_stratification: dict[str, Any],
     taxonomy: dict[str, Any],
     *,
     factor_order: list[str] | None = None,
     inject_behavior: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Validate and normalize a design."""
-    if not isinstance(raw_design, dict):
-        raise ValueError("design must be a JSON object")
+    """Validate and normalize a stratification."""
+    if not isinstance(raw_stratification, dict):
+        raise ValueError("stratification must be a JSON object")
 
     metadata = {
-        key: value for key, value in raw_design.items() if key.startswith("_")
+        key: value for key, value in raw_stratification.items() if key.startswith("_")
     }
     raw_factors = {
         key: value
-        for key, value in raw_design.items()
+        for key, value in raw_stratification.items()
         if not key.startswith("_") and key != "behavior"
     }
-    raw_behavior = raw_design.get("behavior")
+    raw_behavior = raw_stratification.get("behavior")
 
     if factor_order is not None:
         expected = list(factor_order)
         actual = list(raw_factors)
         if set(actual) != set(expected):
             raise ValueError(
-                "design dimensions must match the configured dimension list exactly"
+                "stratification dimensions must match the configured dimension list exactly"
             )
     else:
         expected = list(raw_factors)
@@ -164,12 +164,12 @@ def normalize_design(
     for factor_name in expected:
         if factor_name.startswith("_"):
             raise ValueError(
-                f"design dimension names must not start with '_': {factor_name}"
+                f"stratification dimension names must not start with '_': {factor_name}"
             )
         if factor_name == "behavior":
             raise ValueError("behavior is reserved for taxonomy behavior_categories")
         if factor_name not in raw_factors:
-            raise ValueError(f"missing design dimension: {factor_name}")
+            raise ValueError(f"missing stratification dimension: {factor_name}")
         normalized[factor_name] = _normalize_factor_levels(
             factor_name, raw_factors[factor_name]
         )
@@ -178,14 +178,14 @@ def normalize_design(
     return normalized
 
 
-def render_design_catalog(
-    design: dict[str, list[dict[str, Any]]],
+def render_stratification_catalog(
+    stratification: dict[str, list[dict[str, Any]]],
     *,
     include_behavior: bool = True,
 ) -> str:
     dimensions = [
         key
-        for key in design
+        for key in stratification
         if not key.startswith("_")
         and (include_behavior or key != "behavior")
     ]
@@ -195,13 +195,13 @@ def render_design_catalog(
         text_field = "description" if factor_name == "behavior" else "definition"
         body = "\n".join(
             f"- {entry['name']}: {entry[text_field]}"
-            for entry in design[factor_name]
+            for entry in stratification[factor_name]
         )
         blocks.append(f"{title}:\n{body}")
     return "\n\n".join(blocks)
 
 
-def _design_response_schema(
+def _stratification_response_schema(
     level_count: int,
     *,
     dimensions: tuple[str, ...],
@@ -230,7 +230,7 @@ def _design_response_schema(
     }
 
 
-async def run_design(
+async def run_stratification(
     *,
     taxonomy_path: str,
     out_dir: str,
@@ -287,9 +287,9 @@ async def run_design(
 
     factor_names = [dimension["name"] for dimension in normalized_factors]
     if not factor_names:
-        design = normalize_design({}, taxonomy, inject_behavior=True)
+        stratification = normalize_stratification({}, taxonomy, inject_behavior=True)
     else:
-        provided_design = {
+        provided_stratification = {
             dimension["name"]: dimension["levels"]
             for dimension in normalized_factors
             if dimension.get("levels")
@@ -300,8 +300,8 @@ async def run_design(
             if not dimension.get("levels")
         ]
         if not factors_to_generate:
-            design = normalize_design(
-                provided_design,
+            stratification = normalize_stratification(
+                provided_stratification,
                 taxonomy,
                 factor_order=factor_names,
                 inject_behavior=True,
@@ -309,12 +309,12 @@ async def run_design(
         else:
             if not model:
                 raise ValueError(
-                    "design.model is required when any design dimension is missing levels"
+                    "stratification.model is required when any stratification dimension is missing levels"
                 )
             if reasoning_effort is not None:
                 temperature = None
             prompt = fill_template(
-                DESIGN_PROMPT_TEMPLATE,
+                STRATIFICATION_PROMPT_TEMPLATE,
                 {
                     "behavior_name": str(taxonomy.get("behavior", {}).get("name") or "behavior"),
                     "behavior_categories": render_behavior_categories(taxonomy),
@@ -325,8 +325,8 @@ async def run_design(
             response = await generate_structured(
                 model,
                 prompt,
-                schema_name="policy_design",
-                json_schema=_design_response_schema(
+                schema_name="policy_stratification",
+                json_schema=_stratification_response_schema(
                     level_count,
                     dimensions=tuple(dimension["name"] for dimension in factors_to_generate),
                 ),
@@ -339,33 +339,33 @@ async def run_design(
             )
             parsed = response.parsed
             if not isinstance(parsed, dict):
-                raise ValueError("design generation returned invalid payload")
-            design = normalize_design(
-                {**provided_design, **parsed},
+                raise ValueError("stratification generation returned invalid payload")
+            stratification = normalize_stratification(
+                {**provided_stratification, **parsed},
                 taxonomy,
                 factor_order=factor_names,
                 inject_behavior=True,
             )
 
     if normalized_context:
-        design["_context"] = normalized_context
+        stratification["_context"] = normalized_context
 
-    design_path = output_dir / DESIGN_FILE
-    write_json(design_path, design)
+    stratification_path = output_dir / STRATIFICATION_FILE
+    write_json(stratification_path, stratification)
 
-    factor_sizes = {name: len(design[name]) for name in design_factors(design)}
+    factor_sizes = {name: len(stratification[name]) for name in stratification_dimensions(stratification)}
 
     return {
-        "design_path": str(design_path),
+        "stratification_path": str(stratification_path),
         "factor_sizes": factor_sizes,
     }
 
 
 async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Validate config and generate the design."""
+    """Validate config and generate the stratification."""
     level_count = raw_cfg.get("level_count", DEFAULT_LEVEL_COUNT)
     if not isinstance(level_count, int) or level_count <= 0:
-        raise ValueError("design.level_count must be a positive integer")
+        raise ValueError("stratification.level_count must be a positive integer")
 
     dimensions = ctx.get("dimensions")
     context = ctx.get("context")
@@ -375,27 +375,27 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     model_cfg = None
     model_raw = raw_cfg.get("model")
     if model_raw is not None:
-        model_cfg = parse_model_config(model_raw, field_name="design.model")
+        model_cfg = parse_model_config(model_raw, field_name="stratification.model")
     if any(
         isinstance(dimension, dict)
         and not dimension.get("levels")
         for dimension in (dimensions or [])
     ) and model_cfg is None:
         raise ValueError(
-            "design.model is required when any design dimension is missing levels"
+            "stratification.model is required when any stratification dimension is missing levels"
         )
 
     suite_root = Path(ctx["suite_root"])
     cfg = resolve_stage_paths(
         {
             "taxonomy_path": raw_cfg.get("taxonomy_path") or ctx.get("taxonomy_path") or str(suite_root / "taxonomy.json"),
-            "save_dir": raw_cfg.get("save_dir") or ctx.get("design_artifact_dir") or str(suite_root),
+            "save_dir": raw_cfg.get("save_dir") or ctx.get("stratification_artifact_dir") or str(suite_root),
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
 
-    result = await run_design(
+    result = await run_stratification(
         taxonomy_path=cfg["taxonomy_path"],
         out_dir=cfg["save_dir"],
         dimensions=dimensions,
@@ -405,9 +405,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=model_cfg.reasoning_effort if model_cfg is not None else None,
         temperature=model_cfg.temperature if model_cfg is not None else None,
     )
-    log.debug(f"design: factor_sizes={result.get('factor_sizes', {})}")
+    log.debug(f"stratification: factor_sizes={result.get('factor_sizes', {})}")
     return {
-        "design_path": result["design_path"],
+        "stratification_path": result["stratification_path"],
         "_summary": {
             "factor_sizes": result.get("factor_sizes", {}),
         },

@@ -20,7 +20,7 @@ from p2m.core.config_model import (
     TargetConfig,
 )
 from p2m.core.io import (
-    design_factors,
+    stratification_dimensions,
     fill_template,
     load_policy,
     load_prompt_text,
@@ -39,7 +39,7 @@ from p2m.core.model_client import (
     generate_structured,
 )
 from p2m.core.tools import normalize_tool_defs
-from p2m.stages.design import DEFAULT_LEVEL_COUNT, normalize_design, run_design
+from p2m.stages.stratification import DEFAULT_LEVEL_COUNT, normalize_stratification, run_stratification
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROMPT_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
@@ -349,7 +349,7 @@ def build_generation_prompt(
     behavior: dict[str, Any],
     count: int,
     context: str | None,
-    design: dict[str, list[dict[str, Any]]],
+    stratification: dict[str, list[dict[str, Any]]],
     tuple_spec: dict[str, dict[str, Any]] | None = None,
     tool_source: str = TOOL_SOURCE_RUNTIME,
 ) -> str:
@@ -378,7 +378,7 @@ def build_generation_prompt(
         raise ValueError("generation requires tuple_spec")
     include_pn = (
         "behavior" in tuple_spec
-        and (kind == "scenario" or not design_factors(design))
+        and (kind == "scenario" or not stratification_dimensions(stratification))
     )
     batch_guidance = fill_template(
         GENERATION_GUIDANCE_TEMPLATE,
@@ -415,12 +415,12 @@ def build_generation_prompt(
 # ---------------------------------------------------------------------------
 
 def build_covering_array(
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
     rng: random.Random,
     *,
     axes: tuple[str, ...] | None = None,
 ) -> list[dict[str, str]]:
-    """Build a strength-2 covering array for the design dimensions.
+    """Build a strength-2 covering array for the stratification dimensions.
 
     Returns a set of tuples such that every pair of dimensions has all
     level-combinations represented at least once.  Each tuple is a
@@ -428,22 +428,22 @@ def build_covering_array(
 
     Uses IPOG (In-Parameter-Order-General) for construction.
     """
-    active_axes = design_factors(design) if axes is None else tuple(axes)
+    active_axes = stratification_dimensions(stratification) if axes is None else tuple(axes)
     if not active_axes:
         raise ValueError("at least one dimension is required")
 
-    cardinalities = [len(design[ax]) for ax in active_axes]
+    cardinalities = [len(stratification[ax]) for ax in active_axes]
     if any(c == 0 for c in cardinalities):
         raise ValueError("all dimensions must have at least one level")
 
     if len(active_axes) < 2:
-        return [{active_axes[0]: entry["name"]} for entry in design[active_axes[0]]]
+        return [{active_axes[0]: entry["name"]} for entry in stratification[active_axes[0]]]
 
-    return _ipog(design, active_axes, rng)
+    return _ipog(stratification, active_axes, rng)
 
 
 def _ipog(
-    design: dict[str, list[dict[str, str]]],
+    stratification: dict[str, list[dict[str, str]]],
     active_axes: tuple[str, ...],
     rng: random.Random,
 ) -> list[dict[str, str]]:
@@ -456,7 +456,7 @@ def _ipog(
     remaining uncovered pairs.
     """
     k = len(active_axes)
-    levels = [[entry["name"] for entry in design[ax]] for ax in active_axes]
+    levels = [[entry["name"] for entry in stratification[ax]] for ax in active_axes]
 
     # Full cross of first two dimensions
     rows: list[list[str | None]] = [
@@ -571,7 +571,7 @@ class TestCaseJob:
 def build_generation_jobs(
     *,
     taxonomy: dict[str, Any],
-    design: dict[str, list[dict[str, Any]]],
+    stratification: dict[str, list[dict[str, Any]]],
     sample_size: int,
     rng: random.Random,
 ) -> tuple[list[TestCaseJob], list[dict[str, str]] | None]:
@@ -580,23 +580,23 @@ def build_generation_jobs(
     Budget is spread evenly across tuples via divmod. Each job produces
     its allocated number of test_set for a single (behavior, dimension…) tuple.
     """
-    behavior_entries = design["behavior"]
-    factor_names = design_factors(design)
+    behavior_entries = stratification["behavior"]
+    factor_names = stratification_dimensions(stratification)
     level_lookup: dict[str, dict[str, dict[str, str]]] = {
         factor_name: {
-            entry["name"]: entry for entry in design[factor_name]
+            entry["name"]: entry for entry in stratification[factor_name]
         }
         for factor_name in factor_names
     }
     behavior_level_lookup = {
         str(entry["name"]): entry for entry in behavior_entries
     }
-    covering_design = dict(design)
-    covering_design["behavior"] = behavior_entries
+    covering_stratification = dict(stratification)
+    covering_stratification["behavior"] = behavior_entries
     all_axes = ("behavior",) + factor_names if factor_names else ("behavior",)
-    covering_array = design.get("_covering_array")
+    covering_array = stratification.get("_covering_array")
     if not covering_array:
-        covering_array = build_covering_array(covering_design, rng, axes=all_axes)
+        covering_array = build_covering_array(covering_stratification, rng, axes=all_axes)
 
     # Shuffle so remainder budget is distributed randomly
     tuples = list(covering_array)
@@ -663,7 +663,7 @@ async def _generate_records(
     tool_source: str = TOOL_SOURCE_RUNTIME,
     fixed_system_prompt: str | None = None,
     context: str | None = None,
-    design: dict[str, Any] | None = None,
+    stratification: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
 ) -> dict[str, Any]:
@@ -685,17 +685,17 @@ async def _generate_records(
     if concurrency <= 0:
         raise ValueError("test-case generation concurrency must be > 0")
 
-    design_data = design or {}
+    stratification_data = stratification or {}
     test_case_id_prefix = TEST_CASE_ID_PREFIX[kind]
     behavior_spec_name = taxonomy.get("behavior", {}).get("name", "behavior")
 
     jobs, _ = build_generation_jobs(
         taxonomy=taxonomy,
-        design=design_data,
+        stratification=stratification_data,
         sample_size=sample_size,
         rng=random.Random(seed),
     )
-    factor_names = design_factors(design_data)
+    factor_names = stratification_dimensions(stratification_data)
 
     async def _process(job: TestCaseJob) -> dict[str, Any]:
         """Generate one batch of test_set for *job*.
@@ -717,7 +717,7 @@ async def _generate_records(
                 behavior=job.behavior,
                 count=job.count,
                 context=context,
-                design=design_data,
+                stratification=stratification_data,
                 tuple_spec=job.tuple_spec,
                 tool_source=tool_source,
             )
@@ -831,7 +831,7 @@ async def run_test_set(
     scenario: dict[str, Any] | None,
     target: TargetConfig | None,
     tool_source: str = TOOL_SOURCE_RUNTIME,
-    design: dict[str, Any] | None = None,
+    stratification: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
 ) -> dict[str, Any]:
@@ -846,7 +846,7 @@ async def run_test_set(
     normalized_context = normalize_test_case_context(context)
     fixed_system_prompt = (str(target.system_prompt or "").strip() or None) if target is not None else None
 
-    design = normalize_design(design or {}, taxonomy, inject_behavior=True)
+    stratification = normalize_stratification(stratification or {}, taxonomy, inject_behavior=True)
 
     kinds_cfgs: list[tuple[str, dict[str, Any]]] = []
     if prompt is not None:
@@ -872,7 +872,7 @@ async def run_test_set(
             timeout_s=cfg.get("timeout_s"),
             tool_source=tool_source, fixed_system_prompt=fixed_system_prompt,
             context=normalized_context,
-            design=design,
+            stratification=stratification,
             seed=seed,
             concurrency=concurrency,
         )
@@ -1012,10 +1012,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         artifacts_root=ctx["artifacts_root"],
     )
     taxonomy_path = cfg["taxonomy_path"]
-    design_dir = Path(cfg["save_path"]).parent
-    design_result = await run_design(
+    stratification_dir = Path(cfg["save_path"]).parent
+    stratification_result = await run_stratification(
         taxonomy_path=taxonomy_path,
-        out_dir=str(design_dir),
+        out_dir=str(stratification_dir),
         dimensions=dimensions,
         context=context,
         model=stratify_model_cfg.name if stratify_model_cfg is not None else None,
@@ -1023,8 +1023,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=stratify_model_cfg.reasoning_effort if stratify_model_cfg is not None else None,
         temperature=stratify_model_cfg.temperature if stratify_model_cfg is not None else None,
     )
-    design_path = Path(design_result["design_path"])
-    raw_design = json.loads(design_path.read_text(encoding="utf-8"))
+    stratification_path = Path(stratification_result["stratification_path"])
+    raw_stratification = json.loads(stratification_path.read_text(encoding="utf-8"))
 
     kinds = []
     if prompt_cfg is not None:
@@ -1041,13 +1041,13 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         scenario=scenario_cfg,
         target=ctx.get("target"),
         tool_source=tool_source,
-        design=raw_design,
+        stratification=raw_stratification,
     )
     return {
         "test_set_path": result["test_set_path"],
-        "design_path": str(design_path),
+        "stratification_path": str(stratification_path),
         "_summary": {
-            "factor_sizes": design_result.get("factor_sizes", {}),
+            "factor_sizes": stratification_result.get("factor_sizes", {}),
             "total": result.get("saved_count", 0),
             "prompts": result.get("prompt_count", 0),
             "scenarios": result.get("scenario_count", 0),

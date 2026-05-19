@@ -102,7 +102,7 @@ class RunnerStageFilterTest(unittest.TestCase):
         seen: list[str] = []
         suite_modules = {
             "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
-            "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=self._async_recorder("design", seen)),
+            "stratification": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="stratification.json", run=self._async_recorder("stratification", seen)),
             "test_set": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="test_set.jsonl", run=self._async_recorder("test_set", seen)),
             "inference": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("inference", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
@@ -112,12 +112,12 @@ class RunnerStageFilterTest(unittest.TestCase):
             suite_root = Path(tmp_dir) / "suite"
             suite_root.mkdir(parents=True)
             (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
-            (suite_root / "design.json").write_text("{}", encoding="utf-8")
+            (suite_root / "stratification.json").write_text("{}", encoding="utf-8")
             (suite_root / "test_set.jsonl").write_text("", encoding="utf-8")
             ctx = {
                 "stages": [
                     ("taxonomy", {}),
-                    ("design", {}),
+                    ("stratification", {}),
                     ("test_set", {}),
                     ("inference", {}),
                     ("judge", {}),
@@ -144,7 +144,7 @@ class RunnerStageFilterTest(unittest.TestCase):
                 rc = run_pipeline(config="config.yaml", force_stages=["test_set"])
 
         self.assertEqual(rc, 0)
-        # taxonomy + design are upstream of test_set in PIPELINE_STAGE_ORDER
+        # taxonomy + stratification are upstream of test_set in PIPELINE_STAGE_ORDER
         # and have cached outputs, so they stay skipped. test_set is the
         # explicit force; inference + judge get cascaded in.
         self.assertEqual(seen, ["test_set", "inference", "judge"])

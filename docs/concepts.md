@@ -77,11 +77,11 @@ pipeline:
 
 The `auto_trace` module above adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) that auto-instrument 33+ supported frameworks. For unsupported frameworks or custom orchestration, emit your own OTel spans with the OpenTelemetry SDK — the same `target.trace` config picks them up. A plain callable without `target.trace` is only recommended when you cannot instrument the target.
 
-Output: `transcripts.jsonl`.
+Output: `inference_set.jsonl`.
 
 ## Judge
 
-The `judge` stage scores each transcript against your dimensions and rubrics.
+The `judge` stage scores each inference output (conversation or agent action sequence) against your dimensions and rubrics.
 
 ```yaml
 pipeline:

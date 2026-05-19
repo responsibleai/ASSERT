@@ -138,7 +138,7 @@ class ArtifactCacheTest(unittest.TestCase):
             activate_artifact_plan(ctx, test_set_plan)
             test_set_plan.output_paths["test_set"].parent.mkdir(parents=True, exist_ok=True)
             test_set_plan.output_paths["test_set"].write_text("", encoding="utf-8")
-            test_set_plan.output_paths["design"].write_text("{}", encoding="utf-8")
+            test_set_plan.output_paths["stratification"].write_text("{}", encoding="utf-8")
             ref = finalize_artifact_plan(ctx, test_set_plan)
 
             metadata = (test_set_plan.artifact_dir / "artifact.json").read_text(encoding="utf-8")

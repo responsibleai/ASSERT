@@ -6,11 +6,11 @@ Follows OpenInference semantic conventions for LLM/agent span attributes.
 Usage:
     from p2m.core.otel import parse_otel_traces
 
-    transcripts = parse_otel_traces(
+    inference_rows = parse_otel_traces(
         "traces.json",
         group_by="session.id",
     )
-    # Returns list[dict] in p2m transcript row format (same as transcripts.jsonl)
+    # Returns list[dict] in p2m inference-row format (same as inference_set.jsonl)
 """
 
 from __future__ import annotations
@@ -58,15 +58,15 @@ def parse_otel_traces(
     *,
     group_by: str = "session.id",
 ) -> list[dict[str, Any]]:
-    """Parse OTLP JSON export into p2m transcript rows.
+    """Parse OTLP JSON export into p2m inference rows.
 
     Args:
         path: Path to OTLP JSON file.
         group_by: Span attribute key to group spans into conversations.
 
     Returns:
-        List of transcript row dicts, one per conversation. Each row has the
-        same schema as a row in transcripts.jsonl:
+        List of inference row dicts, one per conversation. Each row has the
+        same schema as a row in inference_set.jsonl:
         {
             "metadata": {...},
             "events": [...],

@@ -86,7 +86,7 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 Read:
 
 - `config.yaml` for the exact config snapshot.
-- `transcripts.jsonl` for conversations and trace references.
+- `inference_set.jsonl` for inference outputs (conversations or agent actions) and trace references.
 - `scores.jsonl` for judge verdicts and evidence.
 - `metrics.json` for aggregate rates.
 

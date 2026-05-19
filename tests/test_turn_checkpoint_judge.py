@@ -338,7 +338,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir = tmp_root / "suite" / "run"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
@@ -417,7 +417,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir = tmp_root / "suite" / "run"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
@@ -487,7 +487,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir = tmp_root / "suite" / "run"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(transcript_a.to_dict()),
@@ -578,7 +578,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir = tmp_root / "suite" / "run"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(transcript_a.to_dict()),
@@ -679,7 +679,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir = tmp_root / "suite" / "run"
             run_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(transcript_a.to_dict()),
@@ -732,7 +732,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir.mkdir(parents=True, exist_ok=True)
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 json.dumps(transcript.to_dict()) + "\n",
                 encoding="utf-8",
             )
@@ -810,7 +810,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             run_dir.mkdir(parents=True, exist_ok=True)
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            (run_dir / "transcripts.jsonl").write_text(
+            (run_dir / "inference_set.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(transcript_a.to_dict()),

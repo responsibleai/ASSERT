@@ -84,7 +84,7 @@ export interface ViewerSeedGroup {
 	items: ViewerSeedItem[];
 }
 
-// Run-level types (from manifest.json, scores.jsonl + transcripts.jsonl)
+// Run-level types (from manifest.json, scores.jsonl + inference_set.jsonl)
 
 export type StageStatus = 'running' | 'completed' | 'failed';
 

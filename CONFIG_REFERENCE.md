@@ -105,7 +105,7 @@ pipeline:
 
 ### `test_set`
 
-`test_set` generates prompt and scenario test cases from `taxonomy.json`, `context`, and `test_set.stratify`. It writes both `test_set.jsonl` and the derived `design.json`.
+`test_set` generates prompt and scenario test cases from `taxonomy.json`, `context`, and `test_set.stratify`. It writes both `test_set.jsonl` and the derived `stratification.json`.
 
 Accepted keys:
 
@@ -146,7 +146,7 @@ pipeline:
 
 ### `inference`
 
-`inference` runs the target on the generated test_set and writes `transcripts.jsonl`.
+`inference` runs the target on the generated test_set and writes `inference_set.jsonl`.
 
 Accepted keys:
 
@@ -282,13 +282,13 @@ pipeline:
 
 ## Behavior dimension
 
-The `behavior` dimension in `design.json` carries only `name` and `description`. The test-set stage builds it from `taxonomy.json`, but the resulting `design.json` is yours to edit freely — you can subset it to a handful of taxonomy behavior_categories, rewrite a description for the suite, or add custom probes that are not in the taxonomy.
+The `behavior` dimension in `stratification.json` carries only `name` and `description`. The test-set stage builds it from `taxonomy.json`, but the resulting `stratification.json` is yours to edit freely — you can subset it to a handful of taxonomy behavior_categories, rewrite a description for the suite, or add custom probes that are not in the taxonomy.
 
-Every run probes at least one behavior. If `design.json` is missing, or is present but does not declare a `behavior` dimension, test-set generation injects every behavior from `taxonomy.json` as the behavior dimension. You opt out of a taxonomy behavior by leaving it out of `design.json`'s `behavior` list — not by removing it from `taxonomy.json`.
+Every run probes at least one behavior. If `stratification.json` is missing, or is present but does not declare a `behavior` dimension, test-set generation injects every behavior from `taxonomy.json` as the behavior dimension. You opt out of a taxonomy behavior by leaving it out of `stratification.json`'s `behavior` list — not by removing it from `taxonomy.json`.
 
-`taxonomy.json` is the source of truth for permissibility. Test-set generation injects the full taxonomy body into the prompt, and results aggregation looks up `taxonomy.behavior_categories[].permissible` by behavior name. `design.json` does not store `permissible` or `examples` on behavior entries.
+`taxonomy.json` is the source of truth for permissibility. Test-set generation injects the full taxonomy body into the prompt, and results aggregation looks up `taxonomy.behavior_categories[].permissible` by behavior name. `stratification.json` does not store `permissible` or `examples` on behavior entries.
 
-Example `design.json` behavior block that mixes taxonomy behavior_categories with a custom probe:
+Example `stratification.json` behavior block that mixes taxonomy behavior_categories with a custom probe:
 
 ```json
 {
@@ -300,7 +300,7 @@ Example `design.json` behavior block that mixes taxonomy behavior_categories wit
 }
 ```
 
-The judge always grades against every taxonomy behavior, independent of what appears in `design.json`. Use `design.json` to shape what gets probed during test-set generation; use `taxonomy.json` to shape what gets evaluated.
+The judge always grades against every taxonomy behavior, independent of what appears in `stratification.json`. Use `stratification.json` to shape what gets probed during test-set generation; use `taxonomy.json` to shape what gets evaluated.
 
 ## Judge dimensions in detail
 

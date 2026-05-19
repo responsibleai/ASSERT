@@ -12,7 +12,7 @@ const ALLOWED_FILES = new Set([
 	'manifest.json',
 	'config.yaml',
 	'scores.jsonl',
-	'transcripts.jsonl',
+	'inference_set.jsonl',
 	'metrics.json'
 ]);
 

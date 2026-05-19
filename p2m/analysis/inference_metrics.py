@@ -1,8 +1,8 @@
-"""Inference-stage metrics computed from transcripts.
+"""Inference-stage metrics computed from inference-set rows.
 
 Aggregates stop-reason distribution, turn counts, truncation rates,
 and conversation health indicators. All functions accept plain dicts
-from transcripts.jsonl rows and return plain dicts.
+from inference_set.jsonl rows and return plain dicts.
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from typing import Any
 from p2m.core.io import row_behavior
 
 
-def count_inference_turns(transcript_row: dict[str, Any]) -> int:
-    """Count the number of tester-initiated inference turns in a transcript.
+def count_inference_turns(inference_row: dict[str, Any]) -> int:
+    """Count the number of tester-initiated turns in an inference row.
 
-    A inference turn is a tester user-message sent to the target view.
+    An inference turn is a tester user-message sent to the target view.
     """
     count = 0
-    for event in transcript_row.get("events", []):
+    for event in inference_row.get("events", []):
         if not isinstance(event, dict):
             continue
         view = event.get("view", [])
@@ -39,14 +39,14 @@ def count_inference_turns(transcript_row: dict[str, Any]) -> int:
 
 
 def compute_inference_metrics(
-    transcript_rows: list[dict[str, Any]],
+    inference_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Compute aggregate inference metrics from transcript rows.
+    """Compute aggregate inference metrics from inference rows.
 
     Returns a dict with stop_reason distribution, turn stats, completion
     rate, and per-behavior breakdowns.
     """
-    n = len(transcript_rows)
+    n = len(inference_rows)
     if n == 0:
         return {"total": 0}
 
@@ -55,7 +55,7 @@ def compute_inference_metrics(
     turn_counts: list[int] = []
     per_behavior: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
-    for row in transcript_rows:
+    for row in inference_rows:
         sr = str(row.get("stop_reason") or "unknown")
         stop_reasons[sr] += 1
         turns = count_inference_turns(row)

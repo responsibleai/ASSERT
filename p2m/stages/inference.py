@@ -1,4 +1,4 @@
-"""Run unified prompt/scenario inferences and write transcripts."""
+"""Run unified prompt/scenario inferences and write inference-set rows."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from p2m.core.config_model import (
     TargetConfig,
 )
 from p2m.core.io import (
-    TRANSCRIPTS_FILE,
+    INFERENCE_SET_FILE,
     append_jsonl_row,
     get_permissible_flag,
     load_jsonl,
@@ -86,7 +86,7 @@ def _is_versioned_test_set_artifact_path(path: Path) -> bool:
     for index in range(len(parts) - 3):
         if (
             parts[index] == "artifacts"
-            and parts[index + 1] in {"test_set", "taxonomy", "design"}
+            and parts[index + 1] in {"test_set", "taxonomy", "stratification"}
             and _VERSIONED_ARTIFACT_RE.match(parts[index + 2])
         ):
             return True
@@ -102,7 +102,7 @@ def _inference_config_fingerprint(
     """Deterministic hash of config values that affect inference output.
 
     Includes the test set input file's content hash when provided so that
-    regenerated test_set invalidate the cached transcripts. Without this,
+    regenerated test_set invalidate the cached inference rows. Without this,
     test case ids are deterministic enough that the resume path silently
     reuses transcripts from a prior test_set.jsonl content.
     """
@@ -998,7 +998,7 @@ async def run_inference(
     resolved_max_tokens = max_tokens if max_tokens is not None else DEFAULT_INFERENCE_MAX_TOKENS
     inference = evaluation.inference if evaluation is not None else InferenceConfig()
     indexed_test_cases = list(enumerate(test_cases))
-    transcripts_path = out_dir / TRANSCRIPTS_FILE
+    inference_set_path = out_dir / INFERENCE_SET_FILE
 
     # Resume: load already-completed test_case_ids and skip them.
     completed_test_case_ids: set[str] = set()
@@ -1009,24 +1009,24 @@ async def run_inference(
         test_set_path=resolved_test_set_path,
     )
     config_hash_path = out_dir / _INFERENCE_CONFIG_HASH_FILE
-    if transcripts_path.exists():
+    if inference_set_path.exists():
         if forced:
             # User explicitly forced this stage (directly or via the runner's
             # --force-stage cascade). Discard the cached output unconditionally;
             # don't trust the hash because regenerated upstream artifacts may
-            # be byte-identical (deterministic test-case generation, no design
+            # be byte-identical (deterministic test-case generation, no stratification
             # dimensions, etc.) which would otherwise leave the cache intact.
-            transcripts_path.unlink()
+            inference_set_path.unlink()
         else:
-            # Check that existing transcripts were produced with the same config.
+            # Check that existing inference rows were produced with the same config.
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    f"Inference config changed since last run - discarding {transcripts_path} and starting fresh"
+                    f"Inference config changed since last run - discarding {inference_set_path} and starting fresh"
                 )
-                transcripts_path.unlink()
+                inference_set_path.unlink()
             else:
-                for row in load_jsonl(transcripts_path):
+                for row in load_jsonl(inference_set_path):
                     sid = row.get("test_case_id")
                     if sid:
                         completed_test_case_ids.add(str(sid))
@@ -1048,7 +1048,7 @@ async def run_inference(
         input errors after the per-call retry budget is exhausted are
         treated as per-row failures: the test case is recorded with an
         ``error`` field and the stage continues. Without this, a single
-        unrecoverable LLM call would discard all the transcripts that
+        unrecoverable LLM call would discard all the inference rows that
         the other concurrent inferences have already produced.
         """
         output_index, test_case_row = test_case
@@ -1074,7 +1074,7 @@ async def run_inference(
                 )
             else:
                 raise ValueError(f"unsupported test case type: {kind}")
-            return {"output_index": output_index, "transcript_row": transcript.to_dict()}
+            return {"output_index": output_index, "inference_row": transcript.to_dict()}
         except LLMAuthError:
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
@@ -1114,13 +1114,13 @@ async def run_inference(
     for completed_task in asyncio.as_completed(tasks):
         result = await completed_task
         results.append(result)
-        transcript_row = result.get("transcript_row")
-        if transcript_row is not None:
-            append_jsonl_row(transcripts_path, transcript_row)
+        inference_row = result.get("inference_row")
+        if inference_row is not None:
+            append_jsonl_row(inference_set_path, inference_row)
         error = result.get("error")
         # Scenario inferences catch target exceptions mid-conversation and
-        # record a transcript with stop_reason="target_error" instead of
-        # propagating. The transcript is still on disk so the user can
+        # record an inference row with stop_reason="target_error" instead of
+        # propagating. The inference row is still on disk so the user can
         # inspect what happened, but the inference produced no useful
         # output, so we count it as a soft failure (counts toward the
         # "did anything succeed?" check below) without converting it
@@ -1128,8 +1128,8 @@ async def run_inference(
         # mid-conversation we tolerate it; if every target call crashes
         # (e.g. deployment doesn't exist) the all-failed check below
         # still fires and surfaces the issue.
-        if error is None and transcript_row is not None:
-            if transcript_row.get("stop_reason") == "target_error":
+        if error is None and inference_row is not None:
+            if inference_row.get("stop_reason") == "target_error":
                 target_error_count += 1
             else:
                 successful_results += 1
@@ -1157,23 +1157,23 @@ async def run_inference(
             log.warning(msg)
 
     # Per-row failures should not kill the stage as long as *some* rows
-    # produced useful transcripts. The errors are visible in the
+    # produced useful inference rows. The errors are visible in the
     # per-test-case progress lines above and are summarised in errored_count
     # below. The stage only fails outright when nothing succeeded
-    # (no useful transcripts in this run AND no cached transcripts from
+    # (no useful transcripts in this run AND no cached inference rows from
     # a prior run) — that means the failure is systemic (auth, config,
     # broken target) rather than per-row.
     if successful_results == 0 and not completed_test_case_ids:
         if errors:
             log.error(
-                "Inference stage failed: all %d test case(s) errored and no prior transcripts were cached",
+                "Inference stage failed: all %d test case(s) errored and no prior inference rows were cached",
                 len(errors),
             )
             raise errors[0]
         if target_error_count:
             log.error(
-                "Inference stage failed: all %d transcript(s) ended with stop_reason=target_error "
-                "and no prior transcripts were cached",
+                "Inference stage failed: all %d inference row(s) ended with stop_reason=target_error "
+                "and no prior inference rows were cached",
                 target_error_count,
             )
             raise RuntimeError(
@@ -1185,7 +1185,7 @@ async def run_inference(
     # more concerning than typed refusals (target_input_refused,
     # tester_input_refused, target_error) because they indicate the
     # worker hit an unrecognised failure mode. At scale, a half-failed run
-    # with a few successful transcripts is more likely a systemic problem
+    # with a few successful inference rows is more likely a systemic problem
     # (deployment misconfigured, target broken, validation bug) than
     # per-test-case bad luck — failing loudly here surfaces it instead of
     # quietly producing a thin artifact. The default threshold of 10% is
@@ -1216,19 +1216,19 @@ async def run_inference(
             raise errors[0]
     if errors:
         log.warning(
-            "Inference stage completed with %d test case failure(s) out of %d new test_set; see transcripts.jsonl for details",
+            "Inference stage completed with %d test case failure(s) out of %d new test_set; see inference_set.jsonl for details",
             len(errors), len(pending_test_cases),
         )
     if target_error_count:
         log.warning(
-            "Inference stage produced %d transcript(s) with stop_reason=target_error; "
+            "Inference stage produced %d inference row(s) with stop_reason=target_error; "
             "the target raised an exception mid-conversation",
             target_error_count,
         )
     build_run_viewer_artifacts(out_dir)
 
     return {
-        "transcripts_path": str(transcripts_path),
+        "inference_set_path": str(inference_set_path),
         "run_id": resolved_run_id,
         "count": len(completed_test_case_ids) + len(results),
         "new_count": len(results),
@@ -1278,7 +1278,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     if target_obj and target_obj.model:
         target_model = target_obj.model.name or ""
     return {
-        "transcripts_path": result["transcripts_path"],
+        "inference_set_path": result["inference_set_path"],
         "test_set_artifact_version": test_set_artifact_ref,
         "_summary": {
             "count": result.get("count", 0),
@@ -1286,7 +1286,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "cached_count": result.get("cached_count", 0),
             "target_model": target_model,
             # Surfaced so the runner can skip finalize_artifact_plan when
-            # any per-row error occurred. A partial transcripts.jsonl
+            # any per-row error occurred. A partial inference_set.jsonl
             # must not be tagged as a complete cacheable artifact -- a
             # future cache hit would silently reuse the smaller file.
             "errored_count": int(result.get("errored_count", 0) or 0),

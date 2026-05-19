@@ -52,7 +52,7 @@ class CheckpointJudgeConfig:
 @dataclass(frozen=True)
 class CheckpointTask:
     output_index: int
-    transcript_row: dict[str, Any]
+    inference_row: dict[str, Any]
     checkpoint_turn: int
     final_transcript_turns: int
     transcript: Transcript
@@ -65,7 +65,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--run-dir",
         required=True,
-        help="Completed run directory containing transcripts.jsonl and config.yaml.",
+        help="Completed run directory containing inference_set.jsonl and config.yaml.",
     )
     parser.add_argument(
         "--checkpoint-step",
@@ -463,13 +463,13 @@ async def run_checkpoint_judge(
         raise ValueError("checkpoint_step must be > 0")
 
     resolved_run_dir = resolve_path(run_dir)
-    transcripts_path = resolved_run_dir / "transcripts.jsonl"
+    inference_set_path = resolved_run_dir / "inference_set.jsonl"
     config_path = resolved_run_dir / "config.yaml"
     taxonomy_path = resolved_run_dir.parent / "taxonomy.json"
     resolved_out_dir = resolve_path(out_dir) if out_dir is not None else (resolved_run_dir / "checkpoint_judge")
 
-    if not transcripts_path.exists():
-        raise FileNotFoundError(f"Transcript file not found: {transcripts_path}")
+    if not inference_set_path.exists():
+        raise FileNotFoundError(f"Inference set file not found: {inference_set_path}")
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
     if not taxonomy_path.exists():
@@ -483,9 +483,9 @@ async def run_checkpoint_judge(
         concurrency_override=concurrency_override,
     )
 
-    transcript_rows = load_jsonl(transcripts_path)
-    if not transcript_rows:
-        raise ValueError(f"No transcripts found in {transcripts_path}")
+    inference_rows = load_jsonl(inference_set_path)
+    if not inference_rows:
+        raise ValueError(f"No inference rows found in {inference_set_path}")
 
     policy_raw = json.loads(taxonomy_path.read_text(encoding="utf-8"))
     permissible_by_name = permissible_by_behavior(policy_raw)
@@ -502,14 +502,14 @@ async def run_checkpoint_judge(
 
     tasks: list[CheckpointTask] = []
     output_index = 0
-    for row in transcript_rows:
+    for row in inference_rows:
         transcript = transcript_from_row(row)
         final_turns = count_inference_turns(transcript)
         for checkpoint_turn in checkpoint_turns(final_turns, checkpoint_step):
             tasks.append(
                 CheckpointTask(
                     output_index=output_index,
-                    transcript_row=row,
+                    inference_row=row,
                     checkpoint_turn=checkpoint_turn,
                     final_transcript_turns=final_turns,
                     transcript=transcript,
@@ -519,7 +519,7 @@ async def run_checkpoint_judge(
 
     if not tasks:
         raise ValueError(
-            f"No checkpoint prefixes available at step {checkpoint_step} in {transcripts_path}"
+            f"No checkpoint prefixes available at step {checkpoint_step} in {inference_set_path}"
         )
 
     resolved_out_dir.mkdir(parents=True, exist_ok=True)
@@ -549,19 +549,19 @@ async def run_checkpoint_judge(
                 response_schema=judge_contract["response_schema"],
             )
             behavior = str(
-                row_behavior(task.transcript_row)
+                row_behavior(task.inference_row)
                 or ""
             )
             row = {
-                "type": task.transcript_row.get("kind", ""),
-                "test_case_id": task.transcript_row.get("test_case_id", ""),
-                "behavior": task.transcript_row.get("behavior", ""),
+                "type": task.inference_row.get("kind", ""),
+                "test_case_id": task.inference_row.get("test_case_id", ""),
+                "behavior": task.inference_row.get("behavior", ""),
                 "permissible": policy_permissible(
                     permissible_by_name,
                     behavior,
                 ),
-                "target": task.transcript_row.get("target", ""),
-                "tester_model": task.transcript_row.get("tester_model", ""),
+                "target": task.inference_row.get("target", ""),
+                "tester_model": task.inference_row.get("tester_model", ""),
                 "checkpoint_turn": task.checkpoint_turn,
                 "final_transcript_turns": task.final_transcript_turns,
                 "judge_model": config.judge_model,

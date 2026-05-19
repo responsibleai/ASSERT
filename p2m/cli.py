@@ -535,7 +535,7 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     help=(
         "Force a stage to rerun even if cached. Repeat to force multiple stages. "
         "Forcing an upstream stage implicitly forces every configured downstream stage, "
-        "so cached transcripts and scores can't silently survive a regenerated input."
+        "so cached inference rows and scores can't silently survive a regenerated input."
     ),
     show_envvar=True,
 )
@@ -1114,32 +1114,32 @@ def results_compare_suites(
         run_summaries.append(run_summary)
         labels.append(f"{suite_id}/{run_id}")
 
-    # Count structural visibility from transcripts
+    # Count structural visibility from inference rows
     structural: list[dict[str, Any]] = []
     for i, suite_run in enumerate(suite_runs):
         parts = suite_run.strip("/").split("/")
         suite_id = parts[0]
         run_id = parts[1] if len(parts) > 1 else "run-1"
-        transcripts_path = results_root / suite_id / run_id / "transcripts.jsonl"
-        transcript_rows = load_jsonl(transcripts_path)
-        total_events = sum(len(r.get("events", [])) for r in transcript_rows)
+        inference_set_path = results_root / suite_id / run_id / "inference_set.jsonl"
+        inference_rows = load_jsonl(inference_set_path)
+        total_events = sum(len(r.get("events", [])) for r in inference_rows)
         tool_events = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             for e in r.get("events", [])
             if e.get("edit", {}).get("type") == "tool_call"
         )
         msg_events = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             for e in r.get("events", [])
             if e.get("edit", {}).get("type") == "add_message"
         )
         with_tools = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             if any(e.get("edit", {}).get("type") == "tool_call" for e in r.get("events", []))
         )
         structural.append({
             "label": labels[i],
-            "transcripts": len(transcript_rows),
+            "inference_rows": len(inference_rows),
             "total_events": total_events,
             "msg_events": msg_events,
             "tool_events": tool_events,
@@ -1204,7 +1204,7 @@ def results_compare_suites(
         pad_edge=False,
     )
     struct_table.add_column("Suite / Run", style="cyan", no_wrap=True)
-    struct_table.add_column("Transcripts", style="white", no_wrap=True)
+    struct_table.add_column("Inference rows", style="white", no_wrap=True)
     struct_table.add_column("Events", style="white", no_wrap=True)
     struct_table.add_column("Messages", style="white", no_wrap=True)
     struct_table.add_column("Tool Events", style="white", no_wrap=True)
@@ -1212,11 +1212,11 @@ def results_compare_suites(
     for s in structural:
         struct_table.add_row(
             s["label"],
-            str(s["transcripts"]),
+            str(s["inference_rows"]),
             str(s["total_events"]),
             str(s["msg_events"]),
             str(s["tool_events"]),
-            f"{s['with_tools']}/{s['transcripts']}",
+            f"{s['with_tools']}/{s['inference_rows']}",
         )
     console.print(struct_table)
 
@@ -1315,10 +1315,10 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     from p2m.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")
-    transcript_rows = parse_otel_traces(traces, group_by=group_by)
-    click.echo(f"Found {len(transcript_rows)} conversations")
+    inference_rows = parse_otel_traces(traces, group_by=group_by)
+    click.echo(f"Found {len(inference_rows)} conversations")
 
-    if not transcript_rows:
+    if not inference_rows:
         click.echo("No conversations found in traces. Check your group_by attribute.")
         raise SystemExit(1)
 
@@ -1329,18 +1329,18 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     out_dir = output or (DEFAULT_RESULTS_DIR / "judge-traces")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    # Write parsed transcripts to output directory
-    transcripts_path = Path(out_dir) / "transcripts.jsonl"
-    with open(transcripts_path, "w") as f:
-        for row in transcript_rows:
+    # Write parsed inference rows to output directory
+    inference_set_path = Path(out_dir) / "inference_set.jsonl"
+    with open(inference_set_path, "w") as f:
+        for row in inference_rows:
             f.write(json.dumps(row) + "\n")
-    click.echo(f"Wrote {len(transcript_rows)} transcripts to {transcripts_path}")
+    click.echo(f"Wrote {len(inference_rows)} inference rows to {inference_set_path}")
 
-    click.echo(f"Judging {len(transcript_rows)} conversations...")
-    # Full judge execution requires LLM access; the transcripts are ready
+    click.echo(f"Judging {len(inference_rows)} conversations...")
+    # Full judge execution requires LLM access; the inference rows are ready
     # for the judge stage to consume.
-    click.echo(f"Transcripts written to {transcripts_path}")
-    click.echo("Run the full pipeline with --force-stage judge to score these transcripts.")
+    click.echo(f"Inference set written to {inference_set_path}")
+    click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
 if __name__ == "__main__":

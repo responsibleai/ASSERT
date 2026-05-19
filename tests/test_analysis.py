@@ -220,7 +220,7 @@ def _make_suite_dir(tmp_path: Path):
          "verdict": {"dimensions": {"policy_violation": i < 4, "overrefusal": False}}}
         for i in range(10)
     ]
-    (run / "transcripts.jsonl").write_text(
+    (run / "inference_set.jsonl").write_text(
         "\n".join(json.dumps(r) for r in transcripts))
     (run / "scores.jsonl").write_text(
         "\n".join(json.dumps(r) for r in scores))

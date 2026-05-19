@@ -90,7 +90,7 @@ ALL_CONFIGS = Q1_CONFIGS + Q2_CONFIGS + Q6_CONFIGS
 
 
 async def score_transcripts(
-    transcript_rows: list[dict],
+    inference_rows: list[dict],
     policy_raw: dict,
     judge_contract: dict,
     config: JudgeRunConfig,
@@ -138,7 +138,7 @@ async def score_transcripts(
                 score_row["multi_judge"] = judge_result["multi_judge"]
             return score_row
 
-    tasks = [asyncio.create_task(score_one(i, row)) for i, row in enumerate(transcript_rows)]
+    tasks = [asyncio.create_task(score_one(i, row)) for i, row in enumerate(inference_rows)]
     for coro in asyncio.as_completed(tasks):
         result = await coro
         results.append(result)
@@ -168,7 +168,7 @@ async def run_experiment(
     print(f"\nRUN {run_dir_name}/{config.name}")
     print(f"  model={config.judge_model} temp={config.temperature} n={config.judge_n}")
 
-    transcripts = load_jsonl(run_dir / "transcripts.jsonl")
+    inference_rows = load_jsonl(run_dir / "inference_set.jsonl")
     policy_raw = json.loads((run_dir.parent / "taxonomy.json").read_text())
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
@@ -177,7 +177,7 @@ async def run_experiment(
         schema_name="transcript_judgment",
     )
 
-    results = await score_transcripts(transcripts, policy_raw, judge_contract, config, concurrency)
+    results = await score_transcripts(inference_rows, policy_raw, judge_contract, config, concurrency)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(scores_path, results)

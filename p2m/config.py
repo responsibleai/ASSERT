@@ -712,7 +712,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         reject_unknown_keys(
             scorer_stage,
             field_name="pipeline.judge",
-            allowed={"model", "n", "dimensions", "transcripts_path", "taxonomy_path", "save_dir",
+            allowed={"model", "n", "dimensions", "inference_set_path", "taxonomy_path", "save_dir",
                        "enabled", "file_path"},
         )
         if judge_enabled:

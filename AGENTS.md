@@ -1,10 +1,10 @@
 # Adaptive Eval Agent Orientation
 
-This file is for coding assistants such as GitHub Copilot, Claude Code, Cursor, and similar tools. It gives a short, customer-safe map of this private-preview repository.
+This file is for coding assistants such as GitHub Copilot, Claude Code, Cursor, and similar tools. It gives a short, customer-safe map of this preview repository.
 
 ## What this repo is
 
-Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting conversations against the spec.
+Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting inference outputs (conversations or agent actions) against the spec.
 
 Use this mental model:
 
@@ -42,13 +42,13 @@ Use the developer-friendly behaviors in prose, and mention current YAML keys whe
 | Variations | `dimensions` |
 | Behavior categories | `pipeline.systematize`, `taxonomy.json` |
 | Test cases | `pipeline.test_set`, `test_set.jsonl` |
-| Execute | `pipeline.inference`, `transcripts.jsonl` |
+| Execute | `pipeline.inference`, `inference_set.jsonl` |
 | Target | `pipeline.inference.target` |
 | Trace capture | `target.trace` |
 | Judge | `pipeline.judge`, `scores.jsonl` |
 | Metrics | `metrics.json` |
 
-Do not rename schema fields unless explicitly asked. Some naming is still evolving, but the private-preview docs should stay aligned with the current branch.
+Do not rename schema fields unless explicitly asked. Some naming is still evolving, but the preview docs should stay aligned with the current branch.
 
 ## Target selection
 
@@ -107,7 +107,7 @@ Read artifacts in this order:
 
 1. `metrics.json`
 2. `scores.jsonl`
-3. `transcripts.jsonl`
+3. `inference_set.jsonl`
 4. Phoenix/OpenInference traces, if configured
 5. `config.yaml`
 

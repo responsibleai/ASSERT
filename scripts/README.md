@@ -47,7 +47,7 @@ re-running with the same parameters after a code change).
 
 ## `turn_checkpoint_judge.py`
 
-This script re-judges transcript prefixes from one completed run at fixed inference-turn checkpoints. It reads `<run>/transcripts.jsonl`, `<run>/config.yaml`, and the suite `taxonomy.json`, then writes checkpoint artifacts under `<run>/checkpoint_judge/` by default: `checkpoint_scores.jsonl`, `checkpoint_metrics.json`, and `<dimension>_by_turn.svg`.
+This script re-judges conversation prefixes from one completed run at fixed inference-turn checkpoints. It reads `<run>/inference_set.jsonl`, `<run>/config.yaml`, and the suite `taxonomy.json`, then writes checkpoint artifacts under `<run>/checkpoint_judge/` by default: `checkpoint_scores.jsonl`, `checkpoint_metrics.json`, and `<dimension>_by_turn.svg`.
 
 ```bash
 uv run python scripts/turn_checkpoint_judge.py \
@@ -58,7 +58,7 @@ uv run python scripts/turn_checkpoint_judge.py \
 
 ## `export_suite_results.py`
 
-This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `transcripts.jsonl`, and `scores.jsonl`, then derives the relevant-node summary directly from `scores.jsonl` and the suite `taxonomy.json`. `--format csv` writes `runs.csv`, `test_set.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export requires `uv sync --extra analysis`.
+This script consolidates all runs in one suite into flat review tables under `artifacts/results/<suite>/exports/`. It reads the suite artifacts plus each run's `manifest.json`, `inference_set.jsonl`, and `scores.jsonl`, then derives the relevant-node summary directly from `scores.jsonl` and the suite `taxonomy.json`. `--format csv` writes `runs.csv`, `test_set.csv`, `conversations.csv`, `scores.csv`, and `relevant_nodes.csv`. `--format excel` writes `suite_results.xlsx`. `--format html` writes `suite_results.html`. If you omit `--format`, the script writes CSV only. Excel export requires `uv sync --extra analysis`.
 
 ```bash
 uv run python scripts/export_suite_results.py \

@@ -17,7 +17,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
         *,
         behavior: str = "Travel planner must produce grounded itineraries.",
         run_id: str | None = None,
-        design_level_count: int = 3,
+        stratification_level_count: int = 3,
         prompt_sample_size: int = 1,
         include_inference: bool = False,
         include_upstream: bool = True,
@@ -34,7 +34,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                         {
                             "stratify": {
                                 "model": {"name": "azure/gpt-5.4"},
-                                "level_count": design_level_count,
+                                "level_count": stratification_level_count,
                             },
                             "prompt": {
                                 "model": {"name": "azure/gpt-5.4"},
@@ -80,21 +80,21 @@ class RunnerArtifactCacheTest(unittest.TestCase):
 
         async def test_set(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             seen.append("test_set")
-            Path(ctx["design_path"]).parent.mkdir(parents=True, exist_ok=True)
-            Path(ctx["design_path"]).write_text("{}", encoding="utf-8")
+            Path(ctx["stratification_path"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(ctx["stratification_path"]).write_text("{}", encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
                 '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
             )
-            return {"design_path": ctx["design_path"], "test_set_path": ctx["test_set_path"]}
+            return {"stratification_path": ctx["stratification_path"], "test_set_path": ctx["test_set_path"]}
 
         async def inference(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             seen.append(f"inference:{Path(ctx['test_set_path']).parent.name}")
             run_root = Path(ctx["run_root"])
             run_root.mkdir(parents=True, exist_ok=True)
-            transcripts = run_root / "transcripts.jsonl"
+            transcripts = run_root / "inference_set.jsonl"
             transcripts.write_text('{"type":"prompt","test_case_id":"test_case_000001"}\n', encoding="utf-8")
-            return {"transcripts_path": str(transcripts)}
+            return {"inference_set_path": str(transcripts)}
 
         return {
             "systematize": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=systematize),
@@ -149,7 +149,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertEqual(codes, [0, 0])
             self.assertEqual(seen, ["systematize", "test_set", "systematize", "test_set"])
             self.assertTrue((root / "results" / "suite-a" / "artifacts" / "systematize" / "v0002" / "taxonomy.json").exists())
-            self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "design.json").exists())
+            self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "stratification.json").exists())
             self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "test_set.jsonl").exists())
 
     def test_stratify_config_change_reuses_systematize_but_regenerates_test_set(self) -> None:
@@ -158,8 +158,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             seen: list[str] = []
             codes = self._run_with_contexts(
                 [
-                    self._ctx(root, design_level_count=3),
-                    self._ctx(root, design_level_count=4),
+                    self._ctx(root, stratification_level_count=3),
+                    self._ctx(root, stratification_level_count=4),
                 ],
                 seen,
             )
@@ -167,7 +167,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertEqual(codes, [0, 0])
             self.assertEqual(seen, ["systematize", "test_set", "test_set"])
             self.assertFalse((root / "results" / "suite-a" / "artifacts" / "systematize" / "v0002").exists())
-            self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "design.json").exists())
+            self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "stratification.json").exists())
             self.assertTrue((root / "results" / "suite-a" / "artifacts" / "test_set" / "v0002" / "test_set.jsonl").exists())
 
     def test_test_set_config_change_reuses_systematize_but_regenerates_test_set(self) -> None:
@@ -228,12 +228,12 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertEqual(codes_a, [0])
 
             suite_root = root / "results" / "suite-a"
-            for filename in ("taxonomy.json", "systematization.json", "design.json", "test_set.jsonl"):
+            for filename in ("taxonomy.json", "systematization.json", "stratification.json", "test_set.jsonl"):
                 (suite_root / filename).unlink(missing_ok=True)
 
             codes_b = self._run_with_contexts([self._ctx(root)], seen)
             self.assertEqual(codes_b, [0])
-            for filename in ("taxonomy.json", "systematization.json", "design.json", "test_set.jsonl"):
+            for filename in ("taxonomy.json", "systematization.json", "stratification.json", "test_set.jsonl"):
                 self.assertTrue(
                     (suite_root / filename).exists(),
                     msg=f"reuse path failed to restore compatibility {filename}",
@@ -317,13 +317,13 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                 seen.append("test_set")
                 save_path = Path(raw_cfg.get("save_path") or ctx["test_set_path"])
                 save_path.parent.mkdir(parents=True, exist_ok=True)
-                design_path = save_path.parent / "design.json"
-                design_path.write_text("{}", encoding="utf-8")
+                stratification_path = save_path.parent / "stratification.json"
+                stratification_path.write_text("{}", encoding="utf-8")
                 save_path.write_text(
                     '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                     encoding="utf-8",
                 )
-                return {"design_path": str(design_path), "test_set_path": str(save_path)}
+                return {"stratification_path": str(stratification_path), "test_set_path": str(save_path)}
 
             modules = {
                 "systematize": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=systematize),
@@ -364,7 +364,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             suite_artifacts = root / "results" / "suite-a" / "artifacts"
             self.assertTrue((suite_artifacts / "systematize" / "v0001" / "taxonomy.json").exists())
             self.assertTrue((suite_artifacts / "systematize" / "v0001" / "systematization.json").exists())
-            self.assertTrue((suite_artifacts / "test_set" / "v0001" / "design.json").exists())
+            self.assertTrue((suite_artifacts / "test_set" / "v0001" / "stratification.json").exists())
             self.assertTrue((suite_artifacts / "test_set" / "v0001" / "test_set.jsonl").exists())
             # The user-supplied directories must be ignored entirely.
             self.assertFalse(user_systematize_dir.exists())
@@ -387,7 +387,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             # Simulate the realistic case where a stage writes partial
             # outputs into its allocated artifact_dir before crashing.
             Path(ctx["test_set_path"]).parent.mkdir(parents=True, exist_ok=True)
-            Path(ctx["design_path"]).write_text('{"partial": true}', encoding="utf-8")
+            Path(ctx["stratification_path"]).write_text('{"partial": true}', encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
                 '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
@@ -444,13 +444,13 @@ class RunnerArtifactCacheTest(unittest.TestCase):
 
         async def partial_test_set(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             Path(ctx["test_set_path"]).parent.mkdir(parents=True, exist_ok=True)
-            Path(ctx["design_path"]).write_text("{}", encoding="utf-8")
+            Path(ctx["stratification_path"]).write_text("{}", encoding="utf-8")
             Path(ctx["test_set_path"]).write_text(
                 '{"type":"prompt","test_case_id":"test_case_000001","seed":{"prompt":"hi"}}\n',
                 encoding="utf-8",
             )
             return {
-                "design_path": ctx["design_path"],
+                "stratification_path": ctx["stratification_path"],
                 "test_set_path": ctx["test_set_path"],
                 "_summary": {
                     "total": 1,

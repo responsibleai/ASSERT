@@ -452,15 +452,15 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            [transcript_row] = [
+            [inference_row] = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(transcript_row["llm_calls"][0]["source"], "target")
-        self.assertEqual(transcript_row["llm_calls"][0]["request"]["model"], "azure/gpt-5.4")
-        self.assertEqual(transcript_row["llm_calls"][0]["response"]["id"], "resp_1")
-        self.assertEqual(transcript_row["llm_calls"][0]["message_ids"], ["event:1"])
+        self.assertEqual(inference_row["llm_calls"][0]["source"], "target")
+        self.assertEqual(inference_row["llm_calls"][0]["request"]["model"], "azure/gpt-5.4")
+        self.assertEqual(inference_row["llm_calls"][0]["response"]["id"], "resp_1")
+        self.assertEqual(inference_row["llm_calls"][0]["message_ids"], ["event:1"])
 
     async def test_run_inference_sets_runtime_close_error_stop_reason(self) -> None:
         test_case_row = {
@@ -506,12 +506,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(transcript_rows[0]["stop_reason"], "runtime_close_error")
+        self.assertEqual(inference_rows[0]["stop_reason"], "runtime_close_error")
 
     async def test_run_inference_external_transcript_writes_minimal_rows(self) -> None:
         test_case_row = {
@@ -557,14 +557,14 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertNotIn("metadata", transcript_rows[0])
-        self.assertNotIn("run_id", transcript_rows[0])
-        self.assertEqual(transcript_rows[0]["events"][0]["edit"]["message"]["content"], "You are a health assistant.")
+        self.assertNotIn("metadata", inference_rows[0])
+        self.assertNotIn("run_id", inference_rows[0])
+        self.assertEqual(inference_rows[0]["events"][0]["edit"]["message"]["content"], "You are a health assistant.")
 
     async def test_run_inference_scenario_keeps_setup_hidden_for_external_target(self) -> None:
         test_case_row = {
@@ -625,21 +625,21 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
         target_events = [
             event
-            for event in transcript_rows[0]["events"]
+            for event in inference_rows[0]["events"]
             if "target" in event["view"] and event["edit"]["type"] == "add_message"
         ]
         self.assertEqual(target_events[0]["edit"]["message"]["role"], "user")
         self.assertEqual(target_events[0]["edit"]["message"]["content"], "Hello target")
-        self.assertEqual(transcript_rows[0]["events"][0]["edit"]["type"], "set_system_message")
+        self.assertEqual(inference_rows[0]["events"][0]["edit"]["type"], "set_system_message")
         self.assertEqual(
-            transcript_rows[0]["events"][0]["edit"]["message"]["content"],
+            inference_rows[0]["events"][0]["edit"]["message"]["content"],
             "You are a careful health assistant.",
         )
 
@@ -709,14 +709,14 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
         target_events = [
             event
-            for event in transcript_rows[0]["events"]
+            for event in inference_rows[0]["events"]
             if "target" in event["view"] and event["edit"]["type"] == "add_message"
         ]
         # With effective_system_message, the tester's first attempt ("Be a careful
@@ -977,12 +977,12 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-inference",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(sorted(row["test_case_id"] for row in transcript_rows), ["test_case_000001", "test_case_000002"])
+        self.assertEqual(sorted(row["test_case_id"] for row in inference_rows), ["test_case_000001", "test_case_000002"])
 
     async def test_run_inference_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
         test_case_rows = [
@@ -1009,7 +1009,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            transcripts_path = out_dir / "transcripts.jsonl"
+            inference_set_path = out_dir / "inference_set.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
             with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
@@ -1028,13 +1028,13 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
                 await asyncio.wait_for(fast_finished.wait(), timeout=1)
                 for _ in range(50):
-                    if transcripts_path.exists() and transcripts_path.read_text(encoding="utf-8").strip():
+                    if inference_set_path.exists() and inference_set_path.read_text(encoding="utf-8").strip():
                         break
                     await asyncio.sleep(0.01)
 
                 interim_rows = [
                     json.loads(line)
-                    for line in transcripts_path.read_text(encoding="utf-8").splitlines()
+                    for line in inference_set_path.read_text(encoding="utf-8").splitlines()
                 ]
                 self.assertEqual([row["test_case_id"] for row in interim_rows], ["test_case_000002"])
 
@@ -1043,7 +1043,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
             final_rows = [
                 json.loads(line)
-                for line in transcripts_path.read_text(encoding="utf-8").splitlines()
+                for line in inference_set_path.read_text(encoding="utf-8").splitlines()
             ]
 
         self.assertEqual(sorted(row["test_case_id"] for row in final_rows), ["test_case_000001", "test_case_000002"])
@@ -1057,7 +1057,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         threshold. The successful transcript stays on disk and the
         stage returns with ``errored_count`` reflecting the failure.
         Re-running the same suite picks up the failed seed via the
-        existing resume logic (it never made it into transcripts.jsonl).
+        existing resume logic (it never made it into inference_set.jsonl).
 
         The ``P2M_INFERENCE_ERROR_FAIL_RATIO`` override is needed because
         a 2-seed test where 1 seed fails has a 50% error rate, which
@@ -1090,7 +1090,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             test_set_path = tmp_path / "test_set.jsonl"
             out_dir = tmp_path / "run"
-            transcripts_path = out_dir / "transcripts.jsonl"
+            inference_set_path = out_dir / "inference_set.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
             with patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
@@ -1110,13 +1110,13 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
                 await asyncio.wait_for(success_finished.wait(), timeout=1)
                 for _ in range(50):
-                    if transcripts_path.exists() and transcripts_path.read_text(encoding="utf-8").strip():
+                    if inference_set_path.exists() and inference_set_path.read_text(encoding="utf-8").strip():
                         break
                     await asyncio.sleep(0.01)
 
                 interim_rows = [
                     json.loads(line)
-                    for line in transcripts_path.read_text(encoding="utf-8").splitlines()
+                    for line in inference_set_path.read_text(encoding="utf-8").splitlines()
                 ]
                 self.assertEqual([row["test_case_id"] for row in interim_rows], ["test_case_000001"])
 
@@ -1125,7 +1125,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
             final_rows = [
                 json.loads(line)
-                for line in transcripts_path.read_text(encoding="utf-8").splitlines()
+                for line in inference_set_path.read_text(encoding="utf-8").splitlines()
             ]
 
         self.assertEqual([row["test_case_id"] for row in final_rows], ["test_case_000001"])
@@ -1167,7 +1167,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     )
 
     async def test_run_inference_resumes_from_existing_transcripts(self) -> None:
-        """Pre-populated transcripts.jsonl causes completed test_set to be skipped."""
+        """Pre-populated inference_set.jsonl causes completed test_set to be skipped."""
         test_case_rows = [
             {"type": "prompt", "seed": {"description": "already done"}},
             {"type": "prompt", "seed": {"description": "still pending"}},
@@ -1439,16 +1439,16 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-refusal-isolation",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
         self.assertEqual(len(run_turn_calls), 5)
-        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(len(inference_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_test_case = {row["test_case_id"]: row for row in transcript_rows}
+        by_test_case = {row["test_case_id"]: row for row in inference_rows}
         refused = by_test_case["test_case_000003"]
         self.assertEqual(refused["stop_reason"], "target_input_refused")
         refusal_events = [
@@ -1553,16 +1553,16 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     run_id="run-tester-refusal",
                 )
 
-            transcript_rows = [
+            inference_rows = [
                 json.loads(line)
-                for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
         self.assertEqual(len(tester_calls), 5)
-        self.assertEqual(len(transcript_rows), 5)
+        self.assertEqual(len(inference_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
-        by_test_case = {row["test_case_id"]: row for row in transcript_rows}
+        by_test_case = {row["test_case_id"]: row for row in inference_rows}
         refused = by_test_case["test_case_000003"]
         self.assertEqual(refused["stop_reason"], "tester_input_refused")
         refusal_events = [

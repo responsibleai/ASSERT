@@ -6,7 +6,7 @@ import json
 import unittest
 from typing import Any
 
-from p2m.analysis.design_metrics import (
+from p2m.analysis.stratification_metrics import (
     build_supplementary_metrics,
     confusion_matrices,
     cross_axis_nmi,
@@ -20,9 +20,9 @@ from p2m.analysis.test_case_labeling import (
     _normalize_observed_label_entry,
     build_labeling_prompt,
 )
-from p2m.stages.design import (
-    _design_response_schema,
-    render_design_catalog,
+from p2m.stages.stratification import (
+    _stratification_response_schema,
+    render_stratification_catalog,
     render_behavior_categories,
 )
 from p2m.stages.test_set import (
@@ -38,8 +38,8 @@ from p2m.stages.test_set import (
 FACTOR_NAMES = ("domain", "user_context")
 
 
-def _minimal_design(include_behavior: bool = True) -> dict[str, list[dict[str, str]]]:
-    design = {
+def _minimal_stratification(include_behavior: bool = True) -> dict[str, list[dict[str, str]]]:
+    stratification = {
         "domain": [
             {"name": "Healthcare", "definition": "Clinical settings."},
             {"name": "Education", "definition": "School settings."},
@@ -50,14 +50,14 @@ def _minimal_design(include_behavior: bool = True) -> dict[str, list[dict[str, s
         ],
     }
     if include_behavior:
-        design = {
+        stratification = {
             "behavior": [
                 {"name": "Behavior A", "description": "Definition A"},
                 {"name": "Behavior B", "description": "Definition B"},
             ],
-            **design,
+            **stratification,
         }
-    return design
+    return stratification
 
 
 def _minimal_policy() -> dict[str, Any]:
@@ -88,25 +88,25 @@ class NormalizeGeneratedSeedTest(unittest.TestCase):
             )
 
 
-class RenderDesignCatalogTest(unittest.TestCase):
+class RenderStratificationCatalogTest(unittest.TestCase):
     def test_includes_behavior_when_present(self) -> None:
-        result = render_design_catalog(_minimal_design(), include_behavior=True)
+        result = render_stratification_catalog(_minimal_stratification(), include_behavior=True)
         self.assertIn("Behavior A", result)
         self.assertIn("Healthcare", result)
 
     def test_excludes_behavior_when_requested(self) -> None:
-        result = render_design_catalog(_minimal_design(), include_behavior=False)
+        result = render_stratification_catalog(_minimal_stratification(), include_behavior=False)
         self.assertNotIn("Behavior A", result)
         self.assertIn("Healthcare", result)
 
 
 class RenderTupleSpecTest(unittest.TestCase):
     def test_renders_factor_values(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         spec = {
-            "domain": design["domain"][0],
-            "user_context": design["user_context"][0],
-            "behavior": design["behavior"][0],
+            "domain": stratification["domain"][0],
+            "user_context": stratification["user_context"][0],
+            "behavior": stratification["behavior"][0],
         }
         result = render_tuple_spec(spec, include_behavior=True)
         self.assertIn("Healthcare", result)
@@ -120,9 +120,9 @@ class RenderPolicyNodesTest(unittest.TestCase):
         self.assertIn("Behavior B (NOT PERMISSIBLE)", result)
 
 
-class DesignResponseSchemaTest(unittest.TestCase):
+class StratificationResponseSchemaTest(unittest.TestCase):
     def test_schema_has_configured_factors(self) -> None:
-        schema = _design_response_schema(3, dimensions=FACTOR_NAMES)
+        schema = _stratification_response_schema(3, dimensions=FACTOR_NAMES)
         self.assertEqual(set(schema["required"]), set(FACTOR_NAMES))
         self.assertEqual(schema["properties"]["domain"]["items"]["required"], ["name", "definition"])
 
@@ -160,7 +160,7 @@ class SeedsResponseSchemaTest(unittest.TestCase):
 
 class LabelEntrySchemaTest(unittest.TestCase):
     def test_schema_enumerates_present_factors_only(self) -> None:
-        schema = _label_entry_schema(_minimal_design(include_behavior=False))
+        schema = _label_entry_schema(_minimal_stratification(include_behavior=False))
         self.assertEqual(set(schema["required"]), set(FACTOR_NAMES))
         self.assertEqual(
             schema["properties"]["domain"]["enum"],
@@ -168,13 +168,13 @@ class LabelEntrySchemaTest(unittest.TestCase):
         )
 
     def test_schema_includes_behavior_when_present(self) -> None:
-        schema = _label_entry_schema(_minimal_design())
+        schema = _label_entry_schema(_minimal_stratification())
         self.assertIn("behavior", schema["required"])
 
 
 class LabelsResponseSchemaTest(unittest.TestCase):
     def test_schema_wraps_label_array_with_count(self) -> None:
-        schema = _labels_response_schema(_minimal_design(), 5)
+        schema = _labels_response_schema(_minimal_stratification(), 5)
         self.assertEqual(schema["properties"]["labels"]["minItems"], 5)
         self.assertEqual(schema["properties"]["labels"]["maxItems"], 5)
 
@@ -235,19 +235,19 @@ class TemplateReplacementsTest(unittest.TestCase):
 
 class NormalizeObservedLabelEntryTest(unittest.TestCase):
     def test_accepts_valid_entry(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         entry = {
             "behavior": "Behavior A",
             "domain": "Healthcare",
             "user_context": "User is a minor",
         }
-        self.assertEqual(_normalize_observed_label_entry(entry, design), entry)
+        self.assertEqual(_normalize_observed_label_entry(entry, stratification), entry)
 
     def test_rejects_invalid_name(self) -> None:
         with self.assertRaises(ValueError):
             _normalize_observed_label_entry(
                 {"domain": "Missing", "user_context": "User is a minor"},
-                _minimal_design(include_behavior=False),
+                _minimal_stratification(include_behavior=False),
             )
 
 
@@ -256,18 +256,18 @@ class BuildLabelingPromptTest(unittest.TestCase):
         result = build_labeling_prompt(
             kind="prompt",
             behavior_name="test_risk",
-            design=_minimal_design(),
+            stratification=_minimal_stratification(),
             rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
         self.assertIn("test_risk", result)
         self.assertIn("Healthcare", result)
         self.assertIn("Prompt 1:", result)
 
-    def test_omits_behavior_when_design_lacks_it(self) -> None:
+    def test_omits_behavior_when_stratification_lacks_it(self) -> None:
         result = build_labeling_prompt(
             kind="scenario",
             behavior_name="test_risk",
-            design=_minimal_design(include_behavior=False),
+            stratification=_minimal_stratification(include_behavior=False),
             rows=[{"test_case_id": "s1", "seed": {"title": "T", "description": "D", "system_prompt": ""}}],
         )
         self.assertNotIn("Taxonomy node", result)
@@ -276,33 +276,33 @@ class BuildLabelingPromptTest(unittest.TestCase):
 
 class MetricsTest(unittest.TestCase):
     def test_effective_dimensionality_handles_assignments(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         assignments = [
             {"behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
             {"behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
         ]
-        result = effective_dimensionality(assignments, design)
+        result = effective_dimensionality(assignments, stratification)
         self.assertGreater(result["n_components_90"], 0)
 
     def test_cross_axis_nmi_returns_all_pairs(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         assignments = [
             {"behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
             {"behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
         ] * 5
-        result = cross_axis_nmi(assignments, design)
+        result = cross_axis_nmi(assignments, stratification)
         self.assertEqual(len(result), 3)
 
     def test_intended_vs_observed_metrics_uses_present_factors(self) -> None:
-        design = _minimal_design(include_behavior=False)
+        stratification = _minimal_stratification(include_behavior=False)
         labels = [{"test_case_id": "s1", "domain": "Healthcare", "user_context": "User is a minor"}]
-        result = intended_vs_observed_metrics(labels, labels, design)
+        result = intended_vs_observed_metrics(labels, labels, stratification)
         self.assertEqual(result["exact_tuple_agreement"], 1.0)
 
     def test_confusion_matrices_match_level_names(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         labels = [{"test_case_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"}]
-        result = confusion_matrices(labels, labels, design)
+        result = confusion_matrices(labels, labels, stratification)
         self.assertEqual(result["domain"]["Healthcare"]["Healthcare"], 1)
 
     def test_behavior_agreement_uses_exact_behavior_name(self) -> None:
@@ -311,7 +311,7 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(behavior_agreement(observed, rows), 1.0)
 
     def test_build_supplementary_metrics_shape(self) -> None:
-        design = _minimal_design()
+        stratification = _minimal_stratification()
         observed = [
             {"test_case_id": "s1", "behavior": "Behavior A", "domain": "Healthcare", "user_context": "User is a minor"},
             {"test_case_id": "s2", "behavior": "Behavior B", "domain": "Education", "user_context": "No professional access"},
@@ -322,14 +322,14 @@ class MetricsTest(unittest.TestCase):
         ]
         result = build_supplementary_metrics(
             kind="scenario",
-            design=design,
+            stratification=stratification,
             rows=rows,
             observed_assignments=observed,
             intended_assignments=None,
         )
-        self.assertIn("design_quality", result)
+        self.assertIn("stratification_quality", result)
         self.assertIn("labeling_quality", result)
-        self.assertIn("factor_counts", result["design_quality"])
+        self.assertIn("factor_counts", result["stratification_quality"])
 
 
 if __name__ == "__main__":

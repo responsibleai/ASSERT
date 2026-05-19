@@ -560,31 +560,31 @@ def load_suite_tables(
     for run_dir in _run_dirs(suite_dir):
         run_id = run_dir.name
         manifest = load_json(run_dir / "manifest.json") or {}
-        transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
+        inference_rows = load_jsonl(run_dir / "inference_set.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
         metrics = _build_score_metrics(score_rows, policy_raw=taxonomy) if score_rows else None
 
-        target = _first_nonempty(score_rows, "target") or _first_nonempty(transcript_rows, "target")
-        tester_model = _first_nonempty(score_rows, "tester_model") or _first_nonempty(transcript_rows, "tester_model")
+        target = _first_nonempty(score_rows, "target") or _first_nonempty(inference_rows, "target")
+        tester_model = _first_nonempty(score_rows, "tester_model") or _first_nonempty(inference_rows, "tester_model")
         judge_model = _first_nonempty(score_rows, "judge_model")
 
-        for transcript_row in transcript_rows:
-            transcript = _transcript_from_row(transcript_row)
+        for inference_row in inference_rows:
+            transcript = _transcript_from_row(inference_row)
             conversation_rows.append(
                 {
                     "suite_id": suite_id,
                     "run_id": run_id,
-                    "test_case_id": str(transcript_row.get("test_case_id") or ""),
-                    "type": str(transcript_row.get("type") or ""),
-                    "behavior": row_behavior(transcript_row),
+                    "test_case_id": str(inference_row.get("test_case_id") or ""),
+                    "type": str(inference_row.get("type") or ""),
+                    "behavior": row_behavior(inference_row),
                     "permissible": _row_permissible(
-                        transcript_row,
+                        inference_row,
                         permissible_by_name,
                     ),
-                    "stop_reason": str(transcript_row.get("stop_reason") or ""),
+                    "stop_reason": str(inference_row.get("stop_reason") or ""),
                     "turn_count": transcript.count_turns("target", skip_system=True),
-                    "target": str(transcript_row.get("target") or ""),
-                    "tester_model": str(transcript_row.get("tester_model") or ""),
+                    "target": str(inference_row.get("target") or ""),
+                    "tester_model": str(inference_row.get("tester_model") or ""),
                     "conversation_text": transcript.format_transcript(
                         "target",
                         skip_system=False,
