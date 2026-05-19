@@ -21,6 +21,26 @@ don't exist.
 | `eval_config.yaml` | p2m pipeline config (policy → seeds → rollout → judge) |
 | `run_correlation.py` | Orchestration script — runs tau2, p2m, and correlation analysis |
 
+## Prerequisites
+
+p2m is installed as part of adaptive-eval (`pip install -e ".[otel]"`).
+
+τ²-bench is a **separate package** that must be installed independently:
+
+```bash
+# Install tau2 from the public repo
+pip install "tau2 @ git+https://github.com/SEACrowd/tau3-bench.git"
+```
+
+Both `p2m` and `tau2` CLIs must be on your PATH (or in your active venv).
+
+You also need Azure OpenAI credentials:
+
+```bash
+export AZURE_API_KEY="..."
+export AZURE_API_BASE="https://..."
+```
+
 ## Running the p2m evaluation
 
 ```bash
