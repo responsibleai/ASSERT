@@ -1072,7 +1072,7 @@
 			<div class="mb-4 flex items-center gap-3">
 				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">{auditGroupBy === 'none' ? 'All Results' : `Results by ${activeAuditAxis.label}`}</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
+				<span class="text-xs text-text-muted">{data.auditScores.length} results{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
 			</div>
 
 			<!-- Controls: multi-judge filter + group-by dropdown + sort -->
@@ -1275,15 +1275,15 @@
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
 			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Inference Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after inference completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} results are available. Judgments will appear after inference completes.
 			</p>
 		</div>
 
 		<section class="mb-8">
 			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
+				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Inference set</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} results</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
@@ -1319,7 +1319,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
 			<div class="text-sm font-semibold text-text">Loading prompt</div>
-			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {promptDrawerLoadingSeedId}.</p>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the result for {promptDrawerLoadingSeedId}.</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Cancel
 			</button>
@@ -1342,8 +1342,8 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerLoadingSeedId}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Loading conversation</div>
-			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {scenarioDrawerLoadingSeedId}.</p>
+			<div class="text-sm font-semibold text-text">Loading result</div>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the result for {scenarioDrawerLoadingSeedId}.</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Cancel
 			</button>
@@ -1354,7 +1354,7 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerError}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Could not load conversation</div>
+			<div class="text-sm font-semibold text-text">Could not load result</div>
 			<p class="mt-2 text-sm text-text-secondary">{scenarioDrawerError}</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Close

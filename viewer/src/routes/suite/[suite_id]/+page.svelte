@@ -539,7 +539,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
 		<div class="rounded-lg border border-border bg-surface p-6 text-center">
 			<div class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-text-muted border-t-interactive"></div>
-			<p class="mt-2 text-sm text-text-muted">Loading conversation...</p>
+			<p class="mt-2 text-sm text-text-muted">Loading result...</p>
 		</div>
 	</div>
 {/if}

@@ -175,7 +175,7 @@
 		if (runtimeMode === 'tool_module') return 'tools';
 		if (runtimeMode === 'simulated') return 'simulated tools';
 		if (runtimeMode === 'external') return 'external tools';
-		return hasAgenticTranscript ? 'agentic transcript' : null;
+		return hasAgenticTranscript ? 'agentic' : null;
 	}
 
 	function isStructuredCitation(value: unknown): value is AuditCitation {
@@ -444,7 +444,7 @@
 			buttonTitle: 'View stored event debug payload',
 			panelTitle: 'Stored event debug payload',
 			description:
-				'This is transcript event debug data captured during inference. For external connectors it may be the only payload available.',
+				'This is raw event debug data captured during inference. For external connectors it may be the only payload available.',
 			payload: raw
 		};
 	}
@@ -606,7 +606,7 @@
 		const part =
 			(citation.parts ?? []).find((entry) => entry.resolution?.status === 'resolved') ??
 			(citation.parts ?? [])[0];
-		if (!part) return 'transcript';
+		if (!part) return 'message';
 		if (part.source_kind === 'tool_arg') {
 			return part.tool_arg ? `tool arg: ${part.tool_arg}` : 'tool arg';
 		}
@@ -939,7 +939,7 @@
 				{/if}
 				{#if activeVerdict?.narrative}
 					<div class="rounded-lg border border-border bg-surface p-4">
-						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Conversation summary</div>
+						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Result summary</div>
 						<p class="text-sm text-text-secondary leading-relaxed">{activeVerdict.narrative}</p>
 					</div>
 				{/if}
@@ -1043,7 +1043,7 @@
 
 		<div class="w-3/5 overflow-y-auto p-5">
 			<h3 class="mb-4 text-[24px] font-semibold text-text">
-				Conversation · {conversationTurnCount(item.messages)} turns
+				Result · {conversationTurnCount(item.messages)} turns
 			</h3>
 			{#if agentTimeline.length >= 2}
 				<div class="mb-4 flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-surface-2/40 px-3 py-2 text-[11px] text-text-muted">
