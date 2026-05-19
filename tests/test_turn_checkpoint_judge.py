@@ -101,11 +101,11 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 for value in judge_dimensions_override
             ]
 
-        rollout_stage_raw = pipeline_raw.get("rollout")
-        rollout_concurrency = checkpoint_judge.DEFAULT_ROLLOUT_CONCURRENCY
-        if isinstance(rollout_stage_raw, dict) and rollout_stage_raw.get("concurrency") is not None:
-            rollout_concurrency = int(rollout_stage_raw["concurrency"])
-        concurrency = concurrency_override if concurrency_override is not None else rollout_concurrency
+        inference_stage_raw = pipeline_raw.get("inference")
+        inference_concurrency = checkpoint_judge.DEFAULT_INFERENCE_CONCURRENCY
+        if isinstance(inference_stage_raw, dict) and inference_stage_raw.get("concurrency") is not None:
+            inference_concurrency = int(inference_stage_raw["concurrency"])
+        concurrency = concurrency_override if concurrency_override is not None else inference_concurrency
         self.assertGreater(concurrency, 0)
 
         return checkpoint_judge.CheckpointJudgeConfig(
@@ -129,7 +129,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         config: dict[str, object] = {
             "pipeline": {
-                "rollout": {"concurrency": concurrency},
+                "inference": {"concurrency": concurrency},
                 "judge": {"n": judge_n},
             }
         }
@@ -151,7 +151,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             behavior="behavior",
             target="target-model",
             dimensions={"behavior": "node-a"},
-            auditor_model="auditor-model",
+            tester_model="tester-model",
         )
 
     def _build_transcript(
@@ -165,7 +165,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
         transcript.add_event(
             TranscriptEvent(
                 view=["system", "target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=SetSystemMessageEdit(message=Message(role="system", content="System prompt")),
             )
         )
@@ -184,7 +184,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
             transcript.add_event(
                 TranscriptEvent(
                     view=["target", "combined"],
-                    actor="auditor",
+                    actor="tester",
                     edit=AddMessageEdit(
                         message=Message(role="user", content=f"user turn {turn_index}")
                     ),
@@ -224,10 +224,10 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
                 )
         return transcript
 
-    def test_checkpoint_schedule_follows_rollout_turns(self) -> None:
+    def test_checkpoint_schedule_follows_inference_turns(self) -> None:
         transcript = self._build_transcript(12, extra_first_turn=True)
 
-        self.assertEqual(checkpoint_judge.count_rollout_turns(transcript), 12)
+        self.assertEqual(checkpoint_judge.count_inference_turns(transcript), 12)
         self.assertEqual(checkpoint_judge.checkpoint_turns(12, 5), [5, 10])
 
     def test_slice_transcript_keeps_full_checkpoint_turn_and_excludes_next_turn(self) -> None:
@@ -237,7 +237,7 @@ class TurnCheckpointJudgeTest(unittest.IsolatedAsyncioTestCase):
         target_messages = sliced.collect_messages("target")
         contents = [message.content for message in target_messages]
 
-        self.assertEqual(checkpoint_judge.count_rollout_turns(sliced), 1)
+        self.assertEqual(checkpoint_judge.count_inference_turns(sliced), 1)
         self.assertEqual(contents[0], "System prompt")
         self.assertIn("user turn 1", contents)
         self.assertIn("assistant turn 1", contents)

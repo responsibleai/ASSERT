@@ -83,7 +83,7 @@ def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
 def _compute_seed_metrics(
     rows: list[dict[str, Any]],
     *,
-    include_auditor_model: bool = False,
+    include_tester_model: bool = False,
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -107,8 +107,8 @@ def _compute_seed_metrics(
         "judge_model": _first_str(rows, "judge_model"),
     }
 
-    if include_auditor_model:
-        metrics["auditor_model"] = _first_str(rows, "auditor_model")
+    if include_tester_model:
+        metrics["tester_model"] = _first_str(rows, "tester_model")
 
     return metrics
 
@@ -120,15 +120,15 @@ def compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute scenario-only summary metrics."""
-    return _compute_seed_metrics(rows, include_auditor_model=True)
+    return _compute_seed_metrics(rows, include_tester_model=True)
 
 
 def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     """Load one run's manifest and score-derived summaries."""
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    prompt_rows = [row for row in score_rows if not row.get("auditor_model")]
-    scenario_rows = [row for row in score_rows if row.get("auditor_model")]
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
     stages = (manifest or {}).get("stages", {})
     has_scores = isinstance(stages, dict) and stages.get("judge") is not None

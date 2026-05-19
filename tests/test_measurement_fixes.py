@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import EvaluationConfig, JudgeConfig, RolloutConfig
+from p2m.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
 from p2m.core.transcript import (
     AddMessageEdit,
     Message,
@@ -34,7 +34,7 @@ class MeasurementFixesTest(unittest.TestCase):
             behavior="behavior",
             target="target",
             dimensions={"behavior": "behavior"},
-            auditor_model="auditor",
+            tester_model="tester",
         )
 
     def test_citation_schema_uses_highlights_string(self) -> None:
@@ -50,14 +50,14 @@ class MeasurementFixesTest(unittest.TestCase):
         transcript.add_event(
             TranscriptEvent(
                 view=["system", "target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=SetSystemMessageEdit(message=Message(role="system", content="New system prompt")),
             )
         )
         transcript.add_event(
             TranscriptEvent(
                 view=["target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=AddMessageEdit(message=Message(role="user", content="Do the thing")),
             )
         )
@@ -73,7 +73,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertIn("[Turn 2] User:\nDo the thing", formatted)
 
     def test_transcript_collect_messages_handles_tasks_namespace_events(self) -> None:
-        from p2m.stages.rollout import _record_system_message
+        from p2m.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "Namespace-safe prompt")
@@ -91,7 +91,7 @@ class MeasurementFixesTest(unittest.TestCase):
         )
 
     def test_count_transcript_turns_ignores_non_target_notes(self) -> None:
-        from p2m.stages.rollout import _record_system_message
+        from p2m.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "New system prompt")
@@ -206,14 +206,14 @@ class MeasurementFixesTest(unittest.TestCase):
         transcript.add_event(
             TranscriptEvent(
                 view=["system", "target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=SetSystemMessageEdit(message=Message(role="system", content="System <prompt>")),
             )
         )
         transcript.add_event(
             TranscriptEvent(
                 view=["target", "combined"],
-                actor="auditor",
+                actor="tester",
                 edit=AddMessageEdit(message=Message(role="user", content="User says & asks")),
             )
         )
@@ -896,7 +896,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -915,7 +915,7 @@ class MeasurementFixesTest(unittest.TestCase):
         """A judge-side LLMInputError on one transcript must not abort the
         stage. The refused row is recorded with ``judge_status='filter_skipped'``
         so the seed isn't lost and the stage can move on. Mirrors the
-        target-side / auditor-side refusal handling in rollout. (Absorbed
+        target-side / tester-side refusal handling in inference. (Absorbed
         from PR #44 commit dcaa91f — was previously only available as a
         benchmark monkey-patch in scripts/benchmark.py.)
         """
@@ -975,7 +975,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         behavior="behavior",
                         target="target",
                         dimensions={"behavior": "test"},
-                        auditor_model="auditor",
+                        tester_model="tester",
                     )
                     transcript = Transcript(metadata=meta)
                     transcript.add_event(
@@ -995,7 +995,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1026,7 +1026,7 @@ class MeasurementFixesTest(unittest.TestCase):
                     behavior="behavior",
                     target="target",
                     dimensions={"behavior": "behavior"},
-                    auditor_model="auditor",
+                    tester_model="tester",
                 )
                 t = Transcript(metadata=meta)
                 t.add_event(
@@ -1088,7 +1088,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1105,7 +1105,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
-                rollout=RolloutConfig(concurrency=1),
+                inference=InferenceConfig(concurrency=1),
             )
             call_count = {"n": 0}
             ok_attempts = self._ok_attempts_factory()
@@ -1148,7 +1148,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
             evaluation = EvaluationConfig(
                 judge=JudgeConfig(model="judge"),
-                rollout=RolloutConfig(concurrency=1),
+                inference=InferenceConfig(concurrency=1),
             )
             ok_attempts = self._ok_attempts_factory()
             call_count = {"n": 0}
@@ -1199,7 +1199,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge-v1"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1211,7 +1211,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge-v2"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1272,7 +1272,7 @@ class MeasurementFixesTest(unittest.TestCase):
                             save_dir=tmp_dir,
                             evaluation=EvaluationConfig(
                                 judge=JudgeConfig(model="judge"),
-                                rollout=RolloutConfig(concurrency=1),
+                                inference=InferenceConfig(concurrency=1),
                             ),
                         )
                     )
@@ -1343,7 +1343,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1420,7 +1420,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1480,7 +1480,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1538,7 +1538,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1604,7 +1604,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1686,7 +1686,7 @@ class MeasurementFixesTest(unittest.TestCase):
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1759,7 +1759,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )
@@ -1822,7 +1822,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
                         save_dir=tmp_dir,
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="judge"),
-                            rollout=RolloutConfig(concurrency=1),
+                            inference=InferenceConfig(concurrency=1),
                         ),
                     )
                 )

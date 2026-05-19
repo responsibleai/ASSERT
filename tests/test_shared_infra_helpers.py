@@ -30,7 +30,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 behavior="behavior",
                 target="target",
                 dimensions={"behavior": "behavior"},
-                auditor_model="auditor",
+                tester_model="tester",
             )
         )
         transcript.add_event(

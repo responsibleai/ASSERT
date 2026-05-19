@@ -113,11 +113,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -207,7 +207,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "status": "completed",
-                        "stages": {"rollout": "completed", "judge": "completed"},
+                        "stages": {"inference": "completed", "judge": "completed"},
                         "artifact_versions": {
                             "test_set": {
                                 "version": "v0001",
@@ -219,7 +219,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -284,11 +284,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
@@ -346,11 +346,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}),
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
@@ -533,7 +533,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(sorted(payload["runIds"]), ["run-a"])
             self.assertNotIn("artifacts", payload["runIds"])
 
-    def test_load_run_page_data_reads_live_transcripts_during_rollout(self) -> None:
+    def test_load_run_page_data_reads_live_transcripts_during_inference(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
@@ -576,7 +576,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "running", "stages": {"rollout": "running"}}),
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
                 encoding="utf-8",
             )
             valid_row = {
@@ -586,11 +586,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "dimensions": {"behavior": "behavior"},
                 "stop_reason": "max_turns",
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "System prompt"},
@@ -598,7 +598,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     },
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "add_message",
                             "message": {"role": "user", "content": "Need advice"},
@@ -632,12 +632,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
                 const payload = loadRunPageData('suite-a', 'run-a');
                 console.log(JSON.stringify({{
-                  previewCount: payload.rolloutPreviewRows.length,
-                  previewSeed: payload.rolloutPreviewRows[0]?.test_case_id ?? null,
-                  previewTurns: payload.rolloutPreviewRows[0]?.turns_count ?? null,
+                  previewCount: payload.inferencePreviewRows.length,
+                  previewSeed: payload.inferencePreviewRows[0]?.test_case_id ?? null,
+                  previewTurns: payload.inferencePreviewRows[0]?.turns_count ?? null,
                   previewDrawerTitle: payload.scenarioSeedMap?.['seed-1']?.title ?? null,
                   previewDrawerMessages: payload.scenarioDrawerItems?.['seed-1']?.messages.length ?? 0,
-                  previewTotal: payload.rolloutPreviewTotal,
+                  previewTotal: payload.inferencePreviewTotal,
                   auditScores: payload.auditScores.length
                 }}));
                 """
@@ -694,7 +694,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "manifest.json").write_text(
-                json.dumps({"status": "running", "stages": {"rollout": "running"}}),
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
                 encoding="utf-8",
             )
             valid_row = {
@@ -743,7 +743,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertIn("transcripts.jsonl", payload["message"])
             self.assertIn("line 2", payload["message"])
 
-    def test_load_run_page_data_rejects_truncated_trailing_line_after_rollout(self) -> None:
+    def test_load_run_page_data_rejects_truncated_trailing_line_after_inference(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
             harness_dir = tmp_root / "harness"
@@ -774,7 +774,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
@@ -864,12 +864,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             valid_row = {
@@ -916,7 +916,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ loadRunPageData }} = await import({json.dumps(data_path.as_uri())});
                 const payload = loadRunPageData('suite-a', 'run-a');
                 console.log(JSON.stringify({{
-                  previewCount: payload.rolloutPreviewRows.length,
+                  previewCount: payload.inferencePreviewRows.length,
                   auditScoreCount: payload.auditScores.length,
                   turnsCount: payload.auditScores[0]?.metadata?.turns_count ?? null
                 }}));
@@ -965,13 +965,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         "status": "completed",
                         "started_at": "2026-04-02T00:00:00Z",
                         "ended_at": "2026-04-02T00:10:00Z",
-                        "stages": {"rollout": "completed", "judge": "completed"},
+                        "stages": {"inference": "completed", "judge": "completed"},
                     }
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -1034,7 +1034,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                   status: payload.manifest?.status ?? null,
                   startedAt: payload.manifest?.started_at ?? null,
                   endedAt: payload.manifest?.ended_at ?? null,
-                  rolloutStage: payload.manifest?.stages?.rollout ?? null,
+                  inferenceStage: payload.manifest?.stages?.inference ?? null,
                   judgeStage: payload.manifest?.stages?.judge ?? null
                 }}));
                 """
@@ -1046,7 +1046,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["status"], "completed")
             self.assertEqual(payload["startedAt"], "2026-04-02T00:00:00Z")
             self.assertEqual(payload["endedAt"], "2026-04-02T00:10:00Z")
-            self.assertEqual(payload["rolloutStage"], "completed")
+            self.assertEqual(payload["inferenceStage"], "completed")
             self.assertEqual(payload["judgeStage"], "completed")
 
     def test_load_run_page_data_falls_back_to_raw_files_when_viewer_read_model_is_stale(self) -> None:
@@ -1081,12 +1081,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             transcript_row = {
@@ -1227,12 +1227,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             prompt_transcript = {
@@ -1244,7 +1244,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "System prompt"},
@@ -1278,12 +1278,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "behavior": "behavior",
                 "dimensions": {"behavior": "scenario-behavior"},
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "stop_reason": "max_turns",
                 "events": [
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {
                             "type": "set_system_message",
                             "message": {"role": "system", "content": "Scenario system"},
@@ -1291,7 +1291,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     },
                     {
                         "view": ["target"],
-                        "actor": "auditor",
+                        "actor": "tester",
                         "edit": {"type": "add_message", "message": {"role": "user", "content": "Start"}},
                     },
                     {
@@ -1323,7 +1323,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 "dimensions": {"behavior": "scenario-behavior"},
                 "judge_model": "judge-model",
                 "target": "target-model",
-                "auditor_model": "auditor-model",
+                "tester_model": "tester-model",
                 "judge_status": "ok",
                 "verdict": {
                     "dimensions": {"policy_violation": True, "overrefusal": False},
@@ -1410,12 +1410,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             (run_dir / "transcripts.jsonl").write_text(
@@ -1430,7 +1430,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         "events": [
                             {
                                 "view": ["target"],
-                                "actor": "auditor",
+                                "actor": "tester",
                                 "edit": {
                                     "type": "set_system_message",
                                     "message": {"role": "system", "content": "System prompt"},
@@ -1546,12 +1546,12 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "running", "stages": {"rollout": "completed", "judge": "running"}}
+                    {"status": "running", "stages": {"inference": "completed", "judge": "running"}}
                 ),
                 encoding="utf-8",
             )
             (run_dir / "config.yaml").write_text(
-                "pipeline:\n  rollout:\n    target:\n      model:\n        name: target-model\n",
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
                 encoding="utf-8",
             )
             prompt_transcript = {
@@ -1673,7 +1673,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             )
             (run_dir / "manifest.json").write_text(
                 json.dumps(
-                    {"status": "completed", "stages": {"rollout": "completed", "judge": "completed"}}
+                    {"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}
                 ),
                 encoding="utf-8",
             )

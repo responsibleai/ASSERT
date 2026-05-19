@@ -13,19 +13,19 @@ import yaml
 log = logging.getLogger(__name__)
 
 from p2m.core.config_model import (
-    DEFAULT_AUDITOR_MAX_TURNS,
+    DEFAULT_TESTER_MAX_TURNS,
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
-    DEFAULT_ROLLOUT_CONCURRENCY,
-    DEFAULT_ROLLOUT_MAX_TOOL_CALLS,
-    DEFAULT_ROLLOUT_MAX_TOKENS,
-    DEFAULT_ROLLOUT_TEMPERATURE,
-    AuditorConfig,
+    DEFAULT_INFERENCE_CONCURRENCY,
+    DEFAULT_INFERENCE_MAX_TOOL_CALLS,
+    DEFAULT_INFERENCE_MAX_TOKENS,
+    DEFAULT_INFERENCE_TEMPERATURE,
+    TesterConfig,
     EvaluationConfig,
     JudgeConfig,
     ModelConfig,
     PipelineConfig,
-    RolloutConfig,
+    InferenceConfig,
     TargetConfig,
     ToolsConfig,
     TraceConfig,
@@ -36,7 +36,7 @@ OUTPUT_PATH_KEYS = {"save_dir", "save_path"}
 PIPELINE_STAGE_ORDER = (
     "systematize",
     "test_set",
-    "rollout",
+    "inference",
     "judge",
 )
 BEHAVIOR_REQUIRED_PIPELINE_STAGES = {"systematize"}
@@ -439,8 +439,8 @@ def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig
             parse_model_config(
                 raw.get("model"),
                 field_name=f"{field_name}.model",
-                default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
-                default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
+                default_temperature=DEFAULT_INFERENCE_TEMPERATURE,
+                default_max_tokens=DEFAULT_INFERENCE_MAX_TOKENS,
             )
             if raw.get("model") is not None
             else None
@@ -632,80 +632,80 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         raise ValueError("pipeline must be a mapping")
 
     default_model_raw = _get_default_model_mapping(raw)
-    rollout_stage = pipeline_raw.get("rollout")
+    inference_stage = pipeline_raw.get("inference")
     scorer_stage = pipeline_raw.get("judge")
 
-    if rollout_stage is not None and not isinstance(rollout_stage, dict):
-        raise ValueError("pipeline.rollout must be a mapping")
+    if inference_stage is not None and not isinstance(inference_stage, dict):
+        raise ValueError("pipeline.inference must be a mapping")
     if scorer_stage is not None and not isinstance(scorer_stage, dict):
         raise ValueError("pipeline.judge must be a mapping")
 
     target = None
-    rollout_cfg = RolloutConfig()
-    auditor = None
+    inference_cfg = InferenceConfig()
+    tester = None
     judge = None
-    rollout_enabled = rollout_stage is not None and bool(rollout_stage.get("enabled", True))
+    inference_enabled = inference_stage is not None and bool(inference_stage.get("enabled", True))
     judge_enabled = scorer_stage is not None and bool(scorer_stage.get("enabled", True))
 
-    if rollout_stage is not None:
+    if inference_stage is not None:
         reject_unknown_keys(
-            rollout_stage,
-            field_name="pipeline.rollout",
-            allowed={"target", "auditor", "max_turns", "max_tool_calls",
+            inference_stage,
+            field_name="pipeline.inference",
+            allowed={"target", "tester", "max_turns", "max_tool_calls",
                       "tool_timeout_s", "startup_timeout_s", "concurrency",
                       "test_set_path", "save_dir", "strict", "enabled", "file_path"},
         )
-        if rollout_enabled:
-            target_raw = rollout_stage.get("target")
-            require(target_raw is not None, "pipeline.rollout.target is required when rollout stage is enabled")
+        if inference_enabled:
+            target_raw = inference_stage.get("target")
+            require(target_raw is not None, "pipeline.inference.target is required when inference stage is enabled")
             if not isinstance(target_raw, dict):
-                raise ValueError("pipeline.rollout.target must be a mapping")
+                raise ValueError("pipeline.inference.target must be a mapping")
             target_raw = dict(target_raw)
             if "model" not in target_raw and "connector" not in target_raw and "callable" not in target_raw and "endpoint" not in target_raw and default_model_raw is not None:
                 target_raw["model"] = dict(default_model_raw)
-            target = parse_target_config(target_raw, field_name="pipeline.rollout.target")
+            target = parse_target_config(target_raw, field_name="pipeline.inference.target")
 
-            auditor_raw = rollout_stage.get("auditor")
-            if auditor_raw is not None:
-                if not isinstance(auditor_raw, dict):
-                    raise ValueError("pipeline.rollout.auditor must be a mapping")
-                if "max_turns" in auditor_raw:
-                    raise ValueError("pipeline.rollout.auditor.max_turns is no longer supported; use pipeline.rollout.max_turns")
-                auditor_model_raw = auditor_raw.get("model", default_model_raw)
+            tester_raw = inference_stage.get("tester")
+            if tester_raw is not None:
+                if not isinstance(tester_raw, dict):
+                    raise ValueError("pipeline.inference.tester must be a mapping")
+                if "max_turns" in tester_raw:
+                    raise ValueError("pipeline.inference.tester.max_turns is no longer supported; use pipeline.inference.max_turns")
+                tester_model_raw = tester_raw.get("model", default_model_raw)
                 require(
-                    auditor_model_raw is not None,
-                    "pipeline.rollout.auditor.model or default_model is required when rollout.auditor is configured",
+                    tester_model_raw is not None,
+                    "pipeline.inference.tester.model or default_model is required when inference.tester is configured",
                 )
-                auditor = AuditorConfig(
+                tester = TesterConfig(
                     model=parse_model_config(
-                        auditor_model_raw,
-                        field_name="pipeline.rollout.auditor.model",
-                        default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
-                        default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
+                        tester_model_raw,
+                        field_name="pipeline.inference.tester.model",
+                        default_temperature=DEFAULT_INFERENCE_TEMPERATURE,
+                        default_max_tokens=DEFAULT_INFERENCE_MAX_TOKENS,
                     ),
                 )
 
-            rollout_cfg = RolloutConfig(
+            inference_cfg = InferenceConfig(
                 max_tool_calls=_coalesce(_optional_int(
-                    rollout_stage.get("max_tool_calls"),
-                    field_name="pipeline.rollout.max_tool_calls",
-                ), DEFAULT_ROLLOUT_MAX_TOOL_CALLS),
+                    inference_stage.get("max_tool_calls"),
+                    field_name="pipeline.inference.max_tool_calls",
+                ), DEFAULT_INFERENCE_MAX_TOOL_CALLS),
                 max_turns=_coalesce(_optional_int(
-                    rollout_stage.get("max_turns"),
-                    field_name="pipeline.rollout.max_turns",
-                ), DEFAULT_AUDITOR_MAX_TURNS),
+                    inference_stage.get("max_turns"),
+                    field_name="pipeline.inference.max_turns",
+                ), DEFAULT_TESTER_MAX_TURNS),
                 tool_timeout_s=_optional_float(
-                    rollout_stage.get("tool_timeout_s"),
-                    field_name="pipeline.rollout.tool_timeout_s",
+                    inference_stage.get("tool_timeout_s"),
+                    field_name="pipeline.inference.tool_timeout_s",
                 ),
                 startup_timeout_s=_optional_float(
-                    rollout_stage.get("startup_timeout_s"),
-                    field_name="pipeline.rollout.startup_timeout_s",
+                    inference_stage.get("startup_timeout_s"),
+                    field_name="pipeline.inference.startup_timeout_s",
                 ),
                 concurrency=_coalesce(_optional_int(
-                    rollout_stage.get("concurrency"),
-                    field_name="pipeline.rollout.concurrency",
-                ), DEFAULT_ROLLOUT_CONCURRENCY),
+                    inference_stage.get("concurrency"),
+                    field_name="pipeline.inference.concurrency",
+                ), DEFAULT_INFERENCE_CONCURRENCY),
             )
 
     if scorer_stage is not None:
@@ -734,7 +734,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             )
 
     evaluation = None
-    if judge is not None or rollout_enabled:
-        evaluation = EvaluationConfig(judge=judge, auditor=auditor, rollout=rollout_cfg)
+    if judge is not None or inference_enabled:
+        evaluation = EvaluationConfig(judge=judge, tester=tester, inference=inference_cfg)
 
     return PipelineConfig(target=target, evaluation=evaluation)

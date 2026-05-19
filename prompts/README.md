@@ -7,7 +7,7 @@ These templates control what the pipeline tells each model. Most users never nee
 The pipeline uses two related but distinct judgment layers:
 
 - **permissible / not permissible** — taxonomy-level label on each behavior indicating whether the target model producing this behavior pattern is acceptable (permissible) or undesirable (not permissible). Appears in taxonomy configs, systematization outputs, and the `permissible` field on test_set.
-- **violated** — per-node binary judgment the judge assigns after scoring a rollout conversation. The judge evaluates each behavior node as `violated = true/false/null`.
+- **violated** — per-node binary judgment the judge assigns after scoring a inference conversation. The judge evaluates each behavior node as `violated = true/false/null`.
 
 Prompts and code use these terms consistently; do not interchange them.
 
@@ -17,10 +17,10 @@ Prompts and code use these terms consistently; do not interchange them.
 |---|---|---|---|
 | `systematize_system.md` | `taxonomy` | system | Generates the behavior taxonomy (behavior_categories, definitions, examples) |
 | `test_set_direct_single.md` | `test_set` | single | Direct test-case generation (single-turn user messages) |
-| `test_set_scenario_single.md` | `test_set` | single | Scenario test-case generation (auditor-facing multi-turn briefs) |
-| `rollout_auditor_system.md` | `rollout` | system | Persona for the model that plays the user in scenario conversations |
+| `test_set_scenario_single.md` | `test_set` | single | Scenario test-case generation (tester-facing multi-turn briefs) |
+| `inference_tester_system.md` | `inference` | system | Persona for the model that plays the user in scenario conversations |
 | `judge_system.md` | `judge` | system | Scoring system prompt (per-node violated judgment) |
-| `rollout_toolsim_user.md` | `rollout` | user | Generates simulated tool results for simulated-tools mode |
+| `inference_toolsim_user.md` | `inference` | user | Generates simulated tool results for simulated-tools mode |
 
 ## Systematization Prompts
 

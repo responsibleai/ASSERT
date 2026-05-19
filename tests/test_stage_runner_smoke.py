@@ -4,8 +4,8 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
 
-from p2m.core.config_model import DEFAULT_ROLLOUT_MAX_TOKENS, EvaluationConfig, JudgeConfig, TargetConfig
-from p2m.stages import judge, systematize, rollout, test_set
+from p2m.core.config_model import DEFAULT_INFERENCE_MAX_TOKENS, EvaluationConfig, JudgeConfig, TargetConfig
+from p2m.stages import judge, systematize, inference, test_set
 from tests.helpers import StageSmokeCase, run_stage_smoke_case, write_json, write_jsonl
 
 
@@ -59,7 +59,7 @@ def _seeds_case() -> StageSmokeCase:
     )
 
 
-def _rollout_case() -> StageSmokeCase:
+def _inference_case() -> StageSmokeCase:
     def setup_fn(root: Path) -> None:
         write_jsonl(root / "test_set.jsonl", [{"type": "prompt", "seed": {"description": "seed prompt"}}])
 
@@ -83,13 +83,13 @@ def _rollout_case() -> StageSmokeCase:
 
     def assert_fn(calls: dict[str, object], result: object, root: Path) -> None:
         assert calls["target"].model == "azure/gpt-5.4"
-        assert calls["max_tokens"] == DEFAULT_ROLLOUT_MAX_TOKENS
+        assert calls["max_tokens"] == DEFAULT_INFERENCE_MAX_TOKENS
         assert result["transcripts_path"] == str(root / "transcripts.jsonl")
 
     return StageSmokeCase(
-        name="rollout",
-        run=rollout.run,
-        workflow_patch="p2m.stages.rollout.run_rollout",
+        name="inference",
+        run=inference.run,
+        workflow_patch="p2m.stages.inference.run_inference",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -184,7 +184,7 @@ class StageRunnerSmokeTest(unittest.TestCase):
 
         for case in [
             _seeds_case(),
-            _rollout_case(),
+            _inference_case(),
             _judge_case(),
         ]:
             with self.subTest(stage=case.name):

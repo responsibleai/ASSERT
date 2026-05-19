@@ -51,11 +51,11 @@ pipeline:
         name: azure/gpt-5.4-mini
         temperature: 0.2
       sample_size: 3
-  rollout:
+  inference:
     concurrency: 2
     target:
       callable: examples.phoenix_auto_trace.travel_openai_router:chat
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

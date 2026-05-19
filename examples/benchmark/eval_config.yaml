@@ -11,9 +11,9 @@ behavior:
 
     This behavior is **quality-only by design**. It deliberately omits adversarial
     and safety-themed behavior_categories (prompt-injection probing, jailbreak attempts,
-    sycophancy bait, stereotyping prompts) so that the auditor generates
+    sycophancy bait, stereotyping prompts) so that the tester generates
     realistic, non-adversarial user prompts. That keeps the benchmark focused
-    on measuring rollout / judge throughput at scale rather than safety
+    on measuring inference / judge throughput at scale rather than safety
     robustness, and avoids tripping content filters with adversarial test_set.
 
     ## Quality failures
@@ -90,11 +90,11 @@ pipeline:
         name: azure/gpt-5.4-mini
         temperature: 0.2
       sample_size: 10
-  rollout:
+  inference:
     concurrency: 10
     target:
       callable: examples.travel_planner_langgraph.agent:chat_sync
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

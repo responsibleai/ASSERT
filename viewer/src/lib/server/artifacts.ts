@@ -41,7 +41,7 @@ export type UnifiedTranscriptRow = Record<string, unknown> & {
 	behavior?: unknown;
 	permissible?: unknown;
 	target?: unknown;
-	auditor_model?: unknown;
+	tester_model?: unknown;
 	dimensions?: unknown;
 };
 
@@ -52,7 +52,7 @@ export type UnifiedScoreRow = Record<string, unknown> & {
 	judge_status?: unknown;
 	judge_error?: unknown;
 	target?: unknown;
-	auditor_model?: unknown;
+	tester_model?: unknown;
 	dimensions?: unknown;
 };
 
@@ -558,8 +558,8 @@ function readObject(value: unknown): Record<string, unknown> | null {
 
 export function loadRunRuntimeMode(config: Record<string, unknown> | null): string | null {
 	const pipeline = readObject(config?.pipeline);
-	const rollout = readObject(pipeline?.rollout);
-	const target = readObject(rollout?.target);
+	const inference = readObject(pipeline?.inference);
+	const target = readObject(inference?.target);
 	const tools = readObject(target?.tools);
 
 	if (typeof target?.connector === 'string' && target.connector) return 'external';
@@ -661,7 +661,7 @@ export function loadRunSnapshot(
 		missingOk: true
 	});
 	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
-	const rolloutRunning = manifest?.stages?.rollout === 'running';
+	const inferenceRunning = manifest?.stages?.inference === 'running';
 	const includeTranscripts = options.includeTranscripts ?? true;
 	const transcriptLineMatcher = options.transcriptKind
 		? buildJsonStringFieldMatcher('type', options.transcriptKind)
@@ -677,7 +677,7 @@ export function loadRunSnapshot(
 		scoreRows: readJsonlFile<UnifiedScoreRow>(path.join(runDir, RUN_SCORES_FILE), { missingOk: true }),
 		transcriptRows: !includeTranscripts
 			? []
-			: rolloutRunning
+			: inferenceRunning
 				? readLiveTranscriptJsonlFile<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
 						missingOk: true,
 						lineMatcher: transcriptLineMatcher
@@ -701,9 +701,9 @@ export async function loadRunTranscriptRow(
 	const lineMatcher = (line: string) => seedMatcher(line) && kindMatcher(line);
 	const runDir = runDirPath(suiteId, runId);
 	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
-	const rolloutRunning = manifest?.stages?.rollout === 'running';
+	const inferenceRunning = manifest?.stages?.inference === 'running';
 
-	return rolloutRunning
+	return inferenceRunning
 		? readLiveJsonlMatchingRow<UnifiedTranscriptRow>(path.join(runDir, RUN_TRANSCRIPTS_FILE), {
 				missingOk: true,
 				lineMatcher

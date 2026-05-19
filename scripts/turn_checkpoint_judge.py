@@ -1,4 +1,4 @@
-"""Judge transcript prefixes at fixed rollout-turn checkpoints and plot flagged rate."""
+"""Judge transcript prefixes at fixed inference-turn checkpoints and plot flagged rate."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import yaml
 from p2m.core.config_model import (
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
-    DEFAULT_ROLLOUT_CONCURRENCY,
+    DEFAULT_INFERENCE_CONCURRENCY,
 )
 from p2m.core.io import (
     append_jsonl_row,
@@ -60,7 +60,7 @@ class CheckpointTask:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Judge transcript prefixes at fixed rollout-turn checkpoints.",
+        description="Judge transcript prefixes at fixed inference-turn checkpoints.",
     )
     parser.add_argument(
         "--run-dir",
@@ -71,7 +71,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--checkpoint-step",
         type=int,
         default=5,
-        help="Checkpoint interval in rollout turns.",
+        help="Checkpoint interval in inference turns.",
     )
     parser.add_argument(
         "--dimension",
@@ -175,14 +175,14 @@ def load_checkpoint_judge_config(
             for value in judge_dimensions_override
         ]
 
-    rollout_stage_raw = pipeline_raw.get("rollout")
-    rollout_concurrency = DEFAULT_ROLLOUT_CONCURRENCY
-    if isinstance(rollout_stage_raw, dict) and rollout_stage_raw.get("concurrency") is not None:
-        rollout_concurrency = _require_positive_int(
-            int(rollout_stage_raw["concurrency"]),
-            field_name="pipeline.rollout.concurrency",
+    inference_stage_raw = pipeline_raw.get("inference")
+    inference_concurrency = DEFAULT_INFERENCE_CONCURRENCY
+    if isinstance(inference_stage_raw, dict) and inference_stage_raw.get("concurrency") is not None:
+        inference_concurrency = _require_positive_int(
+            int(inference_stage_raw["concurrency"]),
+            field_name="pipeline.inference.concurrency",
         )
-    concurrency = concurrency_override if concurrency_override is not None else rollout_concurrency
+    concurrency = concurrency_override if concurrency_override is not None else inference_concurrency
     if concurrency <= 0:
         raise ValueError("concurrency must be > 0")
 
@@ -203,7 +203,7 @@ def transcript_from_row(row: dict[str, Any]) -> Transcript:
             test_case_id=str(row.get("test_case_id") or ""),
             behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             dimensions=row_factors(row),
         ),
         events=[
@@ -221,17 +221,17 @@ def _event_views(event: TranscriptEvent) -> list[str]:
     return [str(event.view)]
 
 
-def is_rollout_turn_start(event: TranscriptEvent) -> bool:
+def is_inference_turn_start(event: TranscriptEvent) -> bool:
     return (
         "target" in _event_views(event)
-        and event.actor == "auditor"
+        and event.actor == "tester"
         and isinstance(event.edit, AddMessageEdit)
         and event.edit.message.role == "user"
     )
 
 
-def count_rollout_turns(transcript: Transcript) -> int:
-    return sum(1 for event in transcript.events if is_rollout_turn_start(event))
+def count_inference_turns(transcript: Transcript) -> int:
+    return sum(1 for event in transcript.events if is_inference_turn_start(event))
 
 
 def checkpoint_turns(final_turns: int, checkpoint_step: int) -> list[int]:
@@ -248,7 +248,7 @@ def slice_transcript_at_turn(transcript: Transcript, checkpoint_turn: int) -> Tr
     seen_turns = 0
 
     for event in transcript.events:
-        if is_rollout_turn_start(event):
+        if is_inference_turn_start(event):
             if seen_turns >= checkpoint_turn:
                 break
             seen_turns += 1
@@ -504,7 +504,7 @@ async def run_checkpoint_judge(
     output_index = 0
     for row in transcript_rows:
         transcript = transcript_from_row(row)
-        final_turns = count_rollout_turns(transcript)
+        final_turns = count_inference_turns(transcript)
         for checkpoint_turn in checkpoint_turns(final_turns, checkpoint_step):
             tasks.append(
                 CheckpointTask(
@@ -561,7 +561,7 @@ async def run_checkpoint_judge(
                     behavior,
                 ),
                 "target": task.transcript_row.get("target", ""),
-                "auditor_model": task.transcript_row.get("auditor_model", ""),
+                "tester_model": task.transcript_row.get("tester_model", ""),
                 "checkpoint_turn": task.checkpoint_turn,
                 "final_transcript_turns": task.final_transcript_turns,
                 "judge_model": config.judge_model,

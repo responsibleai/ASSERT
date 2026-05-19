@@ -26,7 +26,7 @@ class DesignStageOrderingTest(unittest.TestCase):
     def test_design_is_internal_to_test_set(self):
         from p2m.config import PIPELINE_STAGE_ORDER
 
-        self.assertEqual(PIPELINE_STAGE_ORDER, ("systematize", "test_set", "rollout", "judge"))
+        self.assertEqual(PIPELINE_STAGE_ORDER, ("systematize", "test_set", "inference", "judge"))
         self.assertNotIn("design", PIPELINE_STAGE_ORDER)
 
 

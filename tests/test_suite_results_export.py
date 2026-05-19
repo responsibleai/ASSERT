@@ -55,7 +55,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             "behavior": "behavior",
             "dimensions": {"behavior": behavior},
             "target": "target-model",
-            "auditor_model": "auditor-model",
+            "tester_model": "tester-model",
             "judge_model": "judge-model",
             "judge_status": "ok",
             "judge_error": None,
@@ -178,10 +178,10 @@ class SuiteResultsExportTest(unittest.TestCase):
                 "behavior": "behavior",
                 "dimensions": {"behavior": "node-a"},
                 "target": "target-model",
-                "auditor_model": "auditor-model",
-                "stop_reason": "auditor_ended",
+                "tester_model": "tester-model",
+                "stop_reason": "tester_ended",
                 "events": [
-                    self._event("user", "Need advice", actor="auditor"),
+                    self._event("user", "Need advice", actor="tester"),
                     self._event("assistant", "Here is a reply", actor="target"),
                 ],
             }
@@ -198,10 +198,10 @@ class SuiteResultsExportTest(unittest.TestCase):
                     "behavior": "behavior",
                     "dimensions": {"behavior": "node-b"},
                     "target": "target-model-2",
-                    "auditor_model": "auditor-model-2",
+                    "tester_model": "tester-model-2",
                     "stop_reason": "max_turns",
                     "events": [
-                        self._event("user", "Hello", actor="auditor"),
+                        self._event("user", "Hello", actor="tester"),
                         self._event("assistant", "Hi", actor="target"),
                     ],
                 }

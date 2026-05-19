@@ -64,10 +64,10 @@ What the quickstart does:
 
 | Step | Developer behavior | Current YAML / artifact |
 |---|---|---|
-| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
+| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name` and `behavior.description` live inline in `eval_config.yaml` |
 | 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
 | 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
-| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + `target.trace` write `transcripts.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `transcripts.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
@@ -75,7 +75,7 @@ Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
 ## How it works
 
 ```text
-your eval spec (.md)
+one eval_config.yaml
         |
         v
 behavior categories  ->  test cases + variations  ->  execute target  ->  judge
@@ -85,7 +85,7 @@ behavior categories  ->  test cases + variations  ->  execute target  ->  judge
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `behavior`, `dimensions`, `taxonomy`, `test_set`, and `rollout`. The docs use the developer-facing behaviors - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each behavior appears. See [`docs/behaviors.md`](docs/behaviors.md) for the bridge.
+Today the YAML still uses implementation names such as `behavior`, `dimensions`, `taxonomy`, `test_set`, and `inference`. The docs use the developer-facing behaviors - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each behavior appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
 
 ## Choose your target
 
@@ -139,7 +139,7 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 
 ## Documentation map
 
-- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/behaviors.md`](docs/behaviors.md)
+- **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
 - **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)

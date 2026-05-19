@@ -562,7 +562,7 @@ class CallableSession:
                 # bubble up here as raw litellm exceptions
                 # (BadRequestError, ContentPolicyViolationError,
                 # RateLimitError, ...) rather than the typed ``LLM*Error``
-                # classes the rollout stage's per-seed isolation paths key
+                # classes the inference stage's per-seed isolation paths key
                 # off. Re-raise via ``_classify_llm_error`` so a target-side
                 # content-filter rejection lands as ``LLMInputError`` and gets
                 # routed into ``stop_reason='target_input_refused'`` instead

@@ -280,7 +280,7 @@ def _transcript_from_row(row: dict[str, Any]) -> Transcript:
             test_case_id=str(row.get("test_case_id") or ""),
             behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             dimensions=row_factors(row),
         ),
         events=[
@@ -342,7 +342,7 @@ def _score_row(
         "judge_status": str(score_row.get("judge_status") or ""),
         "judge_error": str(score_row.get("judge_error") or ""),
         "target": str(score_row.get("target") or ""),
-        "auditor_model": str(score_row.get("auditor_model") or ""),
+        "tester_model": str(score_row.get("tester_model") or ""),
         "judge_model": str(score_row.get("judge_model") or ""),
         "justification": str(verdict_payload.get("justification") or ""),
     }
@@ -565,7 +565,7 @@ def load_suite_tables(
         metrics = _build_score_metrics(score_rows, policy_raw=taxonomy) if score_rows else None
 
         target = _first_nonempty(score_rows, "target") or _first_nonempty(transcript_rows, "target")
-        auditor_model = _first_nonempty(score_rows, "auditor_model") or _first_nonempty(transcript_rows, "auditor_model")
+        tester_model = _first_nonempty(score_rows, "tester_model") or _first_nonempty(transcript_rows, "tester_model")
         judge_model = _first_nonempty(score_rows, "judge_model")
 
         for transcript_row in transcript_rows:
@@ -584,7 +584,7 @@ def load_suite_tables(
                     "stop_reason": str(transcript_row.get("stop_reason") or ""),
                     "turn_count": transcript.count_turns("target", skip_system=True),
                     "target": str(transcript_row.get("target") or ""),
-                    "auditor_model": str(transcript_row.get("auditor_model") or ""),
+                    "tester_model": str(transcript_row.get("tester_model") or ""),
                     "conversation_text": transcript.format_transcript(
                         "target",
                         skip_system=False,
@@ -641,7 +641,7 @@ def load_suite_tables(
                 "ended_at": str(manifest.get("ended_at") or ""),
                 "concept_name": concept_name,
                 "target": target,
-                "auditor_model": auditor_model,
+                "tester_model": tester_model,
                 "judge_model": judge_model,
                 "prompt_test_case_count": prompt_test_case_count,
                 "scenario_test_case_count": scenario_test_case_count,
@@ -693,7 +693,7 @@ def load_suite_tables(
             "ended_at",
             "concept_name",
             "target",
-            "auditor_model",
+            "tester_model",
             "judge_model",
             "prompt_test_case_count",
             "scenario_test_case_count",
@@ -725,7 +725,7 @@ def load_suite_tables(
             "stop_reason",
             "turn_count",
             "target",
-            "auditor_model",
+            "tester_model",
             "conversation_text",
         ],
         SCORES_TABLE: [
@@ -738,7 +738,7 @@ def load_suite_tables(
             "judge_status",
             "judge_error",
             "target",
-            "auditor_model",
+            "tester_model",
             "judge_model",
             *score_dimension_names,
             "justification",

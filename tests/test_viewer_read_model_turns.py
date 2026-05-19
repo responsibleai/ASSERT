@@ -1,6 +1,6 @@
 """Unit tests for `_materialize_target_messages` turn semantics.
 
-Only the auditor (user) and the target (assistant) emit "turns".
+Only the tester (user) and the target (assistant) emit "turns".
 A target turn = one block of consecutive assistant emissions.
 System messages, tool messages, and tool-call edits never get a
 `judgeTurn` label.
@@ -19,7 +19,7 @@ from p2m.viewer_read_model import (
 def _msg(role: str, content: str = "...", *, raw: dict | None = None) -> dict:
     event = {
         "view": ["target"],
-        "actor": "auditor" if role in {"system", "user"} else "target",
+        "actor": "tester" if role in {"system", "user"} else "target",
         "edit": {
             "type": "set_system_message" if role == "system" else "add_message",
             "message": {"role": role, "content": content},
@@ -70,7 +70,7 @@ class MaterializeTargetMessagesTurnSemanticsTest(unittest.TestCase):
 
     def test_consecutive_assistants_collapse_into_one_turn(self) -> None:
         # Multi-agent target: intent_classifier hands off to flight_searcher
-        # then to a final assistant — all between two auditor messages.
+        # then to a final assistant — all between two tester messages.
         transcript = {
             "events": [
                 _msg("system", "sys"),
@@ -117,10 +117,10 @@ class MaterializeTargetMessagesTurnSemanticsTest(unittest.TestCase):
 
     def test_tools_before_assistant_text_inherit_upcoming_target_turn(self) -> None:
         # Regression test for the screenshot bug: tool calls/results that
-        # arrive immediately after an auditor user message — but BEFORE
+        # arrive immediately after an tester user message — but BEFORE
         # the target's assistant text — must be labeled with the target's
-        # upcoming turn (auditor=11 -> tools=12, assistant=12), not the
-        # auditor's just-finished turn (would have been 11 across the board).
+        # upcoming turn (tester=11 -> tools=12, assistant=12), not the
+        # tester's just-finished turn (would have been 11 across the board).
         transcript = {
             "events": [
                 _msg("user", "what is the cheapest hotel?"),

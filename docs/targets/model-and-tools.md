@@ -14,7 +14,7 @@ You don't need an implemented agent to start evaluating. With a system prompt an
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -27,7 +27,7 @@ pipeline:
         simulator: azure/gpt-5.4-mini
 ```
 
-The eval runs end-to-end: taxonomy → test cases → rollout (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
+The eval runs end-to-end: taxonomy → test cases → inference (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
 
 ## Prompt Agent with real Python tools
 
@@ -35,7 +35,7 @@ Once tools are implemented, point at the Python module that exposes them:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -51,7 +51,7 @@ The smallest configuration — model + system prompt, no tools — for sanity-ch
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini

@@ -86,7 +86,7 @@ class RunnerStageFilterTest(unittest.TestCase):
     # downstream cascade fix in p2m/runner.py).
     #
     # Without cascade, `--force-stage test_set` regenerates test_set.jsonl
-    # but rollout silently keeps the prior transcripts (its resume
+    # but inference silently keeps the prior transcripts (its resume
     # cache keys on test_case_id, and test case ids are deterministic enough
     # to collide). Same hazard for judge against scores.jsonl. The
     # cascade extends the explicit forced set to every stage at or
@@ -104,7 +104,7 @@ class RunnerStageFilterTest(unittest.TestCase):
             "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
             "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=self._async_recorder("design", seen)),
             "test_set": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="test_set.jsonl", run=self._async_recorder("test_set", seen)),
-            "rollout": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("rollout", seen)),
+            "inference": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("inference", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
         }
 
@@ -119,7 +119,7 @@ class RunnerStageFilterTest(unittest.TestCase):
                     ("taxonomy", {}),
                     ("design", {}),
                     ("test_set", {}),
-                    ("rollout", {}),
+                    ("inference", {}),
                     ("judge", {}),
                 ],
                 "suite_root": str(suite_root),
@@ -146,8 +146,8 @@ class RunnerStageFilterTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         # taxonomy + design are upstream of test_set in PIPELINE_STAGE_ORDER
         # and have cached outputs, so they stay skipped. test_set is the
-        # explicit force; rollout + judge get cascaded in.
-        self.assertEqual(seen, ["test_set", "rollout", "judge"])
+        # explicit force; inference + judge get cascaded in.
+        self.assertEqual(seen, ["test_set", "inference", "judge"])
 
     def test_force_stage_no_cascade_when_only_terminal_stage_forced(self) -> None:
         seen: list[str] = []

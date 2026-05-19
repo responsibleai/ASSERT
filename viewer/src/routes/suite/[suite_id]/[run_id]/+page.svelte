@@ -26,7 +26,7 @@
 		getRequiredBaseMetricNames(data.dimensionDefs as Record<string, DimensionDef>)
 	);
 
-	type RolloutPreviewItem = {
+	type InferencePreviewItem = {
 		test_case_id: string;
 		behavior: string;
 		turns_count: number;
@@ -47,7 +47,7 @@
 	// --- Tab state ---
 	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
 	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
-	let hasAuditPreview = $derived((data.rolloutPreviewRows?.length ?? 0) > 0);
+	let hasAuditPreview = $derived((data.inferencePreviewRows?.length ?? 0) > 0);
 	let hasAuditContent = $derived(data.hasAuditContent ?? (hasAuditEval || hasAuditPreview));
 	let activeTab = $derived((data.activeTab ?? (page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts')) as 'prompts' | 'audit');
 
@@ -140,7 +140,7 @@
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		test_set: 'Seed Generation',
-		rollout: 'Rollout',
+		inference: 'Inference',
 		judge: 'Scoring',
 	};
 
@@ -445,7 +445,7 @@
 		scenarioDrawerError = null;
 	}
 
-	async function openPreviewDrawer(item: RolloutPreviewItem) {
+	async function openPreviewDrawer(item: InferencePreviewItem) {
 		const token = bumpScenarioDrawerLoadToken();
 		drawerPreviewSeedId = item.test_case_id;
 		previewNavIdx = previewNavList.findIndex((entry) => entry.test_case_id === item.test_case_id);
@@ -514,7 +514,7 @@
 		return flatAuditScores;
 	});
 
-	let previewNavList = $derived((data.rolloutPreviewRows ?? []) as RolloutPreviewItem[]);
+	let previewNavList = $derived((data.inferencePreviewRows ?? []) as InferencePreviewItem[]);
 	let auditNavIdx = $state(-1);
 	let previewNavIdx = $state(-1);
 	let currentRunKey = $derived(`${data.suite_id}:${data.run_id}`);
@@ -785,7 +785,7 @@
 				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'audit' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
 				onclick={() => setActiveTab('audit')}
 				title="Multi-turn scenario results"
-			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.rolloutPreviewRows.length}</span></button>
+			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span></button>
 		</div>
 		</div>
 	{/if}
@@ -1273,9 +1273,9 @@
 
 	{#if activeTab === 'audit' && !hasAuditEval && hasAuditPreview}
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
-			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Rollout Preview</div>
+			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Inference Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.rolloutPreviewRows.length} / {data.rolloutPreviewTotal} conversations are available. Judgments will appear after rollout completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after inference completes.
 			</p>
 		</div>
 
@@ -1283,11 +1283,11 @@
 			<div class="mb-4 flex items-center gap-3">
 				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.rolloutPreviewRows.length} conversations</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
-				{#each data.rolloutPreviewRows as preview, sIdx}
+				{#each data.inferencePreviewRows as preview, sIdx}
 					{@const seedInfo = data.scenarioSeedMap[preview.test_case_id]}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button

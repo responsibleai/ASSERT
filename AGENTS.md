@@ -37,13 +37,13 @@ Use the developer-friendly behaviors in prose, and mention current YAML keys whe
 
 | Behavior to explain | Current YAML / artifact |
 |---|---|
-| Eval spec | `behavior.name`, `behavior.md`, `<name>.md` |
+| Eval spec | `behavior.name`, `behavior.description` in `eval_config.yaml` |
 | Target description | `context` |
 | Variations | `dimensions` |
 | Behavior categories | `pipeline.systematize`, `taxonomy.json` |
 | Test cases | `pipeline.test_set`, `test_set.jsonl` |
-| Execute | `pipeline.rollout`, `transcripts.jsonl` |
-| Target | `pipeline.rollout.target` |
+| Execute | `pipeline.inference`, `transcripts.jsonl` |
+| Target | `pipeline.inference.target` |
 | Trace capture | `target.trace` |
 | Judge | `pipeline.judge`, `scores.jsonl` |
 | Metrics | `metrics.json` |
@@ -97,7 +97,7 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 2. Create or adapt an eval spec markdown file.
 3. Add `context` describing the agent, tools, users, and constraints.
 4. Add `dimensions` only when systematic variation matters.
-5. Configure the target in `pipeline.rollout.target`.
+5. Configure the target in `pipeline.inference.target`.
 6. Add judge dimensions with concrete descriptions and rubrics.
 7. Run `p2m run --config <path>`.
 

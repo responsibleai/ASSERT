@@ -1,4 +1,4 @@
-"""Score unified transcript rollout artifacts."""
+"""Score unified transcript inference artifacts."""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ async def run_judge(
             test_case_id=str(row.get("test_case_id") or ""),
             behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             dimensions=row_factors(row),
         )
         transcript = Transcript(
@@ -147,7 +147,7 @@ async def run_judge(
             "behavior": row.get("behavior", ""),
             "judge_model": judge_model,
             "target": row.get("target", ""),
-            "auditor_model": row.get("auditor_model", ""),
+            "tester_model": row.get("tester_model", ""),
             "judge_status": infer_judge_status({
                 "judge_status": judge_result["judge_status"],
                 "verdict": judge_result["verdict"],
@@ -188,7 +188,7 @@ async def run_judge(
             # problem: a different transcript will judge cleanly. Record a
             # filter_skipped score row so the seed isn't lost and the
             # stage can move on. Mirrors the target_input_refused and
-            # auditor_input_refused handling in rollout. (Absorbed from
+            # tester_input_refused handling in inference. (Absorbed from
             # PR #44 commit dcaa91f — was previously only available as a
             # benchmark monkey-patch in scripts/benchmark.py.)
             test_case_id = row.get("test_case_id", "?")
@@ -203,7 +203,7 @@ async def run_judge(
                 "behavior": row.get("behavior", ""),
                 "judge_model": judge_model,
                 "target": row.get("target", ""),
-                "auditor_model": row.get("auditor_model", ""),
+                "tester_model": row.get("tester_model", ""),
                 "judge_status": "filter_skipped",
                 "judge_error": f"judge_input_refused: {exc}",
                 "verdict": {},
@@ -294,7 +294,7 @@ async def run_judge(
         if (str(row.get("type") or ""), str(row.get("test_case_id", ""))) not in completed_keys
     ]
 
-    semaphore = asyncio.Semaphore(max(1, min(evaluation.rollout.concurrency, len(pending) or 1)))
+    semaphore = asyncio.Semaphore(max(1, min(evaluation.inference.concurrency, len(pending) or 1)))
 
     async def guard(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
         async with semaphore:

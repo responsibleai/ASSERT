@@ -198,8 +198,8 @@ def _runtime_mode(config: dict[str, Any] | None) -> str | None:
     if not isinstance(config, dict):
         return None
     pipeline = config.get("pipeline")
-    rollout = pipeline.get("rollout") if isinstance(pipeline, dict) else None
-    target = rollout.get("target") if isinstance(rollout, dict) else None
+    inference = pipeline.get("inference") if isinstance(pipeline, dict) else None
+    target = inference.get("target") if isinstance(inference, dict) else None
     if not isinstance(target, dict):
         return None
 
@@ -261,7 +261,7 @@ def _agent_label_from_raw(raw: dict[str, Any] | None) -> str | None:
 def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[str, Any]]:
     """Materialize transcript events into viewer messages with turn labels.
 
-    Turn semantics: only the auditor (user) and the target (assistant) emit
+    Turn semantics: only the tester (user) and the target (assistant) emit
     "turns". A target turn = one block of consecutive assistant emissions
     *plus* any tool calls or tool results issued during that block. Tool
     messages inherit the surrounding assistant turn — they never get their
@@ -355,7 +355,7 @@ def _materialize_target_messages(transcript_row: dict[str, Any]) -> list[dict[st
 
 
 def _count_target_conversation_messages(transcript_row: dict[str, Any]) -> int:
-    """Return the number of target turns (one per auditor message + one per
+    """Return the number of target turns (one per tester message + one per
     consecutive assistant block). Mirrors :func:`_materialize_target_messages`.
     """
     messages = _materialize_target_messages(transcript_row)
@@ -580,7 +580,7 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             "behavior": row_behavior(row),
             "judge_model": row.get("judge_model", ""),
             "target": row.get("target") or transcript_row.get("target"),
-            "auditor_model": row.get("auditor_model") or transcript_row.get("auditor_model"),
+            "tester_model": row.get("tester_model") or transcript_row.get("tester_model"),
             "verdict": _summary_verdict(row.get("verdict")),
             "judge_status": row.get("judge_status"),
             "judge_error": row.get("judge_error"),

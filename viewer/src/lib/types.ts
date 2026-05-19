@@ -296,7 +296,7 @@ export interface AuditRunMetrics {
 	overrefusal_rate: number;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	judge_model: string;
 }
 
@@ -400,7 +400,7 @@ export interface AuditTranscript {
 	llm_calls?: LlmCallTrace[];
 	stop_reason: string;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	dimensions?: SeedFactors;
 }
 
@@ -409,7 +409,7 @@ export interface AuditScore {
 	behavior: string;
 	judge_model: string;
 	target?: string;
-	auditor_model?: string;
+	tester_model?: string;
 	verdict?: AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;

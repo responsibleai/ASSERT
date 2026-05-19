@@ -6,16 +6,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import AuditorConfig, EvaluationConfig, JudgeConfig, RolloutConfig, TargetConfig, ToolsConfig
+from p2m.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
 from p2m.core.io import load_seeds
 from p2m.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from p2m.core.session import TurnResult
-from p2m.stages.rollout import _prepare_seeds, _rollout_config_fingerprint, _run_prompt_seed, run_rollout
+from p2m.stages.inference import _prepare_seeds, _inference_config_fingerprint, _run_prompt_seed, run_inference
 from p2m.viewer_read_model import ViewerReadModelBuildError
 
 
-class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
-    def test_rollout_config_fingerprint_changes_with_seeds_content(self) -> None:
+class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
+    def test_inference_config_fingerprint_changes_with_seeds_content(self) -> None:
         """Fingerprint must include seed content so regenerating test_set invalidates cached transcripts.
 
         Without this, the resume path keys on test_case_id alone, and test case ids
@@ -24,9 +24,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         """
         target = TargetConfig(model="azure/gpt-5.4")
         evaluation = EvaluationConfig(
-            rollout=RolloutConfig(max_turns=4, concurrency=1),
+            inference=InferenceConfig(max_turns=4, concurrency=1),
             judge=JudgeConfig(model="azure/gpt-5.4"),
-            auditor=AuditorConfig(model="azure/gpt-5.4"),
+            tester=TesterConfig(model="azure/gpt-5.4"),
         )
         with TemporaryDirectory() as tmp_dir:
             seeds_a = Path(tmp_dir) / "seeds_a.jsonl"
@@ -40,9 +40,9 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
 
-            hash_no_seeds = _rollout_config_fingerprint(target, evaluation, 1024)
-            hash_a = _rollout_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_a)
-            hash_b = _rollout_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_b)
+            hash_no_seeds = _inference_config_fingerprint(target, evaluation, 1024)
+            hash_a = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_a)
+            hash_b = _inference_config_fingerprint(target, evaluation, 1024, test_set_path=seeds_b)
 
         # Including test_set_path must materially change the fingerprint
         # versus the legacy no-test_set form, and two different seed files
@@ -139,7 +139,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 fixed_system_prompt=None,
             )
 
-    async def test_run_rollout_uses_fixed_target_prompt_exactly(self) -> None:
+    async def test_run_inference_uses_fixed_target_prompt_exactly(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -176,20 +176,20 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", system_prompt="You are a coding agent."),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
         self.assertEqual(captured_messages[0].role, "system")
         self.assertEqual(captured_messages[0].content, "You are a coding agent.")
         self.assertEqual(captured_messages[1].content, "seed prompt")
 
-    async def test_run_rollout_uses_per_seed_prompt_exactly(self) -> None:
+    async def test_run_inference_uses_per_seed_prompt_exactly(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -229,19 +229,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
         self.assertEqual(captured_messages[0].role, "system")
         self.assertEqual(captured_messages[0].content, "Per-seed prompt")
 
-    async def test_run_rollout_can_leave_versioned_seed_file_unchanged(self) -> None:
+    async def test_run_inference_can_leave_versioned_seed_file_unchanged(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "original-seed-id",
@@ -277,19 +277,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             original_seed_text = json.dumps(seed_row) + "\n"
             test_set_path.write_text(original_seed_text, encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                     rewrite_test_set_path=False,
                 )
 
             self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
 
-    async def test_run_rollout_never_mutates_versioned_seed_artifact(self) -> None:
+    async def test_run_inference_never_mutates_versioned_seed_artifact(self) -> None:
         """Even when callers pass rewrite_test_set_path=True, files under
         artifacts/test_set/v#### must be left intact so the cached file_hashes
         stay valid."""
@@ -331,19 +331,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             original_seed_text = json.dumps(seed_row) + "\n"
             test_set_path.write_text(original_seed_text, encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                     rewrite_test_set_path=True,
                 )
 
             self.assertEqual(test_set_path.read_text(encoding="utf-8"), original_seed_text)
 
-    async def test_run_rollout_fails_when_viewer_artifact_build_fails(self) -> None:
+    async def test_run_inference_fails_when_viewer_artifact_build_fails(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -379,22 +379,22 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()),
+                patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()),
                 patch(
-                    "p2m.stages.rollout.build_run_viewer_artifacts",
+                    "p2m.stages.inference.build_run_viewer_artifacts",
                     side_effect=ViewerReadModelBuildError("viewer build failed"),
                 ),
             ):
                 with self.assertRaisesRegex(ViewerReadModelBuildError, "viewer build failed"):
-                    await run_rollout(
+                    await run_inference(
                         test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                         save_dir=str(out_dir),
-                        run_id="run-rollout",
+                        run_id="run-inference",
                     )
 
-    async def test_run_rollout_persists_owned_llm_calls_and_links_message_ids(self) -> None:
+    async def test_run_inference_persists_owned_llm_calls_and_links_message_ids(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -443,13 +443,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             [transcript_row] = [
@@ -462,7 +462,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcript_row["llm_calls"][0]["response"]["id"], "resp_1")
         self.assertEqual(transcript_row["llm_calls"][0]["message_ids"], ["event:1"])
 
-    async def test_run_rollout_sets_runtime_close_error_stop_reason(self) -> None:
+    async def test_run_inference_sets_runtime_close_error_stop_reason(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -497,13 +497,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._build_hosted_session", return_value=FakeSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             transcript_rows = [
@@ -513,7 +513,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(transcript_rows[0]["stop_reason"], "runtime_close_error")
 
-    async def test_run_rollout_external_transcript_writes_minimal_rows(self) -> None:
+    async def test_run_inference_external_transcript_writes_minimal_rows(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -548,13 +548,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()):
-                await run_rollout(
+            with patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             transcript_rows = [
@@ -566,7 +566,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run_id", transcript_rows[0])
         self.assertEqual(transcript_rows[0]["events"][0]["edit"]["message"]["content"], "You are a health assistant.")
 
-    async def test_run_rollout_scenario_keeps_setup_hidden_for_external_target(self) -> None:
+    async def test_run_inference_scenario_keeps_setup_hidden_for_external_target(self) -> None:
         seed_row = {
             "type": "scenario",
             "test_case_id": "seed-1",
@@ -610,19 +610,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.rollout.generate", new=fake_generate),
-                patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()),
+                patch("p2m.stages.inference.generate", new=fake_generate),
+                patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(max_turns=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(max_turns=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             transcript_rows = [
@@ -643,7 +643,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             "You are a careful health assistant.",
         )
 
-    async def test_run_rollout_scenario_forwards_setup_like_text_unchanged(self) -> None:
+    async def test_run_inference_scenario_forwards_setup_like_text_unchanged(self) -> None:
         seed_row = {
             "type": "scenario",
             "test_case_id": "seed-1",
@@ -694,19 +694,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.rollout.generate", new=fake_generate),
-                patch("p2m.stages.rollout.ExternalSession", return_value=FakeExternalSession()),
+                patch("p2m.stages.inference.generate", new=fake_generate),
+                patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(max_turns=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(max_turns=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             transcript_rows = [
@@ -719,12 +719,12 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             for event in transcript_rows[0]["events"]
             if "target" in event["view"] and event["edit"]["type"] == "add_message"
         ]
-        # With effective_system_message, the auditor's first attempt ("Be a careful
+        # With effective_system_message, the tester's first attempt ("Be a careful
         # health assistant for Mara.") is detected as hidden setup and retried.
-        # The second auditor response is forwarded to the external target.
+        # The second tester response is forwarded to the external target.
         self.assertEqual(target_events[0]["edit"]["message"]["content"], "hey, can you help me figure out this headache?")
 
-    async def test_run_rollout_scenario_keeps_setup_hidden_for_hosted_target(self) -> None:
+    async def test_run_inference_scenario_keeps_setup_hidden_for_hosted_target(self) -> None:
         seed_row = {
             "type": "scenario",
             "test_case_id": "seed-1",
@@ -770,19 +770,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.rollout.generate", new=fake_generate),
-                patch("p2m.stages.rollout._build_hosted_session", return_value=FakeHostedSession()),
+                patch("p2m.stages.inference.generate", new=fake_generate),
+                patch("p2m.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(max_turns=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(max_turns=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
         self.assertEqual(captured_inputs[0].role, "system")
@@ -790,7 +790,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         user_messages = [message for message in captured_inputs if message.role == "user"]
         self.assertEqual([message.content for message in user_messages], ["Hello target"])
 
-    async def test_run_rollout_scenario_keeps_setup_hidden_for_other_hosted_runtime_modes(self) -> None:
+    async def test_run_inference_scenario_keeps_setup_hidden_for_other_hosted_runtime_modes(self) -> None:
         seed_row = {
             "type": "scenario",
             "test_case_id": "seed-1",
@@ -838,19 +838,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
                 with (
-                    patch("p2m.stages.rollout.generate", new=fake_generate),
-                    patch("p2m.stages.rollout._build_hosted_session", return_value=FakeHostedSession()),
+                    patch("p2m.stages.inference.generate", new=fake_generate),
+                    patch("p2m.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
                 ):
-                    await run_rollout(
+                    await run_inference(
                         test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
-                            auditor=AuditorConfig(model="azure/gpt-5.4"),
-                            rollout=RolloutConfig(max_turns=1),
+                            tester=TesterConfig(model="azure/gpt-5.4"),
+                            inference=InferenceConfig(max_turns=1),
                         ),
                         save_dir=str(out_dir),
-                        run_id="run-rollout",
+                        run_id="run-inference",
                     )
 
             self.assertEqual(captured_inputs[0].role, "system")
@@ -858,7 +858,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             user_messages = [message for message in captured_inputs if message.role == "user"]
             self.assertEqual([message.content for message in user_messages], ["Hello target"])
 
-    async def test_run_rollout_rejects_item_tools_without_simulator_target(self) -> None:
+    async def test_run_inference_rejects_item_tools_without_simulator_target(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -886,15 +886,15 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 ValueError,
                 "seed.tools is only allowed when tool_source=per_seed",
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
-    async def test_run_rollout_per_seed_uses_seed_tools_with_simulator_target(self) -> None:
+    async def test_run_inference_per_seed_uses_seed_tools_with_simulator_target(self) -> None:
         seed_row = {
             "type": "prompt",
             "test_case_id": "seed-1",
@@ -928,21 +928,21 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(seed_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", tools=ToolsConfig(simulator="azure/gpt-5.4-mini")),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(concurrency=1),
+                        inference=InferenceConfig(concurrency=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
         self.assertEqual(captured_seed_payload["tools"][0]["name"], "lookup")
 
-    async def test_run_rollout_preserves_input_order_under_parallel_completion(self) -> None:
+    async def test_run_inference_preserves_input_order_under_parallel_completion(self) -> None:
         seed_rows = [
             {"type": "prompt", "seed": {"description": "slow prompt"}},
             {"type": "prompt", "seed": {"description": "fast prompt"}},
@@ -965,16 +965,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(concurrency=2),
+                        inference=InferenceConfig(concurrency=2),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             transcript_rows = [
@@ -984,7 +984,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sorted(row["test_case_id"] for row in transcript_rows), ["seed_000001", "seed_000002"])
 
-    async def test_run_rollout_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
+    async def test_run_inference_writes_transcripts_incrementally_before_all_workers_finish(self) -> None:
         seed_rows = [
             {"type": "prompt", "seed": {"description": "slow prompt"}},
             {"type": "prompt", "seed": {"description": "fast prompt"}},
@@ -1012,17 +1012,17 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             transcripts_path = out_dir / "transcripts.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                rollout_task = asyncio.create_task(
-                    run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                inference_task = asyncio.create_task(
+                    run_inference(
                         test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
-                            rollout=RolloutConfig(concurrency=2),
+                            inference=InferenceConfig(concurrency=2),
                         ),
                         save_dir=str(out_dir),
-                        run_id="run-rollout",
+                        run_id="run-inference",
                     )
                 )
 
@@ -1039,7 +1039,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000002"])
 
                 release_slow.set()
-                await rollout_task
+                await inference_task
 
             final_rows = [
                 json.loads(line)
@@ -1048,10 +1048,10 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sorted(row["test_case_id"] for row in final_rows), ["seed_000001", "seed_000002"])
 
-    async def test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
+    async def test_run_inference_keeps_partial_successful_transcripts_when_later_worker_fails(self) -> None:
         """A per-row worker failure no longer kills the stage outright.
 
-        With the resilience fix in place, the rollout stage tolerates
+        With the resilience fix in place, the inference stage tolerates
         per-row failures so long as at least one seed produced a useful
         transcript and the failure rate is below the configured
         threshold. The successful transcript stays on disk and the
@@ -1059,7 +1059,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         Re-running the same suite picks up the failed seed via the
         existing resume logic (it never made it into transcripts.jsonl).
 
-        The ``P2M_ROLLOUT_ERROR_FAIL_RATIO`` override is needed because
+        The ``P2M_INFERENCE_ERROR_FAIL_RATIO`` override is needed because
         a 2-seed test where 1 seed fails has a 50% error rate, which
         exceeds the 10% production default. The override keeps the test
         focused on the soft-fail contract; the ratio threshold itself
@@ -1093,18 +1093,18 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             transcripts_path = out_dir / "transcripts.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
-            with patch.dict(os.environ, {"P2M_ROLLOUT_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
-                 patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                rollout_task = asyncio.create_task(
-                    run_rollout(
+            with patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
+                 patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                inference_task = asyncio.create_task(
+                    run_inference(
                         test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
-                            rollout=RolloutConfig(concurrency=2),
+                            inference=InferenceConfig(concurrency=2),
                         ),
                         save_dir=str(out_dir),
-                        run_id="run-rollout",
+                        run_id="run-inference",
                     )
                 )
 
@@ -1121,7 +1121,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([row["test_case_id"] for row in interim_rows], ["seed_000001"])
 
                 release_failure.set()
-                result = await rollout_task
+                result = await inference_task
 
             final_rows = [
                 json.loads(line)
@@ -1133,7 +1133,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["new_count"], 2)
         self.assertEqual(result["target_error_count"], 0)
 
-    async def test_run_rollout_fails_when_all_seeds_error_and_no_cache(self) -> None:
+    async def test_run_inference_fails_when_all_seeds_error_and_no_cache(self) -> None:
         """If every seed errors and nothing was previously cached, the
         stage still fails — that's a systemic problem (auth, config,
         broken target) rather than per-row noise, and silently
@@ -1153,20 +1153,20 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
-                    await run_rollout(
+                    await run_inference(
                         test_set_path=str(test_set_path),
                         target=TargetConfig(model="azure/gpt-5.4"),
                         evaluation=EvaluationConfig(
                             judge=JudgeConfig(model="azure/gpt-5.4"),
-                            rollout=RolloutConfig(concurrency=2),
+                            inference=InferenceConfig(concurrency=2),
                         ),
                         save_dir=str(out_dir),
-                        run_id="run-rollout",
+                        run_id="run-inference",
                     )
 
-    async def test_run_rollout_resumes_from_existing_transcripts(self) -> None:
+    async def test_run_inference_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated transcripts.jsonl causes completed test_set to be skipped."""
         seed_rows = [
             {"type": "prompt", "seed": {"description": "already done"}},
@@ -1195,8 +1195,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             # First run: let both test_set complete.
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                result = await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     save_dir=str(out_dir),
@@ -1207,8 +1207,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
 
             # Second run: seed_000001 and seed_000002 already exist — nothing to do.
             call_log.clear()
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                result = await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     save_dir=str(out_dir),
@@ -1217,7 +1217,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call_log, [], "No test_set should have been re-run")
             self.assertEqual(result["count"], 2)
 
-    async def test_run_rollout_discards_transcripts_on_config_change(self) -> None:
+    async def test_run_inference_discards_transcripts_on_config_change(self) -> None:
         """Changing target model invalidates existing transcripts."""
         seed_rows = [
             {"type": "prompt", "seed": {"description": "a prompt"}},
@@ -1239,8 +1239,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(seed_rows[0]) + "\n", encoding="utf-8")
 
             # First run with model A.
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-a"),
                     save_dir=str(out_dir),
@@ -1248,8 +1248,8 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             # Second run with model B — should discard and re-run.
-            with patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed):
-                result = await run_rollout(
+            with patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed):
+                result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-b"),
                     save_dir=str(out_dir),
@@ -1292,19 +1292,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
-                patch("p2m.stages.rollout._run_scenario_seed", new=fake_run_scenario_seed),
+                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
+                patch("p2m.stages.inference._run_scenario_seed", new=fake_run_scenario_seed),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(max_turns=1, concurrency=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(max_turns=1, concurrency=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-rollout",
+                    run_id="run-inference",
                 )
 
             canonical_rows = load_seeds(test_set_path)
@@ -1354,7 +1354,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             transcript = await _run_prompt_seed(
                 seed=seed_row,
                 target=TargetConfig(model="azure/gpt-5.4-mini"),
-                rollout=RolloutConfig(max_turns=1, concurrency=1),
+                inference=InferenceConfig(max_turns=1, concurrency=1),
                 max_tokens=1000,
                 config_path=None,
             )
@@ -1371,7 +1371,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             refusal_events[0].edit.message.content,
         )
 
-    async def test_run_rollout_isolates_target_input_refusal_to_one_seed(self) -> None:
+    async def test_run_inference_isolates_target_input_refusal_to_one_seed(self) -> None:
         """One target_input_refused seed must not abort the rest of the batch.
 
         End-to-end check that the target-side refusal handling produces
@@ -1427,13 +1427,13 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(HostedSession, "close", new=fake_close),
                 patch.object(HostedSession, "run_turn", new=fake_run_turn),
             ):
-                result = await run_rollout(
+                result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(concurrency=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(concurrency=1),
                     ),
                     save_dir=str(out_dir),
                     run_id="run-refusal-isolation",
@@ -1465,14 +1465,14 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 f"{completed_id} should have completed cleanly",
             )
 
-    async def test_run_rollout_isolates_auditor_input_refusal_to_one_seed(self) -> None:
-        """One auditor_input_refused seed must not abort the rest of the batch.
+    async def test_run_inference_isolates_tester_input_refusal_to_one_seed(self) -> None:
+        """One tester_input_refused seed must not abort the rest of the batch.
 
-        Absorbed from PR #44 commit f265154. The auditor's adversarial
+        Absorbed from PR #44 commit f265154. The tester's adversarial
         system prompt is exactly the kind of input Azure Prompt Shields'
-        jailbreak detector flags. The fix routes auditor-side input
+        jailbreak detector flags. The fix routes tester-side input
         errors into a recorded transcript event with
-        stop_reason='auditor_input_refused'.
+        stop_reason='tester_input_refused'.
         """
         seed_rows = [
             {
@@ -1484,7 +1484,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             }
             for i in range(5)
         ]
-        auditor_calls: list[str] = []
+        tester_calls: list[str] = []
 
         async def fake_generate(model, messages, options):
             del options
@@ -1494,7 +1494,7 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 if "scenario seed" in content:
                     description_marker = content
                     break
-            auditor_calls.append(description_marker[:120])
+            tester_calls.append(description_marker[:120])
             if "scenario seed 2" in description_marker:
                 raise LLMInputError(
                     "Bad request: AzureException BadRequestError - Invalid "
@@ -1538,19 +1538,19 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.rollout.generate", new=fake_generate),
-                patch("p2m.stages.rollout._build_target_session", return_value=FakeHostedSession()),
+                patch("p2m.stages.inference.generate", new=fake_generate),
+                patch("p2m.stages.inference._build_target_session", return_value=FakeHostedSession()),
             ):
-                result = await run_rollout(
+                result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4-mini"),
-                        rollout=RolloutConfig(max_turns=1, concurrency=1),
+                        tester=TesterConfig(model="azure/gpt-5.4-mini"),
+                        inference=InferenceConfig(max_turns=1, concurrency=1),
                     ),
                     save_dir=str(out_dir),
-                    run_id="run-auditor-refusal",
+                    run_id="run-tester-refusal",
                 )
 
             transcript_rows = [
@@ -1558,21 +1558,21 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
                 for line in (out_dir / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(len(auditor_calls), 5)
+        self.assertEqual(len(tester_calls), 5)
         self.assertEqual(len(transcript_rows), 5)
         self.assertEqual(result["new_count"], 5)
 
         by_seed = {row["test_case_id"]: row for row in transcript_rows}
         refused = by_seed["seed_000003"]
-        self.assertEqual(refused["stop_reason"], "auditor_input_refused")
+        self.assertEqual(refused["stop_reason"], "tester_input_refused")
         refusal_events = [
             event for event in refused["events"]
             if event["edit"]["type"] == "add_message"
-            and "[AUDITOR INPUT REFUSED:" in event["edit"]["message"].get("content", "")
+            and "[TESTER INPUT REFUSED:" in event["edit"]["message"].get("content", "")
         ]
         self.assertEqual(len(refusal_events), 1)
 
-    async def test_run_rollout_still_fails_fast_on_provider_5xx(self) -> None:
+    async def test_run_inference_still_fails_fast_on_provider_5xx(self) -> None:
         """LLMProviderError (Azure 5xx) is global, not seed-specific.
 
         Verifies the per-row tolerance didn't accidentally swallow
@@ -1597,32 +1597,32 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
+                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
                 self.assertRaises(LLMProviderError),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4-mini"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        auditor=AuditorConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(concurrency=1),
+                        tester=TesterConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(concurrency=1),
                     ),
                     save_dir=str(out_dir),
                     run_id="run-provider-error",
                 )
 
-    async def test_run_rollout_fails_when_untyped_error_ratio_exceeds_threshold(self) -> None:
+    async def test_run_inference_fails_when_untyped_error_ratio_exceeds_threshold(self) -> None:
         """Untyped errors above the failure threshold abort the stage.
 
         Per-row tolerance is for typed refusals (target_input_refused,
-        auditor_input_refused, target_error). When the worker hits
+        tester_input_refused, target_error). When the worker hits
         unrecognised exceptions at scale we should fail loudly because
         that's almost always a systemic problem (config bug, broken
         validation) rather than seed-specific bad luck. Default
         threshold is 10%; this test forces 50% (1/2) and asserts the
         stage raises. The companion test
-        ``test_run_rollout_keeps_partial_successful_transcripts_when_later_worker_fails``
+        ``test_run_inference_keeps_partial_successful_transcripts_when_later_worker_fails``
         covers the soft-fail path with the threshold relaxed.
         """
         seed_rows = [
@@ -1650,16 +1650,16 @@ class RolloutStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.dict(os.environ, {"P2M_ROLLOUT_ERROR_FAIL_RATIO": "0.10"}, clear=False),
-                patch("p2m.stages.rollout._run_prompt_seed", new=fake_run_prompt_seed),
+                patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.10"}, clear=False),
+                patch("p2m.stages.inference._run_prompt_seed", new=fake_run_prompt_seed),
                 self.assertRaisesRegex(RuntimeError, "worker exploded"),
             ):
-                await run_rollout(
+                await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
-                        rollout=RolloutConfig(concurrency=1),
+                        inference=InferenceConfig(concurrency=1),
                     ),
                     save_dir=str(out_dir),
                     run_id="run-error-ratio",

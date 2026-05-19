@@ -36,11 +36,11 @@ pipeline:
         temperature: 0.2
         max_tokens: 4000
       sample_size: 2
-  rollout:
+  inference:
     concurrency: 1
     target:
       connector: examples.agents.openclaw
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

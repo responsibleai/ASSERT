@@ -78,7 +78,7 @@ interface AuditMetricView {
 	dimensions: Record<string, DimensionMetrics>;
 }
 
-interface RolloutPreviewRow {
+interface InferencePreviewRow {
 	test_case_id: string;
 	behavior: string;
 	turns_count: number;
@@ -563,8 +563,8 @@ function buildAuditTranscriptsFromSnapshot(snapshot: RunSnapshot): AuditTranscri
 		.map((row) => normalizeAuditTranscript(row));
 }
 
-function buildRolloutPreviewRowsFromSnapshot(snapshot: RunSnapshot): RolloutPreviewRow[] {
-	if (snapshot.manifest?.stages?.rollout !== 'running') return [];
+function buildInferencePreviewRowsFromSnapshot(snapshot: RunSnapshot): InferencePreviewRow[] {
+	if (snapshot.manifest?.stages?.inference !== 'running') return [];
 
 	return snapshot.transcriptRows
 		.filter((row): row is UnifiedTranscriptRow => hasKind(row, 'scenario'))
@@ -601,8 +601,8 @@ function buildScenarioDrawerItem(
 				behavior: readRowBehavior(transcriptRow),
 				judge_model: '',
 				target: typeof transcriptRow.target === 'string' ? transcriptRow.target : undefined,
-				auditor_model:
-					typeof transcriptRow.auditor_model === 'string' ? transcriptRow.auditor_model : undefined,
+				tester_model:
+					typeof transcriptRow.tester_model === 'string' ? transcriptRow.tester_model : undefined,
 				verdict: null,
 				judge_status: null,
 				judge_error: null,
@@ -926,7 +926,7 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		const scenarioRows = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario'));
 		const hasData = promptRows.length > 0 || scenarioRows.length > 0;
 		const hasEvalStage =
-			runSnapshot.manifest?.stages?.rollout != null || runSnapshot.manifest?.stages?.judge != null;
+			runSnapshot.manifest?.stages?.inference != null || runSnapshot.manifest?.stages?.judge != null;
 		if (!hasData && !hasEvalStage) continue;
 		if (!hasData && runSnapshot.manifest?.status === 'failed') continue;
 		evalRunCount += 1;
@@ -1130,9 +1130,9 @@ function loadCompletedRunPageData(
 		taxonomy: normalizePolicy(suiteSnapshot?.taxonomy),
 		samples,
 		auditScores,
-		rolloutPreviewRows: [],
+		inferencePreviewRows: [],
 		scenarioDrawerItems: {},
-		rolloutPreviewTotal: scenarioSeeds.length,
+		inferencePreviewTotal: scenarioSeeds.length,
 		scenarioSeedMap: buildScenarioSeedMap(scenarioSeeds, auditRows),
 		promptSeedTitleMap: buildPromptSeedTitleMap(suiteSnapshot),
 		dimensionDefs: loadDimensions(),
@@ -1160,7 +1160,7 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 	});
 	const promptCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'prompt')).length;
 	const auditCount = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario')).length;
-	const hasAuditContent = auditCount > 0 || runSnapshot.manifest?.stages?.rollout === 'running';
+	const hasAuditContent = auditCount > 0 || runSnapshot.manifest?.stages?.inference === 'running';
 
 	if (resolvedTab === 'prompts' && promptCount === 0 && hasAuditContent) {
 		resolvedTab = 'audit';
@@ -1171,12 +1171,12 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 
 	const samples = resolvedTab === 'prompts' ? buildJudgedPromptsFromSnapshot(runSnapshot) : [];
 	const auditScores = resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [];
-	const rolloutPreviewRows =
+	const inferencePreviewRows =
 		resolvedTab === 'audit' && auditScores.length === 0
-			? buildRolloutPreviewRowsFromSnapshot(runSnapshot)
+			? buildInferencePreviewRowsFromSnapshot(runSnapshot)
 			: [];
 
-	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && rolloutPreviewRows.length === 0) {
+	if (!runSnapshot.manifest && promptCount === 0 && auditCount === 0 && inferencePreviewRows.length === 0) {
 		return null;
 	}
 
@@ -1197,9 +1197,9 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		taxonomy: normalizePolicy(suiteSnapshot?.taxonomy),
 		samples,
 		auditScores,
-		rolloutPreviewRows,
+		inferencePreviewRows,
 		scenarioDrawerItems: {},
-		rolloutPreviewTotal: scenarioSeeds.length,
+		inferencePreviewTotal: scenarioSeeds.length,
 		scenarioSeedMap,
 		promptSeedTitleMap,
 		dimensionDefs: loadDimensions(),

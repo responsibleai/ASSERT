@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from . import judge, rollout, systematize, test_set
+from . import judge, inference, systematize, test_set
 
 STAGES = {
     "systematize": systematize,
     "test_set": test_set,
-    "rollout": rollout,
+    "inference": inference,
     "judge": judge,
 }
 

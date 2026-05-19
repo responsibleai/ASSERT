@@ -26,7 +26,7 @@ and appends a single summary row (timestamp, test_set, concurrency,
 behavior_category_count, exit_code, wall_time, rate-limit cooldowns, scenarios
 scored, judge dimension rates) to `artifacts/benchmark/results.csv`.
 
-The base config is scenario-only by design — the rollout/judge
+The base config is scenario-only by design — the inference/judge
 concurrency knob is what this benchmark exists to exercise, and
 multi-turn scenarios are the heavier shape that makes that knob bite.
 `pipeline.systematize.behavior_category_count` auto-scales with `--test_set` (~10 test_set
@@ -47,7 +47,7 @@ re-running with the same parameters after a code change).
 
 ## `turn_checkpoint_judge.py`
 
-This script re-judges transcript prefixes from one completed run at fixed rollout-turn checkpoints. It reads `<run>/transcripts.jsonl`, `<run>/config.yaml`, and the suite `taxonomy.json`, then writes checkpoint artifacts under `<run>/checkpoint_judge/` by default: `checkpoint_scores.jsonl`, `checkpoint_metrics.json`, and `<dimension>_by_turn.svg`.
+This script re-judges transcript prefixes from one completed run at fixed inference-turn checkpoints. It reads `<run>/transcripts.jsonl`, `<run>/config.yaml`, and the suite `taxonomy.json`, then writes checkpoint artifacts under `<run>/checkpoint_judge/` by default: `checkpoint_scores.jsonl`, `checkpoint_metrics.json`, and `<dimension>_by_turn.svg`.
 
 ```bash
 uv run python scripts/turn_checkpoint_judge.py \
@@ -68,12 +68,12 @@ uv run python scripts/export_suite_results.py \
   --format html
 ```
 
-## `auditor_pairwise_eval.py`
+## `tester_pairwise_eval.py`
 
-This script compares two auditor rollout runs on the same suite by matching scenario `test_case_id`s and judging two separate axes for each matched pair. The primary axis is persona realism: which conversation more convincingly impersonates the seeded person on persona embodiment, style/register fidelity, persona consistency, turn-to-turn coherence, escalation plausibility, and meta-leakage risk. The second axis is auditor effectiveness: which conversation uses its turns more effectively to surface taxonomy-relevant evidence through stronger elicitation, adaptivity, evidence yield, pressure calibration, and turn efficiency. Both judge prompts are blinded to run IDs and rollout metadata, and each axis is judged twice per pair: once as A/B and once as B/A. Only pairs whose winner and per-dimension winners stay consistent after swapping are counted in the aggregate results for that axis. The script writes `pairwise_scores.jsonl`, `pairwise_metrics.json`, `pairwise_summary.md`, and a judge-written `pairwise_eval.md` under `artifacts/tmp/<suite>/pairwise/<run-a>_vs_<run-b>/` by default. In `pairwise_scores.jsonl`, realism stays at the top level and the second axis is stored under `effectiveness_*` fields. In `pairwise_metrics.json`, the aggregate effectiveness block lives under the top-level `effectiveness` key.
+This script compares two tester inference runs on the same suite by matching scenario `test_case_id`s and judging two separate axes for each matched pair. The primary axis is persona realism: which conversation more convincingly impersonates the seeded person on persona embodiment, style/register fidelity, persona consistency, turn-to-turn coherence, escalation plausibility, and meta-leakage risk. The second axis is tester effectiveness: which conversation uses its turns more effectively to surface taxonomy-relevant evidence through stronger elicitation, adaptivity, evidence yield, pressure calibration, and turn efficiency. Both judge prompts are blinded to run IDs and inference metadata, and each axis is judged twice per pair: once as A/B and once as B/A. Only pairs whose winner and per-dimension winners stay consistent after swapping are counted in the aggregate results for that axis. The script writes `pairwise_scores.jsonl`, `pairwise_metrics.json`, `pairwise_summary.md`, and a judge-written `pairwise_eval.md` under `artifacts/tmp/<suite>/pairwise/<run-a>_vs_<run-b>/` by default. In `pairwise_scores.jsonl`, realism stays at the top level and the second axis is stored under `effectiveness_*` fields. In `pairwise_metrics.json`, the aggregate effectiveness block lives under the top-level `effectiveness` key.
 
 ```bash
-uv run python scripts/auditor_pairwise_eval.py \
+uv run python scripts/tester_pairwise_eval.py \
   --run-a artifacts/results/<suite>/<run-a> \
   --run-b artifacts/results/<suite>/<run-b> \
   --judge-model azure/gpt-5.4
@@ -81,7 +81,7 @@ uv run python scripts/auditor_pairwise_eval.py \
 
 ## `scenario_failure_prediction.py`
 
-This script predicts taxonomy violations from scenario metadata before running conversations. It runs four stages: (0) per-test-case failure-rate distribution, (1) baselines (global rate, behavior rate, embedding nearest neighbor, logistic regression on embeddings), (2) zero-shot LLM forecaster with field ablations, (3) retrieval-augmented LLM forecaster. It also runs two robustness checks: within-behavior discrimination and auditor transfer. The script auto-detects the primary auditor (most common across runs) and uses the remaining runs for the transfer check. Intermediate results (embeddings, predictions) are cached under the output directory, so re-runs with `--skip-api` reuse them.
+This script predicts taxonomy violations from scenario metadata before running conversations. It runs four stages: (0) per-test-case failure-rate distribution, (1) baselines (global rate, behavior rate, embedding nearest neighbor, logistic regression on embeddings), (2) zero-shot LLM forecaster with field ablations, (3) retrieval-augmented LLM forecaster. It also runs two robustness checks: within-behavior discrimination and tester transfer. The script auto-detects the primary tester (most common across runs) and uses the remaining runs for the transfer check. Intermediate results (embeddings, predictions) are cached under the output directory, so re-runs with `--skip-api` reuse them.
 
 ```bash
 uv run python scripts/scenario_failure_prediction.py \
@@ -91,7 +91,7 @@ uv run python scripts/scenario_failure_prediction.py \
 
 ## `run_pairwise_expansion.sh`
 
-Shell script that runs `auditor_pairwise_eval.py` for new auditor comparisons (GPT-5.4-mini and GPT-5.4-nano) against GPT-5.4 and GPT-5-railfree, across all 9 judge models. Skips comparisons whose output directory already exists. Requires all four auditor runs to be complete (checks for `metrics.json`).
+Shell script that runs `tester_pairwise_eval.py` for new tester comparisons (GPT-5.4-mini and GPT-5.4-nano) against GPT-5.4 and GPT-5-railfree, across all 9 judge models. Skips comparisons whose output directory already exists. Requires all four tester runs to be complete (checks for `metrics.json`).
 
 ```bash
 bash scripts/run_pairwise_expansion.sh

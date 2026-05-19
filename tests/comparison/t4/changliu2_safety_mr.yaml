@@ -44,7 +44,7 @@ pipeline:
         temperature: 0.2
         max_tokens: 4000
       sample_size: 50
-  rollout:
+  inference:
     concurrency: 3
     target:
       model:
@@ -57,7 +57,7 @@ pipeline:
       tools:
         toolset: tests/comparison/fair/travel_tools.yaml
         simulator: azure/gpt-5.4-mini
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

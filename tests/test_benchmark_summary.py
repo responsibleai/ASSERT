@@ -57,7 +57,7 @@ def _scenario_score_row(
 
     Requirements for the row to be classified as a *successful scenario*:
 
-    * ``auditor_model`` non-empty (so ``load_run_summary`` puts it in
+    * ``tester_model`` non-empty (so ``load_run_summary`` puts it in
       ``scenario_rows`` rather than ``prompt_rows``).
     * ``judge_status='ok'`` and ``verdict.node_judgments`` is a list, so
       :func:`infer_judge_status` returns ``'ok'``.
@@ -71,7 +71,7 @@ def _scenario_score_row(
         "behavior": "behavior",
         "target": "target-model",
         "judge_model": "judge-model",
-        "auditor_model": "auditor-model",
+        "tester_model": "tester-model",
         "judge_status": "ok",
         "verdict": {
             "node_judgments": [{"node": "behavior-1"}],

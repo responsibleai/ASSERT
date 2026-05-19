@@ -310,11 +310,11 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         ),
         None,
     ) or "-"
-    auditor_model = next(
+    tester_model = next(
         (
-            row.get("auditor_model")
+            row.get("tester_model")
             for row in rows
-            if isinstance(row.get("auditor_model"), str) and row.get("auditor_model")
+            if isinstance(row.get("tester_model"), str) and row.get("tester_model")
         ),
         None,
     ) or "-"
@@ -335,7 +335,7 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal") or 0.0,
         "dimensions": dimensions,
         "target": target,
-        "auditor_model": auditor_model,
+        "tester_model": tester_model,
         "judge_model": judge_model,
     }
 
@@ -343,8 +343,8 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    prompt_rows = [row for row in score_rows if not row.get("auditor_model")]
-    scenario_rows = [row for row in score_rows if row.get("auditor_model")]
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
     stages = (manifest or {}).get("stages", {})
     has_scores = isinstance(stages, dict) and stages.get("judge") is not None
@@ -813,7 +813,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
         table.add_row("Target", str(scenario_metrics.get("target") or "-"))
-        table.add_row("Auditor Model", str(scenario_metrics.get("auditor_model") or "-"))
+        table.add_row("Tester Model", str(scenario_metrics.get("tester_model") or "-"))
         table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
@@ -1297,7 +1297,7 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
     analyze_taxonomies.plot_dimensions(df, out_dir)
 
 
-@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running rollout")
+@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running inference")
 @click.option(
     "--traces",
     required=True,
@@ -1314,7 +1314,7 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
 @click.option("--group-by", default="session.id", show_default=True, help="OTel attribute to group spans by")
 @click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
 def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
-    """Judge pre-collected OTel traces without running rollout."""
+    """Judge pre-collected OTel traces without running inference."""
     from p2m.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")

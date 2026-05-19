@@ -36,7 +36,7 @@ class CliTest(unittest.TestCase):
     def test_stage_and_from_are_mutually_exclusive(self) -> None:
         with self.runner.isolated_filesystem():
             Path("eval.yaml").write_text("suite: test\nstages: []\n", encoding="utf-8")
-            result = self.runner.invoke(cli, ["run", "--stage", "judge", "--from", "rollout"])
+            result = self.runner.invoke(cli, ["run", "--stage", "judge", "--from", "inference"])
 
         self.assertEqual(result.exit_code, 1)
         self.assertIn("--stage and --from cannot be used together.", result.output)
@@ -56,7 +56,7 @@ class CliTest(unittest.TestCase):
                         "--stage",
                         "judge",
                         "--stage",
-                        "rollout",
+                        "inference",
                         "--force-stage",
                         "judge",
                         "--resume",
@@ -69,7 +69,7 @@ class CliTest(unittest.TestCase):
             {
                 "config": resolved_config,
                 "force_stages": ["judge"],
-                "stage_filter": ["judge", "rollout"],
+                "stage_filter": ["judge", "inference"],
                 "from_stage": None,
                 "resume": True,
             },

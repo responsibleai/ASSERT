@@ -28,7 +28,7 @@ def transcript_from_row(row: dict) -> Transcript:
             test_case_id=str(row.get("test_case_id") or ""),
             behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
+            tester_model=str(row.get("tester_model") or ""),
             dimensions=row_factors(row),
         ),
         events=[
@@ -52,10 +52,10 @@ class JudgeRunConfig:
 RESULTS_BASE = Path("artifacts/results/relationship-entanglement-v1")
 
 RUN_DIRS = [
-    "gpt54-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54mini-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54nano-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt5rrf0726-auditor_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54mini-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54nano-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt5rrf0726-tester_gpt54nano-target_gpt54-judge_30turns",
 ]
 
 JUDGE_DIMENSIONS = ["harm_actionability", "overrefusal"]
@@ -123,7 +123,7 @@ async def score_transcripts(
                 "test_case_id": row.get("test_case_id", ""),
                 "behavior": row.get("behavior", ""),
                 "target": row.get("target", ""),
-                "auditor_model": row.get("auditor_model", ""),
+                "tester_model": row.get("tester_model", ""),
                 "judge_model": config.judge_model,
                 "judge_temperature": config.temperature,
                 "judge_n": config.judge_n,

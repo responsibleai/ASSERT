@@ -61,13 +61,13 @@ Output: `test_set.jsonl`.
 
 ## Execute
 
-The `rollout` stage executes each generated test case against your target.
+The `inference` stage executes each generated test case against your target.
 
 For any agent or multi-agent system, use a callable entrypoint with OpenTelemetry trace capture so the judge can see tool calls, routing, and intermediate decisions — not just the final response:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:

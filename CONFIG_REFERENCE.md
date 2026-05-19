@@ -1,6 +1,6 @@
 # Adaptive Eval config reference
 
-This page documents the customer-preview `eval.yaml` schema for the standard `behavior -> systematize -> test_set -> rollout -> judge` pipeline.
+This page documents the customer-preview `eval.yaml` schema for the standard `behavior -> systematize -> test_set -> inference -> judge` pipeline.
 
 ## File layout
 
@@ -64,8 +64,8 @@ The fallback applies to:
 - `pipeline.systematize.model`
 - `pipeline.test_set.model`
 - `pipeline.test_set.stratify.model`
-- `pipeline.rollout.target.model` when the target is a hosted model
-- `pipeline.rollout.auditor.model`
+- `pipeline.inference.target.model` when the target is a hosted model
+- `pipeline.inference.tester.model`
 - `pipeline.judge.model`
 
 `pipeline.test_set.prompt.model` and `pipeline.test_set.scenario.model` still fall back through `pipeline.test_set.model` before `default_model`.
@@ -75,7 +75,7 @@ The fallback applies to:
 - Type: mapping
 - Required: yes
 
-`pipeline` maps stage names to stage configs. Supported stages are `systematize`, `test_set`, `rollout`, and `judge`. The runner executes them in that order, not in YAML insertion order.
+`pipeline` maps stage names to stage configs. Supported stages are `systematize`, `test_set`, `inference`, and `judge`. The runner executes them in that order, not in YAML insertion order.
 
 ## Pipeline stages
 
@@ -124,7 +124,7 @@ Accepted keys:
 
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `test_set.prompt.model`, then `test_set.model`, then `default_model`. Scenario generation uses the same order with `test_set.scenario.model` first. Stratify generation uses `test_set.stratify.model`, then `test_set.model`, then `default_model`.
 
-`tool_source: per_seed` requires `pipeline.rollout.target.model` and `pipeline.rollout.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
+`tool_source: per_seed` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
 
 Example:
 
@@ -144,13 +144,13 @@ pipeline:
         max_tokens: 3000
 ```
 
-### `rollout`
+### `inference`
 
-`rollout` runs the target on the generated test_set and writes `transcripts.jsonl`.
+`inference` runs the target on the generated test_set and writes `transcripts.jsonl`.
 
 Accepted keys:
 
-- `target` — mapping. Required when `rollout` is enabled.
+- `target` — mapping. Required when `inference` is enabled.
   - `model` — model config. Use for the [Prompt Agent target](docs/targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop).
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
   - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
@@ -162,7 +162,7 @@ Accepted keys:
     - `module` — string. Use a Python tool backend module.
     - `toolset` — string. Use a toolset file.
     - `simulator` — string. Use a tool simulator.
-- `auditor` — mapping. Optional.
+- `tester` — mapping. Optional.
   - `model` — model config. Optional when `default_model` is set.
 - `max_turns` — positive integer. Default: `10`.
 - `concurrency` — positive integer. Default: `10`.
@@ -174,13 +174,13 @@ Callable agent example with optional OTel trace capture:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:
         backend: phoenix
         group_by: session.id
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         max_tokens: 10000
@@ -192,7 +192,7 @@ Hosted model with simulated tools example:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -205,7 +205,7 @@ pipeline:
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
         simulator: azure/gpt-5.4-mini
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         max_tokens: 10000
@@ -349,8 +349,8 @@ Defaults depend on the stage that reads the model:
 - `systematize.model` — `temperature: null`, `max_tokens: 10000`
 - `test_set.stratify.model` — `temperature: null`; `max_tokens` is accepted but ignored by the current implementation
 - `test_set.prompt.model` and `test_set.scenario.model` — `temperature: null`, `max_tokens: 3000`
-- `rollout.target.model` — `temperature: null`, `max_tokens: 10000`
-- `rollout.auditor.model` — `temperature: null`, `max_tokens: 10000`
+- `inference.target.model` — `temperature: null`, `max_tokens: 10000`
+- `inference.tester.model` — `temperature: null`, `max_tokens: 10000`
 - `judge.model` — `temperature: null`, `max_tokens: 12000`
 
 `default_model` supplies a whole missing model mapping. It does not fill missing subfields inside a stage model.
@@ -393,7 +393,7 @@ pipeline:
   test_set:
     prompt:
       sample_size: 10
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -402,7 +402,7 @@ pipeline:
   judge: {}
 ```
 
-`target.tools` is valid only with `target.model`. It may define `module`, `toolset + simulator`, or `simulator` alone. `toolset` requires `simulator`. If you omit `target.system_prompt`, rollout uses each test case's `system_prompt` when present. Scenario test cases require `auditor`. Prompt test cases do not.
+`target.tools` is valid only with `target.model`. It may define `module`, `toolset + simulator`, or `simulator` alone. `toolset` requires `simulator`. If you omit `target.system_prompt`, inference uses each test case's `system_prompt` when present. Scenario test cases require `tester`. Prompt test cases do not.
 
 ### With explicit dimensions
 
@@ -442,7 +442,7 @@ pipeline:
               definition: The user asks whether symptoms require urgent care.
     prompt:
       sample_size: 10
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
@@ -484,13 +484,13 @@ pipeline:
       sample_size: 10
     scenario:
       sample_size: 5
-  rollout:
+  inference:
     target:
       model:
         name: azure/gpt-5.4-mini
       system_prompt: |
         You are a health assistant.
-    auditor: {}
+    tester: {}
     max_turns: 10
   judge:
     n: 3

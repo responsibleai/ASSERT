@@ -337,7 +337,7 @@
 	}
 
 	function fallbackTurnLabel(messages: InteractionMessage[], messageIndex: number): number {
-		// Mirrors the materializer: only auditor (user) and target (assistant)
+		// Mirrors the materializer: only tester (user) and target (assistant)
 		// emit turns. Tool calls and tool messages inherit the surrounding
 		// assistant turn — they don't get their own number, but they DO show
 		// the assistant's turn label so the viewer can group them under it.
@@ -444,14 +444,14 @@
 			buttonTitle: 'View stored event debug payload',
 			panelTitle: 'Stored event debug payload',
 			description:
-				'This is transcript event debug data captured during rollout. For external connectors it may be the only payload available.',
+				'This is transcript event debug data captured during inference. For external connectors it may be the only payload available.',
 			payload: raw
 		};
 	}
 
 	function llmSourceLabel(source: string): string {
 		if (source === 'target') return 'Target model';
-		if (source === 'auditor') return 'Auditor model';
+		if (source === 'tester') return 'Tester model';
 		if (source === 'tool_simulator') return 'Tool simulator';
 		return source || 'LLM';
 	}
@@ -880,7 +880,7 @@
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Unjudged preview</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This conversation finished rollout and is available for inspection, but the judge has not scored it yet.
+							This conversation finished inference and is available for inspection, but the judge has not scored it yet.
 						</p>
 					</div>
 				{/if}
@@ -1271,7 +1271,7 @@
 							</div>
 							<div class="{isUser ? 'max-w-[85%]' : 'w-[85%]'} rounded-lg {isUser ? 'bg-interactive/8' : 'bg-surface-2'} {isHighlighted ? 'ring-2 ring-interactive bg-interactive/12' : ''} overflow-hidden">
 								<div class="flex items-center gap-2 px-4 pt-3 pb-1.5">
-									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Auditor') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Tester') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if regularAgentBadge}
 										<span
 											class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text-muted"

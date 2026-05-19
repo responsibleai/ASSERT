@@ -5,7 +5,7 @@ outputs into versioned directories under ``<suite>/artifacts/<stage>/v0001``,
 ``v0002``, ... Each version directory holds its data files alongside a
 ``artifact.json`` sidecar with a stable input hash. A ``<suite>/latest.json``
 pointer records the most recently selected version per stage so that
-run-only configs (rollout/judge) can pick up the right inputs without
+run-only configs (inference/judge) can pick up the right inputs without
 regenerating upstream artifacts.
 
 Reuse contract:
@@ -17,7 +17,7 @@ Reuse contract:
   the next ``v####`` directory is allocated.
 * ``finalize_artifact_plan`` writes the sidecar, refreshes ``latest.json``,
   and copies primary outputs back to the suite root for legacy readers.
-* Run-scoped stages (rollout, judge) consume the activated ref via
+* Run-scoped stages (inference, judge) consume the activated ref via
   ``ctx["artifact_versions"]`` and never get their own version directory;
   they simply record which test set artifact version they ran against.
 

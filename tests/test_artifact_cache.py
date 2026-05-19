@@ -395,12 +395,12 @@ class ArtifactCacheTest(unittest.TestCase):
         from p2m.core.artifact_cache import ArtifactPlan, ArtifactFingerprint
 
         plan = ArtifactPlan(
-            stage_name="rollout",
+            stage_name="inference",
             version="v0001",
             artifact_dir=Path("/tmp"),
             output_paths={},
             fingerprint=ArtifactFingerprint(
-                stage_name="rollout",
+                stage_name="inference",
                 concept_hash=None,
                 config_hash="x",
                 input_hash="y",
@@ -408,7 +408,7 @@ class ArtifactCacheTest(unittest.TestCase):
             ),
             reused=False,
         )
-        result = override_cacheable_output_paths("rollout", raw_cfg, plan)
+        result = override_cacheable_output_paths("inference", raw_cfg, plan)
         self.assertIs(result, raw_cfg)
 
     def test_override_cacheable_output_paths_warns_when_user_save_dir_overridden(

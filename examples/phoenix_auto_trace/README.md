@@ -94,7 +94,7 @@ All of these can be evaluated by Adaptive Eval with the same config:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.phoenix_auto_trace.travel_openai:chat
       trace:

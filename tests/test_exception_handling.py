@@ -126,7 +126,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         """User callables (LangGraph, agent frameworks, raw litellm) bypass
         ``generate()``/``_with_retries`` and so emit unclassified provider
         errors. ``CallableSession.run_turn`` must re-classify them so the
-        rollout stage's per-seed isolation paths can route content-filter
+        inference stage's per-seed isolation paths can route content-filter
         rejections to a recorded transcript event instead of aborting the
         whole batch.
         """
@@ -278,25 +278,25 @@ class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Invalid JSON", str(ctx.exception))
 
 
-# ── stages/rollout.py worker logging ───────────────────────────
+# ── stages/inference.py worker logging ───────────────────────────
 
-class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
+class InferenceWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
     async def test_worker_logs_debug_on_runtime_failure(self) -> None:
-        """Verify that the rollout worker logs debug info when a runtime error occurs."""
+        """Verify that the inference worker logs debug info when a runtime error occurs."""
         from p2m.core.config_model import (
-            AuditorConfig,
+            TesterConfig,
             EvaluationConfig,
             JudgeConfig,
-            RolloutConfig,
+            InferenceConfig,
             TargetConfig,
         )
-        from p2m.stages.rollout import run_rollout
+        from p2m.stages.inference import run_inference
 
         target = TargetConfig(model="azure/gpt-5.4")
         evaluation = EvaluationConfig(
-            rollout=RolloutConfig(max_turns=1, concurrency=1),
+            inference=InferenceConfig(max_turns=1, concurrency=1),
             judge=JudgeConfig(model="azure/gpt-5.4"),
-            auditor=AuditorConfig(model="azure/gpt-5.4"),
+            tester=TesterConfig(model="azure/gpt-5.4"),
         )
 
         with TemporaryDirectory() as tmp_dir:
@@ -323,13 +323,13 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch(
-                    "p2m.stages.rollout._build_target_session",
+                    "p2m.stages.inference._build_target_session",
                     return_value=mock_runtime,
                 ),
-                self.assertLogs("p2m.stages.rollout", level="DEBUG") as log_cm,
+                self.assertLogs("p2m.stages.inference", level="DEBUG") as log_cm,
             ):
                 with self.assertRaises(ConnectionError):
-                    await run_rollout(
+                    await run_inference(
                         test_set_path=str(test_set_path),
                         save_dir=tmp_dir,
                         run_id="test-run",
@@ -338,7 +338,7 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
                         config_path=str(test_set_path),
                     )
 
-            debug_messages = [r for r in log_cm.output if "Rollout worker" in r]
+            debug_messages = [r for r in log_cm.output if "Inference worker" in r]
             self.assertTrue(len(debug_messages) > 0, "Expected debug log for worker failure")
             self.assertIn("seed_000001", debug_messages[0])
             self.assertIn("simulated network failure", debug_messages[0])

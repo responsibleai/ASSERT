@@ -18,7 +18,7 @@ class RuntimeContextTest(unittest.TestCase):
                 "behavior": {"name": "harmful_medical_advice"},
                 "pipeline": {
                     "test_set": {"prompt": {"model": {"name": "azure/gpt-5.4"}}},
-                    "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
+                    "inference": {"target": {"model": {"name": "azure/gpt-5.4"}}},
                     "judge": {"model": {"name": "azure/gpt-5.4"}},
                 },
             },
@@ -29,14 +29,14 @@ class RuntimeContextTest(unittest.TestCase):
         self.assertEqual(context["target"].model.name, "azure/gpt-5.4")
         self.assertEqual(context["run_id"], "run-a")
 
-    def test_load_runtime_context_rejects_missing_rollout_target(self) -> None:
-        with self.assertRaisesRegex(ConfigError, "pipeline.rollout.target is required"):
+    def test_load_runtime_context_rejects_missing_inference_target(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "pipeline.inference.target is required"):
             load_runtime_context(
                 {
                     "suite": "suite-a",
                     "behavior": {"name": "harmful_medical_advice"},
                     "pipeline": {
-                        "rollout": {"test_set_path": "test_set.jsonl"},
+                        "inference": {"test_set_path": "test_set.jsonl"},
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
@@ -47,10 +47,6 @@ class RuntimeContextTest(unittest.TestCase):
     def test_load_runtime_context_allows_disabled_stage_family(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             cfg_path = Path(tmp_dir) / "config.yaml"
-            (cfg_path.parent / "behavior.md").write_text(
-                "Help with harmful medical advice.",
-                encoding="utf-8",
-            )
             context = load_runtime_context(
                 {
                     "suite": "suite-a",
@@ -69,12 +65,12 @@ class RuntimeContextTest(unittest.TestCase):
                 ["systematize", "test_set"],
             )
 
-    def test_load_runtime_context_allows_disabled_rollout_without_target(self) -> None:
+    def test_load_runtime_context_allows_disabled_inference_without_target(self) -> None:
         context = load_runtime_context(
             {
                 "suite": "suite-a",
                 "pipeline": {
-                    "rollout": {"enabled": False, "test_set_path": "test_set.jsonl"},
+                    "inference": {"enabled": False, "test_set_path": "test_set.jsonl"},
                 },
             },
             Path("examples/pipes/health_assistant.yaml"),
@@ -106,7 +102,7 @@ class IdentifierValidationTest(unittest.TestCase):
     _BASE_CONFIG = {
         "behavior": {"name": "harmful_medical_advice"},
         "pipeline": {
-            "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
+            "inference": {"target": {"model": {"name": "azure/gpt-5.4"}}},
             "judge": {"model": {"name": "azure/gpt-5.4"}},
         },
     }
@@ -152,7 +148,7 @@ class IdentifierValidationTest(unittest.TestCase):
                     "run_id": "run-a",
                     "behavior": {"name": "harmful_medical_advice"},
                     "pipeline": {
-                        "rollout": {"target": {"model": {"name": "azure/gpt-5.4"}}},
+                        "inference": {"target": {"model": {"name": "azure/gpt-5.4"}}},
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
@@ -207,7 +203,6 @@ class RunnerManifestTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
@@ -274,7 +269,6 @@ class RunnerManifestTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
 
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"

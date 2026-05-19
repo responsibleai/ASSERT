@@ -49,14 +49,14 @@ pipeline:
         name: azure/gpt-5.4-mini
         temperature: 0.2
       sample_size: 3
-  rollout:
+  inference:
     concurrency: 1
     target:
       callable: examples.phoenix_auto_trace.travel_litellm:chat
       trace:
         backend: phoenix
         group_by: session.id
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

@@ -19,7 +19,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
         run_id: str | None = None,
         design_level_count: int = 3,
         prompt_sample_size: int = 1,
-        include_rollout: bool = False,
+        include_inference: bool = False,
         include_upstream: bool = True,
     ) -> dict[str, Any]:
         config_path = root / "config.yaml"
@@ -44,8 +44,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                     ),
                 ]
             )
-        if include_rollout:
-            stages.append(("rollout", {}))
+        if include_inference:
+            stages.append(("inference", {}))
         return {
             "config_path": config_path,
             "artifacts_root": root / "artifacts",
@@ -88,8 +88,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             )
             return {"design_path": ctx["design_path"], "test_set_path": ctx["test_set_path"]}
 
-        async def rollout(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
-            seen.append(f"rollout:{Path(ctx['test_set_path']).parent.name}")
+        async def inference(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
+            seen.append(f"inference:{Path(ctx['test_set_path']).parent.name}")
             run_root = Path(ctx["run_root"])
             run_root.mkdir(parents=True, exist_ok=True)
             transcripts = run_root / "transcripts.jsonl"
@@ -99,7 +99,7 @@ class RunnerArtifactCacheTest(unittest.TestCase):
         return {
             "systematize": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=systematize),
             "test_set": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="test_set.jsonl", run=test_set),
-            "rollout": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=rollout),
+            "inference": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=inference),
         }
 
     def _run_with_contexts(
@@ -239,20 +239,20 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                     msg=f"reuse path failed to restore compatibility {filename}",
                 )
 
-    def test_rollout_records_test_set_artifact_version_and_runs_per_run(self) -> None:
+    def test_inference_records_test_set_artifact_version_and_runs_per_run(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             seen: list[str] = []
             codes = self._run_with_contexts(
                 [
-                    self._ctx(root, run_id="run-a", include_rollout=True),
-                    self._ctx(root, run_id="run-b", include_rollout=True),
+                    self._ctx(root, run_id="run-a", include_inference=True),
+                    self._ctx(root, run_id="run-b", include_inference=True),
                 ],
                 seen,
             )
 
             self.assertEqual(codes, [0, 0])
-            self.assertEqual(seen, ["systematize", "test_set", "rollout:v0001", "rollout:v0001"])
+            self.assertEqual(seen, ["systematize", "test_set", "inference:v0001", "inference:v0001"])
             manifest = json.loads(
                 (root / "results" / "suite-a" / "run-b" / "manifest.json").read_text(encoding="utf-8")
             )
@@ -264,20 +264,20 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertNotIn("relative_path", manifest["artifact_versions"]["test_set"])
             self.assertNotIn("relative_metadata_path", manifest["artifact_versions"]["test_set"])
 
-    def test_rollout_only_config_uses_latest_test_set_artifact_version(self) -> None:
+    def test_inference_only_config_uses_latest_test_set_artifact_version(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             seen: list[str] = []
             codes = self._run_with_contexts(
                 [
-                    self._ctx(root, run_id="run-a", include_rollout=True),
-                    self._ctx(root, run_id="run-b", include_rollout=True, include_upstream=False),
+                    self._ctx(root, run_id="run-a", include_inference=True),
+                    self._ctx(root, run_id="run-b", include_inference=True, include_upstream=False),
                 ],
                 seen,
             )
 
             self.assertEqual(codes, [0, 0])
-            self.assertEqual(seen, ["systematize", "test_set", "rollout:v0001", "rollout:v0001"])
+            self.assertEqual(seen, ["systematize", "test_set", "inference:v0001", "inference:v0001"])
             manifest = json.loads(
                 (root / "results" / "suite-a" / "run-b" / "manifest.json").read_text(encoding="utf-8")
             )

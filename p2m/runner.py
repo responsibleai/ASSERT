@@ -190,18 +190,18 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         seed_models.discard("")
         model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
         log.info(f"{tag} Generating test cases{detail}{model_suffix}...")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         target = ctx.get("target")
         target_name = ""
         if target and target.model:
             target_name = target.model.name or ""
         if target and target.callable:
             target_name = target.callable or target_name
-        auditor_name = ""
-        if isinstance(raw_cfg.get("auditor"), dict) and isinstance(raw_cfg["auditor"].get("model"), dict):
-            auditor_name = raw_cfg["auditor"]["model"].get("name", "")
-        if auditor_name and target_name:
-            log.info(f"{tag} Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
+        tester_name = ""
+        if isinstance(raw_cfg.get("tester"), dict) and isinstance(raw_cfg["tester"].get("model"), dict):
+            tester_name = raw_cfg["tester"]["model"].get("name", "")
+        if tester_name and target_name:
+            log.info(f"{tag} Running test cases (tester: {tester_name} \u2192 target: {target_name})...")
         elif target_name:
             log.info(f"{tag} Running test cases against target ({target_name})...")
         else:
@@ -335,7 +335,7 @@ def _print_stage_done(
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
         log.info(f"{tag} \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s){suffix}")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
         new = s.get("new_count", count)
@@ -345,7 +345,7 @@ def _print_stage_done(
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        log.info(f"{tag} \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s){suffix}")
+        log.info(f"{tag} \u2713 Completed {count} inferences{extra} ({elapsed:.1f}s){suffix}")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -427,7 +427,7 @@ def run_pipeline(
 
     # Cascade: forcing an upstream stage logically invalidates every stage
     # downstream of it. Without this, `--force-stage test_set` regenerates test_set
-    # but rollout silently keeps the old transcripts (its resume cache keys on
+    # but inference silently keeps the old transcripts (its resume cache keys on
     # test_case_id, and test case ids are deterministic so they collide with the prior
     # run's content). Same hazard for judge against scores.jsonl. Computing
     # the closure here keeps the workflow `--force-stage <upstream>` honest
@@ -524,7 +524,7 @@ def run_pipeline(
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
         # Pass the per-stage "was this forced" flag through ctx so stages
-        # like rollout/judge can distinguish a real cache-mismatch warning
+        # like inference/judge can distinguish a real cache-mismatch warning
         # from a redundant one (the user already opted into discarding via
         # --force-stage, possibly via cascade). Stages that don't read
         # _stage_forced ignore it.

@@ -16,11 +16,11 @@ DEFAULT_SYSTEMATIZATION_MAX_TOKENS = None  # uncapped; model uses its own limit
 DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE = None
 DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS = None  # uncapped; model uses its own limit
 
-DEFAULT_ROLLOUT_MAX_TOOL_CALLS = 10
-DEFAULT_ROLLOUT_TEMPERATURE = None
-DEFAULT_ROLLOUT_MAX_TOKENS = 10000
-DEFAULT_ROLLOUT_CONCURRENCY = 10
-DEFAULT_AUDITOR_MAX_TURNS = 10
+DEFAULT_INFERENCE_MAX_TOOL_CALLS = 10
+DEFAULT_INFERENCE_TEMPERATURE = None
+DEFAULT_INFERENCE_MAX_TOKENS = 10000
+DEFAULT_INFERENCE_CONCURRENCY = 10
+DEFAULT_TESTER_MAX_TURNS = 10
 DEFAULT_JUDGE_TEMPERATURE = None
 DEFAULT_JUDGE_MAX_TOKENS = 12000
 DEFAULT_MODEL_TIMEOUT_S = 300.0  # 5 minutes per API call
@@ -150,28 +150,30 @@ class TargetConfig:
 
 
 @dataclass
-class RolloutConfig:
-    max_tool_calls: int = DEFAULT_ROLLOUT_MAX_TOOL_CALLS
-    max_turns: int = DEFAULT_AUDITOR_MAX_TURNS
+class InferenceConfig:
+    max_tool_calls: int = DEFAULT_INFERENCE_MAX_TOOL_CALLS
+    max_turns: int = DEFAULT_TESTER_MAX_TURNS
     tool_timeout_s: float | None = None
     startup_timeout_s: float | None = None
-    concurrency: int = DEFAULT_ROLLOUT_CONCURRENCY
+    concurrency: int = DEFAULT_INFERENCE_CONCURRENCY
 
     def __post_init__(self) -> None:
         if self.max_tool_calls <= 0:
-            raise ValueError("rollout.max_tool_calls must be > 0")
+            raise ValueError("inference.max_tool_calls must be > 0")
         if self.max_turns <= 0:
-            raise ValueError("rollout.max_turns must be > 0")
+            raise ValueError("inference.max_turns must be > 0")
         if self.concurrency <= 0:
-            raise ValueError("rollout.concurrency must be > 0")
+            raise ValueError("inference.concurrency must be > 0")
         if self.tool_timeout_s is not None and self.tool_timeout_s <= 0:
-            raise ValueError("rollout.tool_timeout_s must be > 0")
+            raise ValueError("inference.tool_timeout_s must be > 0")
         if self.startup_timeout_s is not None and self.startup_timeout_s <= 0:
-            raise ValueError("rollout.startup_timeout_s must be > 0")
+            raise ValueError("inference.startup_timeout_s must be > 0")
 
 
 @dataclass
-class AuditorConfig:
+class TesterConfig:
+    __test__ = False
+
     model: ModelConfig | str
 
     def __post_init__(self) -> None:
@@ -200,8 +202,8 @@ class JudgeConfig:
 @dataclass
 class EvaluationConfig:
     judge: JudgeConfig | None = None
-    auditor: AuditorConfig | None = None
-    rollout: RolloutConfig = field(default_factory=RolloutConfig)
+    tester: TesterConfig | None = None
+    inference: InferenceConfig = field(default_factory=InferenceConfig)
 
 
 @dataclass

@@ -26,7 +26,7 @@ The viewer does not implement authentication. If you need access control, put it
 - **Prompt browser** — individual single-turn test cases, model responses, and per-case event flags
 - **Scenario browser** — full multi-turn conversation transcripts with per-node taxonomy judgments
 - **Dimension breakdown** — per-dimension-level rate tables and filter dropdowns on runs with design dimensions
-- **Rollout preview** — transcript-only scenario preview on the run page while rollout is still running
+- **Inference preview** — transcript-only scenario preview on the run page while inference is still running
 - **Run monitor** — read-only polling view over `manifest.json` for in-progress runs
 
 The viewer reads from the filesystem on each request. There is no database, authentication, login flow, or run-launch UI.
@@ -58,11 +58,11 @@ artifacts/results/<suite>/
     ├── viewer_run_manifest.json        # completed judged runs
     ├── viewer_prompt_rows.json         # completed judged runs
     ├── viewer_audit_rows.json          # completed judged runs
-    ├── viewer_transcript_index.json    # completed rollouts
+    ├── viewer_transcript_index.json    # completed inferences
     └── viewer_score_index.json         # completed judged runs
 ```
 
-Missing files that reflect incomplete runs are handled where expected. Invalid JSON, JSONL, or YAML is treated as an artifact error and should be fixed or re-generated. The one exception is a live `transcripts.jsonl` file while `manifest.stages.rollout === "running"`: the viewer tolerates one malformed final segment without a terminating newline so it can read rows that were fully written before the current append finished.
+Missing files that reflect incomplete runs are handled where expected. Invalid JSON, JSONL, or YAML is treated as an artifact error and should be fixed or re-generated. The one exception is a live `transcripts.jsonl` file while `manifest.stages.inference === "running"`: the viewer tolerates one malformed final segment without a terminating newline so it can read rows that were fully written before the current append finished.
 
 Completed judged runs are served from the run-level viewer read model, not by scanning canonical JSONL files on each request. If `viewer_run_manifest.json` is missing or stale, the viewer fails closed. Rebuild the read model by re-running judge for that run:
 

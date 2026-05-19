@@ -540,7 +540,7 @@ class SeedsStageTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_seeds_keeps_partial_records_when_one_batch_errors(self) -> None:
         """A failed batch must not discard records produced by sibling batches.
 
-        Mirrors the resilience contract used by judge & rollout: per-row
+        Mirrors the resilience contract used by judge & inference: per-row
         failures are tolerated and surfaced via ``errored_count``; the
         stage only fails outright when every batch failed.
         """

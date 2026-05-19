@@ -10,9 +10,6 @@ from p2m.runner import run_pipeline
 
 
 class RunnerProgressTest(unittest.TestCase):
-    def _write_concept_markdown(self, root: Path) -> None:
-        (root / "behavior.md").write_text("Help with harmful medical advice.", encoding="utf-8")
-
     def test_run_pipeline_writes_minimal_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -39,8 +36,6 @@ class RunnerProgressTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self._write_concept_markdown(root)
-
             async def fake_run_judge(**_: object) -> dict[str, str]:
                 run_root = root / "results" / "suite-a" / "run-a"
                 run_root.mkdir(parents=True, exist_ok=True)
@@ -84,8 +79,6 @@ class RunnerProgressTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self._write_concept_markdown(root)
-
             self.assertEqual(run_pipeline(config=str(cfg_path)), 1)
 
     def test_run_pipeline_reports_old_config_keys_as_config_errors(self) -> None:
@@ -98,7 +91,7 @@ class RunnerProgressTest(unittest.TestCase):
                         "suite_id: suite-a",
                         "run_id: run-a",
                         "pipeline:",
-                        "  rollout:",
+                        "  inference:",
                         "    target:",
                         "      model:",
                         "        name: azure/gpt-5.4",
@@ -169,7 +162,6 @@ class RunnerProgressTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self._write_concept_markdown(root)
         return cfg_path
 
     def _make_fake_run_judge(self, root: Path):

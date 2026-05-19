@@ -242,9 +242,9 @@ def _metadata_from_dict(data: Dict[str, Any]) -> "TranscriptMetadata":
         test_case_id=data["test_case_id"],
         behavior=data["behavior"],
         target=data["target"],
-        auditor_model=data["auditor_model"],
+        tester_model=data["tester_model"],
         target_reasoning_effort=data.get("target_reasoning_effort"),
-        auditor_reasoning_effort=data.get("auditor_reasoning_effort"),
+        tester_reasoning_effort=data.get("tester_reasoning_effort"),
         dimensions=data.get("dimensions"),
     )
 
@@ -303,7 +303,7 @@ def _transcript_from_dict(data: Dict[str, Any]) -> "Transcript":
 class TranscriptEvent(BaseModel):
     """Single event in the transcript."""
     view: Union[str, List[str]]  # Which views this event affects
-    actor: Literal["auditor", "target", "tool", "system"]
+    actor: Literal["tester", "target", "tool", "system"]
     edit: Edit
     raw: Optional[Dict[str, Any]] = None  # Raw API request/response for debugging
 
@@ -314,14 +314,14 @@ class TranscriptMetadata(BaseModel):
     test_case_id: str
     behavior: str
     target: str
-    auditor_model: str
+    tester_model: str
     target_reasoning_effort: Optional[str] = None
-    auditor_reasoning_effort: Optional[str] = None
+    tester_reasoning_effort: Optional[str] = None
     dimensions: Optional[Dict[str, str]] = None
 
 
 class LLMCallTrace(BaseModel):
-    """One owned LLM invocation captured during rollout."""
+    """One owned LLM invocation captured during inference."""
     call_id: str
     source: str
     api_mode: str
@@ -386,7 +386,7 @@ class Transcript(BaseModel):
         Collect messages for a specific view.
         
         Args:
-            view: Which view to collect ("auditor", "target", "combined")
+            view: Which view to collect ("tester", "target", "combined")
         
         Returns:
             List of messages for the view.
@@ -498,9 +498,9 @@ class Transcript(BaseModel):
             "llm_calls": [call.model_dump() for call in self.llm_calls],
             "stop_reason": self.stop_reason,
             "target": self.metadata.target,
-            "auditor_model": self.metadata.auditor_model,
+            "tester_model": self.metadata.tester_model,
             "target_reasoning_effort": self.metadata.target_reasoning_effort,
-            "auditor_reasoning_effort": self.metadata.auditor_reasoning_effort,
+            "tester_reasoning_effort": self.metadata.tester_reasoning_effort,
         }
         if self.metadata.dimensions:
             result["dimensions"] = self.metadata.dimensions

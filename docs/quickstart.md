@@ -8,13 +8,12 @@ This walkthrough runs the flagship customer-preview example: a LangGraph travel 
 
 ```text
 examples/travel_planner_langgraph/
-├── eval_config.yaml          pipeline config
-├── travel_planner_eval.md    eval spec
+├── eval_config.yaml          pipeline config with inline behavior spec
 ├── agent.py                  LangGraph travel planner
 └── auto_trace.py             Phoenix auto-instrumentation wrapper
 ```
 
-The config points rollout at:
+The config points inference at:
 
 ```yaml
 target:
@@ -73,7 +72,7 @@ The pipeline fills in the rest:
 
 1. `systematize` creates behavior categories.
 2. `test_set` generates prompt and scenario test cases.
-3. `rollout` executes those test cases against the agent.
+3. `inference` executes those test cases against the agent.
 4. `judge` scores each transcript and writes metrics.
 
 ## Inspect results

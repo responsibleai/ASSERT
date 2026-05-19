@@ -1,10 +1,10 @@
 """Outcome stability analysis across multiple runs.
 
 Provides two distinct analyses:
-1. Repeatability — same auditor/target/judge, different rollouts of same test_set.
-   Answers: "How much does rollout stochasticity affect outcomes?"
-2. Cross-auditor variation — different auditors on same test_set.
-   Answers: "How much does auditor choice affect outcomes?"
+1. Repeatability — same tester/target/judge, different inferences of same test_set.
+   Answers: "How much does inference stochasticity affect outcomes?"
+2. Cross-tester variation — different testers on same test_set.
+   Answers: "How much does tester choice affect outcomes?"
 
 These are different questions and must not be conflated.
 """
@@ -83,39 +83,39 @@ def _compute_group_stats(
     }
 
 
-def compute_auditor_variation(
+def compute_tester_variation(
     scored_rows: list[dict[str, Any]],
     *,
     seed_key: str = "test_case_id",
-    auditor_key: str = "auditor_model",
+    tester_key: str = "tester_model",
     run_key: str = "run",
     outcome_key: str = "policy_violation",
 ) -> dict[str, Any]:
-    """Compute how much auditor choice affects outcomes on the same test_set.
+    """Compute how much tester choice affects outcomes on the same test_set.
 
-    Groups rows by auditor model, computes per-auditor violation rates,
+    Groups rows by tester model, computes per-tester violation rates,
     and reports the spread.
     """
-    by_auditor: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_tester: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in scored_rows:
-        auditor = str(row.get(auditor_key) or row.get(run_key, ""))
-        by_auditor[auditor].append(row)
+        tester = str(row.get(tester_key) or row.get(run_key, ""))
+        by_tester[tester].append(row)
 
-    auditor_stats = {}
-    for auditor, rows in sorted(by_auditor.items()):
+    tester_stats = {}
+    for tester, rows in sorted(by_tester.items()):
         outcomes = [bool(r.get(outcome_key, False)) for r in rows]
         n = len(outcomes)
         pos = sum(outcomes)
-        auditor_stats[auditor] = {
+        tester_stats[tester] = {
             "rate": pos / n if n else 0.0,
             "count": n,
             "positive": pos,
         }
 
-    rates = [s["rate"] for s in auditor_stats.values()]
+    rates = [s["rate"] for s in tester_stats.values()]
     return {
-        "n_auditors": len(auditor_stats),
-        "auditors": auditor_stats,
+        "n_testers": len(tester_stats),
+        "testers": tester_stats,
         "rate_range": round(max(rates) - min(rates), 4) if len(rates) > 1 else 0.0,
         "rate_min": round(min(rates), 4) if rates else None,
         "rate_max": round(max(rates), 4) if rates else None,
@@ -131,24 +131,24 @@ def compute_repeatability(
 ) -> dict[str, Any]:
     """Compute seed-level repeatability across runs of the SAME configuration.
 
-    Only pass rows from runs that share the same auditor, target, and judge.
+    Only pass rows from runs that share the same tester, target, and judge.
     """
     return _compute_group_stats(
         scored_rows, seed_key=seed_key, run_key=run_key, outcome_key=outcome_key,
     )
 
 
-def format_auditor_variation(result: dict[str, Any]) -> str:
-    """Format cross-auditor variation as a human-readable summary."""
-    if result.get("n_auditors", 0) == 0:
-        return "No auditor data."
+def format_tester_variation(result: dict[str, Any]) -> str:
+    """Format cross-tester variation as a human-readable summary."""
+    if result.get("n_testers", 0) == 0:
+        return "No tester data."
 
     lines = []
-    lines.append(f"Cross-auditor variation ({result['n_auditors']} auditors, main runs only)")
+    lines.append(f"Cross-tester variation ({result['n_testers']} testers, main runs only)")
     lines.append(f"  Violation rate range: {result['rate_min']:.0%} – {result['rate_max']:.0%} "
                  f"(spread: {result['rate_range']:.0%})")
-    for auditor, stats in sorted(result["auditors"].items(), key=lambda x: -x[1]["rate"]):
-        lines.append(f"    {auditor}: {stats['positive']}/{stats['count']} ({stats['rate']:.0%})")
+    for tester, stats in sorted(result["testers"].items(), key=lambda x: -x[1]["rate"]):
+        lines.append(f"    {tester}: {stats['positive']}/{stats['count']} ({stats['rate']:.0%})")
     return "\n".join(lines)
 
 

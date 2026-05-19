@@ -47,11 +47,11 @@ pipeline:
         temperature: 0.2
         max_tokens: 16000
       sample_size: 500
-  rollout:
+  inference:
     concurrency: 5
     target:
       callable: examples.travel_planner_langgraph.agent:chat_sync
-    auditor:
+    tester:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.0

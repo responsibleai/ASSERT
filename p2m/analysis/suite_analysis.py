@@ -1,6 +1,6 @@
 """Suite-level analysis that combines metrics across stages.
 
-Computes judge rates with confidence intervals, rollout health,
+Computes judge rates with confidence intervals, inference health,
 seed outcome analysis, and per-behavior breakdowns for a complete suite.
 Produces both structured data and human-readable summaries designed
 for terminal display.
@@ -15,12 +15,12 @@ from typing import Any
 from p2m.core.io import load_jsonl, row_behavior
 
 from p2m.analysis.stability import (
-    compute_auditor_variation,
+    compute_tester_variation,
     compute_repeatability,
-    format_auditor_variation,
+    format_tester_variation,
     format_repeatability,
 )
-from p2m.analysis.rollout_metrics import compute_rollout_metrics
+from p2m.analysis.inference_metrics import compute_inference_metrics
 from p2m.analysis.stats import binary_rate_ci, macro_rate
 
 
@@ -41,38 +41,38 @@ def _get_dimension(row: dict[str, Any], dim: str) -> bool | None:
 
 
 def _parse_run_label(run_id: str) -> dict[str, str]:
-    """Extract human-readable auditor/target/judge from run directory name."""
+    """Extract human-readable tester/target/judge from run directory name."""
     label: dict[str, str] = {"short": "", "raw": run_id}
     # Detect replicate runs
-    if run_id.startswith("auditor_interaction_"):
-        suffix = run_id.replace("auditor_interaction_", "")
+    if run_id.startswith("tester_interaction_"):
+        suffix = run_id.replace("tester_interaction_", "")
         parts = suffix.rsplit("_", 1)
-        model = parts[0].replace("-auditor", "")
+        model = parts[0].replace("-tester", "")
         rep = parts[1] if len(parts) > 1 else ""
         label["short"] = f"{model} {rep}"
         label["type"] = "replicate"
     elif "_retry" in run_id:
-        base = run_id.split("-auditor")[0] if "-auditor" in run_id else run_id[:15]
+        base = run_id.split("-tester")[0] if "-tester" in run_id else run_id[:15]
         label["short"] = f"{base} retry"
         label["type"] = "retry"
     else:
-        auditor = run_id.split("-auditor")[0] if "-auditor" in run_id else run_id.split("_")[0]
-        label["short"] = auditor
+        tester = run_id.split("-tester")[0] if "-tester" in run_id else run_id.split("_")[0]
+        label["short"] = tester
         label["type"] = "main"
     return label
 
 
-def _run_quality(rollout: dict[str, Any], judge: dict[str, Any]) -> str:
+def _run_quality(inference: dict[str, Any], judge: dict[str, Any]) -> str:
     """Assign a quality level based on run health indicators."""
     has_serious = (
-        rollout.get("invalid_auditor_rate", 0) >= 0.05
-        or rollout.get("error_rate", 0) >= 0.05
+        inference.get("invalid_tester_rate", 0) >= 0.05
+        or inference.get("error_rate", 0) >= 0.05
         or judge.get("judge_failure_rate", 0) >= 0.05
-        or rollout.get("completion_rate", 1.0) < 0.90
+        or inference.get("completion_rate", 1.0) < 0.90
     )
     if has_serious:
         return "low"
-    if rollout.get("invalid_auditor_rate", 0) > 0 or judge.get("judge_failures", 0) > 0:
+    if inference.get("invalid_tester_rate", 0) > 0 or judge.get("judge_failures", 0) > 0:
         return "medium"
     return "high"
 
@@ -168,34 +168,34 @@ def analyze_suite(
 
     all_results: dict[str, Any] = {"suite": suite_path.name, "runs": {}}
     all_scored_for_variation: list[dict[str, Any]] = []
-    runs_by_auditor: dict[str, list[tuple[str, list[dict[str, Any]]]]] = defaultdict(list)
+    runs_by_tester: dict[str, list[tuple[str, list[dict[str, Any]]]]] = defaultdict(list)
 
     for run_dir in run_dirs:
         run_id = run_dir.name
         transcript_rows = load_jsonl(run_dir / "transcripts.jsonl")
         score_rows = load_jsonl(run_dir / "scores.jsonl")
 
-        rollout = compute_rollout_metrics(transcript_rows)
+        inference = compute_inference_metrics(transcript_rows)
         judge = compute_judge_metrics(score_rows, n_boot=n_boot)
 
         label = _parse_run_label(run_id)
-        quality = _run_quality(rollout, judge)
+        quality = _run_quality(inference, judge)
 
-        auditor_model = ""
+        tester_model = ""
         for row in score_rows:
-            am = row.get("auditor_model", "")
+            am = row.get("tester_model", "")
             if am:
-                auditor_model = str(am)
+                tester_model = str(am)
                 break
-        if not auditor_model:
-            auditor_model = label["short"]
+        if not tester_model:
+            tester_model = label["short"]
 
         all_results["runs"][run_id] = {
             "label": label,
-            "auditor_model": auditor_model,
+            "tester_model": tester_model,
             "trust": quality,
             "n_seeds": len(score_rows),
-            "rollout": rollout,
+            "inference": inference,
             "judge": judge,
         }
 
@@ -206,21 +206,21 @@ def analyze_suite(
                 all_scored_for_variation.append({
                     "test_case_id": row.get("test_case_id", ""),
                     "run": run_id,
-                    "auditor_model": auditor_model,
+                    "tester_model": tester_model,
                     "policy_violation": bool(dims.get("policy_violation", False)),
                     "behavior": row_behavior(row),
                 })
 
-        runs_by_auditor[auditor_model].append((run_id, score_rows))
+        runs_by_tester[tester_model].append((run_id, score_rows))
 
-    # Cross-auditor variation — main runs only
+    # Cross-tester variation — main runs only
     main_scored = [r for r in all_scored_for_variation
                    if all_results["runs"].get(r["run"], {}).get("label", {}).get("type") == "main"]
-    if len(set(r.get("auditor_model", "") for r in main_scored)) > 1:
-        all_results["auditor_variation"] = compute_auditor_variation(main_scored)
+    if len(set(r.get("tester_model", "") for r in main_scored)) > 1:
+        all_results["tester_variation"] = compute_tester_variation(main_scored)
 
-    # Repeatability (same auditor, multiple runs)
-    for auditor, run_list in runs_by_auditor.items():
+    # Repeatability (same tester, multiple runs)
+    for tester, run_list in runs_by_tester.items():
         if len(run_list) < 2:
             continue
         rep_rows = []
@@ -235,7 +235,7 @@ def analyze_suite(
                             "policy_violation": bool(dims.get("policy_violation", False)),
                         })
         if rep_rows:
-            all_results.setdefault("repeatability", {})[auditor] = compute_repeatability(rep_rows)
+            all_results.setdefault("repeatability", {})[tester] = compute_repeatability(rep_rows)
 
     return all_results
 
@@ -251,7 +251,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
     # 1. Main runs comparison table
     if main_runs:
         lines.append("Main runs")
-        lines.append(f"{'Auditor':<22} {'Scored':>6} {'Taxonomy violations':>18} "
+        lines.append(f"{'Tester':<22} {'Scored':>6} {'Taxonomy violations':>18} "
                      f"{'Invalid turns':>13} {'Run quality':>11}")
         lines.append("─" * 76)
 
@@ -260,7 +260,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
         )):
             label = rd.get("label", {}).get("short", run_id[:20])
             judge = rd["judge"]
-            rollout = rd["rollout"]
+            inference = rd["inference"]
             scored = judge.get("scored", 0)
 
             pv_data = judge.get("dimensions", {}).get("policy_violation", {}).get("micro", {})
@@ -268,7 +268,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
             pv_pos = pv_data.get("n_positive", 0)
             pv_str = f"{pv_pos}/{scored} ({pv_rate:.0%})" if pv_rate is not None else "n/a"
 
-            inv_aud = rollout.get("invalid_auditor_rate", 0)
+            inv_aud = inference.get("invalid_tester_rate", 0)
             inv_str = f"{inv_aud:.0%}" if inv_aud > 0 else "—"
             quality = rd.get("trust", "?")
 
@@ -276,17 +276,17 @@ def format_suite_summary(results: dict[str, Any]) -> str:
                          f"{inv_str:>13} {quality:>11}")
         lines.append("")
 
-    # 2. Cross-auditor variation (main runs only) — show early for context
-    if "auditor_variation" in results:
-        lines.append(format_auditor_variation(results["auditor_variation"]))
+    # 2. Cross-tester variation (main runs only) — show early for context
+    if "tester_variation" in results:
+        lines.append(format_tester_variation(results["tester_variation"]))
         lines.append("")
 
-    # 3. Repeatability (per auditor group)
+    # 3. Repeatability (per tester group)
     if "repeatability" in results:
-        for auditor, rep in sorted(results["repeatability"].items()):
+        for tester, rep in sorted(results["repeatability"].items()):
             n_shared = rep.get("n_seeds_full_coverage", 0)
             if n_shared < 5:
-                lines.append(f"Seed-level repeatability: {auditor}")
+                lines.append(f"Seed-level repeatability: {tester}")
                 lines.append(f"  Too few shared test_set ({n_shared}) for reliable estimate.")
             else:
                 lines.append(format_repeatability(rep))
@@ -311,7 +311,7 @@ def format_suite_summary(results: dict[str, Any]) -> str:
     # 5. Per-run detail (main runs only, with behavior breakdowns)
     for run_id, rd in sorted(main_runs.items()):
         judge = rd["judge"]
-        rollout = rd["rollout"]
+        inference = rd["inference"]
         quality = rd.get("trust", "?")
         label = rd.get("label", {}).get("short", run_id)
 
@@ -319,11 +319,11 @@ def format_suite_summary(results: dict[str, Any]) -> str:
         if quality == "low":
             lines.append("  ⚠ DATA QUALITY WARNING — interpret with caution")
 
-        # Rollout (compact — only show stop reasons if there are issues)
-        sr = rollout.get("stop_reasons", {})
-        lines.append(f"  Rollout: {rollout['total']} transcripts, "
-                     f"{rollout['completion_rate']:.0%} non-error termination")
-        if rollout.get("invalid_auditor_rate", 0) > 0 or rollout.get("error_rate", 0) > 0:
+        # Inference (compact — only show stop reasons if there are issues)
+        sr = inference.get("stop_reasons", {})
+        lines.append(f"  Inference: {inference['total']} transcripts, "
+                     f"{inference['completion_rate']:.0%} non-error termination")
+        if inference.get("invalid_tester_rate", 0) > 0 or inference.get("error_rate", 0) > 0:
             sr_parts = [f"{k}={v}" for k, v in sorted(sr.items())]
             lines.append(f"  Stop reasons: {', '.join(sr_parts)}")
 

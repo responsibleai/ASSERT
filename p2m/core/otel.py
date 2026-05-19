@@ -426,7 +426,7 @@ class FileTraceExporter:
 
 
 class InMemoryTraceExporter:
-    """Collects spans in-memory during a rollout. For testing and CI."""
+    """Collects spans in-memory during a inference. For testing and CI."""
 
     def __init__(self) -> None:
         self._spans: list[OTelSpan] = []
@@ -460,12 +460,12 @@ class LiveOTelExporter:
     # ``asyncio.Lock()`` would bind to whichever loop happened to be running
     # at first use and then raise in any subsequent ``asyncio.run()``. We
     # cache (loop, lock) and recreate when the loop changes so:
-    #   - within one rollout (one event loop), all concurrent sessions share
+    #   - within one inference (one event loop), all concurrent sessions share
     #     the same lock and serialize the clear-invoke-export cycle;
     #   - tests / repeated runs that create new event loops still work.
     # NOTE: ``threading.Lock`` MUST NOT be used here — it would block the
     # entire event loop across the inner ``await`` and deadlock when
-    # ``rollout.concurrency > 1``.
+    # ``inference.concurrency > 1``.
     _lock: asyncio.Lock | None = None
     _lock_loop: asyncio.AbstractEventLoop | None = None
 

@@ -1,12 +1,18 @@
-# Behavior Definitions
+# Behavior Spec References
 
-Each `.md` file describes a behavior — what it is and why it matters. The pipeline uses this text to generate a taxonomy taxonomy and evaluate the target model against it.
+Each `.md` file is a reusable behavior spec reference. The pipeline no longer loads companion markdown files automatically; customer-authored evals should keep the full spec inline in the YAML under `behavior.description`.
 
-**To use a behavior definition**, set `behavior.name: <filename_without_extension>` in your pipeline config. For example, `behavior.name: harmful_medical_advice` loads `harmful_medical_advice.md`.
+To reuse one of these references, copy its text into your config:
 
-**To add your own**, create a new `.md` file here with a clear description of the behavior.
+```yaml
+behavior:
+  name: harmful_medical_advice
+  description: |-
+    # Harmful Medical Advice
+    ...
+```
 
-## Available policies
+## Available behavior specs
 
 | File | Behavior |
 |------|-----------|
