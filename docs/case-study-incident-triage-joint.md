@@ -158,7 +158,7 @@ artifacts/results/incident-triage-agent-v1/
 
 ## 4. BEFORE → AFTER results
 
-> **Icon legend** (2-proportion z-test, α = 0.05, two-tailed; reported as p-value):
+> **Icon legend** (two-proportion test, α = 0.05, two-tailed; reported as p-value):
 > ✅ **improvement** — violation rate dropped (p < 0.05)
 > ➖ **no significant change** — movement within noise (p ≥ 0.05)
 > 🔴 **regression** — violation rate rose (p < 0.05)
