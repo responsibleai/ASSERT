@@ -67,6 +67,7 @@ TAU2_DATA_DIR = Path(os.environ.get("TAU2_DATA_DIR", str(SCRIPT_DIR / "data")))
 DEFAULT_USER_MODEL = "azure/gpt-5.4-mini"
 DEFAULT_TRIALS = 4
 DEFAULT_CONCURRENCY = 10
+DEFAULT_TAU2_RETRIES = 3
 
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.
@@ -563,28 +564,50 @@ def _summarize_tau2_run(model: str, output_path: Path,
     logger.warning("\n".join(parts))
 
 
+def _tau2_sim_count(output_path: Path) -> tuple[int, int]:
+    """Return (n_completed, n_expected) for a tau2 simulation file.
+
+    Returns (0, 0) if the file doesn't exist or is unreadable.
+    """
+    if not output_path.exists():
+        return 0, 0
+    try:
+        data = json.loads(output_path.read_text())
+        n_sims = len(data.get("simulations", []))
+        n_tasks = len(data.get("tasks", []))
+        return n_sims, n_tasks
+    except (json.JSONDecodeError, OSError):
+        return 0, 0
+
+
 def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
              trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
-             concurrency: int = DEFAULT_CONCURRENCY) -> dict[str, Path]:
+             concurrency: int = DEFAULT_CONCURRENCY,
+             max_retries: int = DEFAULT_TAU2_RETRIES) -> dict[str, Path]:
     """Run tau2-bench on the telecom domain for each model.
+
+    Crashed models are retried up to *max_retries* times.  Each retry
+    resumes from partial results saved to disk by tau2.
 
     Returns a dict mapping model name → output JSON path.
     """
     outputs: dict[str, Path] = {}
     total = len(models)
     stage_t0 = time.monotonic()
+    tau2_bin = shutil.which("tau2") or str(Path(sys.executable).parent / "tau2")
+    if not Path(tau2_bin).exists() and not shutil.which("tau2"):
+        logger.error(
+            "tau2 CLI not found. Install it with:\n"
+            "  pip install 'tau2 @ git+https://github.com/SEACrowd/tau3-bench.git'"
+        )
+        sys.exit(1)
+
     for i, model in enumerate(models, 1):
         slug = model_slug(model)
-        logger.info("── tau2 %s: %s ──", _progress_line(i, total, stage_t0), model)
         save_name = f"telecom_{slug}"
-        tau2_bin = shutil.which("tau2") or str(Path(sys.executable).parent / "tau2")
-        if not Path(tau2_bin).exists() and not shutil.which("tau2"):
-            logger.error(
-                "tau2 CLI not found. Install it with:\n"
-                "  pip install 'tau2 @ git+https://github.com/SEACrowd/tau3-bench.git'"
-            )
-            sys.exit(1)
-        # Pick the user-sim model for the same endpoint as the agent model
+        output_path = TAU2_DATA_DIR / "simulations" / f"{save_name}.json"
+        outputs[model] = output_path
+
         effective_user_model = resolve_user_model(models_config, model, fallback=user_model)
         cmd = [
             tau2_bin, "run",
@@ -600,18 +623,77 @@ def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
                       env.get("AZURE_API_BASE", "<unset>"),
                       resolve_endpoint_env_var(models_config, model),
                       effective_user_model)
-        errors: list[str] = []
-        result = run_cmd(cmd, dry_run=dry_run, env=env,
-                         auto_resume=True, errors_out=errors)
-        # tau2 saves to {TAU2_DATA_DIR}/simulations/<save_name>.json
-        output_path = TAU2_DATA_DIR / "simulations" / f"{save_name}.json"
-        outputs[model] = output_path
-        if result and result.returncode != 0:
+
+        expected_total = 0  # will be set after first run
+        for attempt in range(1, max_retries + 1):
+            attempt_label = f" (attempt {attempt}/{max_retries})" if max_retries > 1 else ""
+            logger.info("── tau2 %s: %s%s ──",
+                        _progress_line(i, total, stage_t0), model, attempt_label)
+
+            errors: list[str] = []
+            result = run_cmd(cmd, dry_run=dry_run, env=env,
+                             auto_resume=True, errors_out=errors)
+            if dry_run:
+                break
+
+            n_completed, n_tasks = _tau2_sim_count(output_path)
+            expected_total = n_tasks * trials if n_tasks else expected_total
+
+            if result and result.returncode == 0:
+                logger.info("tau2 %s: completed successfully (%d sims)",
+                            slug, n_completed)
+                break  # success
+
+            # Crashed — summarize and decide whether to retry
             _summarize_tau2_run(model, output_path, errors, trials)
+
+            if expected_total and n_completed >= expected_total:
+                logger.info("tau2 %s: all %d sims present despite exit code",
+                            slug, n_completed)
+                break  # all sims done even though process exited non-zero
+
+            if attempt < max_retries:
+                logger.info(
+                    "tau2 %s: %d/%d sims — retrying (tau2 will resume from partial)",
+                    slug, n_completed, expected_total or "?",
+                )
+            else:
+                logger.warning(
+                    "tau2 %s: %d/%d sims after %d attempt(s) — moving on",
+                    slug, n_completed, expected_total or 0, max_retries,
+                )
+
     if not dry_run:
         logger.info("── tau2 stage done: %.1f min for %d model(s) ──",
                      (time.monotonic() - stage_t0) / 60, total)
     return outputs
+
+
+def print_tau2_completion_table(
+    outputs: dict[str, Path], trials: int,
+) -> dict[str, tuple[int, int]]:
+    """Print a completion table and return {model: (completed, expected)}.
+
+    Called after the tau2 stage to make partial results visible.
+    """
+    completion: dict[str, tuple[int, int]] = {}
+    for model, path in outputs.items():
+        n_completed, n_tasks = _tau2_sim_count(path)
+        expected = n_tasks * trials if n_tasks else 0
+        completion[model] = (n_completed, expected)
+
+    print(f"\n{'─' * 60}")
+    print("  tau2 completion:")
+    for model, (done, expected) in completion.items():
+        slug = model_slug(model)
+        if expected:
+            pct = done / expected * 100
+            flag = "✓" if pct >= 80 else "⚠"
+            print(f"    {slug:<25} {done:>4}/{expected:<4} ({pct:5.1f}%) {flag}")
+        else:
+            print(f"    {slug:<25} {done:>4}/???  ⚠")
+    print(f"{'─' * 60}\n")
+    return completion
 
 
 def collect_tau2_rewards(outputs: dict[str, Path]) -> dict[str, float]:
@@ -750,13 +832,25 @@ def collect_p2m_scores(suite_name: str, runs: dict[str, str]) -> dict[str, dict[
 
 
 # ── Stage: correlate ────────────────────────────────────────────────
+def _tau2_sample_sizes(tau2_rewards: dict[str, float]) -> dict[str, int]:
+    """Return {model: n_simulations} from tau2 output files on disk."""
+    sizes: dict[str, int] = {}
+    for model in tau2_rewards:
+        slug = model_slug(model)
+        path = TAU2_DATA_DIR / "simulations" / f"telecom_{slug}.json"
+        n, _ = _tau2_sim_count(path)
+        sizes[model] = n
+    return sizes
+
+
 def compute_correlation(
     tau2_rewards: dict[str, float],
     p2m_scores: dict[str, dict[str, float]],
-) -> dict[str, float]:
+) -> dict[str, dict]:
     """Compute Spearman rank correlation between tau2 and p2m scores.
 
-    Returns {dimension: rho, ...} including _overall.
+    Returns {dimension: {"rho": float, "pval": float, "n": int}, ...}
+    including _overall.
     """
     try:
         from scipy.stats import spearmanr
@@ -777,7 +871,7 @@ def compute_correlation(
     for model_scores in p2m_scores.values():
         all_dims.update(model_scores.keys())
 
-    correlations: dict[str, float] = {}
+    correlations: dict[str, dict] = {}
     for dim in sorted(all_dims):
         p2m_vals = []
         tau2_matched = []
@@ -794,7 +888,7 @@ def compute_correlation(
             continue
 
         rho, pval = spearmanr(tau2_matched, p2m_vals)
-        correlations[dim] = rho
+        correlations[dim] = {"rho": rho, "pval": pval, "n": len(p2m_vals)}
         logger.info("Spearman ρ [%s]: %.4f (p=%.4f, n=%d)", dim, rho, pval, len(p2m_vals))
 
     return correlations
@@ -803,12 +897,14 @@ def compute_correlation(
 def save_results(
     tau2_rewards: dict[str, float],
     p2m_scores: dict[str, dict[str, float]],
-    correlations: dict[str, float],
+    correlations: dict[str, dict],
 ) -> Path:
     """Save combined results to a JSON file."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    tau2_samples = _tau2_sample_sizes(tau2_rewards)
     output = {
         "tau2_rewards": tau2_rewards,
+        "tau2_sample_sizes": tau2_samples,
         "p2m_scores": p2m_scores,
         "correlations": correlations,
         "models_compared": sorted(set(tau2_rewards) & set(p2m_scores)),
@@ -822,13 +918,15 @@ def save_results(
 def print_summary(
     tau2_rewards: dict[str, float],
     p2m_scores: dict[str, dict[str, float]],
-    correlations: dict[str, float],
+    correlations: dict[str, dict],
 ) -> None:
-    """Print a human-readable summary table."""
+    """Print a human-readable summary table with sample sizes."""
     common = sorted(set(tau2_rewards) & set(p2m_scores))
     if not common:
         print("No common models with results in both benchmarks.")
         return
+
+    tau2_samples = _tau2_sample_sizes(tau2_rewards)
 
     # Header
     print("\n" + "=" * 72)
@@ -836,19 +934,34 @@ def print_summary(
     print("=" * 72)
 
     # Model scores table
-    print(f"\n{'Model':<25} {'tau2 reward':>12} {'p2m overall':>12}")
-    print("-" * 50)
+    print(f"\n{'Model':<25} {'tau2 reward':>12} {'tau2 n':>7} {'p2m overall':>12}")
+    print("-" * 57)
     for m in common:
         tau2_r = tau2_rewards.get(m, float("nan"))
         p2m_o = p2m_scores.get(m, {}).get("_overall", float("nan"))
-        print(f"{model_slug(m):<25} {tau2_r:>12.4f} {p2m_o:>12.4f}")
+        n_sims = tau2_samples.get(m, 0)
+        print(f"{model_slug(m):<25} {tau2_r:>12.4f} {n_sims:>7} {p2m_o:>12.4f}")
 
     # Correlation table
     if correlations:
-        print(f"\n{'Dimension':<30} {'Spearman ρ':>12}")
-        print("-" * 43)
+        print(f"\n{'Dimension':<30} {'Spearman ρ':>10} {'p-value':>10} {'n':>4}")
+        print("-" * 55)
         for dim in sorted(correlations):
-            print(f"{dim:<30} {correlations[dim]:>12.4f}")
+            c = correlations[dim]
+            rho = c["rho"] if isinstance(c, dict) else c
+            pval = c.get("pval", float("nan")) if isinstance(c, dict) else float("nan")
+            n = c.get("n", 0) if isinstance(c, dict) else 0
+            sig = "*" if pval < 0.05 else ""
+            print(f"{dim:<30} {rho:>10.4f} {pval:>10.4f} {n:>4} {sig}")
+
+    # Data reliability note
+    low_sample = [m for m in common if tau2_samples.get(m, 0) < 50]
+    if low_sample:
+        print(f"\n⚠ Low tau2 sample count (<50 sims): "
+              f"{', '.join(model_slug(m) for m in low_sample)}")
+        print("  Correlation may be unreliable for these models.")
+        print("  Consider re-running with: "
+              f"--stages tau2 --models {' '.join(low_sample)}")
 
     print("=" * 72 + "\n")
 
@@ -993,6 +1106,13 @@ def main() -> None:
         help=f"Max concurrent tasks (default: {DEFAULT_CONCURRENCY})",
     )
     parser.add_argument(
+        "--tau2-retries",
+        type=int,
+        default=None,
+        help=f"Max retry attempts per model when tau2 crashes "
+             f"(default: {DEFAULT_TAU2_RETRIES})",
+    )
+    parser.add_argument(
         "--test-cases",
         type=int,
         default=None,
@@ -1020,6 +1140,12 @@ def main() -> None:
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Suppress noisy OTEL/gRPC export errors when Phoenix isn't running
+    for _otel_logger in (
+        "opentelemetry.exporter.otlp.proto.grpc.exporter",
+        "opentelemetry.exporter.otlp.proto.grpc",
+    ):
+        logging.getLogger(_otel_logger).setLevel(logging.CRITICAL)
 
     # ── Resolve preset + CLI overrides ──────────────────────────────
     preset_overrides = {}
@@ -1038,6 +1164,7 @@ def main() -> None:
     # Numeric params: CLI > preset > defaults
     trials = args.trials or preset_overrides.get("trials", DEFAULT_TRIALS)
     concurrency = args.concurrency or preset_overrides.get("concurrency", DEFAULT_CONCURRENCY)
+    tau2_retries = args.tau2_retries or DEFAULT_TAU2_RETRIES
     test_cases = args.test_cases or preset_overrides.get("test_cases")
     max_turns = preset_overrides.get("max_turns")
     judge_model = preset_overrides.get("judge_model")
@@ -1091,9 +1218,11 @@ def main() -> None:
         if pending:
             new_outputs = run_tau2(pending, models_config, dry_run=args.dry_run,
                                    trials=trials, user_model=user_model,
-                                   concurrency=concurrency)
+                                   concurrency=concurrency,
+                                   max_retries=tau2_retries)
             if not args.dry_run:
                 all_outputs = {**existing_tau2, **new_outputs}
+                print_tau2_completion_table(all_outputs, trials)
                 tau2_rewards = collect_tau2_rewards(all_outputs)
                 print_tau2_cost_summary(new_outputs)
         elif existing_tau2:
