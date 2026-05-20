@@ -117,7 +117,7 @@ context: |-
 
 # ── DEFAULT MODEL ────────────────────────────────────────────────────
 default_model:
-  name: azure/gpt-5.4-nano
+  name: azure/gpt-5.4-mini
 
 # ═══════════════════════════════════════════════════════════════════════
 # PIPELINE
@@ -126,14 +126,14 @@ pipeline:
 
   # ── STAGE 1: SYSTEMATIZE ───────────────────────────────────────────
   systematize:
-    model: { name: azure/gpt-5.4-nano, temperature: 0.7, max_tokens: 10000 }
+    model: { name: azure/gpt-5.4-mini, temperature: 0.7, max_tokens: 10000 }
     behavior_category_count: 15
 
   # ── STAGE 2: TEST SET ─────────────────────────────────────────────
   test_set:
     tool_source: runtime
     stratify:
-      model: { name: azure/gpt-5.4-nano, temperature: 0.7 }
+      model: { name: azure/gpt-5.4-mini, temperature: 0.7 }
       dimensions:
         - name: customer_scenario
           description: |
@@ -149,17 +149,17 @@ pipeline:
             bills), request that requires escalation, user confusion or
             pushback requiring patient guidance.
     prompt:
-      model: { name: azure/gpt-5.4-nano, temperature: 1.0, max_tokens: 4000 }
+      model: { name: azure/gpt-5.4-mini, temperature: 1.0, max_tokens: 4000 }
       sample_size: 50
     scenario:
-      model: { name: azure/gpt-5.4-nano, temperature: 0.2, max_tokens: 4000 }
+      model: { name: azure/gpt-5.4-mini, temperature: 0.2, max_tokens: 4000 }
       sample_size: 20
 
   # ── STAGE 3: INFERENCE ─────────────────────────────────────────────
   inference:
     concurrency: 5
     target:
-      model: { name: azure/gpt-5.4-nano, temperature: 0.0, max_tokens: 8000 }
+      model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 8000 }
       trace:
         backend: phoenix
       system_prompt: |-
@@ -179,9 +179,9 @@ pipeline:
         also respond to the user in the same turn.
       tools:
         toolset: telecom_tools.yaml
-        simulator: azure/gpt-5.4-nano
+        simulator: azure/gpt-5.4-mini
     tester:
-      model: { name: azure/gpt-5.4-nano, temperature: 0.0, max_tokens: 10000 }
+      model: { name: azure/gpt-5.4-mini, temperature: 0.0, max_tokens: 10000 }
     max_turns: 5
 
   # ── STAGE 4: JUDGE ─────────────────────────────────────────────────
