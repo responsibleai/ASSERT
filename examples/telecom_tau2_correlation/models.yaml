@@ -1,0 +1,63 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Model inventory and presets for the telecom comparison study.
+#
+# Endpoints reference environment variable names — no cleartext URLs.
+# Set the env vars before running:
+#   export AZURE_API_BASE_WESTUS2="https://..."
+#   export AZURE_API_BASE_AUSTRALIAEAST="https://..."
+# ═══════════════════════════════════════════════════════════════════════
+
+endpoints:
+  default: AZURE_API_BASE
+  australiaeast: AZURE_API_BASE_AUSTRALIAEAST
+  westus2: AZURE_API_BASE_WESTUS2
+
+presets:
+  quick:
+    description: Quick validation — 4 models across tiers, reduced test cases
+    trials: 2
+    concurrency: 10
+    test_cases: 10
+    max_turns: 5
+    judge_model: azure/gpt-5.4-mini
+  full:
+    description: Thorough comparison — all deployed models, full trial count
+    trials: 4
+    concurrency: 24
+    test_cases: 70
+    max_turns: 5
+    judge_model: azure/gpt-5.4
+
+models:
+  # ── small/fast ──
+  - name: azure/gpt-oss-120b
+    endpoint: westus2
+    presets: [quick, full]
+  - name: azure/DeepSeek-V3-0324
+    endpoint: westus2
+    presets: [full]
+  # ── fast-mid ──
+  - name: azure/gpt-5.4-mini
+    endpoint: australiaeast
+    presets: [quick, full]
+  - name: azure/grok-4-1-fast-reasoning
+    endpoint: westus2
+    presets: [full]
+  # ── strong-mid ──
+  - name: azure/DeepSeek-V3.2
+    endpoint: westus2
+    presets: [quick, full]
+  - name: azure/grok-4
+    endpoint: westus2
+    presets: [quick, full]
+  # ── strong ──
+  - name: azure/gpt-5.4
+    endpoint: australiaeast
+    presets: [full]
+  # ── frontier ──
+  - name: azure/grok-4-20-reasoning
+    endpoint: westus2
+    presets: [full]
+  - name: azure/grok-4.3
+    endpoint: westus2
+    presets: [full]

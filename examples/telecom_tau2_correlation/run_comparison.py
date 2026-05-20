@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Orchestration script for the telecom τ²-bench ↔ p2m correlation study.
+Orchestration script for the telecom τ²-bench ↔ p2m comparison study.
 
 Runs tau2 and/or p2m evaluations across a set of models, then computes
 Spearman rank correlation between their scores.
 
 Usage:
-    # All three stages with default models
-    python run_correlation.py
+    # Quick preset (4 models, reduced test cases)
+    python run_comparison.py --preset quick
 
-    # Only tau2 + correlate (reuse existing p2m results)
-    python run_correlation.py --stages tau2,correlate
+    # Full preset (all models, full trial count)
+    python run_comparison.py --preset full
 
-    # Only p2m for a custom model list
-    python run_correlation.py --stages p2m --models azure/gpt-4o-mini azure/gpt-4o
+    # Custom: specific stages and models
+    python run_comparison.py --stages tau2,correlate --models azure/gpt-5.4-mini azure/grok-4
 
     # Dry-run to see what would execute
-    python run_correlation.py --dry-run
+    python run_comparison.py --preset quick --dry-run
 """
 from __future__ import annotations
 
@@ -38,24 +38,15 @@ logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]  # adaptive-eval root
 
-DEFAULT_MODELS = [
-    "azure/gpt-4o-mini",      # weak
-    "azure/gpt-4o",           # medium
-    "azure/gpt-5.4-nano",     # medium
-    "azure/gpt-5.4-mini",     # medium-strong
-    "azure/gpt-5.4",          # strong
-    "azure/claude-sonnet-4",   # strong
-    "azure/claude-opus-4",     # very strong
-]
-
+MODELS_CONFIG = SCRIPT_DIR / "models.yaml"
 P2M_CONFIG = SCRIPT_DIR / "eval_config.yaml"
 RESULTS_DIR = SCRIPT_DIR / "results"
 
 # tau2 defaults
 TAU2_DOMAIN = "telecom"
-TAU2_USER_LLM = "azure/gpt-5.4-nano"
-TAU2_NUM_TRIALS = 4
-TAU2_MAX_CONCURRENCY = 5
+DEFAULT_USER_MODEL = "azure/gpt-5.4-nano"
+DEFAULT_TRIALS = 4
+DEFAULT_CONCURRENCY = 5
 
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.
@@ -63,6 +54,28 @@ _EST_TAU2_MINUTES_PER_MODEL = 8       # wall-clock with concurrency=5
 _EST_P2M_MINUTES_PER_MODEL = 8        # 70 seeds
 _EST_TAU2_COST_PER_MODEL_NANO = 4.50  # USD, agent+user at nano pricing
 _EST_P2M_INPUT_TOKENS_PER_MODEL = 3_200_000
+
+
+# ── Config loading ──────────────────────────────────────────────────
+def load_models_config() -> dict:
+    """Load models.yaml and return the parsed config."""
+    if not MODELS_CONFIG.exists():
+        logger.error("models.yaml not found at %s", MODELS_CONFIG)
+        sys.exit(1)
+    return yaml.safe_load(MODELS_CONFIG.read_text())
+
+
+def get_preset_models(config: dict, preset: str) -> list[str]:
+    """Return model names included in a given preset."""
+    return [
+        m["name"] for m in config.get("models", [])
+        if preset in m.get("presets", [])
+    ]
+
+
+def get_preset_overrides(config: dict, preset: str) -> dict:
+    """Return the preset's parameter overrides (trials, concurrency, etc.)."""
+    return config.get("presets", {}).get(preset, {})
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -89,7 +102,9 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False) -> subprocess.CompletedPro
 
 
 # ── Stage: tau2 ─────────────────────────────────────────────────────
-def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
+def run_tau2(models: list[str], *, dry_run: bool = False,
+             trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
+             concurrency: int = DEFAULT_CONCURRENCY) -> dict[str, Path]:
     """Run tau2-bench on the telecom domain for each model.
 
     Returns a dict mapping model name → output JSON path.
@@ -112,9 +127,9 @@ def run_tau2(models: list[str], *, dry_run: bool = False) -> dict[str, Path]:
             tau2_bin, "run",
             "--domain", TAU2_DOMAIN,
             "--agent-llm", model,
-            "--user-llm", TAU2_USER_LLM,
-            "--num-trials", str(TAU2_NUM_TRIALS),
-            "--max-concurrency", str(TAU2_MAX_CONCURRENCY),
+            "--user-llm", user_model,
+            "--num-trials", str(trials),
+            "--max-concurrency", str(concurrency),
             "--save-to", save_name,
         ]
         result = run_cmd(cmd, dry_run=dry_run)
@@ -395,7 +410,8 @@ def print_p2m_cost_summary(suite_name: str, runs: dict[str, str]) -> None:
         )
 
 
-def confirm_stage(stage: str, models: list[str], *, yes: bool = False) -> bool:
+def confirm_stage(stage: str, models: list[str], *, yes: bool = False,
+                  trials: int = DEFAULT_TRIALS, concurrency: int = DEFAULT_CONCURRENCY) -> bool:
     """Show cost/time estimate and ask for confirmation before an expensive stage."""
     if yes:
         return True
@@ -407,7 +423,7 @@ def confirm_stage(stage: str, models: list[str], *, yes: bool = False) -> bool:
         est_min = _EST_TAU2_MINUTES_PER_MODEL * n
         est_cost = _EST_TAU2_COST_PER_MODEL_NANO * n
         print(f"\n{'─' * 60}")
-        print(f"  Stage: tau2 ({TAU2_NUM_TRIALS} trials, concurrency {TAU2_MAX_CONCURRENCY})")
+        print(f"  Stage: tau2 ({trials} trials, concurrency {concurrency})")
         print(f"  Models ({n}): {slugs}")
         print(f"  Estimated: ~{est_min} min, ~${est_cost:.0f}+ (nano pricing)")
         print(f"  Note: cost scales with model pricing (gpt-5.4 >> nano)")
@@ -429,12 +445,18 @@ def confirm_stage(stage: str, models: list[str], *, yes: bool = False) -> bool:
 
 # ── Main ────────────────────────────────────────────────────────────
 def main() -> None:
-    global TAU2_NUM_TRIALS, TAU2_USER_LLM, TAU2_MAX_CONCURRENCY
+    models_config = load_models_config()
 
     parser = argparse.ArgumentParser(
-        description="Run telecom τ²-bench ↔ p2m correlation study.",
+        description="Run telecom τ²-bench ↔ p2m comparison study.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
+    )
+    parser.add_argument(
+        "--preset",
+        choices=list(models_config.get("presets", {}).keys()),
+        default=None,
+        help="Named preset from models.yaml (sets models, trials, concurrency, etc.)",
     )
     parser.add_argument(
         "--stages",
@@ -445,8 +467,8 @@ def main() -> None:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=DEFAULT_MODELS,
-        help="Models to evaluate (default: 7 models weak→strong)",
+        default=None,
+        help="Models to evaluate (overrides preset selection)",
     )
     parser.add_argument(
         "--dry-run",
@@ -454,27 +476,27 @@ def main() -> None:
         help="Print commands without executing",
     )
     parser.add_argument(
-        "--tau2-trials",
-        type=int,
-        default=TAU2_NUM_TRIALS,
-        help=f"Number of tau2 trials per task (default: {TAU2_NUM_TRIALS})",
-    )
-    parser.add_argument(
-        "--tau2-user-llm",
-        default=TAU2_USER_LLM,
-        help=f"LLM for tau2 user simulator (default: {TAU2_USER_LLM})",
-    )
-    parser.add_argument(
-        "--max-concurrency",
-        type=int,
-        default=TAU2_MAX_CONCURRENCY,
-        help=f"Max concurrent tasks for tau2 (default: {TAU2_MAX_CONCURRENCY})",
-    )
-    parser.add_argument(
-        "--p2m-seed-count",
+        "--trials",
         type=int,
         default=None,
-        help="Override p2m seed prompt sample_size (default: use config value)",
+        help=f"Number of tau2 trials per task (default: {DEFAULT_TRIALS})",
+    )
+    parser.add_argument(
+        "--user-model",
+        default=DEFAULT_USER_MODEL,
+        help=f"LLM for tau2 user simulator (default: {DEFAULT_USER_MODEL})",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=f"Max concurrent tasks (default: {DEFAULT_CONCURRENCY})",
+    )
+    parser.add_argument(
+        "--test-cases",
+        type=int,
+        default=None,
+        help="Override p2m test_set prompt sample_size (default: use config value)",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -494,10 +516,24 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    # Apply overrides to module-level defaults
-    TAU2_NUM_TRIALS = args.tau2_trials
-    TAU2_USER_LLM = args.tau2_user_llm
-    TAU2_MAX_CONCURRENCY = args.max_concurrency
+    # ── Resolve preset + CLI overrides ──────────────────────────────
+    preset_overrides = {}
+    if args.preset:
+        preset_overrides = get_preset_overrides(models_config, args.preset)
+        logger.info("Preset '%s': %s", args.preset, preset_overrides.get("description", ""))
+
+    # Models: CLI --models > preset > all models in config
+    if args.models:
+        models = args.models
+    elif args.preset:
+        models = get_preset_models(models_config, args.preset)
+    else:
+        models = [m["name"] for m in models_config.get("models", [])]
+
+    # Numeric params: CLI > preset > defaults
+    trials = args.trials or preset_overrides.get("trials", DEFAULT_TRIALS)
+    concurrency = args.concurrency or preset_overrides.get("concurrency", DEFAULT_CONCURRENCY)
+    user_model = args.user_model
 
     stages = [s.strip() for s in args.stages]
     valid_stages = {"tau2", "p2m", "correlate"}
@@ -505,7 +541,7 @@ def main() -> None:
         if s not in valid_stages:
             parser.error(f"Unknown stage '{s}'. Valid: {', '.join(valid_stages)}")
 
-    logger.info("Stages: %s | Models: %s", stages, [model_slug(m) for m in args.models])
+    logger.info("Stages: %s | Models: %s", stages, [model_slug(m) for m in models])
 
     # ── Run stages ──────────────────────────────────────────────────
     tau2_rewards: dict[str, float] = {}
@@ -525,10 +561,13 @@ def main() -> None:
 
     if "tau2" in stages:
         logger.info("═══ STAGE: tau2 ═══")
-        if not confirm_stage("tau2", args.models, yes=args.dry_run or args.yes):
+        if not confirm_stage("tau2", models, yes=args.dry_run or args.yes,
+                             trials=trials, concurrency=concurrency):
             logger.info("Skipped tau2 stage.")
         else:
-            outputs = run_tau2(args.models, dry_run=args.dry_run)
+            outputs = run_tau2(models, dry_run=args.dry_run,
+                               trials=trials, user_model=user_model,
+                               concurrency=concurrency)
             if not args.dry_run:
                 tau2_rewards = collect_tau2_rewards(outputs)
                 print_tau2_cost_summary(outputs)
@@ -536,10 +575,10 @@ def main() -> None:
     if "p2m" in stages:
         logger.info("═══ STAGE: p2m ═══")
         suite_name = yaml.safe_load(P2M_CONFIG.read_text()).get("suite", "telecom-tau2-correlation-v1")
-        if not confirm_stage("p2m", args.models, yes=args.dry_run or args.yes):
+        if not confirm_stage("p2m", models, yes=args.dry_run or args.yes):
             logger.info("Skipped p2m stage.")
         else:
-            runs = run_p2m(args.models, dry_run=args.dry_run)
+            runs = run_p2m(models, dry_run=args.dry_run)
             if not args.dry_run:
                 p2m_scores = collect_p2m_scores(suite_name, runs)
                 print_p2m_cost_summary(suite_name, runs)
