@@ -24,6 +24,7 @@ import argparse
 import copy
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -78,13 +79,68 @@ def get_preset_overrides(config: dict, preset: str) -> dict:
     return config.get("presets", {}).get(preset, {})
 
 
+# ── Endpoint resolution ─────────────────────────────────────────────
+def _model_entry(config: dict, model_name: str) -> dict | None:
+    """Look up a model's entry in models.yaml by name."""
+    for m in config.get("models", []):
+        if m["name"] == model_name:
+            return m
+    return None
+
+
+def resolve_endpoint_url(config: dict, model_name: str) -> str | None:
+    """Resolve a model's Azure endpoint URL from environment variables.
+
+    Lookup chain: model.endpoint → endpoints.<key> → os.environ[env_var].
+    Falls back to endpoints.default if the model has no endpoint field.
+    Returns None if the env var is not set.
+    """
+    endpoints = config.get("endpoints", {})
+    entry = _model_entry(config, model_name)
+    endpoint_key = entry.get("endpoint") if entry else None
+    env_var = endpoints.get(endpoint_key or "default", endpoints.get("default", "AZURE_API_BASE"))
+    return os.environ.get(env_var)
+
+
+def resolve_endpoint_env_var(config: dict, model_name: str) -> str:
+    """Return the env var name for a model's endpoint (for diagnostics)."""
+    endpoints = config.get("endpoints", {})
+    entry = _model_entry(config, model_name)
+    endpoint_key = entry.get("endpoint") if entry else None
+    return endpoints.get(endpoint_key or "default", endpoints.get("default", "AZURE_API_BASE"))
+
+
+def validate_endpoints(config: dict, models: list[str]) -> None:
+    """Verify all required endpoint env vars are set. Exit if any are missing."""
+    missing: dict[str, list[str]] = {}  # env_var → [models]
+    for model in models:
+        env_var = resolve_endpoint_env_var(config, model)
+        if not os.environ.get(env_var):
+            missing.setdefault(env_var, []).append(model_slug(model))
+    if missing:
+        logger.error("Missing endpoint environment variables:")
+        for var, slugs in missing.items():
+            logger.error("  %s  (needed by: %s)", var, ", ".join(slugs))
+        sys.exit(1)
+
+
+def make_model_env(config: dict, model_name: str) -> dict[str, str]:
+    """Build a subprocess env dict with AZURE_API_BASE set for the given model."""
+    env = os.environ.copy()
+    url = resolve_endpoint_url(config, model_name)
+    if url:
+        env["AZURE_API_BASE"] = url
+    return env
+
+
 # ── Helpers ─────────────────────────────────────────────────────────
 def model_slug(model: str) -> str:
     """Convert 'azure/gpt-4o-mini' → 'gpt-4o-mini'."""
     return model.rsplit("/", 1)[-1]
 
 
-def run_cmd(cmd: list[str], *, dry_run: bool = False) -> subprocess.CompletedProcess | None:
+def run_cmd(cmd: list[str], *, dry_run: bool = False,
+            env: dict[str, str] | None = None) -> subprocess.CompletedProcess | None:
     """Run a subprocess with output streamed to the terminal."""
     display = " ".join(cmd)
     if dry_run:
@@ -92,7 +148,7 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False) -> subprocess.CompletedPro
         return None
     logger.info("Running: %s", display)
     t0 = time.monotonic()
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, env=env)
     elapsed = time.monotonic() - t0
     if result.returncode != 0:
         logger.error("Command failed (exit %d) after %.1fs", result.returncode, elapsed)
@@ -102,7 +158,7 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False) -> subprocess.CompletedPro
 
 
 # ── Stage: tau2 ─────────────────────────────────────────────────────
-def run_tau2(models: list[str], *, dry_run: bool = False,
+def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
              trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
              concurrency: int = DEFAULT_CONCURRENCY) -> dict[str, Path]:
     """Run tau2-bench on the telecom domain for each model.
@@ -132,7 +188,10 @@ def run_tau2(models: list[str], *, dry_run: bool = False,
             "--max-concurrency", str(concurrency),
             "--save-to", save_name,
         ]
-        result = run_cmd(cmd, dry_run=dry_run)
+        env = make_model_env(models_config, model)
+        logger.debug("AZURE_API_BASE=%s (via %s)", env.get("AZURE_API_BASE", "<unset>"),
+                      resolve_endpoint_env_var(models_config, model))
+        result = run_cmd(cmd, dry_run=dry_run, env=env)
         # tau2 saves to {DATA_DIR}/simulations/<save_name>.json where DATA_DIR
         # is the tau2 package's data directory (typically <tau3-bench>/data/).
         try:
@@ -170,7 +229,7 @@ def collect_tau2_rewards(outputs: dict[str, Path]) -> dict[str, float]:
 
 
 # ── Stage: p2m ──────────────────────────────────────────────────────
-def run_p2m(models: list[str], *, dry_run: bool = False) -> dict[str, str]:
+def run_p2m(models: list[str], models_config: dict, *, dry_run: bool = False) -> dict[str, str]:
     """Run p2m evaluation for each model.
 
     Generates a temporary config per model with the target model overridden.
@@ -201,7 +260,10 @@ def run_p2m(models: list[str], *, dry_run: bool = False) -> dict[str, str]:
             shutil.which("p2m") or str(Path(sys.executable).parent / "p2m"),
             "run", "--config", str(tmp_config),
         ]
-        result = run_cmd(cmd, dry_run=dry_run)
+        env = make_model_env(models_config, model)
+        logger.debug("AZURE_API_BASE=%s (via %s)", env.get("AZURE_API_BASE", "<unset>"),
+                      resolve_endpoint_env_var(models_config, model))
+        result = run_cmd(cmd, dry_run=dry_run, env=env)
         runs[model] = run_name
 
         if result and result.returncode != 0:
@@ -543,6 +605,11 @@ def main() -> None:
 
     logger.info("Stages: %s | Models: %s", stages, [model_slug(m) for m in models])
 
+    # ── Validate endpoints before expensive API calls ───────────────
+    api_stages = {"tau2", "p2m"}
+    if api_stages & set(stages) and not args.dry_run:
+        validate_endpoints(models_config, models)
+
     # ── Run stages ──────────────────────────────────────────────────
     tau2_rewards: dict[str, float] = {}
     p2m_scores: dict[str, dict[str, float]] = {}
@@ -565,7 +632,7 @@ def main() -> None:
                              trials=trials, concurrency=concurrency):
             logger.info("Skipped tau2 stage.")
         else:
-            outputs = run_tau2(models, dry_run=args.dry_run,
+            outputs = run_tau2(models, models_config, dry_run=args.dry_run,
                                trials=trials, user_model=user_model,
                                concurrency=concurrency)
             if not args.dry_run:
@@ -578,7 +645,7 @@ def main() -> None:
         if not confirm_stage("p2m", models, yes=args.dry_run or args.yes):
             logger.info("Skipped p2m stage.")
         else:
-            runs = run_p2m(models, dry_run=args.dry_run)
+            runs = run_p2m(models, models_config, dry_run=args.dry_run)
             if not args.dry_run:
                 p2m_scores = collect_p2m_scores(suite_name, runs)
                 print_p2m_cost_summary(suite_name, runs)
