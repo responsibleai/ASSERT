@@ -209,6 +209,7 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
     so live progress feels instantaneous.
     """
     pending = b""
+    last_was_suppressed = False
     while True:
         ready, _, _ = select.select([master_fd], [], [], 0.1)
         if ready:
@@ -225,6 +226,7 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
                 line = line_bytes.decode("utf-8", errors="replace")
                 # Drop unconditionally noisy lines
                 if any(p.search(line) for p in _NOISE_PATTERNS):
+                    last_was_suppressed = True
                     continue
                 # Warn-once: show first occurrence only
                 matched_warn = False
@@ -239,8 +241,13 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
                             )
                             sys.stdout.buffer.flush()
                         matched_warn = True
+                        last_was_suppressed = True
                         break
                 if not matched_warn:
+                    # Collapse blank lines left behind by suppressed output
+                    if not line.strip() and last_was_suppressed:
+                        continue
+                    last_was_suppressed = False
                     sys.stdout.buffer.write(line_bytes + b"\n")
                     sys.stdout.buffer.flush()
         elif pending:
