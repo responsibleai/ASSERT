@@ -1,16 +1,29 @@
 # ═══════════════════════════════════════════════════════════════════════
 # Model inventory and presets for the telecom comparison study.
 #
-# Endpoints reference environment variable names — no cleartext URLs.
-# Set the env vars before running:
+# Endpoints and API keys reference environment variable names — no secrets.
+# Set the env vars before running (or add them to .env):
 #   export AZURE_API_BASE_WESTUS2="https://..."
 #   export AZURE_API_BASE_AUSTRALIAEAST="https://..."
+#   export AZURE_API_KEY_WESTUS2="..."
+#   export AZURE_API_KEY_AUSTRALIAEAST="..."
 # ═══════════════════════════════════════════════════════════════════════
 
 endpoints:
   default: AZURE_API_BASE
   australiaeast: AZURE_API_BASE_AUSTRALIAEAST
   westus2: AZURE_API_BASE_WESTUS2
+
+api_keys:
+  default: AZURE_API_KEY
+  australiaeast: AZURE_API_KEY_AUSTRALIAEAST
+  westus2: AZURE_API_KEY_WESTUS2
+
+# tau2 user simulator model per endpoint.
+# Must be a deployment on the SAME endpoint (tau2 uses one AZURE_API_BASE).
+user_simulator:
+  australiaeast: azure/gpt-5.4-mini
+  westus2: azure/gpt-oss-120b
 
 presets:
   quick:

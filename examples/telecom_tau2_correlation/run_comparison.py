@@ -114,26 +114,66 @@ def resolve_endpoint_env_var(config: dict, model_name: str) -> str:
     return endpoints.get(endpoint_key or "default", endpoints.get("default", "AZURE_API_BASE"))
 
 
+def resolve_api_key_env_var(config: dict, model_name: str) -> str:
+    """Return the env var name for a model's API key."""
+    api_keys = config.get("api_keys", {})
+    entry = _model_entry(config, model_name)
+    endpoint_key = entry.get("endpoint") if entry else None
+    return api_keys.get(endpoint_key or "default", api_keys.get("default", "AZURE_API_KEY"))
+
+
+def resolve_user_model(config: dict, agent_model: str, fallback: str = DEFAULT_USER_MODEL) -> str:
+    """Pick the user-simulator model for a given agent model.
+
+    tau2 sets a single AZURE_API_BASE per subprocess, so the user simulator
+    must be a deployment on the same endpoint as the agent model.
+    Lookup chain: model.endpoint → user_simulator.<key> → fallback.
+    """
+    entry = _model_entry(config, agent_model)
+    endpoint_key = entry.get("endpoint") if entry else None
+    user_sim_map = config.get("user_simulator", {})
+    return user_sim_map.get(endpoint_key or "default", fallback)
+
+
 def validate_endpoints(config: dict, models: list[str]) -> None:
-    """Verify all required endpoint env vars are set. Exit if any are missing."""
+    """Verify all required endpoint and API key env vars are set. Exit if any are missing."""
     missing: dict[str, list[str]] = {}  # env_var → [models]
     for model in models:
-        env_var = resolve_endpoint_env_var(config, model)
-        if not os.environ.get(env_var):
-            missing.setdefault(env_var, []).append(model_slug(model))
+        for resolve_fn in (resolve_endpoint_env_var, resolve_api_key_env_var):
+            env_var = resolve_fn(config, model)
+            if not os.environ.get(env_var):
+                missing.setdefault(env_var, []).append(model_slug(model))
     if missing:
-        logger.error("Missing endpoint environment variables:")
+        logger.error("Missing environment variables:")
         for var, slugs in missing.items():
             logger.error("  %s  (needed by: %s)", var, ", ".join(slugs))
         sys.exit(1)
 
 
+def validate_tau2_data() -> None:
+    """Verify the tau2 data directory exists and has telecom domain files."""
+    telecom_dir = TAU2_DATA_DIR / "tau2" / "domains" / "telecom"
+    if not telecom_dir.is_dir():
+        logger.error("tau2 data directory not found: %s", TAU2_DATA_DIR)
+        logger.error("Clone the tau3-bench repo and symlink or copy its data/ directory:")
+        logger.error("  git clone --depth 1 https://github.com/SEACrowd/tau3-bench.git /tmp/tau3-bench")
+        logger.error("  ln -s /tmp/tau3-bench/data %s", SCRIPT_DIR / "data")
+        logger.error("Or set TAU2_DATA_DIR to an existing tau3-bench data directory.")
+        sys.exit(1)
+
+
 def make_model_env(config: dict, model_name: str) -> dict[str, str]:
-    """Build a subprocess env dict with AZURE_API_BASE set for the given model."""
+    """Build a subprocess env dict with AZURE_API_BASE and AZURE_API_KEY set for the given model."""
     env = os.environ.copy()
     url = resolve_endpoint_url(config, model_name)
     if url:
         env["AZURE_API_BASE"] = url
+    key_var = resolve_api_key_env_var(config, model_name)
+    key_val = os.environ.get(key_var)
+    if key_val:
+        env["AZURE_API_KEY"] = key_val
+    # Point tau2 at local data directory (domain data + simulation outputs)
+    env.setdefault("TAU2_DATA_DIR", str(TAU2_DATA_DIR))
     return env
 
 
@@ -163,17 +203,20 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False,
 
 # ── Result discovery ────────────────────────────────────────────────
 def discover_tau2_results(models: list[str]) -> dict[str, Path]:
-    """Find existing tau2 output files for the given models."""
+    """Find existing tau2 output files that contain actual simulations."""
     existing: dict[str, Path] = {}
-    try:
-        from tau2.utils.utils import DATA_DIR
-        sim_dir = Path(DATA_DIR) / "simulations"
-    except ImportError:
-        sim_dir = Path("data") / "simulations"
+    sim_dir = TAU2_DATA_DIR / "simulations"
     for model in models:
         path = sim_dir / f"telecom_{model_slug(model)}.json"
         if path.exists():
-            existing[model] = path
+            try:
+                data = json.loads(path.read_text())
+                if data.get("simulations"):
+                    existing[model] = path
+                else:
+                    logger.debug("Ignoring %s (0 simulations)", path.name)
+            except (json.JSONDecodeError, OSError):
+                logger.debug("Ignoring %s (unreadable)", path.name)
     return existing
 
 
@@ -220,27 +263,25 @@ def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
                 "  pip install 'tau2 @ git+https://github.com/SEACrowd/tau3-bench.git'"
             )
             sys.exit(1)
+        # Pick the user-sim model for the same endpoint as the agent model
+        effective_user_model = resolve_user_model(models_config, model, fallback=user_model)
         cmd = [
             tau2_bin, "run",
             "--domain", TAU2_DOMAIN,
             "--agent-llm", model,
-            "--user-llm", user_model,
+            "--user-llm", effective_user_model,
             "--num-trials", str(trials),
             "--max-concurrency", str(concurrency),
             "--save-to", save_name,
         ]
         env = make_model_env(models_config, model)
-        logger.debug("AZURE_API_BASE=%s (via %s)", env.get("AZURE_API_BASE", "<unset>"),
-                      resolve_endpoint_env_var(models_config, model))
+        logger.debug("AZURE_API_BASE=%s (via %s), user-llm=%s",
+                      env.get("AZURE_API_BASE", "<unset>"),
+                      resolve_endpoint_env_var(models_config, model),
+                      effective_user_model)
         result = run_cmd(cmd, dry_run=dry_run, env=env)
-        # tau2 saves to {DATA_DIR}/simulations/<save_name>.json where DATA_DIR
-        # is the tau2 package's data directory (typically <tau3-bench>/data/).
-        try:
-            from tau2.utils.utils import DATA_DIR
-            output_path = Path(DATA_DIR) / "simulations" / f"{save_name}.json"
-        except ImportError:
-            # Fallback: assume tau2 data dir is relative to cwd
-            output_path = Path("data") / "simulations" / f"{save_name}.json"
+        # tau2 saves to {TAU2_DATA_DIR}/simulations/<save_name>.json
+        output_path = TAU2_DATA_DIR / "simulations" / f"{save_name}.json"
         outputs[model] = output_path
         if result and result.returncode != 0:
             logger.warning("tau2 failed for %s, skipping", model)
@@ -618,7 +659,8 @@ def main() -> None:
     parser.add_argument(
         "--user-model",
         default=DEFAULT_USER_MODEL,
-        help=f"LLM for tau2 user simulator (default: {DEFAULT_USER_MODEL})",
+        help=f"Fallback LLM for tau2 user simulator when no per-endpoint "
+             f"mapping exists in models.yaml (default: {DEFAULT_USER_MODEL})",
     )
     parser.add_argument(
         "--concurrency",
@@ -689,6 +731,10 @@ def main() -> None:
     api_stages = {"tau2", "p2m"}
     if api_stages & set(stages) and not args.dry_run:
         validate_endpoints(models_config, models)
+
+    # ── Validate tau2 data directory ────────────────────────────────
+    if "tau2" in stages:
+        validate_tau2_data()
 
     # ── Run stages ──────────────────────────────────────────────────
     suite_name = yaml.safe_load(P2M_CONFIG.read_text()).get("suite", "telecom-tau2-correlation")
