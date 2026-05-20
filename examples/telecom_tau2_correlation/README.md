@@ -87,7 +87,10 @@ python examples/telecom_tau2_correlation/smoke_test.py --list   # show config
 # Quick validation -- 4 models, 10 test cases, 2 tau2 trials
 python examples/telecom_tau2_correlation/run_comparison.py --preset quick
 
-# Full study -- 8 models, 70 test cases, 4 tau2 trials
+# Medium run -- 3 models, 70 test cases, 4 tau2 trials
+python examples/telecom_tau2_correlation/run_comparison.py --preset mini
+
+# Full study -- all models, 70 test cases, 4 tau2 trials
 python examples/telecom_tau2_correlation/run_comparison.py --preset full
 
 # Dry-run to preview commands
@@ -100,11 +103,12 @@ python examples/telecom_tau2_correlation/run_comparison.py --preset quick --dry-
 python run_comparison.py [options]
 
 Options:
-  --preset {quick,full}   Model set + override bundle from models.yaml
+  --preset {quick,mini,full}  Model set + override bundle from models.yaml
   --stages STAGES         Comma-separated: tau2,p2m,correlate (default: all)
   --models MODEL [...]    Override preset model selection
   --trials N              tau2 trials per task (default: 4)
   --concurrency N         Max concurrent tau2 tasks (default: 10)
+  --tau2-retries N        Max tau2 retry attempts per model (default: 3)
   --test-cases N          Override p2m test_set prompt sample_size
   --user-model MODEL      LLM for tau2 user simulator
   --force                 Re-run models even if results exist
@@ -138,7 +142,8 @@ sets default values for `trials`, `concurrency`, `test_cases`,
 | Preset | Models | test_cases | trials | judge_model |
 |---|---|---|---|---|
 | `quick` | 4 (across tiers) | 10 | 2 | gpt-5.4-mini |
-| `full` | 8 (all deployed) | 70 | 4 | gpt-5.4 |
+| `mini` | 3 (one per tier) | 70 | 4 | gpt-5.4-mini |
+| `full` | all deployed | 70 | 4 | gpt-5.4 |
 
 CLI flags override preset values when both are provided.
 
@@ -146,9 +151,9 @@ CLI flags override preset values when both are provided.
 
 | Stage | What it does |
 |---|---|
-| `tau2` | Run tau2-bench on the telecom domain for each model |
+| `tau2` | Run tau2-bench on the telecom domain for each model (with retry) |
 | `p2m` | Run p2m evaluation with eval_config for each model |
-| `correlate` | Compute Spearman rank correlation and print summary |
+| `correlate` | Compute Spearman rank correlation with p-values and sample sizes |
 
 Stages skip models that already have results on disk (use `--force` to
 re-run). Intermediate results are saved after each model completes.
@@ -172,3 +177,23 @@ Results are written to `results/` within this directory:
   the same failure modes that tau2's deterministic scoring catches.
 - **Multi-endpoint support**: Models are deployed across Azure regions.
   `models.yaml` maps each model to its endpoint env var.
+- **tau2 retry loop**: tau2-bench can crash mid-run due to malformed LLM
+  responses. The script retries up to `--tau2-retries` times per model,
+  leveraging tau2's built-in resume (skips completed tasks on re-run).
+  A completion table is printed after the tau2 stage.
+- **Enhanced correlation report**: The correlate stage reports Spearman
+  rho, p-values, significance markers, and per-model tau2 sample sizes.
+  Models with low sample completion (< 50%) are flagged with a
+  suggested re-run command.
+
+## Troubleshooting
+
+### Phoenix/OTEL connection errors
+
+If you see `Failed to export traces to localhost:4317` errors, Phoenix
+isn't running. These are harmless -- trace export is optional and the
+script suppresses them automatically. To enable tracing:
+
+```bash
+uv run phoenix serve   # start Phoenix in a separate terminal
+```
