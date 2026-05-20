@@ -270,7 +270,12 @@ def model_slug(model: str) -> str:
     return model.rsplit("/", 1)[-1]
 
 
-def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
+_ERROR_LINE_RE = re.compile(r"Error running task (.+?), trial (\d+): (.+)")
+
+
+def _filter_pty_output(master_fd: int, seen_warnings: set[str],
+                       errors: list[str] | None = None,
+                       *, auto_resume: bool = False) -> None:
     """Read PTY output, filter noise, and write the rest to real stdout.
 
     Uses a pseudo-TTY so the subprocess sees a real terminal (rich progress
@@ -279,9 +284,29 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
     against noise patterns.  Incomplete data (rich progress updates that use
     carriage-return / ANSI cursor control) is flushed after a short timeout
     so live progress feels instantaneous.
+
+    When *auto_resume* is True, the filter auto-answers tau2's interactive
+    "Do you want to resume the run? (y/n)" prompt with "y".
+
+    When *errors* is provided, tau2 ``ERROR`` lines are collected into
+    the list for post-run summarisation.
     """
     pending = b""
     last_was_suppressed = False
+
+    def _check_auto_resume(text: str) -> bool:
+        """If *text* contains a tau2 resume prompt, auto-answer 'y'."""
+        if not auto_resume:
+            return False
+        if "resume the run?" in text:
+            try:
+                os.write(master_fd, b"y\n")
+                logger.debug("Auto-answered resume prompt with 'y'")
+            except OSError:
+                pass
+            return True
+        return False
+
     while True:
         ready, _, _ = select.select([master_fd], [], [], 0.1)
         if ready:
@@ -296,6 +321,13 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
             while b"\n" in pending:
                 line_bytes, pending = pending.split(b"\n", 1)
                 line = line_bytes.decode("utf-8", errors="replace")
+                # Collect tau2 error lines for the summary
+                if errors is not None:
+                    m = _ERROR_LINE_RE.search(line)
+                    if m:
+                        errors.append(line.strip())
+                # Auto-answer resume prompts that arrive on a full line
+                _check_auto_resume(line)
                 # Drop unconditionally noisy lines
                 if any(p.search(line) for p in _NOISE_PATTERNS):
                     last_was_suppressed = True
@@ -325,6 +357,8 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
         elif pending:
             # No new data for 100 ms — flush pending bytes (likely a
             # rich progress update using \r / ANSI cursor escapes).
+            # Check for resume prompts (they don't end with \n).
+            _check_auto_resume(pending.decode("utf-8", errors="replace"))
             sys.stdout.buffer.write(pending)
             sys.stdout.buffer.flush()
             pending = b""
@@ -332,18 +366,28 @@ def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
     # Flush anything left over
     if pending:
         line = pending.decode("utf-8", errors="replace")
+        _check_auto_resume(line)
         if not any(p.search(line) for p in _NOISE_PATTERNS):
             sys.stdout.buffer.write(pending)
             sys.stdout.buffer.flush()
 
 
 def run_cmd(cmd: list[str], *, dry_run: bool = False,
-            env: dict[str, str] | None = None) -> subprocess.CompletedProcess | None:
+            env: dict[str, str] | None = None,
+            auto_resume: bool = False,
+            errors_out: list[str] | None = None,
+            ) -> subprocess.CompletedProcess | None:
     """Run a subprocess through a pseudo-TTY, filtering noisy output.
 
     The PTY lets rich progress bars and panels render normally (the child
     process sees a real terminal) while we intercept the byte stream to
     drop litellm / loguru noise.
+
+    When *auto_resume* is True, stdin is connected through the PTY and
+    tau2's interactive "Do you want to resume?" prompt is auto-answered.
+
+    When *errors_out* is provided, tau2 error lines are collected into
+    the list for post-run analysis.
     """
     display = " ".join(cmd)
     if dry_run:
@@ -367,13 +411,21 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False,
     except Exception:
         pass  # best-effort; default 80×24 is fine
 
-    proc = subprocess.Popen(cmd, env=env,
-                            stdout=slave_fd, stderr=slave_fd)
+    popen_kwargs = dict(env=env, stdout=slave_fd, stderr=slave_fd)
+    if auto_resume:
+        # Connect stdin through the PTY so we can auto-answer prompts
+        popen_kwargs["stdin"] = slave_fd
+    proc = subprocess.Popen(cmd, **popen_kwargs)
     os.close(slave_fd)  # parent doesn't need the slave end
 
     seen: set[str] = set()
-    filter_thread = threading.Thread(target=_filter_pty_output,
-                                     args=(master_fd, seen), daemon=True)
+    collected_errors: list[str] = errors_out if errors_out is not None else []
+    filter_thread = threading.Thread(
+        target=_filter_pty_output,
+        args=(master_fd, seen, collected_errors),
+        kwargs={"auto_resume": auto_resume},
+        daemon=True,
+    )
     filter_thread.start()
     proc.wait()
     filter_thread.join(timeout=5)
@@ -392,12 +444,18 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False,
 
 # ── Result discovery ────────────────────────────────────────────────
 def discover_tau2_results(models: list[str], *, expected_trials: int = 0) -> dict[str, Path]:
-    """Find existing tau2 output files that contain actual simulations.
+    """Find existing tau2 output files that contain complete simulations.
 
-    When *expected_trials* > 0, a result file is only accepted if the
-    simulation count matches exactly.  tau2 appends to existing JSON files
-    across runs, so stale files with accumulated simulations from prior
-    runs are rejected (and removed) to prevent inflated counts.
+    When *expected_trials* > 0, the expected simulation count is derived
+    from the file's task list (``n_tasks × expected_trials``).
+
+    * **Complete** files (sim count matches expected) are returned so the
+      model is skipped in the next run.
+    * **Partial** files (fewer sims) are *kept* on disk so tau2 can
+      resume them — they are simply excluded from the returned dict so
+      the model remains in the pending list.
+    * **Over-count** files (more sims than expected, e.g. accumulated
+      from pre-resume runs) are removed as stale.
     """
     existing: dict[str, Path] = {}
     sim_dir = TAU2_DATA_DIR / "simulations"
@@ -406,17 +464,27 @@ def discover_tau2_results(models: list[str], *, expected_trials: int = 0) -> dic
         if path.exists():
             try:
                 data = json.loads(path.read_text())
-                n_sims = len(data.get("simulations", []))
+                sims = data.get("simulations", [])
+                n_sims = len(sims)
                 if n_sims == 0:
                     logger.debug("Ignoring %s (0 simulations)", path.name)
                     continue
-                if expected_trials > 0 and n_sims != expected_trials:
-                    logger.warning(
-                        "Removing stale %s: has %d sims, expected %d",
-                        path.name, n_sims, expected_trials,
-                    )
-                    path.unlink()
-                    continue
+                if expected_trials > 0:
+                    n_tasks = len(data.get("tasks", []))
+                    expected_total = n_tasks * expected_trials if n_tasks else 0
+                    if expected_total > 0 and n_sims > expected_total:
+                        logger.warning(
+                            "Removing stale %s: has %d sims, expected %d",
+                            path.name, n_sims, expected_total,
+                        )
+                        path.unlink()
+                        continue
+                    if expected_total > 0 and n_sims < expected_total:
+                        logger.info(
+                            "Partial %s: %d/%d sims — tau2 will resume",
+                            path.name, n_sims, expected_total,
+                        )
+                        continue  # keep file for resume, don't mark complete
                 existing[model] = path
             except (json.JSONDecodeError, OSError):
                 logger.debug("Ignoring %s (unreadable)", path.name)
@@ -445,6 +513,56 @@ def _progress_line(i: int, total: int, t0: float) -> str:
 
 
 # ── Stage: tau2 ─────────────────────────────────────────────────────
+def _summarize_tau2_run(model: str, output_path: Path,
+                        errors: list[str], expected_trials: int) -> None:
+    """Log a human-readable summary after a tau2 run fails or finishes."""
+    # Read whatever was saved to disk (tau2 saves per-task incrementally)
+    completed = 0
+    expected_total = 0
+    if output_path.exists():
+        try:
+            data = json.loads(output_path.read_text())
+            completed = len(data.get("simulations", []))
+            n_tasks = len(data.get("tasks", []))
+            expected_total = n_tasks * expected_trials
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Summarise task-level errors captured from stdout
+    error_summary: dict[str, int] = {}
+    failed_tasks: list[str] = []
+    for line in errors:
+        m = _ERROR_LINE_RE.search(line)
+        if m:
+            task_id, _trial, reason = m.group(1), m.group(2), m.group(3)
+            failed_tasks.append(task_id)
+            # Normalise common error reasons for grouping
+            if "content or tool calls" in reason:
+                key = "empty model response (no content or tool calls)"
+            elif "rate limit" in reason.lower() or "429" in reason:
+                key = "rate-limited (429)"
+            elif "timeout" in reason.lower():
+                key = "timeout"
+            else:
+                key = reason[:80]
+            error_summary[key] = error_summary.get(key, 0) + 1
+
+    parts = [f"tau2 failed for {model}:"]
+    if expected_total:
+        parts.append(f"  completed {completed}/{expected_total} sims")
+    if error_summary:
+        parts.append("  errors:")
+        for reason, count in sorted(error_summary.items(), key=lambda x: -x[1]):
+            parts.append(f"    {count}× {reason}")
+        unique_tasks = len(set(failed_tasks))
+        parts.append(f"  {unique_tasks} unique task(s) had errors")
+    else:
+        parts.append("  (no parseable error lines captured)")
+    if completed > 0:
+        parts.append(f"  partial results saved — will resume on next run")
+    logger.warning("\n".join(parts))
+
+
 def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
              trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
              concurrency: int = DEFAULT_CONCURRENCY) -> dict[str, Path]:
@@ -482,12 +600,14 @@ def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
                       env.get("AZURE_API_BASE", "<unset>"),
                       resolve_endpoint_env_var(models_config, model),
                       effective_user_model)
-        result = run_cmd(cmd, dry_run=dry_run, env=env)
+        errors: list[str] = []
+        result = run_cmd(cmd, dry_run=dry_run, env=env,
+                         auto_resume=True, errors_out=errors)
         # tau2 saves to {TAU2_DATA_DIR}/simulations/<save_name>.json
         output_path = TAU2_DATA_DIR / "simulations" / f"{save_name}.json"
         outputs[model] = output_path
         if result and result.returncode != 0:
-            logger.warning("tau2 failed for %s, skipping", model)
+            _summarize_tau2_run(model, output_path, errors, trials)
     if not dry_run:
         logger.info("── tau2 stage done: %.1f min for %d model(s) ──",
                      (time.monotonic() - stage_t0) / 60, total)
