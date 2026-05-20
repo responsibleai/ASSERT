@@ -51,7 +51,7 @@ DEFAULT_CONCURRENCY = 5
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.
 _EST_TAU2_MINUTES_PER_MODEL = 8       # wall-clock with concurrency=5
-_EST_P2M_MINUTES_PER_MODEL = 8        # 70 seeds
+_EST_P2M_MINUTES_PER_MODEL = 8        # 70 test cases
 _EST_TAU2_COST_PER_MODEL_NANO = 4.50  # USD, agent+user at nano pricing
 _EST_P2M_INPUT_TOKENS_PER_MODEL = 3_200_000
 
@@ -189,10 +189,10 @@ def run_p2m(models: list[str], *, dry_run: bool = False) -> dict[str, str]:
         # Deep-copy and patch the config for this model
         config = copy.deepcopy(base_config)
         config["run"] = run_name
-        config["pipeline"]["rollout"]["target"]["model"]["name"] = model
+        config["pipeline"]["inference"]["target"]["model"]["name"] = model
 
         # Write temporary config next to the source config so that
-        # relative paths (concept markdown, tool files) resolve correctly.
+        # relative paths (tool files) resolve correctly.
         tmp_config = P2M_CONFIG.parent / f"config_{slug}.yaml"
         tmp_config.parent.mkdir(parents=True, exist_ok=True)
         tmp_config.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
@@ -217,7 +217,7 @@ def collect_p2m_scores(suite_name: str, runs: dict[str, str]) -> dict[str, dict[
     """Collect p2m scores from artifacts.
 
     Returns {model: {dimension: violation_rate}} where violation_rate
-    is the fraction of seeds where the dimension was flagged true.
+    is the fraction of test cases where the dimension was flagged true.
     """
     scores: dict[str, dict[str, float]] = {}
     artifacts_base = REPO_ROOT / "artifacts" / "results" / suite_name
@@ -432,7 +432,7 @@ def confirm_stage(stage: str, models: list[str], *, yes: bool = False,
         est_min = _EST_P2M_MINUTES_PER_MODEL * n
         est_tok = _EST_P2M_INPUT_TOKENS_PER_MODEL * n
         print(f"\n{'─' * 60}")
-        print(f"  Stage: p2m evaluation (70 seeds per model)")
+        print(f"  Stage: p2m evaluation (70 test cases per model)")
         print(f"  Models ({n}): {slugs}")
         print(f"  Estimated: ~{est_min} min, ~{est_tok / 1e6:.0f}M input tokens")
         print(f"{'─' * 60}")
