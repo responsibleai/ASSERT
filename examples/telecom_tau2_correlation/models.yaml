@@ -19,6 +19,11 @@ api_keys:
   australiaeast: AZURE_API_KEY_AUSTRALIAEAST
   westus2: AZURE_API_KEY_WESTUS2
 
+# Endpoint that hosts p2m pipeline models (systematize, test_set, judge).
+# When AZURE_API_BASE is not set, the p2m subprocess uses this endpoint
+# as the default for all non-target litellm calls.
+pipeline_endpoint: australiaeast
+
 # tau2 user simulator model per endpoint.
 # Must be a deployment on the SAME endpoint (tau2 uses one AZURE_API_BASE).
 user_simulator:

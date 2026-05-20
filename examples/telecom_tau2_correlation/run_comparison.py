@@ -158,6 +158,22 @@ def validate_endpoints(config: dict, models: list[str]) -> None:
             env_var = resolve_fn(config, model)
             if not os.environ.get(env_var):
                 missing.setdefault(env_var, []).append(model_slug(model))
+
+    # Validate that pipeline models have a usable endpoint.
+    # If AZURE_API_BASE isn't set, the pipeline_endpoint must point to
+    # an endpoint whose env vars *are* set.
+    if not os.environ.get("AZURE_API_BASE"):
+        pipeline_key = config.get("pipeline_endpoint")
+        if not pipeline_key:
+            missing.setdefault("AZURE_API_BASE", []).append("pipeline models")
+        else:
+            endpoints = config.get("endpoints", {})
+            api_keys = config.get("api_keys", {})
+            for var_map, label in [(endpoints, "endpoint"), (api_keys, "api_key")]:
+                env_var = var_map.get(pipeline_key)
+                if env_var and not os.environ.get(env_var):
+                    missing.setdefault(env_var, []).append(f"pipeline ({label})")
+
     if missing:
         logger.error("Missing environment variables:")
         for var, slugs in missing.items():
@@ -203,8 +219,29 @@ def make_p2m_env(config: dict, model_name: str) -> dict[str, str]:
     keeps the default AZURE_API_BASE/AZURE_API_KEY for pipeline models
     (systematize, test_set, tester, judge) and routes only the target
     model to its specific endpoint via _P2M_MODEL_ROUTING + _p2m_shim.py.
+
+    When AZURE_API_BASE is not set in the environment, falls back to the
+    ``pipeline_endpoint`` defined in models.yaml so that pipeline models
+    always have a usable default endpoint.
     """
     env = os.environ.copy()
+
+    # Ensure AZURE_API_BASE is set for pipeline models.
+    # If the environment already has it, use it.  Otherwise fall back to
+    # the pipeline_endpoint declared in models.yaml.
+    if not env.get("AZURE_API_BASE"):
+        pipeline_key = config.get("pipeline_endpoint")
+        if pipeline_key:
+            endpoints = config.get("endpoints", {})
+            api_keys = config.get("api_keys", {})
+            base_var = endpoints.get(pipeline_key, "AZURE_API_BASE")
+            key_var = api_keys.get(pipeline_key, "AZURE_API_KEY")
+            base_val = os.environ.get(base_var)
+            key_val = os.environ.get(key_var)
+            if base_val:
+                env["AZURE_API_BASE"] = base_val
+            if key_val:
+                env.setdefault("AZURE_API_KEY", key_val)
 
     # Check if the target model uses a non-default endpoint.
     entry = _model_entry(config, model_name)
