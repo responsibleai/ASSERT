@@ -25,9 +25,13 @@ import copy
 import json
 import logging
 import os
+import pty
+import re
+import select
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -37,6 +41,17 @@ from dotenv import load_dotenv
 load_dotenv()  # pick up .env from repo root
 
 logger = logging.getLogger(__name__)
+
+# Patterns for noisy subprocess stderr lines we want to suppress.
+# The first match of _WARN_ONCE patterns is printed; subsequent duplicates are dropped.
+_NOISE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"Give Feedback / Get Help"),
+    re.compile(r"Provider List:"),
+    re.compile(r"LiteLLM\.Info: If you need to debug"),
+]
+_WARN_ONCE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"This model isn't mapped yet"),
+]
 
 # ── Defaults ────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -183,17 +198,112 @@ def model_slug(model: str) -> str:
     return model.rsplit("/", 1)[-1]
 
 
+def _filter_pty_output(master_fd: int, seen_warnings: set[str]) -> None:
+    """Read PTY output, filter noise, and write the rest to real stdout.
+
+    Uses a pseudo-TTY so the subprocess sees a real terminal (rich progress
+    bars render normally) while we intercept the byte stream to drop noisy
+    litellm/loguru messages.  Complete newline-terminated lines are checked
+    against noise patterns.  Incomplete data (rich progress updates that use
+    carriage-return / ANSI cursor control) is flushed after a short timeout
+    so live progress feels instantaneous.
+    """
+    pending = b""
+    while True:
+        ready, _, _ = select.select([master_fd], [], [], 0.1)
+        if ready:
+            try:
+                data = os.read(master_fd, 8192)
+            except OSError:
+                break
+            if not data:
+                break
+            pending += data
+            # Process all complete (newline-terminated) lines
+            while b"\n" in pending:
+                line_bytes, pending = pending.split(b"\n", 1)
+                line = line_bytes.decode("utf-8", errors="replace")
+                # Drop unconditionally noisy lines
+                if any(p.search(line) for p in _NOISE_PATTERNS):
+                    continue
+                # Warn-once: show first occurrence only
+                matched_warn = False
+                for p in _WARN_ONCE_PATTERNS:
+                    if p.search(line):
+                        key = p.pattern
+                        if key not in seen_warnings:
+                            seen_warnings.add(key)
+                            sys.stdout.buffer.write(line_bytes + b"\n")
+                            sys.stdout.buffer.write(
+                                b"  (further identical warnings suppressed)\n"
+                            )
+                            sys.stdout.buffer.flush()
+                        matched_warn = True
+                        break
+                if not matched_warn:
+                    sys.stdout.buffer.write(line_bytes + b"\n")
+                    sys.stdout.buffer.flush()
+        elif pending:
+            # No new data for 100 ms — flush pending bytes (likely a
+            # rich progress update using \r / ANSI cursor escapes).
+            sys.stdout.buffer.write(pending)
+            sys.stdout.buffer.flush()
+            pending = b""
+
+    # Flush anything left over
+    if pending:
+        line = pending.decode("utf-8", errors="replace")
+        if not any(p.search(line) for p in _NOISE_PATTERNS):
+            sys.stdout.buffer.write(pending)
+            sys.stdout.buffer.flush()
+
+
 def run_cmd(cmd: list[str], *, dry_run: bool = False,
             env: dict[str, str] | None = None) -> subprocess.CompletedProcess | None:
-    """Run a subprocess with output streamed to the terminal."""
+    """Run a subprocess through a pseudo-TTY, filtering noisy output.
+
+    The PTY lets rich progress bars and panels render normally (the child
+    process sees a real terminal) while we intercept the byte stream to
+    drop litellm / loguru noise.
+    """
     display = " ".join(cmd)
     if dry_run:
         logger.info("[DRY-RUN] %s", display)
         return None
     logger.info("Running: %s", display)
     t0 = time.monotonic()
-    result = subprocess.run(cmd, env=env)
+
+    # Create a pseudo-TTY so the subprocess thinks it has a real terminal
+    master_fd, slave_fd = pty.openpty()
+
+    # Propagate the real terminal size so rich panels wrap correctly
+    try:
+        import fcntl
+        import struct
+        import termios
+        if sys.stdout.isatty():
+            size = fcntl.ioctl(sys.stdout.fileno(),
+                               termios.TIOCGWINSZ, b"\x00" * 8)
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, size)
+    except Exception:
+        pass  # best-effort; default 80×24 is fine
+
+    proc = subprocess.Popen(cmd, env=env,
+                            stdout=slave_fd, stderr=slave_fd)
+    os.close(slave_fd)  # parent doesn't need the slave end
+
+    seen: set[str] = set()
+    filter_thread = threading.Thread(target=_filter_pty_output,
+                                     args=(master_fd, seen), daemon=True)
+    filter_thread.start()
+    proc.wait()
+    filter_thread.join(timeout=5)
+    try:
+        os.close(master_fd)
+    except OSError:
+        pass
     elapsed = time.monotonic() - t0
+    result = subprocess.CompletedProcess(cmd, proc.returncode)
     if result.returncode != 0:
         logger.error("Command failed (exit %d) after %.1fs", result.returncode, elapsed)
     else:
