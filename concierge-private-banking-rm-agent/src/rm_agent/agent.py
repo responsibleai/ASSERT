@@ -836,3 +836,10 @@ def handle_for_p2m(user_input: str) -> str:
     agent = ConciergeRMAgent(guarded=True)
     out = agent.handle(user_input=user_input, session_id="p2m-run")
     return out.get("response", "")
+
+
+def handle_for_p2m_unguarded(user_input: str) -> str:
+    """P2M callable target adapter (unguarded baseline)."""
+    agent = ConciergeRMAgent(guarded=False)
+    out = agent.handle(user_input=user_input, session_id="p2m-run-unguarded")
+    return out.get("response", "")
