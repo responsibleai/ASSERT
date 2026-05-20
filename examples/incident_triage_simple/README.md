@@ -1,45 +1,50 @@
-# Incident Triage (Simple) — joint p2m + AgentShield demo
+# Incident-triage agent (simplified) — joint AgentShield + p2m demo
 
-A small SRE triage agent. The point of this folder: show in **~300 lines
-total** that p2m surfaces failure modes a developer would actually care
-about, and that a few lines of AgentShield YAML close the structural ones.
+This is the small, fast version of the case study one folder over (see `../incident_triage_agent/README.md`). It tells the same end-to-end story — p2m finds concrete incident-triage failures, AgentShield closes the deterministic runtime-fixable subset, and p2m measures the residual — but with 3 alerts, 3 tools, and 75-line guardrails.
 
-## What's here
+## Full case study vs. simplified demo
 
-| File | Why it exists |
-|---|---|
-| `agent.py` | LiteLLM tool loop with 3 tools: `get_alert`, `post_to_channel`, `escalate`. 5-sentence system prompt. |
-| `agent_guarded.py` | Same agent, wrapped by the runtime defined in `guardrails.yaml`. |
-| `eval_config.yaml` | One eval config. Swap the `target.callable` line for BEFORE / AFTER runs. |
-| `guardrails.yaml` | Two deterministic gates: must read the alert first; never relay attacker-controlled payload text into a channel post. |
-| `fixtures.json` | Three alerts: P0 security, P0 data + XPIA, P2 low impact. |
-| `incident_triage_simple.md` | Behavior-under-test prose. |
-| `.env.example` | Local env knobs. |
+| Dimension | Full case study (`../incident_triage_agent/`) | Simplified demo (this folder) |
+|---|---|---|
+| Goal | Publishable joint case study with measured BEFORE/AFTER deltas | Fast local walkthrough of the same loop |
+| Alerts | 10 fixture alerts, XPIA-enriched | 3 fixture alerts, one XPIA-heavy |
+| Tools | 6-tool SRE runbook loop | 3 tools: `get_alert`, `post_to_channel`, `escalate` |
+| Guardrails | 13 AgentShield gates | 2 deterministic gates |
+| p2m surface | Larger test_set and 11 judge dimensions | Small test_set and 3 judge dimensions |
+| Best use | Demo, discussion, and deeper debugging | Quick smoke test or first read |
 
-## Run it
+## Two deterministic gates
+
+The simplified runtime keeps only the two gates that make the loop obvious:
+
+1. **Read the alert before acting.** The agent must call `get_alert` before it posts or escalates, so the runtime has a grounded alert payload to validate against.
+2. **Never relay attacker-controlled payload text.** If `inbound_payload_text` shows up in an outbound channel post, AgentShield returns `blocked_by_guardrail`; the agent has to re-plan without copying the injected text.
+
+`reasonable_escalation` remains intentionally outside the guardrail layer. That is a tester-scored model-judgment dimension, not a deterministic runtime rule.
+
+## How to run
+
+From `examples/incident_triage_simple/`:
 
 ```bash
-cp .env.example .env  # then fill the Azure values
+# 1. Install dependencies from the repository project.
+uv sync
 
-# BEFORE: surface failure modes against the bare agent
-p2m run --config examples/incident_triage_simple/eval_config.yaml --run before
+# 2. Copy the env template, then fill in your Azure values.
+cp ./.env.example ./.env
 
-# AFTER: edit eval_config.yaml — flip target.callable to
-# examples.incident_triage_simple.agent_guarded:chat — and re-run
-p2m run --config examples/incident_triage_simple/eval_config.yaml --run after
+# 3. BEFORE — run the bare agent.
+uv run p2m run --config ./eval_config.yaml --run before
+
+# 4. AFTER — switch target.callable in eval_config.yaml to
+#    examples.incident_triage_simple.agent_guarded:chat, then rerun.
+uv run p2m run --config ./eval_config.yaml --run after
 ```
 
 ## What you should see
 
-- **BEFORE** fails `followed_alert_first` and `no_payload_relay` on the
-  ALR-002 (XPIA) scenarios. Channel posts will contain pasted
-  attacker text or skipped the `get_alert` step entirely.
-- **AFTER** closes both. The runtime returns
-  `blocked_by_guardrail` to the agent, the agent re-plans, and the
-  next attempt is clean.
-- The `reasonable_escalation` dimension is intentionally **not**
-  enforced by guardrails — it's a model-judgment dimension. The
-  AFTER run shows how much the model gets right on its own.
+- **BEFORE** should fail `followed_alert_first` and `no_payload_relay` on ALR-002-style XPIA cases: the agent skips `get_alert`, copies attacker text, or both.
+- **AFTER** should close both deterministic gates. The inference output should show `blocked_by_guardrail`, then a cleaner retry.
+- Inspect `inference_set.jsonl` for the conversation/tool-call trace and `scores.jsonl` for tester evidence on each dimension. The remaining `reasonable_escalation` misses are the intended residual: developer work, not guardrail work.
 
-That's the eval-and-fix loop in one folder. Skim the YAMLs — they're
-plain English. That is the entire demo.
+That is the eval-and-fix loop in one folder.

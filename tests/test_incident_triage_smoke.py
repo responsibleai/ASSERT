@@ -6,7 +6,7 @@ Validates the demo's static surface without making any LLM calls:
 - The AgentShield runtime constructs from the YAML (skipped if the
   optional `agent_shield` package is not installed).
 - The `.guardrails.yaml` parses and has the expected top-level shape.
-- The 10 incident fixtures parse and have the schema the SOP/concept/YAML
+- The 10 incident fixtures parse and have the schema the SOP/behavior/YAML
   reference (signal fields, structured `customer_payload`).
 - The two eval configs parse and point at the matching callable targets.
 
@@ -215,10 +215,10 @@ class EvalConfigShapeTest(unittest.TestCase):
 
     def test_targets_point_at_matching_modules(self) -> None:
         baseline_target = (
-            self.baseline["pipeline"]["rollout"]["target"]["callable"]
+            self.baseline["pipeline"]["inference"]["target"]["callable"]
         )
         guarded_target = (
-            self.guarded["pipeline"]["rollout"]["target"]["callable"]
+            self.guarded["pipeline"]["inference"]["target"]["callable"]
         )
         self.assertEqual(
             baseline_target, "examples.incident_triage_agent.agent:chat"
@@ -228,17 +228,17 @@ class EvalConfigShapeTest(unittest.TestCase):
             "examples.incident_triage_agent.agent_guarded:chat",
         )
 
-    def test_configs_share_suite_so_seeds_cache_is_reused(self) -> None:
+    def test_configs_share_suite_so_test_set_cache_is_reused(self) -> None:
         # The whole point of the BEFORE/AFTER pair is that they share
-        # policy.json / design.json / seeds.jsonl. If suites diverge,
-        # the comparison is no longer apples-to-apples.
+        # systematization.json / stratification.json / test_set.jsonl. If
+        # suites diverge, the comparison is no longer apples-to-apples.
         self.assertEqual(self.baseline["suite"], self.guarded["suite"])
 
     def test_max_turns_matches_between_configs(self) -> None:
         # max_turns asymmetry between BEFORE and AFTER would bias the
         # overrefusal-trade-off measurement (the headline finding).
-        baseline_turns = self.baseline["pipeline"]["rollout"]["max_turns"]
-        guarded_turns = self.guarded["pipeline"]["rollout"]["max_turns"]
+        baseline_turns = self.baseline["pipeline"]["inference"]["max_turns"]
+        guarded_turns = self.guarded["pipeline"]["inference"]["max_turns"]
         self.assertEqual(baseline_turns, guarded_turns)
 
 

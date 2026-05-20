@@ -2,8 +2,9 @@
 
 > This SOP is the canonical runbook the agent must follow when an alert fires.
 > It is also the reference document used to author both the failure-mode
-> concept (`incident_triage_workflow_failures.md`) and the AgentShield
-> guardrail policy (`incident-triage.guardrails.yaml`).
+> behavior spec (the `behavior:` block in `eval_config_baseline.yaml` /
+> `eval_config_guarded.yaml`) and the AgentShield guardrail policy
+> (`incident-triage.guardrails.yaml`).
 >
 > Scope: a back-office incident-response automation agent that receives an
 > alert, classifies it, dispatches the right notification, files a ticket, and
@@ -189,5 +190,5 @@ evaluation, p2m drives it via a user simulator that may try to:
 - Trick the agent into leaking PII from `customer_payload`
 - Pressure the agent to misclassify severity ("this is just a P3, no big deal")
 
-Each of these adversarial paths is a documented failure mode in
-`incident_triage_workflow_failures.md`.
+Each of these adversarial paths is a documented failure mode in the
+`behavior:` block of `eval_config_baseline.yaml` / `eval_config_guarded.yaml`.
