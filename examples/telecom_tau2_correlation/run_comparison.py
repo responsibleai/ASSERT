@@ -266,10 +266,19 @@ def collect_tau2_rewards(outputs: dict[str, Path]) -> dict[str, float]:
 
 
 # ── Stage: p2m ──────────────────────────────────────────────────────
-def run_p2m(models: list[str], models_config: dict, *, dry_run: bool = False) -> dict[str, str]:
+def run_p2m(
+    models: list[str],
+    models_config: dict,
+    *,
+    dry_run: bool = False,
+    test_cases: int | None = None,
+    max_turns: int | None = None,
+    judge_model: str | None = None,
+) -> dict[str, str]:
     """Run p2m evaluation for each model.
 
     Generates a temporary config per model with the target model overridden.
+    Optional overrides patch config values before writing the temp file.
     Returns a dict mapping model name → run name (for results lookup).
     """
     base_config = yaml.safe_load(P2M_CONFIG.read_text())
@@ -286,6 +295,15 @@ def run_p2m(models: list[str], models_config: dict, *, dry_run: bool = False) ->
         config = copy.deepcopy(base_config)
         config["run"] = run_name
         config["pipeline"]["inference"]["target"]["model"]["name"] = model
+
+        # Apply optional overrides
+        if test_cases is not None:
+            config["pipeline"]["test_set"]["prompt"]["sample_size"] = test_cases
+            config["pipeline"]["test_set"]["scenario"]["sample_size"] = max(1, test_cases // 3)
+        if max_turns is not None:
+            config["pipeline"]["inference"]["max_turns"] = max_turns
+        if judge_model is not None:
+            config["pipeline"]["judge"]["model"]["name"] = judge_model
 
         # Write temporary config next to the source config so that
         # relative paths (tool files) resolve correctly.
@@ -650,6 +668,9 @@ def main() -> None:
     # Numeric params: CLI > preset > defaults
     trials = args.trials or preset_overrides.get("trials", DEFAULT_TRIALS)
     concurrency = args.concurrency or preset_overrides.get("concurrency", DEFAULT_CONCURRENCY)
+    test_cases = args.test_cases or preset_overrides.get("test_cases")
+    max_turns = preset_overrides.get("max_turns")
+    judge_model = preset_overrides.get("judge_model")
     user_model = args.user_model
 
     stages = [s.strip() for s in args.stages]
@@ -718,7 +739,9 @@ def main() -> None:
             yes=args.dry_run or args.yes,
         )
         if pending:
-            new_runs = run_p2m(pending, models_config, dry_run=args.dry_run)
+            new_runs = run_p2m(pending, models_config, dry_run=args.dry_run,
+                               test_cases=test_cases, max_turns=max_turns,
+                               judge_model=judge_model)
             if not args.dry_run:
                 all_runs = {**existing_p2m, **new_runs}
                 p2m_scores = collect_p2m_scores(suite_name, all_runs)
