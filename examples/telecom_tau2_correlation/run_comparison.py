@@ -178,7 +178,11 @@ def validate_tau2_data() -> None:
 
 
 def make_model_env(config: dict, model_name: str) -> dict[str, str]:
-    """Build a subprocess env dict with AZURE_API_BASE and AZURE_API_KEY set for the given model."""
+    """Build a subprocess env dict with AZURE_API_BASE and AZURE_API_KEY set for the given model.
+
+    Suitable for single-model tools (tau2) where only one endpoint is needed.
+    For p2m (which uses multiple models across endpoints), use make_p2m_env().
+    """
     env = os.environ.copy()
     url = resolve_endpoint_url(config, model_name)
     if url:
@@ -189,6 +193,37 @@ def make_model_env(config: dict, model_name: str) -> dict[str, str]:
         env["AZURE_API_KEY"] = key_val
     # Point tau2 at local data directory (domain data + simulation outputs)
     env.setdefault("TAU2_DATA_DIR", str(TAU2_DATA_DIR))
+    return env
+
+
+def make_p2m_env(config: dict, model_name: str) -> dict[str, str]:
+    """Build env for p2m subprocess with per-model endpoint routing.
+
+    Unlike make_model_env (which overrides AZURE_API_BASE globally), this
+    keeps the default AZURE_API_BASE/AZURE_API_KEY for pipeline models
+    (systematize, test_set, tester, judge) and routes only the target
+    model to its specific endpoint via _P2M_MODEL_ROUTING + _p2m_shim.py.
+    """
+    env = os.environ.copy()
+
+    # Check if the target model uses a non-default endpoint.
+    entry = _model_entry(config, model_name)
+    endpoint_key = entry.get("endpoint") if entry else None
+
+    if endpoint_key and endpoint_key != "default":
+        routing: dict[str, dict[str, str]] = {}
+        route: dict[str, str] = {}
+        url = resolve_endpoint_url(config, model_name)
+        if url:
+            route["api_base"] = url
+        key_var = resolve_api_key_env_var(config, model_name)
+        key_val = os.environ.get(key_var)
+        if key_val:
+            route["api_key"] = key_val
+        if route:
+            routing[model_name] = route
+            env["_P2M_MODEL_ROUTING"] = json.dumps(routing)
+
     return env
 
 
@@ -474,12 +509,13 @@ def run_p2m(
         tmp_config.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
 
         cmd = [
-            shutil.which("p2m") or str(Path(sys.executable).parent / "p2m"),
+            sys.executable, str(SCRIPT_DIR / "_p2m_shim.py"),
             "run", "--config", str(tmp_config),
         ]
-        env = make_model_env(models_config, model)
-        logger.debug("AZURE_API_BASE=%s (via %s)", env.get("AZURE_API_BASE", "<unset>"),
-                      resolve_endpoint_env_var(models_config, model))
+        env = make_p2m_env(models_config, model)
+        logger.debug("AZURE_API_BASE=%s (default), routing=%s",
+                      env.get("AZURE_API_BASE", "<unset>"),
+                      env.get("_P2M_MODEL_ROUTING", "<none>"))
         result = run_cmd(cmd, dry_run=dry_run, env=env)
         runs[model] = run_name
 
