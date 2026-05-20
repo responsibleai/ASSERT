@@ -129,10 +129,6 @@ pipeline:
     model: { name: azure/gpt-5.4-nano, temperature: 0.7, max_tokens: 10000 }
     behavior_category_count: 15
 
-  # ── STAGE 1.5: DESIGN ─────────────────────────────────────────────
-  design:
-    model: { name: azure/gpt-5.4-nano, temperature: 0.7 }
-
   # ── STAGE 2: TEST SET ─────────────────────────────────────────────
   test_set:
     tool_source: runtime
