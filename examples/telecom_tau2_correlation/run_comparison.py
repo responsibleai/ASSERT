@@ -391,8 +391,14 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False,
 
 
 # ── Result discovery ────────────────────────────────────────────────
-def discover_tau2_results(models: list[str]) -> dict[str, Path]:
-    """Find existing tau2 output files that contain actual simulations."""
+def discover_tau2_results(models: list[str], *, expected_trials: int = 0) -> dict[str, Path]:
+    """Find existing tau2 output files that contain actual simulations.
+
+    When *expected_trials* > 0, a result file is only accepted if the
+    simulation count matches exactly.  tau2 appends to existing JSON files
+    across runs, so stale files with accumulated simulations from prior
+    runs are rejected (and removed) to prevent inflated counts.
+    """
     existing: dict[str, Path] = {}
     sim_dir = TAU2_DATA_DIR / "simulations"
     for model in models:
@@ -400,10 +406,18 @@ def discover_tau2_results(models: list[str]) -> dict[str, Path]:
         if path.exists():
             try:
                 data = json.loads(path.read_text())
-                if data.get("simulations"):
-                    existing[model] = path
-                else:
+                n_sims = len(data.get("simulations", []))
+                if n_sims == 0:
                     logger.debug("Ignoring %s (0 simulations)", path.name)
+                    continue
+                if expected_trials > 0 and n_sims != expected_trials:
+                    logger.warning(
+                        "Removing stale %s: has %d sims, expected %d",
+                        path.name, n_sims, expected_trials,
+                    )
+                    path.unlink()
+                    continue
+                existing[model] = path
             except (json.JSONDecodeError, OSError):
                 logger.debug("Ignoring %s (unreadable)", path.name)
     return existing
@@ -947,7 +961,9 @@ def main() -> None:
 
     if "tau2" in stages:
         logger.info("═══ STAGE: tau2 ═══")
-        existing_tau2 = {} if skip_discovery else discover_tau2_results(models)
+        existing_tau2 = {} if skip_discovery else discover_tau2_results(
+            models, expected_trials=trials,
+        )
         pending = plan_and_confirm(
             "tau2", models, existing=existing_tau2,
             yes=args.dry_run or args.yes, trials=trials, concurrency=concurrency,
