@@ -38,6 +38,13 @@ presets:
     test_cases: 10
     max_turns: 5
     judge_model: azure/gpt-5.4-mini
+  mini:
+    description: Few models, full task sets — fast path to real analysis results
+    trials: 4
+    concurrency: 10
+    test_cases: 70
+    max_turns: 5
+    judge_model: azure/gpt-5.4
   full:
     description: Thorough comparison — all deployed models, full trial count
     trials: 4
@@ -50,7 +57,7 @@ models:
   # ── small/fast ──
   - name: azure/gpt-oss-120b
     endpoint: westus2
-    presets: [quick, full]
+    presets: [quick, mini, full]
   - name: azure/DeepSeek-V3-0324
     endpoint: westus2
     presets: [full]
@@ -67,11 +74,11 @@ models:
     presets: [quick, full]
   - name: azure/grok-4
     endpoint: westus2
-    presets: [quick, full]
+    presets: [quick, mini, full]
   # ── strong ──
   - name: azure/gpt-5.4
     endpoint: australiaeast
-    presets: [full]
+    presets: [mini, full]
   # ── frontier ──
   - name: azure/grok-4-20-reasoning
     endpoint: westus2
