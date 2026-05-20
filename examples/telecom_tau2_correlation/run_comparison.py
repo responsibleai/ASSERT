@@ -32,6 +32,9 @@ import time
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv()  # pick up .env from repo root
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,8 @@ RESULTS_DIR = SCRIPT_DIR / "results"
 
 # tau2 defaults
 TAU2_DOMAIN = "telecom"
-DEFAULT_USER_MODEL = "azure/gpt-5.4-nano"
+TAU2_DATA_DIR = Path(os.environ.get("TAU2_DATA_DIR", str(SCRIPT_DIR / "data")))
+DEFAULT_USER_MODEL = "azure/gpt-5.4-mini"
 DEFAULT_TRIALS = 4
 DEFAULT_CONCURRENCY = 5
 
