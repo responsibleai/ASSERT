@@ -57,6 +57,6 @@ _install_routing_hook()
 
 # Hand off to p2m CLI.
 sys.argv[0] = "p2m"
-from p2m.cli import main  # noqa: E402
+from p2m.cli import cli  # noqa: E402
 
-main()
+cli()
