@@ -66,11 +66,11 @@ TAU2_DOMAIN = "telecom"
 TAU2_DATA_DIR = Path(os.environ.get("TAU2_DATA_DIR", str(SCRIPT_DIR / "data")))
 DEFAULT_USER_MODEL = "azure/gpt-5.4-mini"
 DEFAULT_TRIALS = 4
-DEFAULT_CONCURRENCY = 5
+DEFAULT_CONCURRENCY = 10
 
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.
-_EST_TAU2_MINUTES_PER_MODEL = 8       # wall-clock with concurrency=5
+_EST_TAU2_MINUTES_PER_MODEL = 4       # wall-clock with concurrency=10
 _EST_P2M_MINUTES_PER_MODEL = 8        # 70 test cases
 _EST_TAU2_COST_PER_MODEL_NANO = 4.50  # USD, agent+user at nano pricing
 _EST_P2M_INPUT_TOKENS_PER_MODEL = 3_200_000

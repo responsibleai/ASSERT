@@ -29,14 +29,14 @@ presets:
   quick:
     description: Quick validation — 4 models across tiers, reduced test cases
     trials: 2
-    concurrency: 10
+    concurrency: 30
     test_cases: 10
     max_turns: 5
     judge_model: azure/gpt-5.4-mini
   full:
     description: Thorough comparison — all deployed models, full trial count
     trials: 4
-    concurrency: 24
+    concurrency: 40
     test_cases: 70
     max_turns: 5
     judge_model: azure/gpt-5.4
