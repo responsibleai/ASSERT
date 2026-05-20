@@ -67,7 +67,7 @@ TAU2_DATA_DIR = Path(os.environ.get("TAU2_DATA_DIR", str(SCRIPT_DIR / "data")))
 DEFAULT_USER_MODEL = "azure/gpt-5.4-mini"
 DEFAULT_TRIALS = 4
 DEFAULT_CONCURRENCY = 10
-DEFAULT_TAU2_RETRIES = 3
+DEFAULT_TAU2_RETRIES = 10
 
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.

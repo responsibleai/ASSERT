@@ -41,7 +41,7 @@ presets:
   mini:
     description: Few models, full task sets — fast path to real analysis results
     trials: 4
-    concurrency: 10
+    concurrency: 2
     test_cases: 70
     max_turns: 5
     judge_model: azure/gpt-5.4
