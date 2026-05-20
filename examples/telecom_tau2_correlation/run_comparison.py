@@ -610,6 +610,11 @@ def main() -> None:
         action="store_true",
         help="Skip confirmation prompts (auto-approve all stages)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run all models even if results already exist on disk",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -667,9 +672,11 @@ def main() -> None:
             p2m_scores = saved.get("p2m_scores", {})
             logger.info("Loaded %d p2m results from previous run", len(p2m_scores))
 
+    skip_discovery = args.dry_run or args.force
+
     if "tau2" in stages:
         logger.info("═══ STAGE: tau2 ═══")
-        existing_tau2 = {} if args.dry_run else discover_tau2_results(models)
+        existing_tau2 = {} if skip_discovery else discover_tau2_results(models)
         pending = plan_and_confirm(
             "tau2", models, existing=existing_tau2,
             yes=args.dry_run or args.yes, trials=trials, concurrency=concurrency,
@@ -687,10 +694,15 @@ def main() -> None:
             tau2_rewards = collect_tau2_rewards(existing_tau2)
         else:
             logger.info("Skipped tau2 stage.")
+        # Save intermediate so a later --stages=correlate can pick this up
+        if tau2_rewards:
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            (RESULTS_DIR / "tau2_rewards.json").write_text(
+                json.dumps(tau2_rewards, indent=2) + "\n")
 
     if "p2m" in stages:
         logger.info("═══ STAGE: p2m ═══")
-        existing_p2m = {} if args.dry_run else discover_p2m_results(suite_name, models)
+        existing_p2m = {} if skip_discovery else discover_p2m_results(suite_name, models)
         pending = plan_and_confirm(
             "p2m", models, existing=existing_p2m,
             yes=args.dry_run or args.yes,
@@ -706,9 +718,25 @@ def main() -> None:
             p2m_scores = collect_p2m_scores(suite_name, existing_p2m)
         else:
             logger.info("Skipped p2m stage.")
+        # Save intermediate so a later --stages=correlate can pick this up
+        if p2m_scores:
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            (RESULTS_DIR / "p2m_scores.json").write_text(
+                json.dumps(p2m_scores, indent=2) + "\n")
 
     if "correlate" in stages:
         logger.info("═══ STAGE: correlate ═══")
+        # Load intermediates if not computed in this run
+        if not tau2_rewards:
+            f = RESULTS_DIR / "tau2_rewards.json"
+            if f.exists():
+                tau2_rewards = json.loads(f.read_text())
+                logger.info("Loaded %d tau2 rewards from intermediate file", len(tau2_rewards))
+        if not p2m_scores:
+            f = RESULTS_DIR / "p2m_scores.json"
+            if f.exists():
+                p2m_scores = json.loads(f.read_text())
+                logger.info("Loaded %d p2m scores from intermediate file", len(p2m_scores))
         if not tau2_rewards or not p2m_scores:
             logger.error("Need both tau2 and p2m results. Run those stages first.")
             sys.exit(1)
