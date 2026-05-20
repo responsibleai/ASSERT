@@ -184,6 +184,16 @@ def discover_p2m_results(suite_name: str, models: list[str]) -> dict[str, str]:
     return existing
 
 
+def _progress_line(i: int, total: int, t0: float) -> str:
+    """Return '[3/9] elapsed 24m, ETA ~48m' or just '[1/9]' for the first."""
+    elapsed = time.monotonic() - t0
+    if i > 1:
+        per_model = elapsed / (i - 1)
+        remaining = per_model * (total - i + 1)
+        return f"[{i}/{total}] elapsed {elapsed / 60:.0f}m, ETA ~{remaining / 60:.0f}m"
+    return f"[{i}/{total}]"
+
+
 # ── Stage: tau2 ─────────────────────────────────────────────────────
 def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
              trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
@@ -197,7 +207,7 @@ def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
     stage_t0 = time.monotonic()
     for i, model in enumerate(models, 1):
         slug = model_slug(model)
-        logger.info("── tau2 model %d/%d: %s ──", i, total, model)
+        logger.info("── tau2 %s: %s ──", _progress_line(i, total, stage_t0), model)
         save_name = f"telecom_{slug}"
         tau2_bin = shutil.which("tau2") or str(Path(sys.executable).parent / "tau2")
         if not Path(tau2_bin).exists() and not shutil.which("tau2"):
@@ -270,7 +280,7 @@ def run_p2m(models: list[str], models_config: dict, *, dry_run: bool = False) ->
     for i, model in enumerate(models, 1):
         slug = model_slug(model)
         run_name = f"{slug}-eval"
-        logger.info("── p2m model %d/%d: %s ──", i, total, model)
+        logger.info("── p2m %s: %s ──", _progress_line(i, total, stage_t0), model)
 
         # Deep-copy and patch the config for this model
         config = copy.deepcopy(base_config)
