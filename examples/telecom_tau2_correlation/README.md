@@ -21,6 +21,7 @@ don't exist.
 | `eval_config.yaml` | p2m pipeline config (systematize / test_set / inference / judge) |
 | `models.yaml` | Model inventory, endpoint mapping, and presets |
 | `run_comparison.py` | Orchestration script -- runs tau2, p2m, and correlation analysis |
+| `smoke_test.py` | Quick connectivity check for each configured endpoint |
 
 ## Prerequisites
 
@@ -34,19 +35,51 @@ pip install "tau2 @ git+https://github.com/SEACrowd/tau3-bench.git"
 
 Both `p2m` and `tau2` CLIs must be on your PATH (or in your active venv).
 
-### Azure OpenAI credentials
+### tau2-bench domain data
 
-Models are deployed across multiple Azure OpenAI endpoints. Set the
-env vars referenced in `models.yaml`:
+tau2-bench's pip package does **not** include its domain data files.
+You need the data from the tau3-bench git repository:
 
 ```bash
-export AZURE_API_KEY="..."
-export AZURE_API_BASE_WESTUS2="https://..."      # DeepSeek, Grok, gpt-oss
-export AZURE_API_BASE_AUSTRALIAEAST="https://..." # gpt-5.4-mini, gpt-5.4
+# Option A: Clone the repo and symlink the data directory (recommended)
+git clone --depth 1 https://github.com/SEACrowd/tau3-bench.git /tmp/tau3-bench
+ln -s /tmp/tau3-bench/data examples/telecom_tau2_correlation/data
+
+# Option B: Point to an existing clone
+export TAU2_DATA_DIR=/path/to/your/tau3-bench/data
 ```
 
-A `default` endpoint (`AZURE_API_BASE`) is used as fallback when no
-model-specific endpoint is configured.
+The script looks for data at `examples/telecom_tau2_correlation/data/`
+by default, or at the path specified by `TAU2_DATA_DIR`. It will print
+setup instructions and exit if the telecom domain files are missing.
+
+### Azure OpenAI credentials
+
+Models are deployed across multiple Azure OpenAI endpoints, each with
+its own API key. Set the env vars referenced in `models.yaml` (or add
+them to `.env` at the repo root):
+
+```bash
+# westus2 endpoint — DeepSeek, Grok, gpt-oss models
+export AZURE_API_KEY_WESTUS2="..."
+export AZURE_API_BASE_WESTUS2="https://..."
+
+# australiaeast endpoint — gpt-5.4-mini, gpt-5.4
+export AZURE_API_KEY_AUSTRALIAEAST="..."
+export AZURE_API_BASE_AUSTRALIAEAST="https://..."
+
+# default fallback (used when a model has no explicit endpoint)
+export AZURE_API_KEY="..."
+export AZURE_API_BASE="https://..."
+```
+
+Verify endpoints before running the full study:
+
+```bash
+python examples/telecom_tau2_correlation/smoke_test.py          # test all
+python examples/telecom_tau2_correlation/smoke_test.py westus2  # test one
+python examples/telecom_tau2_correlation/smoke_test.py --list   # show config
+```
 
 ## Quick start
 
