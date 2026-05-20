@@ -10,8 +10,8 @@
 
 	const PAGE_SIZE = 10;
 	const statusConfig: Record<string, { icon: string; label: string; class: string }> = {
-		policy_only: { icon: '○', label: 'Policy Defined', class: 'text-text-muted' },
-		seeds_ready: { icon: '●', label: 'Seeds Generated', class: 'text-score-border' },
+		systematized: { icon: '○', label: 'Behavior Categories Ready', class: 'text-text-muted' },
+		test_set_ready: { icon: '●', label: 'Test Set Generated', class: 'text-score-border' },
 		has_results: { icon: '◉', label: 'Has Run Result', class: 'text-score-pass' }
 	};
 
@@ -20,14 +20,14 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') items = items.filter((s) => s.status === statusFilter);
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
+			if (sortBy === 'name') return a.behavior_name.localeCompare(b.behavior_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -52,7 +52,7 @@
 <div class="mb-6 flex items-start justify-between">
 	<div>
 		<h1 class="text-xl font-semibold tracking-tight">Measurement suites</h1>
-		<p class="mt-0.5 text-sm text-text-muted">Browse risk policies, seeds, and measurement results.</p>
+		<p class="mt-0.5 text-sm text-text-muted">Browse behavior categories, test cases, and measurement results.</p>
 	</div>
 	<a
 		href="/new"
@@ -115,8 +115,8 @@
 			<label for="suite-status-filter" class="sr-only">Status</label>
 			<select id="suite-status-filter" bind:value={statusFilter} class="form-select">
 				<option value="all">All statuses</option>
-				<option value="policy_only">○ Policy Defined</option>
-				<option value="seeds_ready">● Seeds Generated</option>
+				<option value="systematized">○ Behavior Categories Ready</option>
+				<option value="test_set_ready">● Test Set Generated</option>
 				<option value="has_results">◉ Has Run Result</option>
 			</select>
 		</div>
@@ -173,7 +173,7 @@
 {:else if viewMode === 'card'}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#each filtered as suite (suite.suite_id)}
-			{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
+			{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 			<div class="card-hover group rounded-lg border border-border bg-surface p-4 no-underline">
 				<div class="flex items-center justify-between gap-3">
 					<p class="truncate font-mono text-[10px] uppercase tracking-wider text-text-muted">{suite.suite_id}</p>
@@ -182,16 +182,16 @@
 					</span>
 				</div>
 				<a href="/suite/{suite.suite_id}" class="card-heading mt-1 block text-base font-semibold text-text no-underline">
-					{suite.concept_name}
+					{suite.behavior_name}
 				</a>
 				<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
-					<a href="/suite/{suite.suite_id}?section=policy" class="no-underline hover:text-interactive">
+					<a href="/suite/{suite.suite_id}?section=taxonomy" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Categories</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_count}</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_category_count}</div>
 					</a>
-					<a href="/suite/{suite.suite_id}?section=seeds" class="no-underline hover:text-interactive">
-						<div class="text-[10px] text-text-muted">Evaluation set</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.seed_count + suite.scenario_seed_count}</div>
+					<a href="/suite/{suite.suite_id}?section=test_set" class="no-underline hover:text-interactive">
+						<div class="text-[10px] text-text-muted">Test cases</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.prompt_test_case_count + suite.scenario_test_case_count}</div>
 					</a>
 					<a href="/suite/{suite.suite_id}?section=results" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Evaluations</div>
@@ -214,21 +214,21 @@
 				<tr class="border-b border-border bg-surface text-left text-[11px] text-text-muted">
 					<th class="px-4 py-2 font-semibold">Suite name</th>
 					<th class="px-4 py-2 font-semibold">Categories</th>
-					<th class="px-4 py-2 font-semibold">Evaluation set</th>
+					<th class="px-4 py-2 font-semibold">Test cases</th>
 					<th class="px-4 py-2 font-semibold">Evaluations</th>
 					<th class="px-4 py-2 font-semibold">Status</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each paginatedList as suite}
-					{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
+					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="px-4 py-2.5 align-middle">
-							<a href="/suite/{suite.suite_id}" class="card-heading text-base font-semibold no-underline hover:text-interactive hover:underline">{suite.concept_name}</a>
+							<a href="/suite/{suite.suite_id}" class="card-heading text-base font-semibold no-underline hover:text-interactive hover:underline">{suite.behavior_name}</a>
 							<p class="mt-0.5 truncate font-mono text-[10px] text-text-muted">{suite.suite_id}</p>
 						</td>
-						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=policy" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.behavior_count}</a></td>
-						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=seeds" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.seed_count + suite.scenario_seed_count}</a></td>
+						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=taxonomy" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.behavior_category_count}</a></td>
+						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=test_set" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.prompt_test_case_count + suite.scenario_test_case_count}</a></td>
 						<td class="px-4 py-2.5 align-middle"><a href="/suite/{suite.suite_id}?section=results" class="text-sm text-text-secondary no-underline hover:text-interactive hover:underline">{suite.run_count}</a></td>
 						<td class="px-4 py-2.5 align-middle">
 							<span class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}"><span>{sc.icon}</span> {sc.label}</span>

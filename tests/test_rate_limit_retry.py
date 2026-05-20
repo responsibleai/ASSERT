@@ -285,7 +285,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
     async def test_label_does_not_affect_behavior(self) -> None:
         call_fn = AsyncMock(return_value="ok")
         with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
-            result = await _with_retries(call_fn, model="m", label="seeds:prompt:slug")
+            result = await _with_retries(call_fn, model="m", label="test_set:prompt:slug")
         self.assertEqual(result, "ok")
 
     async def test_provider_error_uses_exponential_backoff(self) -> None:

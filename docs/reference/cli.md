@@ -11,7 +11,7 @@ p2m run --config examples\travel_planner_langgraph\eval_config.yaml
 ## Re-run one stage
 
 ```powershell
-p2m run --config examples\travel_planner_langgraph\eval_config.yaml --force-stage seeds
+p2m run --config examples\travel_planner_langgraph\eval_config.yaml --force-stage test_set
 ```
 
 Use this when you intentionally changed a stage input and want to regenerate downstream artifacts.
@@ -43,10 +43,10 @@ p2m results compare <suite> <run-a> <run-b>
 
 ```powershell
 # OpenAI backend (default)
-p2m analysis seed-metrics --policy artifacts\results\<suite>\policy.json --seeds artifacts\results\<suite>\seeds.jsonl
+p2m analysis test-set-metrics --taxonomy artifacts\results\<suite>\taxonomy.json --test_set artifacts\results\<suite>\test_set.jsonl
 
 # Offline HuggingFace backend (no API key)
-p2m analysis seed-metrics --policy artifacts\results\<suite>\policy.json --seeds artifacts\results\<suite>\seeds.jsonl --embed-backend hf --embed-model all-MiniLM-L6-v2
+p2m analysis test-set-metrics --taxonomy artifacts\results\<suite>\taxonomy.json --test_set artifacts\results\<suite>\test_set.jsonl --embed-backend hf --embed-model all-MiniLM-L6-v2
 ```
 
 ## Where outputs go

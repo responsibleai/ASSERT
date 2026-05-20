@@ -39,7 +39,7 @@ class SuiteResultsExportTest(unittest.TestCase):
     def _score_row(
         self,
         *,
-        seed_id: str,
+        test_case_id: str,
         behavior: str,
         permissible: bool,
         policy_violation: bool,
@@ -50,12 +50,12 @@ class SuiteResultsExportTest(unittest.TestCase):
         node1_violated: bool | None,
     ) -> dict:
         return {
-            "kind": "scenario",
-            "seed_id": seed_id,
-            "concept": "concept",
-            "factors": {"behavior": behavior},
+            "type": "scenario",
+            "test_case_id": test_case_id,
+            "behavior": "behavior",
+            "dimensions": {"behavior": behavior},
             "target": "target-model",
-            "auditor_model": "auditor-model",
+            "tester_model": "tester-model",
             "judge_model": "judge-model",
             "judge_status": "ok",
             "judge_error": None,
@@ -66,7 +66,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                 },
                 "justification": "overall",
                 "dimension_justifications": {
-                    "policy_violation": "policy rationale",
+                    "policy_violation": "taxonomy rationale",
                     "overrefusal": "overrefusal rationale",
                 },
                 "node_judgments": [
@@ -111,22 +111,22 @@ class SuiteResultsExportTest(unittest.TestCase):
             encoding="utf-8",
         )
         policy_raw = {
-            "concept": {"name": "Risk Name"},
-            "behaviors": [
+            "behavior": {"name": "Risk Name"},
+            "behavior_categories": [
                 {"name": "node-a", "definition": "def a", "permissible": False},
                 {"name": "node-b", "definition": "def b", "permissible": True},
             ],
         }
-        (suite_dir / "policy.json").write_text(json.dumps(policy_raw), encoding="utf-8")
-        (suite_dir / "seeds.jsonl").write_text(
+        (suite_dir / "taxonomy.json").write_text(json.dumps(policy_raw), encoding="utf-8")
+        (suite_dir / "test_set.jsonl").write_text(
             "\n".join(
                 [
                     json.dumps(
                         {
-                            "kind": "scenario",
-                            "seed_id": "seed-1",
-                            "concept": "concept",
-                            "factors": {"behavior": "node-a"},
+                            "type": "scenario",
+                            "test_case_id": "test-case-1",
+                            "behavior": "behavior",
+                            "dimensions": {"behavior": "node-a"},
                             "seed": {
                                 "title": "Title A",
                                 "description": "Description A",
@@ -136,10 +136,10 @@ class SuiteResultsExportTest(unittest.TestCase):
                     ),
                     json.dumps(
                         {
-                            "kind": "scenario",
-                            "seed_id": "seed-2",
-                            "concept": "concept",
-                            "factors": {"behavior": "node-b"},
+                            "type": "scenario",
+                            "test_case_id": "test-case-2",
+                            "behavior": "behavior",
+                            "dimensions": {"behavior": "node-b"},
                             "seed": {
                                 "title": "Title B",
                                 "description": "Description B",
@@ -171,37 +171,37 @@ class SuiteResultsExportTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        transcript_rows = [
+        inference_rows = [
             {
-                "kind": "scenario",
-                "seed_id": "seed-1",
-                "concept": "concept",
-                "factors": {"behavior": "node-a"},
+                "type": "scenario",
+                "test_case_id": "test-case-1",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "node-a"},
                 "target": "target-model",
-                "auditor_model": "auditor-model",
-                "stop_reason": "auditor_ended",
+                "tester_model": "tester-model",
+                "stop_reason": "tester_ended",
                 "events": [
-                    self._event("user", "Need advice", actor="auditor"),
+                    self._event("user", "Need advice", actor="tester"),
                     self._event("assistant", "Here is a reply", actor="target"),
                 ],
             }
         ]
-        (run_a_dir / "transcripts.jsonl").write_text(
-            "\n".join(json.dumps(row) for row in transcript_rows) + "\n",
+        (run_a_dir / "inference_set.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in inference_rows) + "\n",
             encoding="utf-8",
         )
-        (run_b_dir / "transcripts.jsonl").write_text(
+        (run_b_dir / "inference_set.jsonl").write_text(
             json.dumps(
                 {
-                    "kind": "scenario",
-                    "seed_id": "seed-2",
-                    "concept": "concept",
-                    "factors": {"behavior": "node-b"},
+                    "type": "scenario",
+                    "test_case_id": "test-case-2",
+                    "behavior": "behavior",
+                    "dimensions": {"behavior": "node-b"},
                     "target": "target-model-2",
-                    "auditor_model": "auditor-model-2",
+                    "tester_model": "tester-model-2",
                     "stop_reason": "max_turns",
                     "events": [
-                        self._event("user", "Hello", actor="auditor"),
+                        self._event("user", "Hello", actor="tester"),
                         self._event("assistant", "Hi", actor="target"),
                     ],
                 }
@@ -212,7 +212,7 @@ class SuiteResultsExportTest(unittest.TestCase):
 
         score_rows = [
             self._score_row(
-                seed_id="seed-1",
+                test_case_id="test-case-1",
                 behavior="node-a",
                 permissible=False,
                 policy_violation=True,
@@ -223,7 +223,7 @@ class SuiteResultsExportTest(unittest.TestCase):
                 node1_violated=None,
             ),
             self._score_row(
-                seed_id="seed-2",
+                test_case_id="test-case-2",
                 behavior="node-b",
                 permissible=True,
                 policy_violation=False,
@@ -271,7 +271,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             self.assertEqual(rc, 0)
             export_dir = results_root / "suite-a" / "exports"
             self.assertTrue((export_dir / "runs.csv").exists())
-            self.assertTrue((export_dir / "seeds.csv").exists())
+            self.assertTrue((export_dir / "test_set.csv").exists())
             self.assertTrue((export_dir / "conversations.csv").exists())
             self.assertTrue((export_dir / "scores.csv").exists())
             self.assertTrue((export_dir / "relevant_nodes.csv").exists())
@@ -281,10 +281,10 @@ class SuiteResultsExportTest(unittest.TestCase):
             self.assertEqual(len(runs_lines), 3)
             self.assertIn("suite_id,run_id,status", runs_lines[0])
 
-            seeds_lines = (export_dir / "seeds.csv").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(seeds_lines), 3)
-            self.assertTrue(seeds_lines[0].startswith("suite_id,seed_id,kind"))
-            self.assertNotIn("run_id", seeds_lines[0])
+            test_set_lines = (export_dir / "test_set.csv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(test_set_lines), 3)
+            self.assertTrue(test_set_lines[0].startswith("suite_id,test_case_id,type"))
+            self.assertNotIn("run_id", test_set_lines[0])
 
             conversations_text = (export_dir / "conversations.csv").read_text(encoding="utf-8")
             self.assertIn("Here is a reply", conversations_text)
@@ -302,7 +302,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             scores_lines = scores_text.splitlines()
             scores_reader = csv.DictReader(scores_lines)
             score_dicts = list(scores_reader)
-            seed1_row = next(r for r in score_dicts if r["seed_id"] == "seed-1")
+            seed1_row = next(r for r in score_dicts if r["test_case_id"] == "test-case-1")
             self.assertEqual(seed1_row["node-a_relevant"], "True")
             self.assertEqual(seed1_row["node-a_violated"], "True")
             self.assertEqual(seed1_row["node-a_confidence"], "high")
@@ -345,7 +345,7 @@ class SuiteResultsExportTest(unittest.TestCase):
             workbook = load_workbook(workbook_path)
             self.assertEqual(
                 workbook.sheetnames,
-                ["Runs", "Seeds", "Conversations", "Scores", "Relevant Nodes"],
+                ["Runs", "Test Set", "Conversations", "Scores", "Relevant Nodes"],
             )
             runs_sheet = workbook["Runs"]
             self.assertEqual(runs_sheet["A1"].value, "suite_id")
@@ -451,9 +451,9 @@ class SuiteResultsExportTest(unittest.TestCase):
     def test_build_score_metrics_excludes_failed_judgments_from_event_rates(self) -> None:
         rows = [
             {
-                "seed_id": "ok",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "test_case_id": "ok",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -467,9 +467,9 @@ class SuiteResultsExportTest(unittest.TestCase):
                 },
             },
             {
-                "seed_id": "bad",
-                "concept": "concept",
-                "factors": {"behavior": "behavior"},
+                "test_case_id": "bad",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
                 "judge_model": "judge",
                 "judge_status": "judge_failed",
                 "judge_error": "judge_failed",
@@ -480,8 +480,8 @@ class SuiteResultsExportTest(unittest.TestCase):
         metrics = suite_export._build_score_metrics(
             rows,
             policy_raw={
-                "concept": {"name": "concept"},
-                "behaviors": [{"name": "behavior", "definition": "def", "permissible": True}],
+                "behavior": {"name": "behavior"},
+                "behavior_categories": [{"name": "behavior", "definition": "def", "permissible": True}],
             },
         )
         overall = metrics["overall_permissible"]
@@ -505,9 +505,9 @@ class SuiteResultsExportTest(unittest.TestCase):
     def test_build_score_metrics_adds_per_node_conditional_rates(self) -> None:
         rows = [
             {
-                "seed_id": "row-1",
-                "concept": "concept",
-                "factors": {"behavior": "node-a"},
+                "test_case_id": "row-1",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "node-a"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -549,9 +549,9 @@ class SuiteResultsExportTest(unittest.TestCase):
                 },
             },
             {
-                "seed_id": "row-2",
-                "concept": "concept",
-                "factors": {"behavior": "node-b"},
+                "test_case_id": "row-2",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "node-b"},
                 "judge_model": "judge",
                 "judge_status": "ok",
                 "judge_error": None,
@@ -593,9 +593,9 @@ class SuiteResultsExportTest(unittest.TestCase):
                 },
             },
             {
-                "seed_id": "row-3",
-                "concept": "concept",
-                "factors": {"behavior": "node-c"},
+                "test_case_id": "row-3",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "node-c"},
                 "judge_model": "judge",
                 "judge_status": "judge_failed",
                 "judge_error": "judge_failed",
@@ -606,8 +606,8 @@ class SuiteResultsExportTest(unittest.TestCase):
         metrics = suite_export._build_score_metrics(
             rows,
             policy_raw={
-                "concept": {"name": "concept"},
-                "behaviors": [
+                "behavior": {"name": "behavior"},
+                "behavior_categories": [
                     {"name": "node-a", "definition": "def a", "permissible": False},
                     {"name": "node-b", "definition": "def b", "permissible": True},
                     {"name": "node-c", "definition": "def c", "permissible": False},

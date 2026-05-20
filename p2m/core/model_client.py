@@ -121,7 +121,7 @@ class UsageAccumulator:
     Created by :func:`track_usage` and populated by the model client itself, so
     callers don't have to thread per-call usage objects through their code.
     Per-model breakdowns are tracked under ``per_model`` so a single stage that
-    invokes more than one model (e.g. seeds + design) can be inspected later.
+    invokes more than one model (e.g. test_set + stratification) can be inspected later.
     """
 
     calls: int = 0
@@ -286,6 +286,39 @@ def build_json_schema_text_format(
         "strict": strict,
         "schema": schema,
     }
+
+
+def _model_family(model: str) -> str:
+    """Return the provider/model-family prefix used for transport capability checks."""
+    normalized = (model or "").strip().lower()
+    if "/" in normalized:
+        return normalized.split("/", 1)[0]
+    if normalized.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    return normalized
+
+
+def _supports_web_search_preview(model: str) -> bool:
+    """Whether this model can use the Responses API web_search_preview tool.
+
+    The current implementation sends OpenAI Responses API payloads with
+    ``tools=[{"type": "web_search_preview"}]``. LiteLLM exposes that
+    path for OpenAI-compatible models, but provider smoke testing showed
+    Gemini fails before useful generation when this tool is combined with
+    structured output. Keep the gate intentionally narrow until each
+    provider has an explicit, tested web-search path.
+    """
+    return _model_family(model) in {"openai", "azure"}
+
+
+def _require_web_search_preview_support(model: str) -> None:
+    if _supports_web_search_preview(model):
+        return
+    raise ValueError(
+        "web_search uses the OpenAI Responses API web_search_preview tool, "
+        f"which is not enabled for model '{model}'. Disable web_search for this "
+        "stage or use an OpenAI/Azure OpenAI model."
+    )
 
 
 def messages_to_openai(messages: str | Sequence[MessageLike]) -> list[dict[str, Any]]:
@@ -1099,8 +1132,10 @@ async def generate(
 ) -> ModelResponse:
     """Run a standard async text generation call."""
     resolved_options = options or GenerateOptions()
-    litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
+    if resolved_options.web_search:
+        _require_web_search_preview_support(model)
+    litellm = _get_litellm_module()
     t0 = time.monotonic()
 
     if resolved_options.web_search:
@@ -1149,8 +1184,10 @@ async def generate_structured(
 ) -> ModelResponse:
     """Run a structured generation call constrained by a JSON schema."""
     resolved_options = options or GenerateOptions()
-    litellm = _get_litellm_module()
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
+    if resolved_options.web_search:
+        _require_web_search_preview_support(model)
+    litellm = _get_litellm_module()
     t0 = time.monotonic()
 
     if resolved_options.web_search:

@@ -45,6 +45,6 @@ uv run p2m run --config examples/travel_planner_neurosan/eval_config.yaml
 
 ## What the judge sees
 
-Same artifact schema as auto-instrumented demos: `transcripts.jsonl`, `scores.jsonl`,
+Same artifact schema as auto-instrumented demos: `inference_set.jsonl`, `scores.jsonl`,
 `metrics.json`. The judge grades the same dimensions — it doesn't know or care whether
 traces came from auto-instrumentation or manual spans.

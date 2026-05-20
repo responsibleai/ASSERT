@@ -46,6 +46,12 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 p2m results status travel-planner-langgraph-v1 demo-1
 ```
 
+Codespaces / VS Code Dev Containers:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
+
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+
 Windows PowerShell equivalent:
 
 ```powershell
@@ -62,12 +68,12 @@ p2m results status travel-planner-langgraph-v1 demo-1
 
 What the quickstart does:
 
-| Step | Developer concept | Current YAML / artifact |
+| Step | Developer behavior | Current YAML / artifact |
 |---|---|---|
-| 1 | **Eval spec**: plain-English behavior requirements | `concept.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
-| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.policy` writes `policy.json` |
-| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.seeds` writes `seeds.jsonl` |
-| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + `target.trace` write `transcripts.jsonl` |
+| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name` and `behavior.description` live inline in `eval_config.yaml` |
+| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
+| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `inference_set.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
@@ -75,17 +81,17 @@ Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
 ## How it works
 
 ```text
-your eval spec (.md)
+one eval_config.yaml
         |
         v
 behavior categories  ->  test cases + variations  ->  execute target  ->  judge
         |                         |                         |              |
         v                         v                         v              v
-   policy.json                seeds.jsonl          transcripts.jsonl   scores.jsonl
+   taxonomy.json                test_set.jsonl          inference_set.jsonl   scores.jsonl
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
+Today the YAML still uses implementation names such as `behavior`, `dimensions`, `taxonomy`, `test_set`, and `inference`. The docs use the developer-facing behaviors - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each behavior appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
 
 ## Choose your target
 
@@ -117,22 +123,22 @@ Every run writes a self-contained directory under `artifacts/results/<suite>/<ru
 ```text
 artifacts/results/<suite>/
 ├── suite.json
-├── policy.json
-├── seeds.jsonl
+├── taxonomy.json
+├── test_set.jsonl
 └── <run>/
     ├── manifest.json
     ├── config.yaml
-    ├── transcripts.jsonl
+    ├── inference_set.jsonl
     ├── scores.jsonl
     └── metrics.json
 ```
 
 These artifacts are portable and inspectable:
 
-- `policy.json` - generated behavior taxonomy from your spec.
-- `seeds.jsonl` - generated prompts and scenarios.
-- `transcripts.jsonl` - target conversations and trace references.
-- `scores.jsonl` - per-conversation verdicts with reasoning and evidence.
+- `taxonomy.json` - generated behavior taxonomy from your spec.
+- `test_set.jsonl` - generated prompts and scenarios.
+- `inference_set.jsonl` - inference outputs (conversations or agent actions) and trace references.
+- `scores.jsonl` - per-inference verdicts with reasoning and evidence.
 - `metrics.json` - aggregate rates by judge dimension and behavior category.
 
 Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves your machine unless you send it somewhere.

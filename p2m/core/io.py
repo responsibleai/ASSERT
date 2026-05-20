@@ -71,16 +71,16 @@ def _atomic_write_text(path: Path, text: str) -> None:
                 pass
 
 
-def load_seeds(
+def load_test_cases(
     path: str | Path,
     *,
     strict: bool = False,
 ) -> list[dict[str, Any]]:
-    """Load seed records from a JSONL file."""
+    """Load test case records from a JSONL file."""
     resolved = resolve_path(path)
     if not resolved.is_file():
         tried = [str(path), str(resolved)]
-        raise FileNotFoundError(f"Seed file not found. Tried: {tried}")
+        raise FileNotFoundError(f"Test set file not found. Tried: {tried}")
 
     records: list[dict[str, Any]] = []
     bad_lines: list[int] = []
@@ -101,12 +101,12 @@ def load_seeds(
     return records
 
 
-def normalize_seed_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Assign canonical opaque seed IDs."""
+def normalize_test_case_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assign canonical opaque test case IDs."""
     normalized = [dict(row) for row in rows]
     counter = 1
     for row in normalized:
-        row["seed_id"] = f"seed_{counter:06d}"
+        row["test_case_id"] = f"test_case_{counter:06d}"
         counter += 1
     return normalized
 
@@ -154,7 +154,7 @@ def load_prompt_text(filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def normalize_seed_context(value: str | None) -> str | None:
+def normalize_test_case_context(value: str | None) -> str | None:
     if value is None:
         return None
     trimmed = value.strip()
@@ -177,22 +177,22 @@ def get_permissible_flag(payload: dict[str, Any], default: bool | None = None) -
 
 # ── Output filenames (written by run stages, read by viewer) ──
 
-TRANSCRIPTS_FILE = "transcripts.jsonl"
+INFERENCE_SET_FILE = "inference_set.jsonl"
 SCORES_FILE = "scores.jsonl"
 
-# ── Design helpers ────────────────────────────────────────────
+# ── Stratification helpers ────────────────────────────────────────────
 
 
-def design_factors(design: dict[str, Any]) -> tuple[str, ...]:
-    """Return user-defined design factors in stable order.
+def stratification_dimensions(stratification: dict[str, Any]) -> tuple[str, ...]:
+    """Return user-defined stratification dimensions in stable order.
 
-    Excludes metadata keys and the reserved ``behavior`` factor.
+    Excludes metadata keys and the reserved ``behavior`` dimension.
     """
     return tuple(
-        key for key in design if not key.startswith("_") and key != "behavior"
+        key for key in stratification if not key.startswith("_") and key != "behavior"
     )
 
-DESIGN_FILE = "design.json"
+STRATIFICATION_FILE = "stratification.json"
 
 
 # ── Template rendering ────────────────────────────────────────────
@@ -212,39 +212,39 @@ def fill_template(template: str, replacements: dict[str, str]) -> str:
     return rendered
 
 
-# ── Policy loading ────────────────────────────────────────────────
+# ── Taxonomy loading ────────────────────────────────────────────────
 
 
 def load_policy(path: str | Path) -> dict[str, Any]:
-    """Load and normalize a policy JSON file."""
-    policy = json.loads(resolve_path(path).read_text(encoding="utf-8"))
-    for behavior in policy.get("behaviors", []):
+    """Load and normalize a taxonomy JSON file."""
+    taxonomy = json.loads(resolve_path(path).read_text(encoding="utf-8"))
+    for behavior in taxonomy.get("behavior_categories", []):
         permissible = get_permissible_flag(behavior)
         if permissible is not None:
             behavior["permissible"] = permissible
-    return policy
+    return taxonomy
 
 
-def permissible_by_behavior(policy: dict[str, Any] | None) -> dict[str, bool]:
+def permissible_by_behavior(taxonomy: dict[str, Any] | None) -> dict[str, bool]:
     """Return canonical permissibility flags keyed by behavior name."""
-    behaviors = (policy or {}).get("behaviors")
-    if not isinstance(behaviors, list):
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
         return {}
     return {
         str(entry.get("name") or ""): bool(entry.get("permissible"))
-        for entry in behaviors
+        for entry in behavior_categories
         if isinstance(entry, dict) and str(entry.get("name") or "")
     }
 
 
-def definitions_by_behavior(policy: dict[str, Any] | None) -> dict[str, str]:
+def definitions_by_behavior(taxonomy: dict[str, Any] | None) -> dict[str, str]:
     """Return canonical behavior definitions keyed by behavior name."""
-    behaviors = (policy or {}).get("behaviors")
-    if not isinstance(behaviors, list):
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
         return {}
     return {
         str(entry.get("name") or ""): str(entry.get("definition") or "")
-        for entry in behaviors
+        for entry in behavior_categories
         if isinstance(entry, dict) and str(entry.get("name") or "")
     }
 
@@ -253,12 +253,12 @@ def policy_definition(
     policy_definition_by_name: dict[str, str],
     behavior_name: str,
 ) -> str:
-    """Return a behavior's policy definition or raise on missing policy."""
+    """Return a behavior's taxonomy definition or raise on missing taxonomy."""
     try:
         return policy_definition_by_name[behavior_name]
     except KeyError as exc:
         raise ValueError(
-            f"behavior '{behavior_name}' is missing from policy.behaviors"
+            f"behavior '{behavior_name}' is missing from taxonomy.behavior_categories"
         ) from exc
 
 
@@ -266,32 +266,32 @@ def policy_permissible(
     policy_permissible_by_name: dict[str, bool],
     behavior_name: str,
 ) -> bool:
-    """Return a behavior's policy permissibility or raise on missing policy."""
+    """Return a behavior's taxonomy permissibility or raise on missing taxonomy."""
     try:
         return policy_permissible_by_name[behavior_name]
     except KeyError as exc:
         raise ValueError(
-            f"behavior '{behavior_name}' is missing from policy.behaviors"
+            f"behavior '{behavior_name}' is missing from taxonomy.behavior_categories"
         ) from exc
 
 
 def row_behavior(row: dict[str, Any]) -> str:
-    """Return behavior name from a row's factors, or empty string if absent.
+    """Return behavior name from a row's dimensions, or empty string if absent.
 
-    Seed/transcript/score rows carry behavior inside `factors`; this is the
+    Test set/transcript/score rows carry behavior inside `dimensions`; this is the
     single, canonical accessor used everywhere downstream.
     """
-    factors = row.get("factors")
-    if not isinstance(factors, dict):
+    dimensions = row.get("dimensions")
+    if not isinstance(dimensions, dict):
         return ""
-    value = factors.get("behavior")
+    value = dimensions.get("behavior")
     return str(value) if value else ""
 
 
 def row_factors(row: dict[str, Any]) -> dict[str, str] | None:
-    """Return the row's `factors` dict if present and well-formed, else None."""
-    factors = row.get("factors")
-    return factors if isinstance(factors, dict) else None
+    """Return the row's `dimensions` dict if present and well-formed, else None."""
+    dimensions = row.get("dimensions")
+    return dimensions if isinstance(dimensions, dict) else None
 
 
 def _iter_nonempty_lines(path: Path) -> Iterable[tuple[int, str]]:

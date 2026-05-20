@@ -102,11 +102,11 @@ def _normalize_transcript_judge_verdict_impl(
     if isinstance(raw_justification, str) and raw_justification.strip():
         explanation_texts.append(raw_justification)
 
-    behaviors = policy_raw.get("behaviors")
-    if not isinstance(behaviors, list):
-        return None, "missing_policy_behaviors"
+    behavior_categories = policy_raw.get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        return None, "missing_policy_behavior_categories"
     name_to_index: dict[str, int] = {}
-    for idx, entry in enumerate(behaviors):
+    for idx, entry in enumerate(behavior_categories):
         if isinstance(entry, dict) and isinstance(entry.get("name"), str):
             stripped = entry["name"].strip()
             if stripped:
@@ -225,7 +225,7 @@ def _normalize_transcript_judge_verdict_impl(
 
     dense_node_judgments = _expand_sparse_node_judgments(
         sparse_nodes,
-        behaviors=behaviors,
+        behavior_categories=behavior_categories,
         citation_by_index=citation_by_index,
     )
 
@@ -298,8 +298,8 @@ def _citation_turns_for_indices(
     return sorted(turns)
 
 
-def _behavior_name(behaviors: list[Any], node_index: int) -> str:
-    behavior = behaviors[node_index] if 0 <= node_index < len(behaviors) else None
+def _behavior_name(behavior_categories: list[Any], node_index: int) -> str:
+    behavior = behavior_categories[node_index] if 0 <= node_index < len(behavior_categories) else None
     if isinstance(behavior, dict) and isinstance(behavior.get("name"), str):
         return str(behavior["name"]).strip()
     return ""
@@ -308,27 +308,27 @@ def _behavior_name(behaviors: list[Any], node_index: int) -> str:
 def _expand_sparse_node_judgments(
     raw_nodes: list[dict[str, Any]],
     *,
-    behaviors: list[Any],
+    behavior_categories: list[Any],
     citation_by_index: dict[int, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     dense_nodes = [
         {
             "node_index": index,
-            "node_name": _behavior_name(behaviors, index),
+            "node_name": _behavior_name(behavior_categories, index),
             "relevant": False,
             "violated": None,
             "confidence": None,
             "evidence_turns": [],
             "reasoning": "",
         }
-        for index in range(len(behaviors))
+        for index in range(len(behavior_categories))
     ]
     for node in raw_nodes:
         node_index = int(node["node_index"])
         reasoning = str(node["reasoning"]).strip()
         dense_nodes[node_index] = {
             "node_index": node_index,
-            "node_name": _behavior_name(behaviors, node_index),
+            "node_name": _behavior_name(behavior_categories, node_index),
             "relevant": True,
             "violated": bool(node["violated"]),
             "confidence": str(node["confidence"]),

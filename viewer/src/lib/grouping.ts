@@ -10,7 +10,7 @@ import type { AuditScore, JudgedSample, GroupAxis, GroupContext, GroupEntry, Nod
 // Constants
 // ---------------------------------------------------------------------------
 
-const NO_MATCHING_BEHAVIOR = 'No matching policy behavior';
+const NO_MATCHING_BEHAVIOR = 'No matching taxonomy behavior';
 const JUDGE_FAILED = 'Judge failed to score';
 const NOT_JUDGED = 'Not judged yet';
 
@@ -54,7 +54,7 @@ type ScoredRecord = {
 	verdict?: Record<string, unknown> | null;
 	judge_status?: string | null;
 	judge_error?: string | null;
-	factors?: Record<string, string>;
+	dimensions?: Record<string, string>;
 };
 
 export function formatFactorLabel(name: string): string {
@@ -94,21 +94,21 @@ const GROUP_AXES: GroupAxis<ScoredRecord>[] = [
 export const AUDIT_GROUP_AXES: GroupAxis<AuditScore>[] = GROUP_AXES;
 export const PROMPT_GROUP_AXES: GroupAxis<JudgedSample>[] = GROUP_AXES;
 
-export function buildFactorAxes<T extends { factors?: Record<string, string> }>(
+export function buildFactorAxes<T extends { dimensions?: Record<string, string> }>(
 	items: T[]
 ): GroupAxis<T>[] {
 	const factorNames = new Set<string>();
 	for (const item of items) {
-		for (const name of Object.keys(item.factors ?? {})) {
+		for (const name of Object.keys(item.dimensions ?? {})) {
 			factorNames.add(name);
 		}
 	}
 
 	const orderedFactorNames = [...factorNames].sort((a, b) => a.localeCompare(b));
 	const axes: GroupAxis<T>[] = orderedFactorNames.map((name) => ({
-		key: `factor:${name}`,
+		key: `dimension:${name}`,
 		label: formatFactorLabel(name),
-		accessor: (item) => item.factors?.[name]
+		accessor: (item) => item.dimensions?.[name]
 	}));
 
 	for (let index = 0; index < orderedFactorNames.length; index += 1) {
@@ -116,11 +116,11 @@ export function buildFactorAxes<T extends { factors?: Record<string, string> }>(
 			const first = orderedFactorNames[index];
 			const second = orderedFactorNames[otherIndex];
 			axes.push({
-				key: `factor:${first}:${second}`,
+				key: `dimension:${first}:${second}`,
 				label: `${formatFactorLabel(first)} × ${formatFactorLabel(second)}`,
 				accessor: (item) => {
-					const a = item.factors?.[first];
-					const b = item.factors?.[second];
+					const a = item.dimensions?.[first];
+					const b = item.dimensions?.[second];
 					return a && b ? `${formatFactorLabel(first)}: ${a} · ${formatFactorLabel(second)}: ${b}` : undefined;
 				}
 			});

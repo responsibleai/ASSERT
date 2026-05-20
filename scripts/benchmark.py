@@ -1,19 +1,19 @@
 """Concurrency / throughput benchmark harness.
 
 Drives the full p2m pipeline against a base benchmark config, with
-``--seeds`` and ``--concurrency`` as the two knobs. Everything else
-(target, factors, judge dimensions) stays identical across runs so
+``--test_set`` and ``--concurrency`` as the two knobs. Everything else
+(target, dimensions, judge dimensions) stays identical across runs so
 results are comparable.
 
 Each invocation:
 
 1. Materializes a per-run working dir under ``artifacts/benchmark/<run_id>/``.
-2. Copies the base YAML and the concept markdown into that dir.
+2. Copies the base YAML and inlines the behavior spec into that config.
 3. Applies overrides:
 
-   - ``pipeline.policy.behavior_count``  (auto-scaled from --seeds unless --behaviors)
-   - ``pipeline.seeds.scenario.sample_size`` = --seeds
-   - ``pipeline.rollout.concurrency``    = --concurrency  (judge re-uses this number)
+   - ``pipeline.systematize.behavior_category_count``  (auto-scaled from --test_set unless --behavior_categories)
+   - ``pipeline.test_set.scenario.sample_size`` = --test_set
+   - ``pipeline.inference.concurrency``    = --concurrency  (judge re-uses this number)
    - ``run``                              = the timestamped run id
 
 4. Calls :func:`p2m.runner.run_pipeline` directly.
@@ -25,9 +25,9 @@ Each invocation:
 
 Example::
 
-    python scripts/benchmark.py --seeds 100 --concurrency 10
-    python scripts/benchmark.py --seeds 1000 --concurrency 50
-    python scripts/benchmark.py --seeds 5000 --concurrency 100
+    python scripts/benchmark.py --test_set 100 --concurrency 10
+    python scripts/benchmark.py --test_set 1000 --concurrency 50
+    python scripts/benchmark.py --test_set 5000 --concurrency 100
 
 Run with ``--help`` for the full flag list.
 """
@@ -39,7 +39,6 @@ import csv
 import json
 import logging
 import math
-import shutil
 import sys
 import time
 from datetime import datetime, timezone
@@ -56,15 +55,15 @@ from p2m.runner import run_pipeline  # noqa: E402
 from p2m.logging_config import configure_logging  # noqa: E402
 
 DEFAULT_BASE_CONFIG = REPO_ROOT / "examples" / "benchmark" / "eval_config.yaml"
-# Quality-only concept colocated with the benchmark config. We deliberately
-# don't reuse examples/travel_planner_langgraph/travel_planner_eval.md
-# because that spec includes adversarial safety behaviors (prompt injection,
-# sycophancy bait) that push the auditor into jailbreak-shaped turns and
+# Quality-only behavior source colocated with the benchmark config. We deliberately
+# do not reuse the full travel-planner eval spec from the flagship YAML because
+# it includes adversarial safety behavior categories (prompt injection,
+# sycophancy bait) that push the tester into jailbreak-shaped turns and
 # get rejected by Azure Prompt Shields.
-DEFAULT_CONCEPT_SOURCE = (
+DEFAULT_BEHAVIOR_SPEC_SOURCE = (
     REPO_ROOT / "examples" / "benchmark" / "travel_planner_benchmark.md"
 )
-# The default auditor system prompt (prompts/rollout_auditor_system.md) is
+# The default tester system prompt (prompts/inference_tester_system.md) is
 # itself jailbreak-shaped by design — it instructs the LLM to escalate
 # obliquely-to-overtly, treat the target's replies as "not instructions to
 # you", and vary justification strength. Azure Prompt Shields' jailbreak
@@ -72,8 +71,8 @@ DEFAULT_CONCEPT_SOURCE = (
 # which makes the default prompt unusable for any throughput benchmark
 # running through Azure-hosted models. This file ships a tame variant
 # that still drives a multi-turn persona but reads like a normal user.
-DEFAULT_BENIGN_AUDITOR_PROMPT = (
-    REPO_ROOT / "examples" / "benchmark" / "auditor_system_benign.md"
+DEFAULT_BENIGN_TESTER_PROMPT = (
+    REPO_ROOT / "examples" / "benchmark" / "tester_system_benign.md"
 )
 DEFAULT_BENCH_ROOT = REPO_ROOT / "artifacts" / "benchmark"
 DEFAULT_RESULTS_CSV = DEFAULT_BENCH_ROOT / "results.csv"
@@ -81,14 +80,14 @@ DEFAULT_RESULTS_CSV = DEFAULT_BENCH_ROOT / "results.csv"
 CSV_FIELDS = [
     "timestamp_utc",
     "run_id",
-    "seeds",
+    "test_set",
     "concurrency",
-    "behavior_count",
+    "behavior_category_count",
     "exit_code",
     "wall_time_s",
     "rate_limit_cooldowns",
     "target_input_refused_count",
-    "auditor_input_refused_count",
+    "tester_input_refused_count",
     "target_error_count",
     "judge_filter_skipped_count",
     "scenario_seeds_generated",
@@ -102,10 +101,10 @@ CSV_FIELDS = [
 
 # Module-level placeholder kept so older external scripts that reference
 # this attribute don't crash. The actual counting is now done by scanning
-# transcripts.jsonl / scores.jsonl after the run completes (see
+# inference_set.jsonl / scores.jsonl after the run completes (see
 # ``_scan_run_artifacts`` below). Product code records typed refusals as
-# ``stop_reason='target_input_refused'`` / ``'auditor_input_refused'``
-# (rollout) and ``judge_status='filter_skipped'`` (judge).
+# ``stop_reason='target_input_refused'`` / ``'tester_input_refused'``
+# (inference) and ``judge_status='filter_skipped'`` (judge).
 
 
 def _scan_run_artifacts(suite_id: str, run_id: str) -> dict[str, int]:
@@ -119,7 +118,7 @@ def _scan_run_artifacts(suite_id: str, run_id: str) -> dict[str, int]:
     """
     counts: dict[str, int] = {
         "target_input_refused": 0,
-        "auditor_input_refused": 0,
+        "tester_input_refused": 0,
         "target_error": 0,
         "judge_filter_skipped": 0,
     }
@@ -127,9 +126,9 @@ def _scan_run_artifacts(suite_id: str, run_id: str) -> dict[str, int]:
         return counts
     run_dir = REPO_ROOT / "artifacts" / "results" / suite_id / run_id
 
-    transcripts_path = run_dir / "transcripts.jsonl"
-    if transcripts_path.exists():
-        for line in transcripts_path.read_text(encoding="utf-8").splitlines():
+    inference_set_path = run_dir / "inference_set.jsonl"
+    if inference_set_path.exists():
+        for line in inference_set_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -168,7 +167,7 @@ def _silence_asyncio_close_noise() -> None:
     ``RuntimeError: Event loop is closed`` and asyncio prints
     ``Task exception was never retrieved`` plus the full traceback —
     once per orphaned connection. It happens *after* the run is
-    logically finished, so the exit code, transcripts, scores, metrics
+    logically finished, so the exit code, inference rows, scores, metrics
     and CSV row are already written.
 
     We attach a filter to the ``asyncio`` logger that only drops records
@@ -222,23 +221,23 @@ class _RateLimitCounter(logging.Handler):
             self.count += 1
 
 
-def _scale_behavior_count(seeds: int) -> int:
-    """Aim for ~10 seeds per behavior; clamp into a tractable range.
+def _scale_behavior_category_count(test_set: int) -> int:
+    """Aim for ~10 test_set per behavior; clamp into a tractable range.
 
-    Below the floor the policy stage produces too few categories to
-    cover the concept; above the ceiling the policy LLM has to invent
+    Below the floor the systematize stage produces too few categories to
+    cover the behavior; above the ceiling the taxonomy LLM has to invent
     too many distinct failure modes in a single call.
     """
-    target = math.ceil(seeds / 10)
+    target = math.ceil(test_set / 10)
     return max(6, min(50, target))
 
 
 def _override_config(
     base: dict[str, Any],
     *,
-    seeds: int,
+    test_set: int,
     concurrency: int,
-    behavior_count: int,
+    behavior_category_count: int,
     run_id: str,
 ) -> dict[str, Any]:
     cfg = dict(base)
@@ -246,24 +245,24 @@ def _override_config(
 
     pipeline = dict(cfg.get("pipeline") or {})
 
-    policy = dict(pipeline.get("policy") or {})
-    policy["behavior_count"] = behavior_count
-    pipeline["policy"] = policy
+    taxonomy = dict(pipeline.get("taxonomy") or {})
+    taxonomy["behavior_category_count"] = behavior_category_count
+    pipeline["taxonomy"] = taxonomy
 
-    seeds_block = dict(pipeline.get("seeds") or {})
-    # Scenario-only by design: the rollout/judge concurrency knob is what
-    # this benchmark exercises, and scenario rollouts are the heavier
+    test_set_block = dict(pipeline.get("test_set") or {})
+    # Scenario-only by design: the inference/judge concurrency knob is what
+    # this benchmark exercises, and scenario inferences are the heavier
     # multi-turn shape that makes that knob bite. Strip any prompt block
     # that may be in the base config.
-    seeds_block.pop("prompt", None)
-    scenario = dict(seeds_block.get("scenario") or {})
-    scenario["sample_size"] = seeds
-    seeds_block["scenario"] = scenario
-    pipeline["seeds"] = seeds_block
+    test_set_block.pop("prompt", None)
+    scenario = dict(test_set_block.get("scenario") or {})
+    scenario["sample_size"] = test_set
+    test_set_block["scenario"] = scenario
+    pipeline["test_set"] = test_set_block
 
-    rollout = dict(pipeline.get("rollout") or {})
-    rollout["concurrency"] = concurrency
-    pipeline["rollout"] = rollout
+    inference = dict(pipeline.get("inference") or {})
+    inference["concurrency"] = concurrency
+    pipeline["inference"] = inference
 
     cfg["pipeline"] = pipeline
     return cfg
@@ -273,25 +272,26 @@ def _prepare_run_dir(
     bench_root: Path,
     run_id: str,
     base_config: Path,
-    concept_source: Path,
+    behavior_spec_source: Path,
     overrides: dict[str, Any],
 ) -> Path:
     run_dir = bench_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    target_config = run_dir / "eval_config.yaml"
-    target_config.write_text(yaml.safe_dump(overrides, sort_keys=False), encoding="utf-8")
-
-    # The config loader looks for <concept_name>.md next to the config
-    # file. Copy the source markdown alongside so the resolution succeeds
-    # without leaking benchmark-specific paths into the loader.
-    if not concept_source.exists():
+    if not behavior_spec_source.exists():
         raise FileNotFoundError(
-            f"Concept markdown not found at {concept_source}. "
-            "Pass --concept-md to point at the right .md file."
+            f"Behavior spec markdown not found at {behavior_spec_source}. "
+            "Pass --behavior-spec to point at the right .md file."
         )
-    concept_name = overrides.get("concept", {}).get("name") or concept_source.stem
-    shutil.copy2(concept_source, run_dir / f"{concept_name}.md")
+    behavior_spec_text = behavior_spec_source.read_text(encoding="utf-8").strip()
+    cfg = dict(overrides)
+    behavior = dict(cfg.get("behavior") or {})
+    behavior["name"] = behavior.get("name") or behavior_spec_source.stem
+    behavior["description"] = behavior_spec_text
+    cfg["behavior"] = behavior
+
+    target_config = run_dir / "eval_config.yaml"
+    target_config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
     return target_config
 
@@ -306,11 +306,11 @@ def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
     via :func:`p2m.results.load_run_summary`. ``scenario_seeds_generated``
     is the count of scenario rows that reached the judge stage in this
     run; ``scenarios_scored`` is the subset that judge successfully
-    scored (i.e. ``judge_status == "ok"``). For partial-seeds runs that
+    scored (i.e. ``judge_status == "ok"``). For partial-test_set runs that
     skip cache finalization, this keeps the CSV row internally
     consistent with the other per-run columns (cooldowns, target_errors,
     wall_time_s) instead of reading the suite-root compatibility
-    ``seeds.jsonl`` which only refreshes on full-success runs.
+    ``test_set.jsonl`` which only refreshes on full-success runs.
 
     The runner's ``metrics.json`` is token-usage telemetry only and is
     not consulted here.
@@ -362,36 +362,36 @@ def _append_results_row(csv_path: Path, row: dict[str, Any]) -> None:
         writer.writerow({k: row.get(k, "") for k in CSV_FIELDS})
 
 
-def _build_run_id(seeds: int, concurrency: int, custom: str | None) -> str:
+def _build_run_id(test_set: int, concurrency: int, custom: str | None) -> str:
     if custom:
         return custom
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"bench-s{seeds}-c{concurrency}-{stamp}"
+    return f"bench-s{test_set}-c{concurrency}-{stamp}"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the full p2m pipeline at a chosen (seeds, concurrency) point.",
+        description="Run the full p2m pipeline at a chosen (test_set, concurrency) point.",
     )
     parser.add_argument(
-        "--seeds",
+        "--test_set",
         type=int,
         required=True,
-        help="Total scenario seeds to generate (sets pipeline.seeds.scenario.sample_size). 1..100000.",
+        help="Total scenario test_set to generate (sets pipeline.test_set.scenario.sample_size). 1..100000.",
     )
     parser.add_argument(
         "--concurrency",
         type=int,
         required=True,
-        help="Rollout concurrency (judge re-uses this value). Must be >= 1.",
+        help="Inference concurrency (judge re-uses this value). Must be >= 1.",
     )
     parser.add_argument(
-        "--behaviors",
+        "--behavior_categories",
         type=int,
         default=None,
         help=(
-            "Override pipeline.policy.behavior_count. Default scales with --seeds "
-            "(roughly 10 seeds per behavior, clamped to [6, 50])."
+            "Override pipeline.systematize.behavior_category_count. Default scales with --test_set "
+            "(roughly 10 test_set per behavior, clamped to [6, 50])."
         ),
     )
     parser.add_argument(
@@ -401,12 +401,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Base YAML to template from (default: {DEFAULT_BASE_CONFIG.relative_to(REPO_ROOT)}).",
     )
     parser.add_argument(
-        "--concept-md",
+        "--behavior-spec",
+        "--behavior-md",
+        dest="behavior_spec",
         type=Path,
-        default=DEFAULT_CONCEPT_SOURCE,
+        default=DEFAULT_BEHAVIOR_SPEC_SOURCE,
         help=(
-            "Source path to the concept markdown that gets copied next to the temp "
-            f"config (default: {DEFAULT_CONCEPT_SOURCE.relative_to(REPO_ROOT)})."
+            "Source markdown to inline into behavior.description in the generated "
+            f"config (default: {DEFAULT_BEHAVIOR_SPEC_SOURCE.relative_to(REPO_ROOT)})."
         ),
     )
     parser.add_argument(
@@ -443,23 +445,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Also write all log output to this file (DEBUG level).",
     )
     parser.add_argument(
-        "--auditor-prompt",
+        "--tester-prompt",
         type=Path,
-        default=DEFAULT_BENIGN_AUDITOR_PROMPT,
+        default=DEFAULT_BENIGN_TESTER_PROMPT,
         help=(
-            "Path to a markdown file used to override the rollout auditor "
+            "Path to a markdown file used to override the inference tester "
             "system prompt for the duration of this benchmark run. Defaults "
-            f"to {DEFAULT_BENIGN_AUDITOR_PROMPT.relative_to(REPO_ROOT)} (a "
+            f"to {DEFAULT_BENIGN_TESTER_PROMPT.relative_to(REPO_ROOT)} (a "
             "tame variant that doesn't trip Azure Prompt Shields). Pass "
-            "--no-auditor-override to use the product default instead."
+            "--no-tester-override to use the product default instead."
         ),
     )
     parser.add_argument(
-        "--no-auditor-override",
+        "--no-tester-override",
         action="store_true",
         help=(
-            "Skip the benign auditor-prompt swap and use the product's "
-            "default rollout auditor system prompt. Likely to fail on "
+            "Skip the benign tester-prompt swap and use the product's "
+            "default inference tester system prompt. Likely to fail on "
             "Azure-hosted models with default content filters."
         ),
     )
@@ -470,7 +472,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "DEPRECATED: this flag is now a no-op. Per-row tolerance for "
             "Azure Prompt Shields and other input refusals is handled "
             "natively by product code (target_input_refused / "
-            "auditor_input_refused / judge filter_skipped). Kept for "
+            "tester_input_refused / judge filter_skipped). Kept for "
             "backward compatibility."
         ),
     )
@@ -486,8 +488,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    if args.seeds < 1 or args.seeds > 100_000:
-        print(f"--seeds must be in [1, 100000], got {args.seeds}", file=sys.stderr)
+    if args.test_set < 1 or args.test_set > 100_000:
+        print(f"--test_set must be in [1, 100000], got {args.test_set}", file=sys.stderr)
         return 2
     if args.concurrency < 1:
         print(f"--concurrency must be >= 1, got {args.concurrency}", file=sys.stderr)
@@ -502,25 +504,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Base config did not parse to a dict: {args.base_config}", file=sys.stderr)
         return 2
 
-    behavior_count = (
-        args.behaviors if args.behaviors is not None else _scale_behavior_count(args.seeds)
+    behavior_category_count = (
+        args.behavior_categories if args.behavior_categories is not None else _scale_behavior_category_count(args.test_set)
     )
-    if behavior_count < 1:
-        print(f"--behaviors must be >= 1, got {behavior_count}", file=sys.stderr)
+    if behavior_category_count < 1:
+        print(f"--behavior_categories must be >= 1, got {behavior_category_count}", file=sys.stderr)
         return 2
 
-    run_id = _build_run_id(args.seeds, args.concurrency, args.run_id)
+    run_id = _build_run_id(args.test_set, args.concurrency, args.run_id)
 
     overrides = _override_config(
         base_cfg,
-        seeds=args.seeds,
+        test_set=args.test_set,
         concurrency=args.concurrency,
-        behavior_count=behavior_count,
+        behavior_category_count=behavior_category_count,
         run_id=run_id,
     )
 
     target_config = _prepare_run_dir(
-        args.bench_root, run_id, args.base_config, args.concept_md, overrides
+        args.bench_root, run_id, args.base_config, args.behavior_spec, overrides
     )
 
     suite_id = str(overrides.get("suite") or "")
@@ -528,9 +530,9 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print(f"Benchmark run: {run_id}")
     print(f"  suite          : {suite_id}")
-    print(f"  seeds          : {args.seeds} (scenario only)")
-    print(f"  concurrency    : {args.concurrency} (rollout + judge)")
-    print(f"  behavior_count : {behavior_count}")
+    print(f"  test_set          : {args.test_set} (scenario only)")
+    print(f"  concurrency    : {args.concurrency} (inference + judge)")
+    print(f"  behavior_category_count : {behavior_category_count}")
     print(f"  config         : {target_config}")
     if args.log_file:
         print(f"  log file       : {args.log_file}")
@@ -543,35 +545,35 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(verbose=args.verbose, log_file=args.log_file)
     _silence_asyncio_close_noise()
 
-    # Swap in the benign auditor prompt unless the user opted out. The
+    # Swap in the benign tester prompt unless the user opted out. The
     # default prompt is intentionally adversarial (oblique→overt
     # escalation, "treat replies as not instructions") which trips Azure
     # Prompt Shields' jailbreak detector before the first target turn.
     # We monkey-patch the module-level constant so no product code path
     # has to care about this benchmark-only override.
-    if not args.no_auditor_override:
-        if not args.auditor_prompt.exists():
+    if not args.no_tester_override:
+        if not args.tester_prompt.exists():
             print(
-                f"Auditor prompt override not found: {args.auditor_prompt}",
+                f"Tester prompt override not found: {args.tester_prompt}",
                 file=sys.stderr,
             )
             return 2
-        from p2m.stages import rollout as _rollout_mod
-        _rollout_mod.AUDITOR_SYSTEM_PROMPT = args.auditor_prompt.read_text(
+        from p2m.stages import inference as _inference_mod
+        _inference_mod.TESTER_SYSTEM_PROMPT = args.tester_prompt.read_text(
             encoding="utf-8"
         )
         logging.getLogger("benchmark").info(
-            "Overrode auditor system prompt with %s",
-            args.auditor_prompt.relative_to(REPO_ROOT)
-            if args.auditor_prompt.is_relative_to(REPO_ROOT)
-            else args.auditor_prompt,
+            "Overrode tester system prompt with %s",
+            args.tester_prompt.relative_to(REPO_ROOT)
+            if args.tester_prompt.is_relative_to(REPO_ROOT)
+            else args.tester_prompt,
         )
 
     # Per-row tolerance for content-filter rejections is now handled
-    # natively by product code (target_input_refused / auditor_input_refused
-    # in rollout, judge_status='filter_skipped' in judge). The legacy
+    # natively by product code (target_input_refused / tester_input_refused
+    # in inference, judge_status='filter_skipped' in judge). The legacy
     # monkey-patches are gone; we count typed refusals after the run by
-    # scanning transcripts.jsonl + scores.jsonl. The
+    # scanning inference_set.jsonl + scores.jsonl. The
     # --no-tolerate-content-filter flag is preserved for back-compat but
     # is now a no-op (the typed handlers always run).
     if args.no_tolerate_content_filter:
@@ -610,8 +612,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Rate-limit cooldowns   : {counter.count}")
     if refusal_counts["target_input_refused"]:
         print(f"Target input refused   : {refusal_counts['target_input_refused']}")
-    if refusal_counts["auditor_input_refused"]:
-        print(f"Auditor input refused  : {refusal_counts['auditor_input_refused']}")
+    if refusal_counts["tester_input_refused"]:
+        print(f"Tester input refused  : {refusal_counts['tester_input_refused']}")
     if refusal_counts["target_error"]:
         print(f"Target errors          : {refusal_counts['target_error']}")
     if refusal_counts["judge_filter_skipped"]:
@@ -625,14 +627,14 @@ def main(argv: list[str] | None = None) -> int:
         row = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "run_id": run_id,
-            "seeds": args.seeds,
+            "test_set": args.test_set,
             "concurrency": args.concurrency,
-            "behavior_count": behavior_count,
+            "behavior_category_count": behavior_category_count,
             "exit_code": exit_code,
             "wall_time_s": round(wall_time, 2),
             "rate_limit_cooldowns": counter.count,
             "target_input_refused_count": refusal_counts["target_input_refused"],
-            "auditor_input_refused_count": refusal_counts["auditor_input_refused"],
+            "tester_input_refused_count": refusal_counts["tester_input_refused"],
             "target_error_count": refusal_counts["target_error"],
             "judge_filter_skipped_count": refusal_counts["judge_filter_skipped"],
             "config_path": str(target_config),

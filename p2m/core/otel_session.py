@@ -1,9 +1,9 @@
 """OTel-traced session for multi-turn adversarial evaluation.
 
 Architecture:
-    Turn 1: Auditor generates probe → CallableSession invokes target →
+    Turn 1: Tester generates probe → CallableSession invokes target →
             OTel captures agent internals → P2M records turn + trace metadata
-    Turn 2: Auditor escalates based on Turn 1 response → same flow
+    Turn 2: Tester escalates based on Turn 1 response → same flow
     ...
     Turn N: Max turns reached or stop condition met
 
@@ -46,8 +46,8 @@ class OTelTracedSession:
     2. In-memory: For testing. Spans are injected directly via add_span().
 
     Multi-turn flow:
-        P2M's rollout stage drives the conversation. Each turn:
-        1. Auditor generates the next adversarial message
+        P2M's inference stage drives the conversation. Each turn:
+        1. Tester generates the next adversarial message
         2. This session invokes the target callable
         3. Target executes (emitting OTel spans if instrumented)
         4. Session captures response + collects trace data for this turn
@@ -158,9 +158,9 @@ class OTelTracedSession:
         clear-invoke-export cycle is serialized via an ``asyncio.Lock`` to
         prevent concurrent sessions from contaminating each other's span
         data. The lock MUST be ``asyncio.Lock`` (not ``threading.Lock``):
-        the rollout stage runs all sessions in one event loop, so holding a
+        the inference stage runs all sessions in one event loop, so holding a
         sync threading lock across the inner ``await`` would block the loop
-        and deadlock when ``rollout.concurrency > 1``.
+        and deadlock when ``inference.concurrency > 1``.
         """
         from p2m.core.otel import LiveOTelExporter
         lock_ctx = LiveOTelExporter.get_lock() if self._live_otel else nullcontext()

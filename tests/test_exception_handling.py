@@ -32,16 +32,11 @@ class LoadConfigErrorTest(unittest.TestCase):
             self.assertIn(str(path), str(ctx.exception))
 
     def test_permission_denied_raises_config_error(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "locked.yaml"
-            path.write_text("key: value", encoding="utf-8")
-            path.chmod(0o000)
-            try:
-                with self.assertRaises(ConfigError) as ctx:
-                    load_config(path)
-                self.assertIn("Permission denied", str(ctx.exception))
-            finally:
-                path.chmod(0o644)
+        path = Path("locked.yaml")
+        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+        self.assertIn("Permission denied", str(ctx.exception))
 
     def test_valid_yaml_non_mapping_raises_config_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -131,7 +126,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         """User callables (LangGraph, agent frameworks, raw litellm) bypass
         ``generate()``/``_with_retries`` and so emit unclassified provider
         errors. ``CallableSession.run_turn`` must re-classify them so the
-        rollout stage's per-seed isolation paths can route content-filter
+        inference stage's per-seed isolation paths can route content-filter
         rejections to a recorded transcript event instead of aborting the
         whole batch.
         """
@@ -155,7 +150,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         async def fake_invoke_callable(fn, *args, **kwargs):
             raise FakeLitellmBadRequest(
                 "Invalid prompt: your prompt was flagged as potentially "
-                "violating our usage policy"
+                "violating our usage taxonomy"
             )
 
         session = CallableSession(callable_ref="json:dumps")
@@ -248,68 +243,68 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
 # ── stages/judge.py ────────────────────────────────────────────
 
 class JudgePolicyParseErrorTest(unittest.TestCase):
-    def test_corrupt_policy_json_raises_value_error(self) -> None:
+    def test_corrupt_taxonomy_json_raises_value_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            policy_path = Path(tmp_dir) / "policy.json"
-            policy_path.write_text("{not valid json", encoding="utf-8")
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text("{not valid json", encoding="utf-8")
             # We can't easily call run_judge without full setup, but we can
             # test the JSON parse path directly
             with self.assertRaises(json.JSONDecodeError):
-                json.loads(policy_path.read_text(encoding="utf-8"))
+                json.loads(taxonomy_path.read_text(encoding="utf-8"))
 
 
 # ── stages/systematization_convert.py ──────────────────────────
 
 class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_file_raises_file_not_found(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_policy
+        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
         with self.assertRaises(FileNotFoundError) as ctx:
-            await run_systematization_to_policy(
+            await run_systematization_to_taxonomy(
                 systematization_path="/tmp/nonexistent_syst_abc123.json",
             )
         self.assertIn("Systematization file not found", str(ctx.exception))
 
     async def test_corrupt_json_raises_value_error(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_policy
+        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "bad_syst.json"
             path.write_text("{not valid", encoding="utf-8")
             with self.assertRaises(ValueError) as ctx:
-                await run_systematization_to_policy(
+                await run_systematization_to_taxonomy(
                     systematization_path=str(path),
                 )
             self.assertIn("Invalid JSON", str(ctx.exception))
 
 
-# ── stages/rollout.py worker logging ───────────────────────────
+# ── stages/inference.py worker logging ───────────────────────────
 
-class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
+class InferenceWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
     async def test_worker_logs_debug_on_runtime_failure(self) -> None:
-        """Verify that the rollout worker logs debug info when a runtime error occurs."""
+        """Verify that the inference worker logs debug info when a runtime error occurs."""
         from p2m.core.config_model import (
-            AuditorConfig,
+            TesterConfig,
             EvaluationConfig,
             JudgeConfig,
-            RolloutConfig,
+            InferenceConfig,
             TargetConfig,
         )
-        from p2m.stages.rollout import run_rollout
+        from p2m.stages.inference import run_inference
 
         target = TargetConfig(model="azure/gpt-5.4")
         evaluation = EvaluationConfig(
-            rollout=RolloutConfig(max_turns=1, concurrency=1),
+            inference=InferenceConfig(max_turns=1, concurrency=1),
             judge=JudgeConfig(model="azure/gpt-5.4"),
-            auditor=AuditorConfig(model="azure/gpt-5.4"),
+            tester=TesterConfig(model="azure/gpt-5.4"),
         )
 
         with TemporaryDirectory() as tmp_dir:
-            seeds_path = Path(tmp_dir) / "seeds.jsonl"
-            seeds_path.write_text(
+            test_set_path = Path(tmp_dir) / "test_set.jsonl"
+            test_set_path.write_text(
                 json.dumps({
-                    "kind": "prompt",
-                    "seed_id": "prompt-fail-001",
+                    "type": "prompt",
+                    "test_case_id": "prompt-fail-001",
                     "content": "test prompt",
                     "seed": {"description": "test", "system_prompt": "be helpful"},
                 }) + "\n",
@@ -328,24 +323,24 @@ class RolloutWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch(
-                    "p2m.stages.rollout._build_target_session",
+                    "p2m.stages.inference._build_target_session",
                     return_value=mock_runtime,
                 ),
-                self.assertLogs("p2m.stages.rollout", level="DEBUG") as log_cm,
+                self.assertLogs("p2m.stages.inference", level="DEBUG") as log_cm,
             ):
                 with self.assertRaises(ConnectionError):
-                    await run_rollout(
-                        seed_path=str(seeds_path),
+                    await run_inference(
+                        test_set_path=str(test_set_path),
                         save_dir=tmp_dir,
                         run_id="test-run",
                         target=target,
                         evaluation=evaluation,
-                        config_path=str(seeds_path),
+                        config_path=str(test_set_path),
                     )
 
-            debug_messages = [r for r in log_cm.output if "Rollout worker" in r]
+            debug_messages = [r for r in log_cm.output if "Inference worker" in r]
             self.assertTrue(len(debug_messages) > 0, "Expected debug log for worker failure")
-            self.assertIn("seed_000001", debug_messages[0])
+            self.assertIn("test_case_000001", debug_messages[0])
             self.assertIn("simulated network failure", debug_messages[0])
             self.assertIn("Traceback", debug_messages[0])
 

@@ -162,10 +162,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level policy violation is flagged, but no policy node is marked violated';
+			return 'top-level taxonomy violation is flagged, but no taxonomy node is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a policy node is marked violated, but the top-level policy verdict is clear';
+			return 'a taxonomy node is marked violated, but the top-level taxonomy verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -175,7 +175,7 @@
 		if (runtimeMode === 'tool_module') return 'tools';
 		if (runtimeMode === 'simulated') return 'simulated tools';
 		if (runtimeMode === 'external') return 'external tools';
-		return hasAgenticTranscript ? 'agentic transcript' : null;
+		return hasAgenticTranscript ? 'agentic' : null;
 	}
 
 	function isStructuredCitation(value: unknown): value is AuditCitation {
@@ -337,7 +337,7 @@
 	}
 
 	function fallbackTurnLabel(messages: InteractionMessage[], messageIndex: number): number {
-		// Mirrors the materializer: only auditor (user) and target (assistant)
+		// Mirrors the materializer: only tester (user) and target (assistant)
 		// emit turns. Tool calls and tool messages inherit the surrounding
 		// assistant turn — they don't get their own number, but they DO show
 		// the assistant's turn label so the viewer can group them under it.
@@ -444,14 +444,14 @@
 			buttonTitle: 'View stored event debug payload',
 			panelTitle: 'Stored event debug payload',
 			description:
-				'This is transcript event debug data captured during rollout. For external connectors it may be the only payload available.',
+				'This is raw event debug data captured during inference. For external connectors it may be the only payload available.',
 			payload: raw
 		};
 	}
 
 	function llmSourceLabel(source: string): string {
 		if (source === 'target') return 'Target model';
-		if (source === 'auditor') return 'Auditor model';
+		if (source === 'tester') return 'Tester model';
 		if (source === 'tool_simulator') return 'Tool simulator';
 		return source || 'LLM';
 	}
@@ -606,7 +606,7 @@
 		const part =
 			(citation.parts ?? []).find((entry) => entry.resolution?.status === 'resolved') ??
 			(citation.parts ?? [])[0];
-		if (!part) return 'transcript';
+		if (!part) return 'message';
 		if (part.source_kind === 'tool_arg') {
 			return part.tool_arg ? `tool arg: ${part.tool_arg}` : 'tool arg';
 		}
@@ -790,9 +790,9 @@
 				{:else if judgeStatus(item) === 'unjudged'}
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
 				{/if}
-				{#if item.factors}
+				{#if item.dimensions}
 					<span class="flex flex-wrap items-center gap-1.5">
-						{#each Object.entries(item.factors) as [name, value]}
+						{#each Object.entries(item.dimensions) as [name, value]}
 							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
 								{formatFactorLabel(name)}: {value}
 							</span>
@@ -880,7 +880,7 @@
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Unjudged preview</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This conversation finished rollout and is available for inspection, but the judge has not scored it yet.
+							This conversation finished inference and is available for inspection, but the judge has not scored it yet.
 						</p>
 					</div>
 				{/if}
@@ -896,7 +896,7 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Node-level taxonomy findings and the top-level taxonomy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
 						</p>
 					</div>
 				{/if}
@@ -933,13 +933,13 @@
 							{/each}
 						</div>
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
-							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
+							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, taxonomy reasoning, and transcript highlights follow this verdict.
 						</p>
 					</div>
 				{/if}
 				{#if activeVerdict?.narrative}
 					<div class="rounded-lg border border-border bg-surface p-4">
-						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Conversation summary</div>
+						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Result summary</div>
 						<p class="text-sm text-text-secondary leading-relaxed">{activeVerdict.narrative}</p>
 					</div>
 				{/if}
@@ -978,9 +978,9 @@
 													<div class="min-w-0 flex-1">
 														<div
 															class="truncate text-xs font-semibold text-text"
-															title={nodeName ?? 'Unnamed policy node'}
+															title={nodeName ?? 'Unnamed taxonomy node'}
 														>
-															{nodeName ?? 'Unnamed policy node'}
+															{nodeName ?? 'Unnamed taxonomy node'}
 														</div>
 													</div>
 													<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -1043,7 +1043,7 @@
 
 		<div class="w-3/5 overflow-y-auto p-5">
 			<h3 class="mb-4 text-[24px] font-semibold text-text">
-				Conversation · {conversationTurnCount(item.messages)} turns
+				Result · {conversationTurnCount(item.messages)} turns
 			</h3>
 			{#if agentTimeline.length >= 2}
 				<div class="mb-4 flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-surface-2/40 px-3 py-2 text-[11px] text-text-muted">
@@ -1271,7 +1271,7 @@
 							</div>
 							<div class="{isUser ? 'max-w-[85%]' : 'w-[85%]'} rounded-lg {isUser ? 'bg-interactive/8' : 'bg-surface-2'} {isHighlighted ? 'ring-2 ring-interactive bg-interactive/12' : ''} overflow-hidden">
 								<div class="flex items-center gap-2 px-4 pt-3 pb-1.5">
-									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Auditor') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Tester') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if regularAgentBadge}
 										<span
 											class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text-muted"

@@ -8,13 +8,12 @@ This walkthrough runs the flagship customer-preview example: a LangGraph travel 
 
 ```text
 examples/travel_planner_langgraph/
-├── eval_config.yaml          pipeline config
-├── travel_planner_eval.md    eval spec
+├── eval_config.yaml          pipeline config with inline behavior spec
 ├── agent.py                  LangGraph travel planner
 └── auto_trace.py             Phoenix auto-instrumentation wrapper
 ```
 
-The config points rollout at:
+The config points inference at:
 
 ```yaml
 target:
@@ -64,16 +63,16 @@ p2m results status travel-planner-langgraph-v1 demo-1
 
 The developer-authored pieces are:
 
-1. **Eval spec**: `concept.name: travel_planner_eval` loads `travel_planner_eval.md`.
+1. **Eval spec**: `behavior.name` names the eval and `behavior.description` contains the behavior spec.
 2. **About the target**: `context` tells the generator this is a multi-agent travel planner with flight, hotel, weather, advisory, and budget tools.
-3. **Variations**: `factors` ask the generator to vary traveler type and trip type.
-4. **Judge dimensions**: `judge.dimensions` defines what the judge should score, with descriptions and rubrics.
+3. **Variations**: `pipeline.test_set.stratify.dimensions` ask the generator to vary traveler type and trip type.
+4. **Judge dimensions**: `pipeline.judge.dimensions` defines what the judge should score, with descriptions and rubrics.
 
 The pipeline fills in the rest:
 
-1. `policy` creates a behavior taxonomy.
-2. `seeds` generates single-turn prompts and multi-turn scenarios.
-3. `rollout` executes those tests against the agent.
+1. `systematize` creates behavior categories.
+2. `test_set` generates prompt and scenario test cases.
+3. `inference` executes those test cases against the agent.
 4. `judge` scores each transcript and writes metrics.
 
 ## Inspect results
@@ -87,7 +86,7 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 Read:
 
 - `config.yaml` for the exact config snapshot.
-- `transcripts.jsonl` for conversations and trace references.
+- `inference_set.jsonl` for inference outputs (conversations or agent actions) and trace references.
 - `scores.jsonl` for judge verdicts and evidence.
 - `metrics.json` for aggregate rates.
 

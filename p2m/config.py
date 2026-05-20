@@ -13,19 +13,19 @@ import yaml
 log = logging.getLogger(__name__)
 
 from p2m.core.config_model import (
-    DEFAULT_AUDITOR_MAX_TURNS,
+    DEFAULT_TESTER_MAX_TURNS,
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
-    DEFAULT_ROLLOUT_CONCURRENCY,
-    DEFAULT_ROLLOUT_MAX_TOOL_CALLS,
-    DEFAULT_ROLLOUT_MAX_TOKENS,
-    DEFAULT_ROLLOUT_TEMPERATURE,
-    AuditorConfig,
+    DEFAULT_INFERENCE_CONCURRENCY,
+    DEFAULT_INFERENCE_MAX_TOOL_CALLS,
+    DEFAULT_INFERENCE_MAX_TOKENS,
+    DEFAULT_INFERENCE_TEMPERATURE,
+    TesterConfig,
     EvaluationConfig,
     JudgeConfig,
     ModelConfig,
     PipelineConfig,
-    RolloutConfig,
+    InferenceConfig,
     TargetConfig,
     ToolsConfig,
     TraceConfig,
@@ -34,13 +34,12 @@ from p2m.core.config_model import (
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH_KEYS = {"save_dir", "save_path"}
 PIPELINE_STAGE_ORDER = (
-    "policy",
-    "design",
-    "seeds",
-    "rollout",
+    "systematize",
+    "test_set",
+    "inference",
     "judge",
 )
-CONCEPT_REQUIRED_PIPELINE_STAGES = {"policy"}
+BEHAVIOR_REQUIRED_PIPELINE_STAGES = {"systematize"}
 
 
 class ConfigError(Exception):
@@ -123,6 +122,8 @@ def _resolve_path(
     Validates that relative paths do not escape their expected root directory
     via traversal sequences.
     """
+    artifacts_root = Path(artifacts_root).expanduser().resolve()
+    cfg_dir = Path(cfg_dir).expanduser().resolve() if cfg_dir is not None else None
     candidate = Path(path).expanduser()
     if candidate.is_absolute():
         # Absolute paths are explicitly specified by the user; allow them.
@@ -174,9 +175,8 @@ def load_runtime_context(
         allowed={
             "suite",
             "run",
-            "concept",
+            "behavior",
             "context",
-            "factors",
             "default_model",
             "artifacts_root",
             "results_dir",
@@ -184,10 +184,13 @@ def load_runtime_context(
         },
     )
     default_model_raw = _get_default_model_mapping(raw)
-    factors = _parse_top_level_factors(raw.get("factors"))
-    if factors and any("levels" not in factor for factor in factors) and default_model_raw is None:
+    pipeline_raw = raw.get("pipeline")
+    require(isinstance(pipeline_raw, dict), "'pipeline' must be a mapping")
+    dimensions = _parse_test_set_dimensions(pipeline_raw)
+    if dimensions and any("levels" not in dimension for dimension in dimensions) and default_model_raw is None:
         raise ValueError(
-            "default_model is required when factors use generated mode (description without levels)"
+            "default_model is required when test_set.stratify.dimensions use generated mode "
+            "(description without levels)"
         )
     pipeline = parse_pipeline_config(raw)
     target = pipeline.target if pipeline else None
@@ -212,13 +215,15 @@ def load_runtime_context(
 
     suite_id = str(raw.get("suite") or datetime.now(timezone.utc).strftime("eval-%Y%m%dT%H%M%S"))
     _validate_identifier(suite_id, "suite")
-    pipeline_raw = raw.get("pipeline")
-    require(isinstance(pipeline_raw, dict), "'pipeline' must be a mapping")
     stages = _validate_pipeline_stages(pipeline_raw, stage_modules=stage_modules)
     if default_model_raw is not None:
         for stage_name, stage_cfg in stages:
-            if stage_name in {"policy", "design", "seeds"} and "model" not in stage_cfg:
+            if stage_name in {"systematize", "test_set"} and "model" not in stage_cfg:
                 stage_cfg["model"] = dict(default_model_raw)
+            if stage_name == "test_set":
+                stratify_cfg = stage_cfg.get("stratify")
+                if isinstance(stratify_cfg, dict) and "model" not in stratify_cfg:
+                    stratify_cfg["model"] = dict(default_model_raw)
     enabled_stage_names = [
         stage_name
         for stage_name, stage_cfg in stages
@@ -226,7 +231,7 @@ def load_runtime_context(
     ]
 
     has_enabled_run_stage = any(stage_modules[name].SCOPE == "run" for name in enabled_stage_names)
-    requires_concept = any(stage in CONCEPT_REQUIRED_PIPELINE_STAGES for stage in enabled_stage_names)
+    requires_behavior = any(stage in BEHAVIOR_REQUIRED_PIPELINE_STAGES for stage in enabled_stage_names)
 
     run_id = raw.get("run")
     if has_enabled_run_stage and not run_id:
@@ -235,41 +240,31 @@ def load_runtime_context(
     if run_id is not None:
         _validate_identifier(run_id, "run")
 
-    concept_name = None
-    concept_text = ""
-    concept_raw = raw.get("concept")
-    if concept_raw is None:
-        require(not requires_concept, "concept is required when a concept-backed stage is enabled")
+    behavior_name = None
+    behavior_description = ""
+    behavior_raw = raw.get("behavior")
+    if behavior_raw is None:
+        require(not requires_behavior, "behavior is required when a behavior-backed stage is enabled")
     else:
-        if not isinstance(concept_raw, dict):
-            raise ValueError("concept must be a mapping")
+        if not isinstance(behavior_raw, dict):
+            raise ValueError("behavior must be a mapping")
         reject_unknown_keys(
-            concept_raw,
-            field_name="concept",
-            allowed={"name"},
+            behavior_raw,
+            field_name="behavior",
+            allowed={"name", "description"},
         )
-        concept_name = _optional_str(concept_raw.get("name"), field_name="concept.name")
-        if not concept_name:
-            raise ValueError("concept.name is required")
-        _validate_identifier(concept_name, "concept.name")
-
-        concept_path = next(
-            (
-                candidate
-                for candidate in (cfg_path.parent / "concept.md", cfg_path.parent / f"{concept_name}.md")
-                if candidate.exists()
-            ),
-            None,
+        behavior_name = _optional_str(behavior_raw.get("name"), field_name="behavior.name")
+        if not behavior_name:
+            raise ValueError("behavior.name is required")
+        _validate_identifier(behavior_name, "behavior.name")
+        behavior_description = _optional_str(
+            behavior_raw.get("description"),
+            field_name="behavior.description",
+        ) or ""
+        require(
+            bool(behavior_description) or not requires_behavior,
+            "behavior.description is required when a behavior-backed stage is enabled",
         )
-        if concept_path is None:
-            require(
-                not requires_concept,
-                "concept markdown is required when a concept-backed stage is enabled; "
-                f"expected concept.md or {concept_name}.md next to {cfg_path}",
-            )
-        else:
-            concept_text = concept_path.read_text(encoding="utf-8").strip()
-            require(bool(concept_text) or not requires_concept, f"Concept file '{concept_path.name}' is empty")
 
     context = raw.get("context")
     if context is not None and not isinstance(context, str):
@@ -285,10 +280,10 @@ def load_runtime_context(
         "config_path": cfg_path,
         "suite_id": suite_id,
         "run_id": run_id,
-        "concept_name": concept_name,
-        "concept": concept_text,
+        "behavior_name": behavior_name,
+        "behavior": behavior_description,
         "context": context,
-        "factors": factors,
+        "dimensions": dimensions,
         "artifacts_root": artifacts_root,
         "results_dir": results_dir,
         "suite_root": suite_root,
@@ -444,8 +439,8 @@ def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig
             parse_model_config(
                 raw.get("model"),
                 field_name=f"{field_name}.model",
-                default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
-                default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
+                default_temperature=DEFAULT_INFERENCE_TEMPERATURE,
+                default_max_tokens=DEFAULT_INFERENCE_MAX_TOKENS,
             )
             if raw.get("model") is not None
             else None
@@ -469,49 +464,68 @@ def _get_default_model_mapping(raw: dict[str, Any]) -> dict[str, Any] | None:
     return dict(default_model_raw)
 
 
-def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
+def _parse_test_set_dimensions(pipeline_raw: dict[str, Any]) -> list[dict[str, Any]] | None:
+    test_set_stage = pipeline_raw.get("test_set")
+    if test_set_stage is None:
+        return None
+    if not isinstance(test_set_stage, dict):
+        raise ValueError("pipeline.test_set must be a mapping")
+    stratify_raw = test_set_stage.get("stratify")
+    if stratify_raw is None:
+        return None
+    if not isinstance(stratify_raw, dict):
+        raise ValueError("pipeline.test_set.stratify must be a mapping")
+    reject_unknown_keys(
+        stratify_raw,
+        field_name="pipeline.test_set.stratify",
+        allowed={"dimensions", "level_count", "model"},
+    )
+    return _parse_dimensions(stratify_raw.get("dimensions"))
+
+
+def _parse_dimensions(raw: Any) -> list[dict[str, Any]] | None:
     if raw is None:
         return None
     if not isinstance(raw, list):
-        raise ValueError("factors must be a list")
+        raise ValueError("dimensions must be a list")
     if len(raw) > 10:
-        log.warning("factors defines more than 10 factors")
+        log.warning("dimensions defines more than 10 dimensions")
 
-    factors: list[dict[str, Any]] = []
+    dimensions: list[dict[str, Any]] = []
     seen_names: set[str] = set()
     saw_explicit_levels = False
     saw_generated_levels = False
-    for index, factor_raw in enumerate(raw, start=1):
-        field_name = f"factors[{index}]"
-        if not isinstance(factor_raw, dict):
+    for index, dimension_raw in enumerate(raw, start=1):
+        field_name = f"dimensions[{index}]"
+        if not isinstance(dimension_raw, dict):
             raise ValueError(f"{field_name} must be a mapping")
         reject_unknown_keys(
-            factor_raw,
+            dimension_raw,
             field_name=field_name,
             allowed={"name", "description", "levels"},
         )
-        name = _optional_str(factor_raw.get("name"), field_name=f"{field_name}.name")
+        name = _optional_str(dimension_raw.get("name"), field_name=f"{field_name}.name")
         if not name:
             raise ValueError(f"{field_name}.name is required")
         if name == "behavior":
-            raise ValueError("factor name 'behavior' is reserved")
+            raise ValueError("dimension name 'behavior' is reserved")
         if name in seen_names:
-            raise ValueError(f"duplicate factor name: {name}")
+            raise ValueError(f"duplicate dimension name: {name}")
         seen_names.add(name)
 
         description = _optional_str(
-            factor_raw.get("description"),
+            dimension_raw.get("description"),
             field_name=f"{field_name}.description",
         )
-        levels_raw = factor_raw.get("levels")
+        levels_raw = dimension_raw.get("levels")
         levels = None
         if levels_raw is not None:
             if not isinstance(levels_raw, list) or not levels_raw:
                 raise ValueError(f"{field_name}.levels must be a non-empty list")
             if len(levels_raw) == 1:
-                raise ValueError("single-level factor adds no variation")
+                raise ValueError("single-level dimension adds no variation")
             if len(levels_raw) > 20:
-                log.warning(f"factor '{name}' defines more than 20 levels")
+                log.warning(f"dimension '{name}' defines more than 20 levels")
             levels = []
             seen_level_names: set[str] = set()
             for level_index, level_raw in enumerate(levels_raw, start=1):
@@ -546,18 +560,18 @@ def _parse_top_level_factors(raw: Any) -> list[dict[str, Any]] | None:
         if levels is None and description is None:
             raise ValueError(f"{field_name} must define either levels or description")
 
-        factor: dict[str, Any] = {"name": name}
+        dimension: dict[str, Any] = {"name": name}
         if description is not None:
-            factor["description"] = description
+            dimension["description"] = description
         if levels is not None:
-            factor["levels"] = levels
-        factors.append(factor)
+            dimension["levels"] = levels
+        dimensions.append(dimension)
 
     if saw_explicit_levels and saw_generated_levels:
         raise ValueError(
-            "all factors must use the same mode: either all with explicit levels or all with descriptions for generation"
+            "all dimensions must use the same mode: either all with explicit levels or all with descriptions for generation"
         )
-    return factors
+    return dimensions
 
 
 def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]:
@@ -618,87 +632,87 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         raise ValueError("pipeline must be a mapping")
 
     default_model_raw = _get_default_model_mapping(raw)
-    rollout_stage = pipeline_raw.get("rollout")
+    inference_stage = pipeline_raw.get("inference")
     scorer_stage = pipeline_raw.get("judge")
 
-    if rollout_stage is not None and not isinstance(rollout_stage, dict):
-        raise ValueError("pipeline.rollout must be a mapping")
+    if inference_stage is not None and not isinstance(inference_stage, dict):
+        raise ValueError("pipeline.inference must be a mapping")
     if scorer_stage is not None and not isinstance(scorer_stage, dict):
         raise ValueError("pipeline.judge must be a mapping")
 
     target = None
-    rollout_cfg = RolloutConfig()
-    auditor = None
+    inference_cfg = InferenceConfig()
+    tester = None
     judge = None
-    rollout_enabled = rollout_stage is not None and bool(rollout_stage.get("enabled", True))
+    inference_enabled = inference_stage is not None and bool(inference_stage.get("enabled", True))
     judge_enabled = scorer_stage is not None and bool(scorer_stage.get("enabled", True))
 
-    if rollout_stage is not None:
+    if inference_stage is not None:
         reject_unknown_keys(
-            rollout_stage,
-            field_name="pipeline.rollout",
-            allowed={"target", "auditor", "max_turns", "max_tool_calls",
+            inference_stage,
+            field_name="pipeline.inference",
+            allowed={"target", "tester", "max_turns", "max_tool_calls",
                       "tool_timeout_s", "startup_timeout_s", "concurrency",
-                      "seed_path", "save_dir", "strict", "enabled", "file_path"},
+                      "test_set_path", "save_dir", "strict", "enabled", "file_path"},
         )
-        if rollout_enabled:
-            target_raw = rollout_stage.get("target")
-            require(target_raw is not None, "pipeline.rollout.target is required when rollout stage is enabled")
+        if inference_enabled:
+            target_raw = inference_stage.get("target")
+            require(target_raw is not None, "pipeline.inference.target is required when inference stage is enabled")
             if not isinstance(target_raw, dict):
-                raise ValueError("pipeline.rollout.target must be a mapping")
+                raise ValueError("pipeline.inference.target must be a mapping")
             target_raw = dict(target_raw)
             if "model" not in target_raw and "connector" not in target_raw and "callable" not in target_raw and "endpoint" not in target_raw and default_model_raw is not None:
                 target_raw["model"] = dict(default_model_raw)
-            target = parse_target_config(target_raw, field_name="pipeline.rollout.target")
+            target = parse_target_config(target_raw, field_name="pipeline.inference.target")
 
-            auditor_raw = rollout_stage.get("auditor")
-            if auditor_raw is not None:
-                if not isinstance(auditor_raw, dict):
-                    raise ValueError("pipeline.rollout.auditor must be a mapping")
-                if "max_turns" in auditor_raw:
-                    raise ValueError("pipeline.rollout.auditor.max_turns is no longer supported; use pipeline.rollout.max_turns")
-                auditor_model_raw = auditor_raw.get("model", default_model_raw)
+            tester_raw = inference_stage.get("tester")
+            if tester_raw is not None:
+                if not isinstance(tester_raw, dict):
+                    raise ValueError("pipeline.inference.tester must be a mapping")
+                if "max_turns" in tester_raw:
+                    raise ValueError("pipeline.inference.tester.max_turns is no longer supported; use pipeline.inference.max_turns")
+                tester_model_raw = tester_raw.get("model", default_model_raw)
                 require(
-                    auditor_model_raw is not None,
-                    "pipeline.rollout.auditor.model or default_model is required when rollout.auditor is configured",
+                    tester_model_raw is not None,
+                    "pipeline.inference.tester.model or default_model is required when inference.tester is configured",
                 )
-                auditor = AuditorConfig(
+                tester = TesterConfig(
                     model=parse_model_config(
-                        auditor_model_raw,
-                        field_name="pipeline.rollout.auditor.model",
-                        default_temperature=DEFAULT_ROLLOUT_TEMPERATURE,
-                        default_max_tokens=DEFAULT_ROLLOUT_MAX_TOKENS,
+                        tester_model_raw,
+                        field_name="pipeline.inference.tester.model",
+                        default_temperature=DEFAULT_INFERENCE_TEMPERATURE,
+                        default_max_tokens=DEFAULT_INFERENCE_MAX_TOKENS,
                     ),
                 )
 
-            rollout_cfg = RolloutConfig(
+            inference_cfg = InferenceConfig(
                 max_tool_calls=_coalesce(_optional_int(
-                    rollout_stage.get("max_tool_calls"),
-                    field_name="pipeline.rollout.max_tool_calls",
-                ), DEFAULT_ROLLOUT_MAX_TOOL_CALLS),
+                    inference_stage.get("max_tool_calls"),
+                    field_name="pipeline.inference.max_tool_calls",
+                ), DEFAULT_INFERENCE_MAX_TOOL_CALLS),
                 max_turns=_coalesce(_optional_int(
-                    rollout_stage.get("max_turns"),
-                    field_name="pipeline.rollout.max_turns",
-                ), DEFAULT_AUDITOR_MAX_TURNS),
+                    inference_stage.get("max_turns"),
+                    field_name="pipeline.inference.max_turns",
+                ), DEFAULT_TESTER_MAX_TURNS),
                 tool_timeout_s=_optional_float(
-                    rollout_stage.get("tool_timeout_s"),
-                    field_name="pipeline.rollout.tool_timeout_s",
+                    inference_stage.get("tool_timeout_s"),
+                    field_name="pipeline.inference.tool_timeout_s",
                 ),
                 startup_timeout_s=_optional_float(
-                    rollout_stage.get("startup_timeout_s"),
-                    field_name="pipeline.rollout.startup_timeout_s",
+                    inference_stage.get("startup_timeout_s"),
+                    field_name="pipeline.inference.startup_timeout_s",
                 ),
                 concurrency=_coalesce(_optional_int(
-                    rollout_stage.get("concurrency"),
-                    field_name="pipeline.rollout.concurrency",
-                ), DEFAULT_ROLLOUT_CONCURRENCY),
+                    inference_stage.get("concurrency"),
+                    field_name="pipeline.inference.concurrency",
+                ), DEFAULT_INFERENCE_CONCURRENCY),
             )
 
     if scorer_stage is not None:
         reject_unknown_keys(
             scorer_stage,
             field_name="pipeline.judge",
-            allowed={"model", "n", "dimensions", "transcripts_path", "policy_path", "save_dir",
+            allowed={"model", "n", "dimensions", "inference_set_path", "taxonomy_path", "save_dir",
                        "enabled", "file_path"},
         )
         if judge_enabled:
@@ -720,7 +734,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             )
 
     evaluation = None
-    if judge is not None or rollout_enabled:
-        evaluation = EvaluationConfig(judge=judge, auditor=auditor, rollout=rollout_cfg)
+    if judge is not None or inference_enabled:
+        evaluation = EvaluationConfig(judge=judge, tester=tester, inference=inference_cfg)
 
     return PipelineConfig(target=target, evaluation=evaluation)

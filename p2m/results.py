@@ -80,10 +80,10 @@ def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     return "—"
 
 
-def _compute_seed_metrics(
+def _compute_test_set_metrics(
     rows: list[dict[str, Any]],
     *,
-    include_auditor_model: bool = False,
+    include_tester_model: bool = False,
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -107,28 +107,28 @@ def _compute_seed_metrics(
         "judge_model": _first_str(rows, "judge_model"),
     }
 
-    if include_auditor_model:
-        metrics["auditor_model"] = _first_str(rows, "auditor_model")
+    if include_tester_model:
+        metrics["tester_model"] = _first_str(rows, "tester_model")
 
     return metrics
 
 
 def compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute prompt-only summary metrics."""
-    return _compute_seed_metrics(rows)
+    return _compute_test_set_metrics(rows)
 
 
 def compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compute scenario-only summary metrics."""
-    return _compute_seed_metrics(rows, include_auditor_model=True)
+    return _compute_test_set_metrics(rows, include_tester_model=True)
 
 
 def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     """Load one run's manifest and score-derived summaries."""
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    prompt_rows = [row for row in score_rows if not row.get("auditor_model")]
-    scenario_rows = [row for row in score_rows if row.get("auditor_model")]
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
     stages = (manifest or {}).get("stages", {})
     has_scores = isinstance(stages, dict) and stages.get("judge") is not None
@@ -154,16 +154,16 @@ def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     }
 
 
-def count_seed_kinds(path: Path) -> tuple[int, int]:
-    """Count prompt and scenario rows in a seeds JSONL file."""
+def count_test_case_types(path: Path) -> tuple[int, int]:
+    """Count prompt and scenario rows in a test_set JSONL file."""
     rows = load_jsonl(path)
     prompt_count = 0
     scenario_count = 0
     for row in rows:
-        kind = row.get("kind")
-        if kind == "prompt":
+        row_type = row.get("type")
+        if row_type == "prompt":
             prompt_count += 1
-        elif kind == "scenario":
+        elif row_type == "scenario":
             scenario_count += 1
     return prompt_count, scenario_count
 
@@ -171,8 +171,8 @@ def count_seed_kinds(path: Path) -> tuple[int, int]:
 def load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     """Load one suite's metadata, runs, and high-level status."""
     suite_meta = load_json(suite_dir / "suite.json")
-    policy = load_json(suite_dir / "policy.json")
-    if suite_meta is None and policy is None:
+    taxonomy = load_json(suite_dir / "taxonomy.json")
+    if suite_meta is None and taxonomy is None:
         return None
 
     run_summaries = []
@@ -188,27 +188,27 @@ def load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
         or run_summary.get("scenario_metrics") is not None
         for run_summary in run_summaries
     )
-    seed_count, scenario_seed_count = count_seed_kinds(suite_dir / "seeds.jsonl")
+    prompt_test_case_count, scenario_test_case_count = count_test_case_types(suite_dir / "test_set.jsonl")
 
-    concept_name = suite_dir.name
-    concept_block = (policy or {}).get("concept")
-    if isinstance(concept_block, dict) and isinstance(concept_block.get("name"), str) and concept_block.get("name"):
-        concept_name = concept_block["name"]
+    behavior_name = suite_dir.name
+    behavior_block = (taxonomy or {}).get("behavior")
+    if isinstance(behavior_block, dict) and isinstance(behavior_block.get("name"), str) and behavior_block.get("name"):
+        behavior_name = behavior_block["name"]
 
     if has_results:
         status = "has_results"
-    elif seed_count or scenario_seed_count:
-        status = "seeds_ready"
+    elif prompt_test_case_count or scenario_test_case_count:
+        status = "test_set_ready"
     else:
-        status = "policy_only"
+        status = "systematized"
 
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "concept_name": concept_name,
-        "behavior_count": len((policy or {}).get("behaviors") or []),
-        "seed_count": seed_count,
-        "scenario_seed_count": scenario_seed_count,
+        "behavior_name": behavior_name,
+        "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
+        "prompt_test_case_count": prompt_test_case_count,
+        "scenario_test_case_count": scenario_test_case_count,
         "run_count": len(run_summaries),
         "runs": run_summaries,
         "status": status,
@@ -242,7 +242,7 @@ def iter_run_dirs_for_viewer_rebuild(
 
     def is_run_dir(path: Path) -> bool:
         return path.is_dir() and (
-            (path / "transcripts.jsonl").exists()
+            (path / "inference_set.jsonl").exists()
             or (path / "scores.jsonl").exists()
             or (path / "manifest.json").exists()
         )

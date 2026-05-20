@@ -1,25 +1,25 @@
 """Artifact-level cache and version helpers for suite-scoped outputs.
 
-Cacheable upstream stages (``policy``, ``design``, ``seeds``) write their
+Cacheable upstream stages (``systematize``, ``test_set``) write their
 outputs into versioned directories under ``<suite>/artifacts/<stage>/v0001``,
 ``v0002``, ... Each version directory holds its data files alongside a
 ``artifact.json`` sidecar with a stable input hash. A ``<suite>/latest.json``
 pointer records the most recently selected version per stage so that
-run-only configs (rollout/judge) can pick up the right inputs without
+run-only configs (inference/judge) can pick up the right inputs without
 regenerating upstream artifacts.
 
 Reuse contract:
 
 * On each suite run, ``prepare_artifact_plan`` re-derives an ``input_hash``
-  from the relevant inputs (concept text, stage config, upstream artifact
-  refs, prompt template files, target config for seeds). If a prior version
+  from the relevant inputs (behavior text, stage config, upstream artifact
+  refs, prompt template files, target config for test_set). If a prior version
   has the same hash and complete outputs, that version is reused; otherwise
   the next ``v####`` directory is allocated.
 * ``finalize_artifact_plan`` writes the sidecar, refreshes ``latest.json``,
   and copies primary outputs back to the suite root for legacy readers.
-* Run-scoped stages (rollout, judge) consume the activated ref via
+* Run-scoped stages (inference, judge) consume the activated ref via
   ``ctx["artifact_versions"]`` and never get their own version directory;
-  they simply record which seed artifact version they ran against.
+  they simply record which test set artifact version they ran against.
 
 Artifact references emitted into manifests/sidecars are always
 POSIX-formatted relative-to-suite paths so they read cleanly on every
@@ -46,7 +46,7 @@ from p2m.core.io import PROMPTS_DIR, write_json
 log = logging.getLogger(__name__)
 
 
-CACHEABLE_STAGES = ("policy", "design", "seeds")
+CACHEABLE_STAGES = ("systematize", "test_set")
 ARTIFACTS_DIR = "artifacts"
 ARTIFACT_METADATA_FILE = "artifact.json"
 LATEST_FILE = "latest.json"
@@ -59,47 +59,42 @@ LATEST_FILE = "latest.json"
 _MAX_VERSION_ALLOCATION_RETRIES = 100
 
 _OUTPUT_FILES: dict[str, dict[str, str]] = {
-    "policy": {
-        "policy": "policy.json",
+    "systematize": {
+        "taxonomy": "taxonomy.json",
         "systematization": "systematization.json",
     },
-    "design": {
-        "design": "design.json",
-    },
-    "seeds": {
-        "seeds": "seeds.jsonl",
+    "test_set": {
+        "test_set": "test_set.jsonl",
+        "stratification": "stratification.json",
     },
 }
 
 _CONTEXT_PATH_KEYS: dict[str, dict[str, str]] = {
-    "policy": {
-        "policy": "policy_path",
+    "systematize": {
+        "taxonomy": "taxonomy_path",
         "systematization": "systematization_path",
     },
-    "design": {
-        "design": "design_path",
-    },
-    "seeds": {
-        "seeds": "seeds_path",
+    "test_set": {
+        "test_set": "test_set_path",
+        "stratification": "stratification_path",
     },
 }
 
 _CONTEXT_DIR_KEYS = {
-    "policy": "policy_artifact_dir",
-    "design": "design_artifact_dir",
-    "seeds": "seeds_artifact_dir",
+    "systematize": "systematize_artifact_dir",
+    "test_set": "test_set_artifact_dir",
 }
 
 _PROMPT_FILES = {
-    "policy": (
+    "systematize": (
         "systematization_single.md",
         "systematization_convert_single.md",
     ),
-    "design": ("seeds_design.md",),
-    "seeds": (
-        "seeds_direct_single.md",
-        "seeds_scenario_single.md",
-        "seeds_generation_guidance.md",
+    "test_set": (
+        "test_set_stratification.md",
+        "test_set_direct_single.md",
+        "test_set_scenario_single.md",
+        "test_set_generation_guidance.md",
     ),
 }
 
@@ -114,7 +109,7 @@ class ArtifactFingerprint:
     """Stable hash material for a cacheable artifact."""
 
     stage_name: str
-    concept_hash: str | None
+    behavior_hash: str | None
     config_hash: str
     input_hash: str
     descriptor: dict[str, Any]
@@ -202,9 +197,8 @@ def activate_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
 # either the sentinel ``"__artifact_dir__"`` (meaning "the version directory
 # itself") or the name of an entry in ``plan.output_paths``.
 _RAW_CFG_OUTPUT_OVERRIDES: dict[str, list[tuple[str, str]]] = {
-    "policy": [("save_dir", "__artifact_dir__")],
-    "design": [("save_dir", "__artifact_dir__")],
-    "seeds": [("save_path", "seeds")],
+    "systematize": [("save_dir", "__artifact_dir__")],
+    "test_set": [("save_path", "test_set")],
 }
 
 
@@ -373,8 +367,8 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
         "config_hash": plan.fingerprint.config_hash,
         "input_hash": plan.fingerprint.input_hash,
     }
-    if plan.fingerprint.concept_hash is not None:
-        hashes["concept_hash"] = plan.fingerprint.concept_hash
+    if plan.fingerprint.behavior_hash is not None:
+        hashes["behavior_hash"] = plan.fingerprint.behavior_hash
     metadata = {
         "schema_version": 1,
         "artifact_type": plan.stage_name,
@@ -589,9 +583,9 @@ def artifact_ref(
         "metadata_path": relative_metadata_path,
         "file_hashes": file_hashes,
     }
-    concept_hash = hashes.get("concept_hash", plan.fingerprint.concept_hash)
-    if concept_hash is not None:
-        ref["concept_hash"] = concept_hash
+    behavior_hash = hashes.get("behavior_hash", plan.fingerprint.behavior_hash)
+    if behavior_hash is not None:
+        ref["behavior_hash"] = behavior_hash
     return ref
 
 
@@ -620,9 +614,9 @@ def _ref_from_metadata(
         "metadata_path": _relative_to_suite(sidecar_path, suite_root),
         "file_hashes": file_hashes,
     }
-    concept_hash = hashes.get("concept_hash")
-    if concept_hash is not None:
-        ref["concept_hash"] = concept_hash
+    behavior_hash = hashes.get("behavior_hash")
+    if behavior_hash is not None:
+        ref["behavior_hash"] = behavior_hash
     return ref
 
 
@@ -633,18 +627,18 @@ def build_artifact_fingerprint(
     raw_cfg: dict[str, Any],
 ) -> ArtifactFingerprint:
     descriptor = _stage_descriptor(ctx=ctx, stage_name=stage_name, raw_cfg=raw_cfg)
-    concept_hash = descriptor.get("concept_hash")
+    behavior_hash = descriptor.get("behavior_hash")
     config_hash = hash_payload(descriptor["config"])
     input_hash = hash_payload({
         "stage_name": stage_name,
-        "concept_hash": concept_hash,
+        "behavior_hash": behavior_hash,
         "config_hash": config_hash,
         "dependencies": descriptor.get("dependencies", {}),
         "prompts": descriptor.get("prompts", {}),
     })
     return ArtifactFingerprint(
         stage_name=stage_name,
-        concept_hash=concept_hash if isinstance(concept_hash, str) else None,
+        behavior_hash=behavior_hash if isinstance(behavior_hash, str) else None,
         config_hash=config_hash,
         input_hash=input_hash,
         descriptor=descriptor,
@@ -665,20 +659,18 @@ def _stage_descriptor(
     stage_name: str,
     raw_cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    # ``concept_hash`` is computed only for the policy stage. Downstream
-    # cacheable stages (design, seeds) do NOT recompute it — they pick the
-    # concept change up transitively via ``_dependency_descriptor``: design
-    # depends on policy's input_hash and seeds depends on design's, so any
-    # change to the concept invalidates policy's input_hash and the cascade
-    # invalidates every stage that consumes it. This relies on the
+    # ``behavior_hash`` is computed only for the systematize stage. Downstream
+    # cacheable stages do NOT recompute it — they pick the behavior change up
+    # transitively via ``_dependency_descriptor``: test_set depends on the
+    # systematize artifact, so any behavior edit invalidates the cascade. This relies on the
     # dependency chain being complete; if a future cacheable stage stops
-    # depending on its upstream artifact, hash this concept directly here
-    # too or the cache will reuse stale outputs after a concept edit.
-    concept_hash = None
-    if stage_name == "policy":
-        concept_hash = hash_payload({
-            "concept_name": ctx.get("concept_name"),
-            "concept": ctx.get("concept"),
+    # depending on its upstream artifact, hash this behavior directly here
+    # too or the cache will reuse stale outputs after a behavior edit.
+    behavior_hash = None
+    if stage_name == "systematize":
+        behavior_hash = hash_payload({
+            "behavior_name": ctx.get("behavior_name"),
+            "behavior": ctx.get("behavior"),
         })
 
     descriptor: dict[str, Any] = {
@@ -687,8 +679,8 @@ def _stage_descriptor(
         "dependencies": _dependency_descriptor(ctx=ctx, stage_name=stage_name),
         "prompts": _prompt_descriptor(stage_name),
     }
-    if concept_hash is not None:
-        descriptor["concept_hash"] = concept_hash
+    if behavior_hash is not None:
+        descriptor["behavior_hash"] = behavior_hash
     return descriptor
 
 
@@ -706,18 +698,18 @@ def _stage_config_descriptor(
     descriptor: dict[str, Any] = {
         "stage_config": cfg,
     }
-    if stage_name in {"policy", "design", "seeds"}:
+    if stage_name in {"systematize", "test_set"}:
         descriptor["context"] = ctx.get("context")
-    if stage_name in {"design", "seeds"}:
-        descriptor["factors"] = ctx.get("factors")
-    if stage_name == "seeds":
-        # Seeds prompts only consume a narrow slice of the target spec
+    if stage_name == "test_set":
+        descriptor["dimensions"] = ctx.get("dimensions")
+    if stage_name == "test_set":
+        # Test-set prompts only consume a narrow slice of the target spec
         # (model, system_prompt, tools, connector). The callable / endpoint
-        # / kind do NOT affect seed content. Including them in the cache
-        # key forces unnecessary seed regeneration when an A/B run pair
-        # only changes target.callable (e.g. baseline vs guarded wrapper)
-        # — and worse, breaks apples-to-apples comparison because the
-        # second run gets a different LLM-generated seed mix.
+        # / kind do NOT affect test-case content. Including them in the cache
+        # key forces unnecessary regeneration when an A/B run pair only
+        # changes target.callable (e.g. baseline vs guarded wrapper) — and
+        # worse, breaks apples-to-apples comparison because the second run
+        # gets a different LLM-generated test-case mix.
         target = ctx.get("target")
         if target is None:
             descriptor["target"] = None
@@ -733,13 +725,11 @@ def _stage_config_descriptor(
 
 
 def _dependency_descriptor(ctx: dict[str, Any], stage_name: str) -> dict[str, Any]:
-    if stage_name == "policy":
+    if stage_name == "systematize":
         return {}
     deps: dict[str, Any] = {}
-    if stage_name in {"design", "seeds"}:
-        deps["policy"] = _artifact_or_file_dependency(ctx, "policy", "policy_path")
-    if stage_name == "seeds":
-        deps["design"] = _artifact_or_file_dependency(ctx, "design", "design_path")
+    if stage_name == "test_set":
+        deps["taxonomy"] = _artifact_or_file_dependency(ctx, "systematize", "taxonomy_path")
     return deps
 
 
@@ -759,8 +749,8 @@ def _artifact_or_file_dependency(
     raw_path = ctx.get(context_path_key)
     if not raw_path and ctx.get("suite_root"):
         default_name = {
-            "policy_path": "policy.json",
-            "design_path": "design.json",
+            "taxonomy_path": "taxonomy.json",
+            "stratification_path": "stratification.json",
         }.get(context_path_key)
         if default_name:
             raw_path = str(Path(ctx["suite_root"]) / default_name)

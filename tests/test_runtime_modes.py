@@ -8,34 +8,34 @@ from p2m.core.tool_backend import inspect_tool_module
 from p2m.core.model_client import Message
 from p2m.core.model_client import GenerateOptions
 from p2m.core.session import ExternalSession
-from p2m.stages.rollout import _build_hosted_session as build_hosted_session
+from p2m.stages.inference import _build_hosted_session as build_hosted_session
 
 
 class ConfigAndHandlerFoundationTest(unittest.TestCase):
     def test_parse_pipeline_config_rejects_old_target_fields_and_missing_target(self) -> None:
-        with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): kind"):
+        with self.assertRaisesRegex(ValueError, "pipeline.inference.target has unsupported field\\(s\\): type"):
             parse_pipeline_config(
-                {"pipeline": {"rollout": {"target": {"kind": "unknown", "model": {"name": "azure/gpt-5.4"}}}}},
+                {"pipeline": {"inference": {"target": {"type": "unknown", "model": {"name": "azure/gpt-5.4"}}}}},
             )
 
-        with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): toolset"):
+        with self.assertRaisesRegex(ValueError, "pipeline.inference.target has unsupported field\\(s\\): toolset"):
             parse_pipeline_config(
-                {"pipeline": {"rollout": {"target": {"model": {"name": "azure/gpt-5.4"}, "toolset": "tools.yaml"}}}},
+                {"pipeline": {"inference": {"target": {"model": {"name": "azure/gpt-5.4"}, "toolset": "tools.yaml"}}}},
             )
 
-        with self.assertRaisesRegex(ValueError, "pipeline.rollout.target has unsupported field\\(s\\): simulator"):
+        with self.assertRaisesRegex(ValueError, "pipeline.inference.target has unsupported field\\(s\\): simulator"):
             parse_pipeline_config(
-                {"pipeline": {"rollout": {"target": {"model": {"name": "azure/gpt-5.4"}, "simulator": "azure/gpt-5.4"}}}},
+                {"pipeline": {"inference": {"target": {"model": {"name": "azure/gpt-5.4"}, "simulator": "azure/gpt-5.4"}}}},
             )
 
         with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"):
-            parse_pipeline_config({"pipeline": {"rollout": {"target": {}}}})
+            parse_pipeline_config({"pipeline": {"inference": {"target": {}}}})
 
-        with self.assertRaisesRegex(ValueError, "pipeline.rollout has unsupported field\\(s\\): environment"):
+        with self.assertRaisesRegex(ValueError, "pipeline.inference has unsupported field\\(s\\): environment"):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {"model": {"name": "azure/gpt-5.4"}},
                             "environment": {"backend": "weird"},
                         }
@@ -51,7 +51,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
                                 "tools": {"toolset": "tools.yaml"},
@@ -65,7 +65,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
                                 "tools": {},
@@ -79,7 +79,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
                                 "tools": {"module": "examples.agents.health_assistant", "toolset": "tools.yaml"},
@@ -94,7 +94,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
                                 "connector": "examples.agents.demo",
@@ -108,7 +108,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "connector": "examples.agents.demo",
                                 "tools": {"module": "examples.agents.health_assistant"},
@@ -118,22 +118,22 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                 },
             )
 
-    def test_load_runtime_context_reads_rollout_target(self) -> None:
+    def test_load_runtime_context_reads_inference_target(self) -> None:
         context = load_runtime_context(
             {
                 "suite": "suite-v1",
                 "pipeline": {
-                    "rollout": {
+                    "inference": {
                         "target": {
                             "model": {"name": "azure/gpt-5.4"},
                             "tools": {"module": "examples.agents.health_assistant"},
                         },
-                        "seed_path": "examples/agents/health_assistant_tools.yaml",
+                        "test_set_path": "examples/agents/health_assistant_tools.yaml",
                     }
                 },
             },
             Path("examples/pipes/health_assistant.yaml"),
-            stage_modules={"rollout": type("Stage", (), {"SCOPE": "run"})()},
+            stage_modules={"inference": type("Stage", (), {"SCOPE": "run"})()},
         )
 
         self.assertEqual(context["target"].model.name, "azure/gpt-5.4")
@@ -148,7 +148,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             parsed = parse_pipeline_config(
                 {
                     "pipeline": {
-                        "rollout": {
+                        "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
                                 "system_prompt": str(prompt_path),
@@ -218,7 +218,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                 encoding="utf-8",
             )
             config_path.write_text(
-                "pipeline:\n  rollout:\n    target:\n      model: azure/gpt-5.4\n",
+                "pipeline:\n  inference:\n    target:\n      model: azure/gpt-5.4\n",
                 encoding="utf-8",
             )
 
@@ -361,7 +361,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         pipeline = parse_pipeline_config(
             {
                 "pipeline": {
-                    "rollout": {
+                    "inference": {
                         "target": {
                             "model": {"name": "azure/o3", "reasoning_effort": "high"},
                         },
@@ -372,19 +372,19 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertIsNotNone(pipeline)
         self.assertEqual(pipeline.target.model.reasoning_effort, "high")
 
-    def test_pipeline_config_wires_reasoning_effort_to_auditor(self) -> None:
+    def test_pipeline_config_wires_reasoning_effort_to_tester(self) -> None:
         pipeline = parse_pipeline_config(
             {
                 "pipeline": {
-                    "rollout": {
+                    "inference": {
                         "target": {"model": {"name": "azure/gpt-5.4"}},
-                        "auditor": {"model": {"name": "azure/o3", "reasoning_effort": "medium"}},
+                        "tester": {"model": {"name": "azure/o3", "reasoning_effort": "medium"}},
                     },
                 },
             },
         )
         self.assertIsNotNone(pipeline)
-        self.assertEqual(pipeline.evaluation.auditor.model.reasoning_effort, "medium")
+        self.assertEqual(pipeline.evaluation.tester.model.reasoning_effort, "medium")
 
 
     def test_transcript_metadata_reasoning_effort_round_trips(self) -> None:
@@ -392,32 +392,32 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         transcript = Transcript(
             metadata=TranscriptMetadata(
                 kind="prompt",
-                seed_id="s1",
-                concept="r",
+                test_case_id="s1",
+                behavior="r",
                 target="azure/o3",
-                auditor_model="",
+                tester_model="",
                 target_reasoning_effort="high",
-                factors={"behavior": "sr"},
+                dimensions={"behavior": "sr"},
             ),
         )
         d = transcript.to_dict()
         self.assertEqual(d["target_reasoning_effort"], "high")
-        self.assertIsNone(d["auditor_reasoning_effort"])
+        self.assertIsNone(d["tester_reasoning_effort"])
 
         meta = _metadata_from_dict(d)
         self.assertEqual(meta.target_reasoning_effort, "high")
-        self.assertIsNone(meta.auditor_reasoning_effort)
+        self.assertIsNone(meta.tester_reasoning_effort)
 
     def test_transcript_metadata_defaults_missing_reasoning_fields_to_none(self) -> None:
         from p2m.core.transcript import _metadata_from_dict
         old_data = {
-            "kind": "prompt", "seed_id": "s1", "concept": "r",
-            "factors": {"behavior": "sr"},
-            "target": "m", "auditor_model": "",
+            "type": "prompt", "test_case_id": "s1", "behavior": "r",
+            "dimensions": {"behavior": "sr"},
+            "target": "m", "tester_model": "",
         }
         meta = _metadata_from_dict(old_data)
         self.assertIsNone(meta.target_reasoning_effort)
-        self.assertIsNone(meta.auditor_reasoning_effort)
+        self.assertIsNone(meta.tester_reasoning_effort)
 
 
 class ExternalSessionTest(unittest.IsolatedAsyncioTestCase):

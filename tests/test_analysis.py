@@ -1,4 +1,4 @@
-"""Tests for p2m.analysis modules — stats, rollout_metrics, stability, suite_analysis."""
+"""Tests for p2m.analysis modules — stats, inference_metrics, stability, suite_analysis."""
 
 import json
 import tempfile
@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from p2m.analysis.stats import binary_rate_ci, macro_rate, _wilson_ci
-from p2m.analysis.rollout_metrics import count_rollout_turns, compute_rollout_metrics
+from p2m.analysis.inference_metrics import count_inference_turns, compute_inference_metrics
 from p2m.analysis.stability import (
-    compute_auditor_variation,
+    compute_tester_variation,
     compute_repeatability,
 )
 
@@ -93,44 +93,44 @@ class TestMacroRate:
         assert result["rate"] is None
 
 
-# --- rollout_metrics.py ---
+# --- inference_metrics.py ---
 
 
-def _make_transcript(stop_reason="max_turns", n_auditor_turns=3):
+def _make_transcript(stop_reason="max_turns", n_tester_turns=3):
     events = []
-    for _ in range(n_auditor_turns):
+    for _ in range(n_tester_turns):
         events.append({
             "view": ["target"],
-            "actor": "auditor",
+            "actor": "tester",
             "edit": {"message": {"role": "user", "content": "hello"}},
         })
         events.append({
-            "view": ["auditor"],
+            "view": ["tester"],
             "actor": "target",
             "edit": {"message": {"role": "assistant", "content": "hi"}},
         })
-    return {"stop_reason": stop_reason, "events": events, "factors": {"behavior": "test_behavior"}}
+    return {"stop_reason": stop_reason, "events": events, "dimensions": {"behavior": "test_behavior"}}
 
 
-class TestCountRolloutTurns:
-    def test_counts_auditor_user_messages_to_target(self):
-        row = _make_transcript(n_auditor_turns=5)
-        assert count_rollout_turns(row) == 5
+class TestCountInferenceTurns:
+    def test_counts_tester_user_messages_to_target(self):
+        row = _make_transcript(n_tester_turns=5)
+        assert count_inference_turns(row) == 5
 
     def test_empty_events(self):
-        assert count_rollout_turns({"events": []}) == 0
+        assert count_inference_turns({"events": []}) == 0
 
     def test_missing_events(self):
-        assert count_rollout_turns({}) == 0
+        assert count_inference_turns({}) == 0
 
 
-class TestComputeRolloutMetrics:
+class TestComputeInferenceMetrics:
     def test_empty_returns_zero_total(self):
-        assert compute_rollout_metrics([])["total"] == 0
+        assert compute_inference_metrics([])["total"] == 0
 
     def test_all_completed(self):
         rows = [_make_transcript("max_turns") for _ in range(10)]
-        result = compute_rollout_metrics(rows)
+        result = compute_inference_metrics(rows)
         assert result["total"] == 10
         assert result["completion_rate"] == 1.0
         assert result["error_rate"] == 0.0
@@ -140,23 +140,23 @@ class TestComputeRolloutMetrics:
             _make_transcript("max_turns"),
             _make_transcript("max_turns"),
             _make_transcript("target_error"),
-            _make_transcript("invalid_auditor_turn"),
+            _make_transcript("invalid_tester_turn"),
         ]
-        result = compute_rollout_metrics(rows)
+        result = compute_inference_metrics(rows)
         assert result["completion_rate"] == 0.5
         assert result["error_rate"] == 0.25
-        assert result["invalid_auditor_rate"] == 0.25
+        assert result["invalid_tester_rate"] == 0.25
 
 
 # --- stability.py ---
 
 
-def _make_scored_rows(seed_outcomes: dict[str, list[bool]], runs: list[str]):
+def _make_scored_rows(test_case_outcomes: dict[str, list[bool]], runs: list[str]):
     """Build scored rows from a seed→per-run-outcomes mapping."""
     rows = []
-    for sid, outcomes in seed_outcomes.items():
+    for sid, outcomes in test_case_outcomes.items():
         for run, outcome in zip(runs, outcomes):
-            rows.append({"seed_id": sid, "run": run, "policy_violation": outcome})
+            rows.append({"test_case_id": sid, "run": run, "policy_violation": outcome})
     return rows
 
 
@@ -186,16 +186,16 @@ class TestComputeRepeatability:
         assert result["n_seeds"] == 0
 
 
-class TestComputeAuditorVariation:
-    def test_two_auditors(self):
+class TestComputeTesterVariation:
+    def test_two_testers(self):
         rows = [
-            {"seed_id": "s1", "auditor_model": "a1", "policy_violation": True},
-            {"seed_id": "s2", "auditor_model": "a1", "policy_violation": False},
-            {"seed_id": "s1", "auditor_model": "a2", "policy_violation": False},
-            {"seed_id": "s2", "auditor_model": "a2", "policy_violation": False},
+            {"test_case_id": "s1", "tester_model": "a1", "policy_violation": True},
+            {"test_case_id": "s2", "tester_model": "a1", "policy_violation": False},
+            {"test_case_id": "s1", "tester_model": "a2", "policy_violation": False},
+            {"test_case_id": "s2", "tester_model": "a2", "policy_violation": False},
         ]
-        result = compute_auditor_variation(rows)
-        assert result["n_auditors"] == 2
+        result = compute_tester_variation(rows)
+        assert result["n_testers"] == 2
         assert result["rate_range"] > 0
 
 
@@ -210,17 +210,17 @@ def _make_suite_dir(tmp_path: Path):
     run.mkdir()
 
     transcripts = [
-        {"seed_id": f"s{i}", "stop_reason": "max_turns", "factors": {"behavior": "b1"},
-         "events": [{"view": ["target"], "actor": "auditor",
+        {"test_case_id": f"s{i}", "stop_reason": "max_turns", "dimensions": {"behavior": "b1"},
+         "events": [{"view": ["target"], "actor": "tester",
                      "edit": {"message": {"role": "user", "content": "hi"}}}] * 3}
         for i in range(10)
     ]
     scores = [
-        {"seed_id": f"s{i}", "judge_status": "ok", "factors": {"behavior": "b1"},
+        {"test_case_id": f"s{i}", "judge_status": "ok", "dimensions": {"behavior": "b1"},
          "verdict": {"dimensions": {"policy_violation": i < 4, "overrefusal": False}}}
         for i in range(10)
     ]
-    (run / "transcripts.jsonl").write_text(
+    (run / "inference_set.jsonl").write_text(
         "\n".join(json.dumps(r) for r in transcripts))
     (run / "scores.jsonl").write_text(
         "\n".join(json.dumps(r) for r in scores))
@@ -235,7 +235,7 @@ class TestAnalyzeSuite:
         assert "runs" in results
         assert "run1" in results["runs"]
         output = format_suite_summary(results)
-        assert "Policy violations" in output
+        assert "Taxonomy violations" in output
 
     def test_empty_suite_returns_error(self, tmp_path):
         from p2m.analysis.suite_analysis import analyze_suite

@@ -33,12 +33,12 @@ skipped: 'border-border/50',
 error: 'bg-score-fail/5 border-score-fail/20'
 };
 const stageLabels: Record<string, string> = {
-policy: 'Policy Generation',
-seeds: 'Seed Generation',
-rollout: 'Rollout',
+taxonomy: 'Taxonomy Generation',
+test_set: 'Test Set Generation',
+inference: 'Inference',
 judge: 'Scoring',
 systematization: 'Systematization',
-systematization_convert: 'Policy Conversion'
+systematization_convert: 'Taxonomy Conversion'
 };
 
 let currentStageLabel = $derived.by(() => {

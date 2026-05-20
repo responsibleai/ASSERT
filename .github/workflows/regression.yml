@@ -5,9 +5,9 @@
 # 2. Tier 4: regression test with frozen risk specs + paired t-test gate
 #
 # Seed count can be overridden via PR labels:
-#   seeds:20   — quick iteration (~12 min)
-#   seeds:50   — default (~30 min)
-#   seeds:100  — pre-release (~60 min)
+#   test_set:20   — quick iteration (~12 min)
+#   test_set:50   — default (~30 min)
+#   test_set:100  — pre-release (~60 min)
 
 name: Regression Test
 
@@ -98,24 +98,24 @@ jobs:
           uv pip install --system scipy
 
       - name: Detect seed count from labels
-        id: seeds
+        id: test_set
         run: |
-          SEEDS=50
+          TEST_SET=50
           LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
           for label in $LABELS; do
             case $label in
-              seeds:*) SEEDS="${label#seeds:}" ;;
+              test_set:*) TEST_SET="${label#test_set:}" ;;
             esac
           done
-          echo "count=$SEEDS" >> "$GITHUB_OUTPUT"
-          echo "Using $SEEDS seeds per risk spec"
+          echo "count=$TEST_SET" >> "$GITHUB_OUTPUT"
+          echo "Using $TEST_SET test_set per risk spec"
 
       - name: Run regression test
         run: |
           python scripts/regression_test.py \
             --baseline "${{ github.event.pull_request.base.sha }}" \
             --treatment "${{ github.sha }}" \
-            --seeds "${{ steps.seeds.outputs.count }}" \
+            --test_set "${{ steps.test_set.outputs.count }}" \
             --artifacts-dir artifacts/regression
 
       - name: Post results to PR summary

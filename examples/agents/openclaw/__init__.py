@@ -4,7 +4,7 @@ Config key: connector: examples.agents.openclaw
 
 p2m delegates the conversation to the external agent and records what
 it says.  Each Adapter instance spins up its own Docker container via
-docker-compose so concurrent rollout workers never collide.
+docker-compose so concurrent inference workers never collide.
 """
 
 from __future__ import annotations

@@ -19,7 +19,7 @@ export interface CombinedRunEntry {
 
 export function normalizePromptSeeds(items: PromptSeed[]): ViewerSeedItem[] {
 	return items.map((seed) => ({
-		id: seed.seed_id,
+		id: seed.test_case_id,
 		kind: 'prompt',
 		title: seed.seed.title || seed.behavior,
 		description: seed.seed.description,
@@ -27,13 +27,13 @@ export function normalizePromptSeeds(items: PromptSeed[]): ViewerSeedItem[] {
 		definition: seed.definition,
 		system_prompt: seed.seed.system_prompt ?? null,
 		tools: seed.seed.tools,
-		factors: seed.factors
+		dimensions: seed.dimensions
 	}));
 }
 
 export function normalizeScenarioSeeds(items: ScenarioSeed[]): ViewerSeedItem[] {
 	return items.map((seed) => ({
-		id: seed.seed_id,
+		id: seed.test_case_id,
 		kind: 'scenario',
 		title: seed.seed.title,
 		description: seed.seed.description,
@@ -41,7 +41,7 @@ export function normalizeScenarioSeeds(items: ScenarioSeed[]): ViewerSeedItem[] 
 		definition: seed.definition,
 		system_prompt: seed.seed.system_prompt ?? null,
 		tools: seed.seed.tools,
-		factors: seed.factors
+		dimensions: seed.dimensions
 	}));
 }
 
@@ -61,7 +61,7 @@ export function filterViewerSeeds(
 
 export function groupViewerSeedsByPolicy(
 	items: ViewerSeedItem[],
-	behaviors: Behavior[]
+	behavior_categories: Behavior[]
 ): ViewerSeedGroup[] {
 	const groupedSeeds = new Map<string, ViewerSeedItem[]>();
 	for (const seed of items) {
@@ -70,7 +70,7 @@ export function groupViewerSeedsByPolicy(
 	}
 
 	const orderedGroups: ViewerSeedGroup[] = [];
-	for (const beh of behaviors) {
+	for (const beh of behavior_categories) {
 		const matchingSeeds = groupedSeeds.get(beh.name);
 		if (!matchingSeeds) continue;
 		orderedGroups.push({
@@ -99,7 +99,7 @@ export function groupSeedsByFactor(
 ): ViewerSeedGroup[] {
 	const groups = new Map<string, ViewerSeedItem[]>();
 	for (const item of items) {
-		const level = item.factors?.[factorName] ?? '(none)';
+		const level = item.dimensions?.[factorName] ?? '(none)';
 		if (!groups.has(level)) groups.set(level, []);
 		groups.get(level)!.push(item);
 	}
@@ -115,8 +115,8 @@ export function groupSeedsByCrossFactors(
 ): ViewerSeedGroup[] {
 	const groups = new Map<string, ViewerSeedItem[]>();
 	for (const item of items) {
-		const a = item.factors?.[factorA] ?? '(none)';
-		const b = item.factors?.[factorB] ?? '(none)';
+		const a = item.dimensions?.[factorA] ?? '(none)';
+		const b = item.dimensions?.[factorB] ?? '(none)';
 		const key = `${a} · ${b}`;
 		if (!groups.has(key)) groups.set(key, []);
 		groups.get(key)!.push(item);

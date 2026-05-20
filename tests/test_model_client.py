@@ -97,6 +97,37 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response_format["json_schema"]["schema"], schema)
         self.assertEqual(response.parsed, {"verdict": "pass"})
 
+    async def test_generate_structured_with_web_search_rejects_gemini(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"verdict": {"type": "string"}},
+            "required": ["verdict"],
+            "additionalProperties": False,
+        }
+
+        with patch.object(model_client, "_get_litellm_module") as get_litellm:
+            with self.assertRaisesRegex(ValueError, "web_search.*gemini/gemini-2.5-flash"):
+                await model_client.generate_structured(
+                    "gemini/gemini-2.5-flash",
+                    "research this",
+                    schema_name="judge_output",
+                    json_schema=schema,
+                    options=model_client.GenerateOptions(web_search=True),
+                )
+
+        get_litellm.assert_not_called()
+
+    async def test_generate_with_web_search_rejects_non_openai_provider(self) -> None:
+        with patch.object(model_client, "_get_litellm_module") as get_litellm:
+            with self.assertRaisesRegex(ValueError, "Disable web_search"):
+                await model_client.generate(
+                    "anthropic/claude-sonnet-4-20250514",
+                    "research this",
+                    options=model_client.GenerateOptions(web_search=True),
+                )
+
+        get_litellm.assert_not_called()
+
     async def test_generate_structured_with_web_search_uses_responses_api(self) -> None:
         captured: dict[str, object] = {}
 

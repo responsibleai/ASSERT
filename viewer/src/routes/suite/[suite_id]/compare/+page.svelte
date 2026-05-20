@@ -139,7 +139,7 @@ function sampleGridMinWidth(runCount: number): string {
 		<h1 class="text-lg font-semibold text-text">
 			Comparing {data.runs.length} runs
 			<span class="text-text-muted font-normal">on</span>
-			<span class="text-interactive">{data.policy?.concept?.name ?? data.suite_id}</span>
+			<span class="text-interactive">{data.taxonomy?.behavior?.name ?? data.suite_id}</span>
 		</h1>
 
 		<div class="flex flex-wrap gap-3">

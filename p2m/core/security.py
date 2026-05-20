@@ -97,7 +97,7 @@ def validate_sys_path_addition(path: Path, *, config_path: Path | None = None) -
     ]
     for prefix in blocked_prefixes:
         try:
-            resolved.relative_to(prefix)
+            resolved.relative_to(prefix.resolve())
             raise ValueError(
                 f"Refusing to add system path '{resolved}' to sys.path. "
                 f"Only workspace-local paths are allowed."
