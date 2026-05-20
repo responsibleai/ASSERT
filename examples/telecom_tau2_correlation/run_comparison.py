@@ -157,6 +157,33 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False,
     return result
 
 
+# ── Result discovery ────────────────────────────────────────────────
+def discover_tau2_results(models: list[str]) -> dict[str, Path]:
+    """Find existing tau2 output files for the given models."""
+    existing: dict[str, Path] = {}
+    try:
+        from tau2.utils.utils import DATA_DIR
+        sim_dir = Path(DATA_DIR) / "simulations"
+    except ImportError:
+        sim_dir = Path("data") / "simulations"
+    for model in models:
+        path = sim_dir / f"telecom_{model_slug(model)}.json"
+        if path.exists():
+            existing[model] = path
+    return existing
+
+
+def discover_p2m_results(suite_name: str, models: list[str]) -> dict[str, str]:
+    """Find existing p2m score files for the given models."""
+    existing: dict[str, str] = {}
+    artifacts_base = REPO_ROOT / "artifacts" / "results" / suite_name
+    for model in models:
+        run_name = f"{model_slug(model)}-eval"
+        if (artifacts_base / run_name / "scores.jsonl").exists():
+            existing[model] = run_name
+    return existing
+
+
 # ── Stage: tau2 ─────────────────────────────────────────────────────
 def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
              trials: int = DEFAULT_TRIALS, user_model: str = DEFAULT_USER_MODEL,
@@ -472,37 +499,50 @@ def print_p2m_cost_summary(suite_name: str, runs: dict[str, str]) -> None:
         )
 
 
-def confirm_stage(stage: str, models: list[str], *, yes: bool = False,
-                  trials: int = DEFAULT_TRIALS, concurrency: int = DEFAULT_CONCURRENCY) -> bool:
-    """Show cost/time estimate and ask for confirmation before an expensive stage."""
-    if yes:
-        return True
+def plan_and_confirm(stage: str, models: list[str], *,
+                     existing: dict | None = None, yes: bool = False,
+                     trials: int = DEFAULT_TRIALS,
+                     concurrency: int = DEFAULT_CONCURRENCY) -> list[str]:
+    """Show execution plan with discovered results and ask for confirmation.
 
-    n = len(models)
-    slugs = ", ".join(model_slug(m) for m in models)
+    Returns the list of models to run (pending only). Empty if user
+    declines or all models already have results.
+    """
+    existing = existing or {}
+    pending = [m for m in models if m not in existing]
 
+    print(f"\n{'─' * 60}")
+    print(f"  Stage: {stage}")
+    if existing:
+        print(f"  Done ({len(existing)}): "
+              f"{', '.join(model_slug(m) for m in existing)}")
+    if not pending:
+        print(f"  All {len(models)} model(s) already have results.")
+        print(f"{'─' * 60}", flush=True)
+        return []
+
+    n = len(pending)
+    slugs = ", ".join(model_slug(m) for m in pending)
     if stage == "tau2":
         est_min = _EST_TAU2_MINUTES_PER_MODEL * n
         est_cost = _EST_TAU2_COST_PER_MODEL_NANO * n
-        print(f"\n{'─' * 60}")
-        print(f"  Stage: tau2 ({trials} trials, concurrency {concurrency})")
-        print(f"  Models ({n}): {slugs}")
+        print(f"  To run ({n}): {slugs}")
+        print(f"  Params: {trials} trials, concurrency {concurrency}")
         print(f"  Estimated: ~{est_min} min, ~${est_cost:.0f}+ (nano pricing)")
         print(f"  Note: cost scales with model pricing (gpt-5.4 >> nano)")
-        print(f"{'─' * 60}")
     elif stage == "p2m":
         est_min = _EST_P2M_MINUTES_PER_MODEL * n
         est_tok = _EST_P2M_INPUT_TOKENS_PER_MODEL * n
-        print(f"\n{'─' * 60}")
-        print(f"  Stage: p2m evaluation (70 test cases per model)")
-        print(f"  Models ({n}): {slugs}")
+        print(f"  To run ({n}): {slugs}")
         print(f"  Estimated: ~{est_min} min, ~{est_tok / 1e6:.0f}M input tokens")
-        print(f"{'─' * 60}")
     else:
-        return True  # correlate is compute-only, no API cost
+        print(f"  To run ({n}): {slugs}")
+    print(f"{'─' * 60}", flush=True)
 
+    if yes:
+        return pending
     answer = input("  Proceed? [y/N] ").strip().lower()
-    return answer in ("y", "yes")
+    return pending if answer in ("y", "yes") else []
 
 
 # ── Main ────────────────────────────────────────────────────────────
@@ -611,44 +651,61 @@ def main() -> None:
         validate_endpoints(models_config, models)
 
     # ── Run stages ──────────────────────────────────────────────────
+    suite_name = yaml.safe_load(P2M_CONFIG.read_text()).get("suite", "telecom-tau2-correlation")
     tau2_rewards: dict[str, float] = {}
     p2m_scores: dict[str, dict[str, float]] = {}
     correlations: dict[str, float] = {}
 
-    # Load any existing results for stages we're skipping
+    # Load aggregate results for stages we're skipping entirely
     existing_results = RESULTS_DIR / "correlation_results.json"
     if existing_results.exists():
-        existing = json.loads(existing_results.read_text())
+        saved = json.loads(existing_results.read_text())
         if "tau2" not in stages:
-            tau2_rewards = existing.get("tau2_rewards", {})
+            tau2_rewards = saved.get("tau2_rewards", {})
             logger.info("Loaded %d tau2 results from previous run", len(tau2_rewards))
         if "p2m" not in stages:
-            p2m_scores = existing.get("p2m_scores", {})
+            p2m_scores = saved.get("p2m_scores", {})
             logger.info("Loaded %d p2m results from previous run", len(p2m_scores))
 
     if "tau2" in stages:
         logger.info("═══ STAGE: tau2 ═══")
-        if not confirm_stage("tau2", models, yes=args.dry_run or args.yes,
-                             trials=trials, concurrency=concurrency):
-            logger.info("Skipped tau2 stage.")
-        else:
-            outputs = run_tau2(models, models_config, dry_run=args.dry_run,
-                               trials=trials, user_model=user_model,
-                               concurrency=concurrency)
+        existing_tau2 = {} if args.dry_run else discover_tau2_results(models)
+        pending = plan_and_confirm(
+            "tau2", models, existing=existing_tau2,
+            yes=args.dry_run or args.yes, trials=trials, concurrency=concurrency,
+        )
+        if pending:
+            new_outputs = run_tau2(pending, models_config, dry_run=args.dry_run,
+                                   trials=trials, user_model=user_model,
+                                   concurrency=concurrency)
             if not args.dry_run:
-                tau2_rewards = collect_tau2_rewards(outputs)
-                print_tau2_cost_summary(outputs)
+                all_outputs = {**existing_tau2, **new_outputs}
+                tau2_rewards = collect_tau2_rewards(all_outputs)
+                print_tau2_cost_summary(new_outputs)
+        elif existing_tau2:
+            logger.info("All tau2 results exist, collecting scores.")
+            tau2_rewards = collect_tau2_rewards(existing_tau2)
+        else:
+            logger.info("Skipped tau2 stage.")
 
     if "p2m" in stages:
         logger.info("═══ STAGE: p2m ═══")
-        suite_name = yaml.safe_load(P2M_CONFIG.read_text()).get("suite", "telecom-tau2-correlation-v1")
-        if not confirm_stage("p2m", models, yes=args.dry_run or args.yes):
-            logger.info("Skipped p2m stage.")
-        else:
-            runs = run_p2m(models, models_config, dry_run=args.dry_run)
+        existing_p2m = {} if args.dry_run else discover_p2m_results(suite_name, models)
+        pending = plan_and_confirm(
+            "p2m", models, existing=existing_p2m,
+            yes=args.dry_run or args.yes,
+        )
+        if pending:
+            new_runs = run_p2m(pending, models_config, dry_run=args.dry_run)
             if not args.dry_run:
-                p2m_scores = collect_p2m_scores(suite_name, runs)
-                print_p2m_cost_summary(suite_name, runs)
+                all_runs = {**existing_p2m, **new_runs}
+                p2m_scores = collect_p2m_scores(suite_name, all_runs)
+                print_p2m_cost_summary(suite_name, new_runs)
+        elif existing_p2m:
+            logger.info("All p2m results exist, collecting scores.")
+            p2m_scores = collect_p2m_scores(suite_name, existing_p2m)
+        else:
+            logger.info("Skipped p2m stage.")
 
     if "correlate" in stages:
         logger.info("═══ STAGE: correlate ═══")
