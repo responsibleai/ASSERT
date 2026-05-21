@@ -67,7 +67,7 @@ TAU2_DATA_DIR = Path(os.environ.get("TAU2_DATA_DIR", str(SCRIPT_DIR / "data")))
 DEFAULT_USER_MODEL = "azure/gpt-5.4-mini"
 DEFAULT_TRIALS = 4
 DEFAULT_CONCURRENCY = 10
-DEFAULT_TAU2_RETRIES = 10
+DEFAULT_TAU2_RETRIES = 3
 
 # Cost estimation benchmarks (observed from gpt-5.4-nano, telecom domain).
 # These are rough lower bounds; actual cost scales with model pricing.
@@ -640,9 +640,17 @@ def run_tau2(models: list[str], models_config: dict, *, dry_run: bool = False,
             expected_total = n_tasks * trials if n_tasks else expected_total
 
             if result and result.returncode == 0:
-                logger.info("tau2 %s: completed successfully (%d sims)",
-                            slug, n_completed)
-                break  # success
+                if expected_total and n_completed >= expected_total:
+                    logger.info("tau2 %s: completed successfully (%d sims)",
+                                slug, n_completed)
+                    break  # success — all sims done
+                elif expected_total:
+                    logger.info("tau2 %s: %d/%d sims — incomplete despite exit 0",
+                                slug, n_completed, expected_total)
+                    # fall through to retry
+                else:
+                    logger.info("tau2 %s: completed (%d sims)", slug, n_completed)
+                    break
 
             # Crashed — summarize and decide whether to retry
             _summarize_tau2_run(model, output_path, errors, trials)
@@ -1119,6 +1127,11 @@ def main() -> None:
         help="Override p2m test_set prompt sample_size (default: use config value)",
     )
     parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Write log output to this file (default: logs/run_YYYYMMDD_HHMMSS.log)",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Debug-level logging",
@@ -1135,11 +1148,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=log_level,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Always log to file as a run log backup
+    log_file = args.log_file
+    if not log_file:
+        from datetime import datetime
+        log_dir = Path(__file__).parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_file = str(log_dir / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    else:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    logging.getLogger().addHandler(file_handler)
+    logger.info("Logging to file: %s", log_file)
     # Suppress noisy OTEL/gRPC export errors when Phoenix isn't running
     for _otel_logger in (
         "opentelemetry.exporter.otlp.proto.grpc.exporter",

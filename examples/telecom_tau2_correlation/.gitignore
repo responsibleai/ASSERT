@@ -1,6 +1,7 @@
 # Orchestration script outputs
 results/
 config_*.yaml
+logs/
 
 # tau2 data directory (local symlink or clone — see README)
 data/
