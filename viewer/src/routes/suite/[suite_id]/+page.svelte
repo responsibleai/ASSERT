@@ -339,7 +339,8 @@
 					Created {data.suite?.created_at ? new Date(data.suite.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '—'}
 				</span>
 				{#if hasSystematization}
-					<button class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted transition-colors hover:text-text-secondary" onclick={() => metaOpen = !metaOpen}>
+					<button class="inline-flex items-center gap-1.5 rounded-full! bg-surface-2 px-2.5 py-1 text-xs text-text-muted transition-colors hover:text-text-secondary" onclick={() => metaOpen = !metaOpen}>
+						<svg class="h-3 w-3 transition-transform" style={metaOpen ? 'transform:rotate(180deg)' : ''} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
 						{metaOpen ? 'hide details' : 'details'}
 					</button>
 				{/if}
