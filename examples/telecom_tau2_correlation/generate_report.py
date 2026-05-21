@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Generate a combined HTML report from tau2↔p2m correlation results.
 
-Produces a single report.html with:
-  - Data status overview (all tau2/p2m models, coverage gaps)
+Scans tau2 simulation files and p2m artifact directories directly from
+disk, computes correlations on-the-fly, and produces a single report.html
+with:
+  - Data status overview (all tau2/p2m models with live progress)
   - Full analysis (all overlapping models)
   - Filtered analysis (only models with ≥ min_sims tau2 simulations)
+
+No need to run the correlate stage first — this script is self-contained.
 
 Usage:
     python generate_report.py                         # generate report (no browser)
@@ -24,19 +28,113 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR / "results"
 SIM_DIR = SCRIPT_DIR / "data" / "simulations"
+REPO_ROOT = SCRIPT_DIR.parents[1]  # adaptive-eval root
+DEFAULT_SUITE_NAME = "telecom-tau2-correlation"
 
 
 def slug(model: str) -> str:
     return model.split("/")[-1] if "/" in model else model
 
 
-def load_results(results_dir: Path) -> dict:
-    path = results_dir / "correlation_results.json"
-    if not path.exists():
-        print(f"ERROR: {path} not found. Run the pipeline first:", file=sys.stderr)
-        print("  python run_comparison.py --preset quick", file=sys.stderr)
-        sys.exit(1)
-    return json.loads(path.read_text())
+def _collect_tau2_data(
+    sim_dir: Path,
+) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
+    """Scan tau2 simulation files on disk.
+
+    Returns:
+        rewards: {model_slug: mean_reward}
+        sample_sizes: {model_slug: n_simulations}
+        task_counts: {model_slug: n_tasks}
+    """
+    rewards: dict[str, float] = {}
+    sizes: dict[str, int] = {}
+    task_counts: dict[str, int] = {}
+    if not sim_dir.is_dir():
+        return rewards, sizes, task_counts
+    for path in sorted(sim_dir.glob("telecom_*.json")):
+        model = path.stem.removeprefix("telecom_")
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        sims = data.get("simulations", [])
+        if not sims:
+            continue
+        task_rewards = [s["reward_info"]["reward"] for s in sims]
+        rewards[model] = sum(task_rewards) / len(task_rewards)
+        sizes[model] = len(sims)
+        task_counts[model] = len(data.get("tasks", []))
+    return rewards, sizes, task_counts
+
+
+def _collect_p2m_data(
+    artifacts_dir: Path,
+) -> tuple[dict[str, dict[str, float]], dict[str, str], dict[str, tuple[int, int]]]:
+    """Scan p2m artifact directories on disk.
+
+    Returns:
+        scores: {model_slug: {dimension: violation_rate, "_overall": score}}
+        status: {model_slug: human-readable status string}
+        progress: {model_slug: (completed_count, expected_count)}
+    """
+    scores: dict[str, dict[str, float]] = {}
+    status: dict[str, str] = {}
+    progress: dict[str, tuple[int, int]] = {}
+    if not artifacts_dir.is_dir():
+        return scores, status, progress
+    for d in sorted(artifacts_dir.iterdir()):
+        if not d.is_dir() or not d.name.endswith("-eval"):
+            continue
+        model = d.name.removesuffix("-eval")
+        scores_path = d / "scores.jsonl"
+        metrics_path = d / "metrics.json"
+        inference_path = d / "inference_set.jsonl"
+        test_set_path = d / "test_set.jsonl"
+
+        # Determine expected count from test_set.jsonl
+        expected = 0
+        if test_set_path.exists():
+            expected = sum(1 for _ in open(test_set_path))
+
+        if scores_path.exists():
+            lines = scores_path.read_text().strip().splitlines()
+            if lines:
+                is_complete = metrics_path.exists()
+                status[model] = (
+                    f"complete ({len(lines)} scored)" if is_complete
+                    else f"judging ({len(lines)} scored)"
+                )
+                progress[model] = (len(lines), expected or len(lines))
+                dim_totals: dict[str, list[bool]] = {}
+                for line in lines:
+                    record = json.loads(line)
+                    verdicts = (
+                        record.get("verdict", {}).get("dimensions")
+                        or record.get("verdicts")
+                        or record.get("scores", {})
+                    )
+                    for dim, verdict in verdicts.items():
+                        dim_totals.setdefault(dim, []).append(bool(verdict))
+                model_scores: dict[str, float] = {}
+                for dim, vals in dim_totals.items():
+                    model_scores[dim] = sum(vals) / len(vals)
+                if model_scores:
+                    mean_violation = sum(model_scores.values()) / len(model_scores)
+                    model_scores["_overall"] = 1.0 - mean_violation
+                scores[model] = model_scores
+            else:
+                status[model] = "judging (0 scored)"
+                progress[model] = (0, expected)
+        elif inference_path.exists():
+            n_inferences = sum(1 for _ in open(inference_path))
+            status[model] = f"inferring ({n_inferences} inferred)"
+            progress[model] = (0, expected)
+        elif test_set_path.exists():
+            status[model] = "generating test cases"
+            progress[model] = (0, expected)
+        else:
+            status[model] = "queued"
+    return scores, status, progress
 
 
 def fig_to_base64(fig) -> str:
@@ -83,6 +181,62 @@ def _recompute_correlations(
     return correlations
 
 
+def _build_eval_specs_html(
+    eval_spec: dict,
+    models_spec: dict,
+    trials: int,
+) -> str:
+    """Build an HTML metadata section showing eval configuration."""
+    rows = []
+
+    suite = eval_spec.get("suite", "")
+    if suite:
+        rows.append(("Suite", suite))
+
+    behavior = eval_spec.get("behavior", {})
+    if isinstance(behavior, dict) and behavior.get("name"):
+        rows.append(("Behavior", behavior["name"]))
+
+    rows.append(("Trials per task", str(trials)))
+
+    # Judge model from first preset that has one
+    for preset_name, preset_cfg in models_spec.get("presets", {}).items():
+        if "judge_model" in preset_cfg:
+            rows.append(("Judge model", preset_cfg["judge_model"]))
+            break
+
+    # User simulator
+    user_sim = models_spec.get("user_simulator", {})
+    if user_sim:
+        sim_models = [f"{ep}: {model}" for ep, model in user_sim.items()]
+        rows.append(("User simulator", ", ".join(sim_models)))
+
+    # Target models
+    model_list = models_spec.get("models", [])
+    if model_list:
+        if isinstance(model_list, list):
+            names = [m.get("name", str(m)) if isinstance(m, dict) else str(m) for m in model_list]
+        else:
+            names = [cfg.get("name", key) for key, cfg in model_list.items()]
+        rows.append(("Target models", f"{len(names)} — " + ", ".join(names)))
+
+    if not rows:
+        return ""
+
+    row_html = "".join(
+        f"<tr><td style='font-weight:600; white-space:nowrap'>{k}</td><td>{v}</td></tr>\n"
+        for k, v in rows
+    )
+    return f"""
+<div class="summary-box" style="margin-bottom: 24px;">
+  <h3 style="margin-top:0; color:#4C72B0;">Eval Configuration</h3>
+  <table style="width:auto; border:none;">
+  {row_html}
+  </table>
+</div>
+"""
+
+
 def build_report(
     results_dir: Path,
     sim_dir: Path,
@@ -100,63 +254,142 @@ def build_report(
 
     sns.set_theme(style="whitegrid", font_scale=1.0)
 
-    results = load_results(results_dir)
-    tau2_rewards = results["tau2_rewards"]
-    tau2_samples = results.get("tau2_sample_sizes", {})
-    p2m_scores = results["p2m_scores"]
+    # ── Collect live data from disk ───────────────────────────────
+    suite_name = DEFAULT_SUITE_NAME
+    config_path = SCRIPT_DIR / "eval_config.yaml"
+    models_config_path = SCRIPT_DIR / "models.yaml"
+    eval_spec: dict = {}
+    models_spec: dict = {}
+    if config_path.exists():
+        try:
+            import yaml
+            eval_spec = yaml.safe_load(config_path.read_text()) or {}
+            suite_name = eval_spec.get("suite", suite_name)
+        except Exception:
+            pass
+    if models_config_path.exists():
+        try:
+            import yaml
+            models_spec = yaml.safe_load(models_config_path.read_text()) or {}
+        except Exception:
+            pass
+    artifacts_dir = REPO_ROOT / "artifacts" / "results" / suite_name
 
-    # All models with both tau2 + p2m
-    all_models = sorted(set(tau2_rewards) & set(p2m_scores))
-    if len(all_models) < 2:
+    tau2_rewards, tau2_samples, tau2_task_counts = _collect_tau2_data(sim_dir)
+    p2m_scores, p2m_status, p2m_progress = _collect_p2m_data(artifacts_dir)
+
+    # All models from either source
+    all_known = sorted(set(tau2_rewards) | set(p2m_scores) | set(p2m_status))
+    if not tau2_rewards and not p2m_status:
         return ""
+
+    # Models with both tau2 + p2m scores (ready for analysis)
+    all_models = sorted(set(tau2_rewards) & set(p2m_scores))
 
     # Filtered models (high sim count)
     filtered_models = [m for m in all_models if tau2_samples.get(m, 0) >= min_sims]
     excluded_models = [m for m in all_models if tau2_samples.get(m, 0) < min_sims]
 
+    # ── Save correlation_results.json for downstream tools ────────
+    if all_models:
+        full_correlations = _recompute_correlations(
+            {m: tau2_rewards[m] for m in all_models},
+            {m: p2m_scores[m] for m in all_models},
+        )
+        results_dir.mkdir(parents=True, exist_ok=True)
+        (results_dir / "correlation_results.json").write_text(json.dumps({
+            "tau2_rewards": tau2_rewards,
+            "tau2_sample_sizes": tau2_samples,
+            "p2m_scores": {m: p2m_scores[m] for m in p2m_scores},
+            "correlations": full_correlations,
+            "models_compared": all_models,
+        }, indent=2))
+
     # ── Data Status section ───────────────────────────────────────
-    tau2_only = sorted(set(tau2_rewards) - set(p2m_scores))
-    p2m_only = sorted(set(p2m_scores) - set(tau2_rewards))
+    n_p2m_scored = len(p2m_scores)
+    n_p2m_total = len(p2m_status)
+
+    # Resolve trials for tau2 completion %
+    # Use max trials across presets (conservative — matches full/default runs)
+    trials = 4  # fallback
+    preset_trials = [
+        cfg["trials"]
+        for cfg in models_spec.get("presets", {}).values()
+        if "trials" in cfg
+    ]
+    if preset_trials:
+        trials = max(preset_trials)
 
     status_rows = ""
-    for m in sorted(tau2_rewards):
-        has_p2m = m in p2m_scores
+    for m in all_known:
+        reward = tau2_rewards.get(m)
         sims = tau2_samples.get(m, 0)
-        reward = tau2_rewards[m]
-        p2m_overall = p2m_scores.get(m, {}).get("_overall", None)
-        p2m_cell = f"{p2m_overall:.4f}" if p2m_overall is not None else '<span style="color:#c00">missing</span>'
-        overlap = "✓" if has_p2m else "✗"
-        sim_style = ' style="color:#c00"' if sims < min_sims else ""
+        n_tasks = tau2_task_counts.get(m, 0)
+        p2m_overall = p2m_scores.get(m, {}).get("_overall")
+        p2m_st = p2m_status.get(m, "not started")
+
+        reward_cell = f"{reward:.4f}" if reward is not None else '<span style="color:#999">—</span>'
+        sims_cell = str(sims) if m in tau2_rewards else "—"
+        sim_style = ' style="color:#c00"' if m in tau2_rewards and sims < min_sims else ""
+        p2m_cell = f"{p2m_overall:.4f}" if p2m_overall is not None else '<span style="color:#999">—</span>'
+
+        # tau2 completion %
+        if m in tau2_rewards and n_tasks > 0:
+            expected_sims = n_tasks * trials
+            tau2_pct = sims / expected_sims * 100
+            tau2_pct_cell = f"{tau2_pct:.0f}%"
+            if tau2_pct < 100:
+                tau2_pct_cell = f'<span style="color:#fd7e14">{tau2_pct_cell}</span>'
+            else:
+                tau2_pct_cell = f'<span style="color:#28a745">{tau2_pct_cell}</span>'
+        elif m in tau2_rewards:
+            tau2_pct_cell = '<span style="color:#999">?</span>'
+        else:
+            tau2_pct_cell = "—"
+
+        # p2m completion %
+        p2m_done, p2m_expected = p2m_progress.get(m, (0, 0))
+        if p2m_expected > 0:
+            p2m_pct = p2m_done / p2m_expected * 100
+            p2m_pct_cell = f"{p2m_pct:.0f}%"
+            if p2m_pct >= 100:
+                p2m_pct_cell = f'<span style="color:#28a745">{p2m_pct_cell}</span>'
+            elif p2m_pct > 0:
+                p2m_pct_cell = f'<span style="color:#fd7e14">{p2m_pct_cell}</span>'
+            else:
+                p2m_pct_cell = f'<span style="color:#c00">{p2m_pct_cell}</span>'
+        elif m in p2m_status:
+            p2m_pct_cell = '<span style="color:#999">—</span>'
+        else:
+            p2m_pct_cell = "—"
+
+        if "complete" in p2m_st:
+            badge = f'<span style="color:#28a745">{p2m_st}</span>'
+        elif "judging" in p2m_st or "inferring" in p2m_st:
+            badge = f'<span style="color:#fd7e14">{p2m_st}</span>'
+        elif p2m_st == "not started":
+            badge = '<span style="color:#c00">not started</span>'
+        else:
+            badge = f'<span style="color:#999">{p2m_st}</span>'
+
+        ready = "✓" if m in all_models else ""
+
         status_rows += (
-            f"<tr><td>{slug(m)}</td><td>{reward:.4f}</td>"
-            f"<td{sim_style}>{sims}</td><td>{p2m_cell}</td><td>{overlap}</td></tr>\n"
-        )
-    for m in p2m_only:
-        p2m_overall = p2m_scores[m].get("_overall", 0)
-        status_rows += (
-            f'<tr><td>{slug(m)}</td><td><span style="color:#c00">missing</span></td>'
-            f'<td>—</td><td>{p2m_overall:.4f}</td><td>✗</td></tr>\n'
+            f"<tr><td>{slug(m)}</td><td>{reward_cell}</td>"
+            f"<td{sim_style}>{sims_cell}</td><td>{tau2_pct_cell}</td>"
+            f"<td>{p2m_cell}</td><td>{p2m_pct_cell}</td>"
+            f"<td>{badge}</td><td>{ready}</td></tr>\n"
         )
 
     data_status_html = f"""
 <h2>1. Data Status</h2>
-<p>{len(tau2_rewards)} models with τ² data, {len(p2m_scores)} with p2m data,
-   <strong>{len(all_models)}</strong> overlap ({len(filtered_models)} with ≥{min_sims} sims).</p>
+<p>{len(tau2_rewards)} models with τ² data, {n_p2m_scored}/{n_p2m_total} p2m scored,
+   <strong>{len(all_models)}</strong> ready for analysis ({len(filtered_models)} with ≥{min_sims} sims).</p>
 <table>
-<tr><th>Model</th><th>τ² Reward</th><th>τ² Sims</th><th>p2m Overall</th><th>Both?</th></tr>
+<tr><th>Model</th><th>τ² Reward</th><th>τ² Sims</th><th>τ² Complete</th><th>p2m Overall</th><th>p2m Complete</th><th>p2m Status</th><th>Ready?</th></tr>
 {status_rows}
 </table>
 """
-    if tau2_only:
-        data_status_html += (
-            f'<p style="color:#666">τ² only (no p2m yet): '
-            f'{", ".join(slug(m) for m in tau2_only)}</p>\n'
-        )
-    if p2m_only:
-        data_status_html += (
-            f'<p style="color:#666">p2m only (no τ² yet): '
-            f'{", ".join(slug(m) for m in p2m_only)}</p>\n'
-        )
 
     # ── Helper to build analysis sections ─────────────────────────
     def _build_analysis_section(
@@ -362,9 +595,9 @@ inverted (1 − rate) so higher = better, matching τ² convention.</p>
 """
         return html, charts
 
-    # ── Chart: Reward distributions (shared, uses all models) ─────
+    # ── Chart: Reward distributions (all tau2 models) ───────────────
     sim_data: dict[str, list] = {}
-    for m in all_models:
+    for m in sorted(tau2_rewards):
         path = sim_dir / f"telecom_{slug(m)}.json"
         if path.exists():
             sim_data[m] = json.loads(path.read_text())["simulations"]
@@ -414,7 +647,14 @@ inverted (1 − rate) so higher = better, matching τ² convention.</p>
 """
 
     # ── Build analysis sections ───────────────────────────────────
-    full_html, _ = _build_analysis_section(all_models, 2, f"Full Analysis (all {len(all_models)} models)")
+    if len(all_models) >= 2:
+        full_html, _ = _build_analysis_section(all_models, 2, f"Full Analysis (all {len(all_models)} models)")
+    else:
+        full_html = (
+            "<h2>2. Full Analysis</h2>"
+            f"<p>Need ≥2 models with both τ² and p2m scores (currently {len(all_models)}). "
+            "Waiting for more evaluations to complete.</p>"
+        )
 
     filtered_html = ""
     if excluded_models:
@@ -462,6 +702,8 @@ inverted (1 − rate) so higher = better, matching τ² convention.</p>
 <body>
 <h1>τ²-bench ↔ p2m Correlation Report</h1>
 
+{_build_eval_specs_html(eval_spec, models_spec, trials)}
+
 {data_status_html}
 
 {full_html}
@@ -473,8 +715,8 @@ inverted (1 − rate) so higher = better, matching τ² convention.</p>
 
 <hr />
 <p style="color: #888; font-size: 0.9em;">
-  Generated from <code>results/correlation_results.json</code>.
-  Re-run <code>python generate_report.py</code> or <code>python run_comparison.py</code> to refresh.
+  Generated live from <code>data/simulations/</code> and <code>artifacts/results/{suite_name}/</code>.
+  Re-run <code>python generate_report.py</code> to refresh.
 </p>
 </body>
 </html>"""
@@ -484,9 +726,9 @@ inverted (1 − rate) so higher = better, matching τ² convention.</p>
 def main():
     parser = argparse.ArgumentParser(description="Generate τ²↔p2m correlation HTML report.")
     parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR,
-                        help="Directory containing correlation_results.json")
+                        help="Directory for output files (report.html, correlation_results.json)")
     parser.add_argument("--sim-dir", type=Path, default=SIM_DIR,
-                        help="Directory containing raw simulation JSONs")
+                        help="Directory containing raw tau2 simulation JSONs")
     parser.add_argument("--out", type=Path, default=None,
                         help="Output HTML path (default: results/report.html)")
     parser.add_argument("--min-sims", type=int, default=DEFAULT_MIN_SIMS,
@@ -497,7 +739,18 @@ def main():
 
     out_path = args.out or (args.results_dir / "report.html")
 
-    print(f"Loading results from {args.results_dir}/")
+    print(f"Scanning tau2 data from {args.sim_dir}/")
+    suite_name = DEFAULT_SUITE_NAME
+    config_path = SCRIPT_DIR / "eval_config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            suite_name = yaml.safe_load(config_path.read_text()).get("suite", suite_name)
+        except Exception:
+            pass
+    artifacts_dir = REPO_ROOT / "artifacts" / "results" / suite_name
+    print(f"Scanning p2m artifacts from {artifacts_dir}/")
+
     html = build_report(args.results_dir, args.sim_dir, min_sims=args.min_sims)
     if html:
         out_path.write_text(html)
@@ -506,7 +759,7 @@ def main():
             import webbrowser
             webbrowser.open(out_path.as_uri())
     else:
-        print("Not enough data for report (need ≥2 models with both tau2 + p2m).")
+        print("No data found. Run tau2/p2m stages first.")
 
 
 if __name__ == "__main__":
