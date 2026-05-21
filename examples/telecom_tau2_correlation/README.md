@@ -7,18 +7,22 @@ deterministic scores on the **telecom customer service** domain.
 
 tau2-bench (arXiv:2506.07982) uses curated task scenarios with
 database-level ground truth to score agents deterministically. p2m uses
-LLM-generated test cases with LLM-judged scoring. If the two rankings
-agree across a range of models (weak to strong), p2m can be trusted as a
-lightweight proxy for domains where deterministic evaluation harnesses
-don't exist.
+LLM-generated test cases with LLM-judged scoring. This study checks
+whether the two produce **similar relative model rankings** despite
+using fundamentally different test methodologies.
+
+**Important caveat:** tau2 evaluates agents against pre-configured
+database states with deterministic tool backends. p2m generates its
+own test scenarios and uses simulated tool responses based on tool
+descriptions. This study measures whether the two approaches produce
+similar relative model rankings despite different methodologies.
 
 ## What's in this directory
 
 | File | Purpose |
 |---|---|
-| `concept.md` | Telecom agent behavior spec (derived from tau2-bench's main_policy.md) |
+| `eval_config.yaml` | p2m pipeline config; the `behavior:` block contains the telecom agent spec (derived from tau2-bench's main_policy.md) |
 | `telecom_tools.yaml` | 14 agent tool schemas in p2m YAML format |
-| `eval_config.yaml` | p2m pipeline config (systematize / test_set / inference / judge) |
 | `models.yaml` | Model inventory, endpoint mapping, and presets |
 | `run_comparison.py` | Orchestration script -- runs tau2, p2m, and correlation analysis |
 | `smoke_test.py` | Quick connectivity check for each configured endpoint |
@@ -108,9 +112,10 @@ Options:
   --models MODEL [...]    Override preset model selection
   --trials N              tau2 trials per task (default: 4)
   --concurrency N         Max concurrent tau2 tasks (default: 10)
-  --tau2-retries N        Max tau2 retry attempts per model (default: 3)
+  --tau2-retries N        Max tau2 retry attempts per model (default: 10)
   --test-cases N          Override p2m test_set prompt sample_size
   --user-model MODEL      LLM for tau2 user simulator
+  --log-file PATH         Write log output to file (default: logs/run_YYYYMMDD_HHMMSS.log)
   --force                 Re-run models even if results exist
   --dry-run               Print commands without executing
   -y, --yes               Skip confirmation prompts
@@ -142,7 +147,7 @@ sets default values for `trials`, `concurrency`, `test_cases`,
 | Preset | Models | test_cases | trials | judge_model |
 |---|---|---|---|---|
 | `quick` | 4 (across tiers) | 10 | 2 | gpt-5.4-mini |
-| `mini` | 3 (one per tier) | 70 | 4 | gpt-5.4-mini |
+| `mini` | 3 (one per tier) | 70 | 4 | gpt-5.4 |
 | `full` | all deployed | 70 | 4 | gpt-5.4 |
 
 CLI flags override preset values when both are provided.
@@ -162,16 +167,18 @@ re-run). Intermediate results are saved after each model completes.
 
 Results are written to `results/` within this directory:
 
-- `results/tau2/{model_slug}/` -- tau2-bench simulation outputs
+- `data/simulations/telecom_{slug}.json` -- tau2-bench simulation outputs
 - `results/correlation_results.json` -- final correlation data
-- `artifacts/results/telecom-tau2-correlation-v1/` -- p2m run artifacts
+- `results/tau2_rewards.json` -- tau2 mean rewards per model
+- `results/p2m_scores.json` -- p2m judged scores per model
+- `artifacts/results/telecom-tau2-correlation/` -- p2m run artifacts
 
 ## Design decisions
 
-- **Simulated tools** (not real tau2 tools): p2m generates its own test
-  scenarios via the test_set pipeline, so it cannot reuse tau2's
-  pre-configured database states. The tool simulator responds
-  realistically based on tool descriptions.
+- **Simulated tools** (not real tau2 tools): see the caveat in
+  Motivation above. p2m generates its own test scenarios via the
+  test_set pipeline and uses simulated tool responses, so it does not
+  reuse tau2's pre-configured database states.
 - **4 judge dimensions**: `workflow_violation`, `policy_adherence`,
   `communication_quality`, `escalation_judgment` -- designed to capture
   the same failure modes that tau2's deterministic scoring catches.
@@ -185,6 +192,97 @@ Results are written to `results/` within this directory:
   rho, p-values, significance markers, and per-model tau2 sample sizes.
   Models with low sample completion (< 50%) are flagged with a
   suggested re-run command.
+
+## Inspecting results
+
+After a run completes (or partially completes), use these commands to
+check data completeness and review analysis output.
+
+### Tau2 simulation completeness
+
+Each model's sim file lives at `data/simulations/telecom_{slug}.json`.
+Check how many simulations completed vs expected (`114 tasks × num_trials`):
+
+```bash
+# Summary for all sim files
+for f in data/simulations/telecom_*.json; do
+  slug=$(basename "$f" .json | sed 's/telecom_//')
+  trials=$(python3 -c "import json; print(json.load(open('$f'))['info']['num_trials'])")
+  count=$(python3 -c "import json; print(len(json.load(open('$f'))['simulations']))")
+  expected=$((114 * trials))
+  pct=$((count * 100 / expected))
+  echo "$slug: $count / $expected sims (${pct}%, ${trials} trials)"
+done
+```
+
+Example output:
+```
+gpt-5.4: 456 / 456 sims (100%, 4 trials)
+gpt-oss-120b: 9 / 456 sims (1%, 4 trials)
+grok-4: 57 / 456 sims (12%, 4 trials)
+```
+
+Models below ~80% completion produce unreliable tau2 reward estimates.
+Re-run with more retries to push them toward completion:
+
+```bash
+python run_comparison.py --preset mini --stages tau2 --tau2-retries 10 --yes
+```
+
+Tau2 has built-in resume -- it reads the existing sim file and only
+runs missing task/trial combinations.
+
+### Correlation analysis output
+
+Results are written to `results/` as JSON files:
+
+```bash
+# Tau2 deterministic rewards per model
+python3 -m json.tool results/tau2_rewards.json
+
+# P2m LLM-judged scores per model (per dimension + overall)
+python3 -m json.tool results/p2m_scores.json
+
+# Spearman correlations, sample sizes, and per-dimension breakdowns
+python3 -m json.tool results/correlation_results.json
+```
+
+Key fields in `correlation_results.json`:
+
+| Field | Description |
+|---|---|
+| `tau2_rewards` | Mean reward per model (0-1 scale) |
+| `tau2_sample_sizes` | Number of completed sims per model |
+| `p2m_scores` | Per-dimension + `_overall` scores per model |
+| `correlations` | Spearman `rho`, `pval`, and `n` per dimension |
+
+Interpreting the correlations:
+
+- **rho** close to ±1 = strong monotonic agreement between tau2 and p2m
+- **pval < 0.05** = statistically significant at 95% confidence
+- **n** = number of models compared (need n ≥ 10 for reliable inference,
+  n ≥ 20 recommended)
+
+### P2m evaluation artifacts
+
+P2m writes detailed artifacts per model under the adaptive-eval
+artifacts directory:
+
+```bash
+ls ../../artifacts/results/telecom-tau2-correlation/
+```
+
+Each model subfolder contains `metrics.json`, `scores.jsonl`,
+`inference_set.jsonl`, and the generated `test_set.jsonl`.
+
+### Run logs
+
+When file logging is enabled (default), logs are written to `logs/`:
+
+```bash
+ls -lt logs/   # most recent log first
+tail -100 logs/run_*.log   # check the latest run
+```
 
 ## Troubleshooting
 
