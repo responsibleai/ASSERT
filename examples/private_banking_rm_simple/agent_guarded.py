@@ -192,12 +192,13 @@ def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
         span.set_attribute("openinference.span.kind", "AGENT")
         span.set_attribute("agentshield.guarded", True)
         span.set_attribute("input.value", message)
+        span.set_attribute("conversation.history_turn_count", len(baseline._history_messages(history)))
 
         actions: list[str] = []
-        wants_email = baseline._wants_email(message)
+        wants_email = baseline._wants_email_for_turn(message, history)
         wants_wire = baseline._wants_wire(message)
         wants_lookup = baseline._wants_lookup(message) or not (wants_email or wants_wire)
-        client_id = baseline._find_client_id(message)
+        client_id = baseline._find_client_id_for_turn(message, history)
 
         if wants_lookup and not wants_email:
             portfolio = lookup_portfolio(client_id)
@@ -226,7 +227,7 @@ def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
             if "error" in portfolio:
                 actions.append(f"Email draft skipped because {client_id} was not found.")
             else:
-                body = baseline._compose_email_body(portfolio, message)
+                body = baseline._compose_email_body(portfolio, message, history)
                 draft = draft_email(recipient, body)
                 if isinstance(draft, str):
                     span.set_attribute("output.value", draft)
