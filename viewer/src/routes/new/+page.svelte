@@ -217,9 +217,21 @@
 	}
 
 	// Sentinel value used by the model <select> dropdowns to expose an
-	// "+ Add model" entry. Picking it opens a prompt for an arbitrary model id,
-	// appends it to `modelOptions`, and applies it to the field.
+	// "+ Add model" entry. Picking it opens a themed modal for an arbitrary model
+	// id, appends it to `modelOptions`, and applies it to the field.
 	const ADD_CUSTOM_MODEL = '__add_custom_model__';
+
+	let addModelOpen = $state(false);
+	let addModelValue = $state('');
+	let addModelError = $state('');
+	let pendingApply = $state<((m: string) => void) | null>(null);
+	let addModelInput = $state<HTMLInputElement | null>(null);
+
+	$effect(() => {
+		if (addModelOpen && addModelInput) {
+			addModelInput.focus();
+		}
+	});
 
 	function handleModelChange(
 		event: Event & { currentTarget: HTMLSelectElement },
@@ -228,23 +240,40 @@
 	) {
 		const value = event.currentTarget.value;
 		if (value === ADD_CUSTOM_MODEL) {
-			const raw = window.prompt(
-				'Enter a model id (e.g., openai/gpt-4o-mini, azure/my-deployment).'
-			);
-			const custom = raw?.trim() ?? '';
-			if (!custom) {
-				event.currentTarget.value = currentValue;
-				return;
-			}
-			if (!modelOptions.includes(custom)) {
-				modelOptions = [...modelOptions, custom];
-			}
-			apply(custom);
-			markDirty();
+			event.currentTarget.value = currentValue;
+			pendingApply = apply;
+			addModelValue = '';
+			addModelError = '';
+			addModelOpen = true;
 			return;
 		}
 		apply(value);
 		markDirty();
+	}
+
+	function confirmAddModel() {
+		const custom = addModelValue.trim();
+		if (!custom) {
+			addModelError = 'Model id is required.';
+			return;
+		}
+		if (!/^[a-zA-Z0-9._\/-]+$/.test(custom)) {
+			addModelError = 'Use only letters, numbers, “.”, “_”, “-”, and “/”.';
+			return;
+		}
+		if (!modelOptions.includes(custom)) {
+			modelOptions = [...modelOptions, custom];
+		}
+		pendingApply?.(custom);
+		markDirty();
+		closeAddModel();
+	}
+
+	function closeAddModel() {
+		addModelOpen = false;
+		pendingApply = null;
+		addModelValue = '';
+		addModelError = '';
 	}
 
 	// ── Derived ─────────────────────────────────────────────────────
@@ -1462,6 +1491,47 @@
 			<div class="mt-5 flex items-center justify-end gap-2">
 				<button class="btn" onclick={() => (showDiscardModal = false)}>Stay</button>
 				<button class="btn btn-danger" onclick={() => { isDirty = false; showDiscardModal = false; goto('/'); }}>Discard</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Add model modal -->
+{#if addModelOpen}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+		role="dialog"
+		tabindex="-1"
+		aria-modal="true"
+		aria-labelledby="add-model-title"
+		onkeydown={(e) => { if (e.key === 'Escape') closeAddModel(); }}
+	>
+		<div class="fixed inset-0" role="presentation" onclick={closeAddModel}></div>
+		<div class="relative z-10 w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
+			<h3 id="add-model-title" class="text-base font-semibold text-text">Add model</h3>
+			<p class="mt-1 text-xs text-text-muted">Specify a model id in <code class="rounded bg-surface-2 px-1 py-0.5 font-mono text-[11px] text-text-secondary">provider/model</code> form.</p>
+			<div class="mt-4">
+				<label for="add-model-input" class="mb-1 block text-xs font-semibold text-text-secondary">Model id</label>
+				<input
+					id="add-model-input"
+					bind:this={addModelInput}
+					type="text"
+					autocomplete="off"
+					placeholder="e.g., openai/gpt-4o-mini"
+					class="form-control w-full text-sm {addModelError ? 'border-score-fail' : ''}"
+					value={addModelValue}
+					oninput={(e) => { addModelValue = e.currentTarget.value; addModelError = ''; }}
+					onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmAddModel(); } }}
+				/>
+				{#if addModelError}
+					<p class="mt-1 text-xs text-score-fail">{addModelError}</p>
+				{:else}
+					<p class="mt-1 text-xs text-text-muted">Examples: <code class="font-mono">openai/gpt-4o-mini</code>, <code class="font-mono">azure/my-deployment</code>, <code class="font-mono">anthropic/claude-3.5-sonnet</code>.</p>
+				{/if}
+			</div>
+			<div class="mt-5 flex items-center justify-end gap-2">
+				<button class="btn" onclick={closeAddModel}>Cancel</button>
+				<button class="btn btn-primary" onclick={confirmAddModel} disabled={!addModelValue.trim()}>Add model</button>
 			</div>
 		</div>
 	</div>
