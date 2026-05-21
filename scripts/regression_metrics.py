@@ -133,8 +133,19 @@ def _row_dim(row: dict[str, Any], name: str) -> bool | None:
 def _policy_behaviors(policy: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(policy, dict):
         return []
-    behaviors = policy.get("behaviors")
+    behaviors = policy.get("behavior_categories") or policy.get("behaviors")
     return list(behaviors) if isinstance(behaviors, list) else []
+
+
+def _row_behavior(row: dict[str, Any]) -> str:
+    behavior = row_behavior(row)
+    if behavior:
+        return behavior
+    factors = row.get("factors")
+    if isinstance(factors, dict):
+        value = factors.get("behavior")
+        return str(value) if value else ""
+    return ""
 
 
 # ── Per-test-case binary metrics ────────────────────────────────────────────────
@@ -217,7 +228,7 @@ def construct_coverage(
         return MetricResult("construct_coverage", 0.0, "dataset", detail={"reason": "empty_policy"})
     declared = {str(b.get("name") or "") for b in behaviors if b.get("name")}
     declared.discard("")
-    seen = {row_behavior(r) for r in rows}
+    seen = {_row_behavior(r) for r in rows}
     seen.discard("")
     covered = declared & seen
     value = len(covered) / len(declared) if declared else 0.0
@@ -255,7 +266,7 @@ def separation_strength(
         flag = _row_dim(row, "policy_violation")
         if flag is None:
             continue
-        bname = row_behavior(row)
+        bname = _row_behavior(row)
         if bname not in perm_by_name:
             continue
         if perm_by_name[bname]:
@@ -306,7 +317,7 @@ def failure_variety(rows: list[dict[str, Any]]) -> MetricResult:
         if infer_judge_status(row) != "ok":
             continue
         if _row_dim(row, "policy_violation") is True:
-            bname = row_behavior(row)
+            bname = _row_behavior(row)
             if bname:
                 triggered.add(bname)
     return MetricResult(
@@ -334,7 +345,7 @@ def item_saturation(rows: list[dict[str, Any]]) -> MetricResult:
     sigs: set[tuple[str, str]] = set()
     n = 0
     for row in rows:
-        bname = row_behavior(row)
+        bname = _row_behavior(row)
         if not bname:
             continue
         n += 1
