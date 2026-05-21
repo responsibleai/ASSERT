@@ -1035,7 +1035,7 @@
 											{@render modelSelect('qs-model', promptTestCasesConfig.model, (v) => (promptTestCasesConfig = { ...promptTestCasesConfig, model: v }))}
 										</div>
 										<div>
-											<label for="qs-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
+											<label for="qs-budget" class="mb-0.5 block text-[10px] text-text-muted">Test set size</label>
 											<input id="qs-budget" type="number" step="10" min="1" class="form-control w-full text-sm" value={promptTestCasesConfig.budget} oninput={(e) => { promptTestCasesConfig = { ...promptTestCasesConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
 										</div>
 										<div>
@@ -1211,7 +1211,7 @@
 												{@render modelSelect('as-model', scenarioTestCasesConfig.model, (v) => (scenarioTestCasesConfig = { ...scenarioTestCasesConfig, model: v }))}
 											</div>
 											<div>
-												<label for="as-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
+												<label for="as-budget" class="mb-0.5 block text-[10px] text-text-muted">Test set size</label>
 												<input id="as-budget" type="number" min="1" class="form-control w-full text-sm" value={scenarioTestCasesConfig.budget} oninput={(e) => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 											<div>
