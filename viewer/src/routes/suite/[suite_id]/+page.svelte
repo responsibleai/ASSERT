@@ -31,6 +31,7 @@
 	let heavyData = $state<SuiteHeavyData | null>(null);
 	let heavyError = $state<string | null>(null);
 	let heavyPending = $derived(heavyData === null && heavyError === null);
+	let showSkeleton = $state(false);
 
 	$effect(() => {
 		const promise = data.streamed?.heavy;
@@ -38,6 +39,12 @@
 		let cancelled = false;
 		heavyData = null;
 		heavyError = null;
+		showSkeleton = false;
+		const skeletonTimer = setTimeout(() => {
+			if (!cancelled && heavyData === null && heavyError === null) {
+				showSkeleton = true;
+			}
+		}, 180);
 		promise.then(
 			(result) => {
 				if (!cancelled) heavyData = result;
@@ -48,6 +55,7 @@
 		);
 		return () => {
 			cancelled = true;
+			clearTimeout(skeletonTimer);
 		};
 	});
 
@@ -400,9 +408,9 @@
 				</span>
 				{#if selectedCompareRuns.size > 0}<button class="btn btn-invisible btn-small" onclick={() => selectedCompareRuns = new Set()}>Clear</button>{/if}
 				<span class="text-xs text-text-muted">
-					{#if heavyPending}
+					{#if showSkeleton}
 						<span class="inline-block h-3 w-12 animate-pulse rounded bg-surface-2 align-middle"></span>
-					{:else}
+					{:else if heavyData}
 						{allRuns.length} runs
 					{/if}
 				</span>
@@ -411,38 +419,22 @@
 		<p class="mt-1 text-sm leading-5 text-text-muted">View all evaluation runs for this policy-defined behavior. Select up to {MAX_COMPARE_RUNS} runs, then click Compare.</p>
 	</div>
 
-	{#if heavyPending}
-		<div class="overflow-hidden rounded-lg border border-border" transition:fade={{ duration: 120 }}>
-			<div class="border-b border-border bg-surface px-3 py-2">
-				<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
-			</div>
-			{#each Array(3) as _, idx}
-				<div class="flex items-center gap-3 px-3 py-2.5 {idx > 0 ? 'border-t border-border/50' : ''}">
-					<div class="h-3 w-3 animate-pulse rounded bg-surface-2"></div>
-					<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
-					<div class="h-3 w-24 animate-pulse rounded bg-surface-2"></div>
-					<div class="h-3 w-20 animate-pulse rounded bg-surface-2"></div>
-					<div class="ml-auto h-3 w-12 animate-pulse rounded bg-surface-2"></div>
-					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
-					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
-				</div>
-			{/each}
-		</div>
-	{:else if heavyError}
-		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center" transition:fade={{ duration: 120 }}>
+	{#if heavyError}
+		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center">
 			<p class="text-sm text-score-fail">Failed to load run details: {heavyError}</p>
 		</div>
-	{:else if allRuns.length === 0}
-		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center" transition:fade={{ duration: 120 }}>
-			<p class="text-sm text-text-secondary">No evaluation results yet.</p>
-		</div>
-	{:else}
-		<div class="overflow-hidden rounded-lg border border-border" transition:fade={{ duration: 120 }}>
-			<table class="w-full text-left text-sm">
-				<thead>
-					<tr class="border-b border-border bg-surface">
-						<th class="w-8 px-3 py-2 text-xs font-medium text-text-muted"></th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run</th>
+	{:else if heavyData}
+		{#if allRuns.length === 0}
+			<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center">
+				<p class="text-sm text-text-secondary">No evaluation results yet.</p>
+			</div>
+		{:else}
+			<div class="overflow-hidden rounded-lg border border-border">
+				<table class="w-full text-left text-sm">
+					<thead>
+						<tr class="border-b border-border bg-surface">
+							<th class="w-8 px-3 py-2 text-xs font-medium text-text-muted"></th>
+							<th class="px-3 py-2 text-xs font-medium text-text-muted">Run</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">
 							<span class="inline-flex items-center gap-1">Type
 								<InfoTooltip direction="se" label="Direct prompts are single-turn requests. Multi-turn scenarios simulate longer user conversations against the target." />
@@ -563,6 +555,24 @@
 				</tbody>
 			</table>
 		</div>
+		{/if}
+	{:else if showSkeleton}
+		<div class="overflow-hidden rounded-lg border border-border" out:fade={{ duration: 100 }}>
+			<div class="border-b border-border bg-surface px-3 py-2">
+				<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
+			</div>
+			{#each Array(3) as _, idx}
+				<div class="flex items-center gap-3 px-3 py-2.5 {idx > 0 ? 'border-t border-border/50' : ''}">
+					<div class="h-3 w-3 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-24 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-20 animate-pulse rounded bg-surface-2"></div>
+					<div class="ml-auto h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+				</div>
+			{/each}
+		</div>
 	{/if}
 </div>
 
@@ -641,9 +651,9 @@
 						<span class="text-left text-xs text-text-muted">{pCount}</span>
 						<span class="text-left text-xs text-text-muted">{sCount}</span>
 						<span class="text-left text-xs text-text-muted">
-							{#if heavyPending}
+							{#if showSkeleton}
 								<span class="inline-block h-3 w-6 animate-pulse rounded bg-surface-2 align-middle"></span>
-							{:else}
+							{:else if heavyData}
 								{evalCountsByBehavior.get(behavior.name) ?? 0}
 							{/if}
 						</span>
@@ -748,16 +758,20 @@
 							<h4 class="text-xs font-medium text-text">Evaluation results</h4>
 							<span class="ml-auto text-xs text-text-muted">{behaviorEvalSamples.length} result{behaviorEvalSamples.length !== 1 ? 's' : ''}</span>
 						</div>
-						{#if heavyPending}
-							<div class="space-y-2">
-								{#each Array(2) as _}
-									<div class="rounded-lg border border-border bg-bg p-3">
-										<div class="h-3 w-16 animate-pulse rounded bg-surface-2"></div>
-										<div class="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2"></div>
-										<div class="mt-1 h-3 w-1/2 animate-pulse rounded bg-surface-2"></div>
-									</div>
-								{/each}
-							</div>
+						{#if heavyError}
+							<div class="rounded-lg border border-border bg-bg p-3"><p class="text-sm text-score-fail">{heavyError}</p></div>
+						{:else if !heavyData}
+							{#if showSkeleton}
+								<div class="space-y-2" out:fade={{ duration: 100 }}>
+									{#each Array(2) as _}
+										<div class="rounded-lg border border-border bg-bg p-3">
+											<div class="h-3 w-16 animate-pulse rounded bg-surface-2"></div>
+											<div class="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2"></div>
+											<div class="mt-1 h-3 w-1/2 animate-pulse rounded bg-surface-2"></div>
+										</div>
+									{/each}
+								</div>
+							{/if}
 						{:else if behaviorEvalError}
 							<div class="py-6 text-center"><p class="text-sm text-score-fail">{behaviorEvalError}</p></div>
 						{:else if behaviorEvalSamples.length === 0}
