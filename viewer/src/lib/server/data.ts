@@ -79,7 +79,7 @@ interface AuditMetricView {
 	overrefusalRate: number;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	judge_model: string;
 }
 
@@ -699,7 +699,7 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		overrefusalRate: 0,
 		dimensions: {},
 		target: '',
-		auditor_model: '',
+		tester_model: '',
 		judge_model: ''
 	};
 }
@@ -732,7 +732,7 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		overrefusalRate: metrics.overrefusal_rate,
 		dimensions: metrics.dimensions,
 		target: metrics.target,
-		auditor_model: metrics.auditor_model,
+		tester_model: metrics.tester_model,
 		judge_model: metrics.judge_model
 	};
 }

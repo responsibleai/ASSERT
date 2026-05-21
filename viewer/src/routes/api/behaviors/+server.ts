@@ -7,9 +7,9 @@ export const GET: RequestHandler = async () => {
 	const seen = new Map<string, { name: string; definition: string; suiteId: string }>();
 
 	for (const suite of suites) {
-		const policy = loadPolicy(suite.suite_id);
-		if (!policy?.behaviors) continue;
-		for (const b of policy.behaviors) {
+		const taxonomy = loadPolicy(suite.suite_id);
+		if (!taxonomy?.behavior_categories) continue;
+		for (const b of taxonomy.behavior_categories) {
 			if (b.name && !seen.has(b.name)) {
 				seen.set(b.name, {
 					name: b.name,

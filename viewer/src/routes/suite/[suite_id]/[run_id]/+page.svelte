@@ -28,8 +28,8 @@
 		getRequiredBaseMetricNames(data.dimensionDefs as Record<string, DimensionDef>)
 	);
 
-	type RolloutPreviewItem = {
-		seed_id: string;
+	type InferencePreviewItem = {
+		test_case_id: string;
 		behavior: string;
 		turns_count: number;
 		stop_reason: string;
@@ -49,7 +49,7 @@
 	// --- Tab state ---
 	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
 	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
-	let hasAuditPreview = $derived((data.rolloutPreviewRows?.length ?? 0) > 0);
+	let hasAuditPreview = $derived((data.inferencePreviewRows?.length ?? 0) > 0);
 	let hasAuditContent = $derived(data.hasAuditContent ?? (hasAuditEval || hasAuditPreview));
 	let activeTab = $derived((data.activeTab ?? (page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts')) as 'prompts' | 'audit');
 
@@ -182,7 +182,7 @@
 	// Lookup map: behavior name -> permissible boolean (from policy)
 	let behaviorPermissibleMap = $derived.by(() => {
 		const map: Record<string, boolean> = {};
-		for (const b of data.policy?.behaviors ?? []) {
+		for (const b of data.taxonomy?.behavior_categories ?? []) {
 			if (b?.name) map[b.name] = !!b.permissible;
 		}
 		return map;
@@ -314,16 +314,16 @@
 			textIncludesQuery(sample.prompt, query) ||
 			textIncludesQuery(sample.response, query) ||
 			textIncludesQuery(sample.behavior, query) ||
-			textIncludesQuery(sample.seed_id, query) ||
-			textIncludesQuery(sample.seed_id ? data.promptSeedTitleMap?.[sample.seed_id] : undefined, query)
+			textIncludesQuery(sample.test_case_id, query) ||
+			textIncludesQuery(sample.test_case_id ? data.promptSeedTitleMap?.[sample.test_case_id] : undefined, query)
 		);
 	}
 
 	function auditScoreMatchesSearch(score: AuditScore, query: string): boolean {
-		const seedInfo = data.scenarioSeedMap?.[score.seed_id];
+		const seedInfo = data.scenarioSeedMap?.[score.test_case_id];
 		return (
 			textIncludesQuery(score.behavior, query) ||
-			textIncludesQuery(score.seed_id, query) ||
+			textIncludesQuery(score.test_case_id, query) ||
 			textIncludesQuery(seedInfo?.title, query) ||
 			textIncludesQuery(seedInfo?.description, query)
 		);
@@ -334,11 +334,11 @@
 	}
 
 	function isActivePromptSample(sample: JudgedSample): boolean {
-		return Boolean(sample.seed_id && drawerSample?.seed_id === sample.seed_id);
+		return Boolean(sample.test_case_id && drawerSample?.test_case_id === sample.test_case_id);
 	}
 
 	function isActiveAuditScore(score: AuditScore): boolean {
-		return drawerAuditScore?.seed_id === score.seed_id;
+		return drawerAuditScore?.test_case_id === score.test_case_id;
 	}
 
 	let nextPromptDrawerLoadToken = 0;
@@ -357,7 +357,7 @@
 	}
 
 	function buildLocalPromptDrawerItem(sample: JudgedSample): ViewerResultItem | null {
-		if (!sample.seed_id) return null;
+		if (!sample.test_case_id) return null;
 		if (!Array.isArray(sample.messages) || sample.messages.length === 0) return null;
 		return normalizePromptResult(sample);
 	}
@@ -369,24 +369,24 @@
 	}
 
 	async function openSampleModal(sample: JudgedSample) {
-		if (!sample.seed_id) {
+		if (!sample.test_case_id) {
 			promptDrawerError = 'Prompt is missing a seed id.';
 			return;
 		}
 		const token = bumpPromptDrawerLoadToken();
 		drawerSample = sample;
-		promptNavIdx = promptNavList.findIndex((entry) => entry.seed_id === sample.seed_id);
+		promptNavIdx = promptNavList.findIndex((entry) => entry.test_case_id === sample.test_case_id);
 		drawerAuditScore = null;
 		drawerPreviewSeedId = null;
 		auditDrawerItem = null;
 		previewDrawerItem = null;
 		promptDrawerItem = null;
-		promptDrawerLoadingSeedId = sample.seed_id;
+		promptDrawerLoadingSeedId = sample.test_case_id;
 		promptDrawerError = null;
 
 		const localItem = buildLocalPromptDrawerItem(sample);
 		if (localItem) {
-			const cacheKey = promptDrawerCacheKey(sample.seed_id);
+			const cacheKey = promptDrawerCacheKey(sample.test_case_id);
 			promptDrawerCache = { ...promptDrawerCache, [cacheKey]: localItem };
 			promptDrawerItem = localItem;
 			promptDrawerLoadingSeedId = null;
@@ -394,11 +394,11 @@
 		}
 
 		try {
-			const item = await fetchPromptDrawerItem(sample.seed_id);
-			if (promptDrawerLoadToken !== token || drawerSample?.seed_id !== sample.seed_id) return;
+			const item = await fetchPromptDrawerItem(sample.test_case_id);
+			if (promptDrawerLoadToken !== token || drawerSample?.test_case_id !== sample.test_case_id) return;
 			promptDrawerItem = item;
 		} catch (error) {
-			if (promptDrawerLoadToken !== token || drawerSample?.seed_id !== sample.seed_id) return;
+			if (promptDrawerLoadToken !== token || drawerSample?.test_case_id !== sample.test_case_id) return;
 			promptDrawerError = error instanceof Error ? error.message : 'Failed to load prompt';
 		} finally {
 			if (promptDrawerLoadToken === token) promptDrawerLoadingSeedId = null;
@@ -421,7 +421,7 @@
 			const items: JudgedSample[] = [];
 			for (const g of promptGroups) {
 				for (const s of g.items) {
-					const key = s.seed_id ?? s.prompt;
+					const key = s.test_case_id ?? s.prompt;
 					if (seen.has(key)) continue;
 					seen.add(key);
 					items.push(s);
@@ -448,16 +448,16 @@
 	async function openDrawer(score: AuditScore) {
 		const token = bumpScenarioDrawerLoadToken();
 		drawerAuditScore = score;
-		auditNavIdx = auditNavList.findIndex((entry) => entry.seed_id === score.seed_id);
+		auditNavIdx = auditNavList.findIndex((entry) => entry.test_case_id === score.test_case_id);
 		drawerPreviewSeedId = null;
 		previewDrawerItem = null;
 		auditDrawerItem = null;
-		scenarioDrawerLoadingSeedId = score.seed_id;
+		scenarioDrawerLoadingSeedId = score.test_case_id;
 		scenarioDrawerError = null;
 
-		const localItem = buildLocalScenarioDrawerItem(score.seed_id);
+		const localItem = buildLocalScenarioDrawerItem(score.test_case_id);
 		if (localItem) {
-			const cacheKey = scenarioDrawerCacheKey(score.seed_id);
+			const cacheKey = scenarioDrawerCacheKey(score.test_case_id);
 			scenarioDrawerCache = { ...scenarioDrawerCache, [cacheKey]: localItem };
 			auditDrawerItem = localItem;
 			scenarioDrawerLoadingSeedId = null;
@@ -465,11 +465,11 @@
 		}
 
 		try {
-			const item = await fetchScenarioDrawerItem(score.seed_id);
-			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.seed_id !== score.seed_id) return;
+			const item = await fetchScenarioDrawerItem(score.test_case_id);
+			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.test_case_id !== score.test_case_id) return;
 			auditDrawerItem = item;
 		} catch (error) {
-			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.seed_id !== score.seed_id) return;
+			if (scenarioDrawerLoadToken !== token || drawerAuditScore?.test_case_id !== score.test_case_id) return;
 			scenarioDrawerError = error instanceof Error ? error.message : 'Failed to load scenario';
 		} finally {
 			if (scenarioDrawerLoadToken === token) scenarioDrawerLoadingSeedId = null;
@@ -485,19 +485,19 @@
 		scenarioDrawerError = null;
 	}
 
-	async function openPreviewDrawer(item: RolloutPreviewItem) {
+	async function openPreviewDrawer(item: InferencePreviewItem) {
 		const token = bumpScenarioDrawerLoadToken();
-		drawerPreviewSeedId = item.seed_id;
-		previewNavIdx = previewNavList.findIndex((entry) => entry.seed_id === item.seed_id);
+		drawerPreviewSeedId = item.test_case_id;
+		previewNavIdx = previewNavList.findIndex((entry) => entry.test_case_id === item.test_case_id);
 		drawerAuditScore = null;
 		auditDrawerItem = null;
 		previewDrawerItem = null;
-		scenarioDrawerLoadingSeedId = item.seed_id;
+		scenarioDrawerLoadingSeedId = item.test_case_id;
 		scenarioDrawerError = null;
 
-		const localItem = buildLocalScenarioDrawerItem(item.seed_id);
+		const localItem = buildLocalScenarioDrawerItem(item.test_case_id);
 		if (localItem) {
-			const cacheKey = scenarioDrawerCacheKey(item.seed_id);
+			const cacheKey = scenarioDrawerCacheKey(item.test_case_id);
 			scenarioDrawerCache = { ...scenarioDrawerCache, [cacheKey]: localItem };
 			previewDrawerItem = localItem;
 			scenarioDrawerLoadingSeedId = null;
@@ -505,11 +505,11 @@
 		}
 
 		try {
-			const drawerItem = await fetchScenarioDrawerItem(item.seed_id);
-			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.seed_id) return;
+			const drawerItem = await fetchScenarioDrawerItem(item.test_case_id);
+			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.test_case_id) return;
 			previewDrawerItem = drawerItem;
 		} catch (error) {
-			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.seed_id) return;
+			if (scenarioDrawerLoadToken !== token || drawerPreviewSeedId !== item.test_case_id) return;
 			scenarioDrawerError = error instanceof Error ? error.message : 'Failed to load scenario';
 		} finally {
 			if (scenarioDrawerLoadToken === token) scenarioDrawerLoadingSeedId = null;
@@ -544,8 +544,8 @@
 			const items: AuditScore[] = [];
 			for (const g of auditGroups) {
 				for (const s of g.items) {
-					if (seen.has(s.seed_id)) continue;
-					seen.add(s.seed_id);
+					if (seen.has(s.test_case_id)) continue;
+					seen.add(s.test_case_id);
 					items.push(s);
 				}
 			}
@@ -554,7 +554,7 @@
 		return flatAuditScores;
 	});
 
-	let previewNavList = $derived((data.rolloutPreviewRows ?? []) as RolloutPreviewItem[]);
+	let previewNavList = $derived((data.inferencePreviewRows ?? []) as InferencePreviewItem[]);
 	let auditNavIdx = $state(-1);
 	let previewNavIdx = $state(-1);
 	let currentRunKey = $derived(`${data.suite_id}:${data.run_id}`);
@@ -724,7 +724,7 @@
 	<nav aria-label="Breadcrumb">
 		<ol class="Breadcrumb">
 			<li class="Breadcrumb-item"><a href="/">Evaluation suites</a></li>
-			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.policy?.concept?.name ?? data.suite_id}</a></li>
+			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.taxonomy?.behavior?.name ?? data.suite_id}</a></li>
 			<li class="Breadcrumb-item" aria-current="page">{data.run_id}</li>
 		</ol>
 	</nav>
@@ -836,7 +836,7 @@
 					>
 						<span class="SegmentedControl-content">
 							<span>Scenarios</span>
-							<span class="Counter">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.rolloutPreviewRows.length}</span>
+							<span class="Counter">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span>
 						</span>
 					</button>
 				</div>
@@ -1047,7 +1047,7 @@
 											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActivePromptSample(sample) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
 											onclick={() => void openSampleModal(sample)}
 										>
-											<span class="flex-1 truncate text-sm text-text-secondary">{(sample.seed_id && data.promptSeedTitleMap?.[sample.seed_id]) || sample.prompt}</span>
+											<span class="flex-1 truncate text-sm text-text-secondary">{(sample.test_case_id && data.promptSeedTitleMap?.[sample.test_case_id]) || sample.prompt}</span>
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(sample, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
@@ -1109,7 +1109,7 @@
 							style="grid-template-columns: minmax(0,1fr) minmax(0,2fr) minmax(0,2fr) 16px;"
 							onclick={() => void openSampleModal(sample)}
 						>
-							<span class="truncate text-sm text-text-secondary">{(sample.seed_id && data.promptSeedTitleMap?.[sample.seed_id]) || sample.prompt}</span>
+							<span class="truncate text-sm text-text-secondary">{(sample.test_case_id && data.promptSeedTitleMap?.[sample.test_case_id]) || sample.prompt}</span>
 							<span class="truncate text-sm text-text-muted">{sample.response ?? ''}</span>
 							<div class="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
 								{#each metricNames as m}
@@ -1321,13 +1321,13 @@
 						{#if expandedAuditBehavior === group.key}
 							<div class="border-t border-border">
 								{#each group.items as auditScore, sIdx}
-									{@const seedInfo = data.scenarioSeedMap[auditScore.seed_id]}
+									{@const seedInfo = data.scenarioSeedMap[auditScore.test_case_id]}
 									<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 										<button
 											class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActiveAuditScore(auditScore) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
 											onclick={() => void openDrawer(auditScore)}
 										>
-											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.seed_id}</span>
+											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.test_case_id}</span>
 											<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
 											<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
 											<div class="flex items-center gap-1.5 flex-shrink-0">
@@ -1379,13 +1379,13 @@
 			<!-- Flat list sorted by metric -->
 			<div class="overflow-hidden rounded-lg border border-border">
 				{#each flatAuditScores as auditScore, sIdx}
-					{@const seedInfo = data.scenarioSeedMap[auditScore.seed_id]}
+					{@const seedInfo = data.scenarioSeedMap[auditScore.test_case_id]}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
 							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActiveAuditScore(auditScore) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
 							onclick={() => void openDrawer(auditScore)}
 						>
-							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.seed_id}</span>
+							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.test_case_id}</span>
 							<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
 							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
 							<div class="flex items-center gap-1.5 flex-shrink-0">
@@ -1431,7 +1431,7 @@
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
 			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Rollout Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.rolloutPreviewRows.length} / {data.rolloutPreviewTotal} conversations are available. Judgments will appear after rollout completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after rollout completes.
 			</p>
 		</div>
 
@@ -1439,19 +1439,19 @@
 			<div class="mb-4 flex items-center gap-3">
 				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.rolloutPreviewRows.length} conversations</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
-				{#each data.rolloutPreviewRows as preview, sIdx}
-					{@const seedInfo = data.scenarioSeedMap[preview.seed_id]}
+				{#each data.inferencePreviewRows as preview, sIdx}
+					{@const seedInfo = data.scenarioSeedMap[preview.test_case_id]}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
-							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerPreviewSeedId === preview.seed_id ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {drawerPreviewSeedId === preview.test_case_id ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
 							onclick={() => void openPreviewDrawer(preview)}
 						>
 							<div class="min-w-0 flex-1">
-								<div class="truncate text-sm text-text-secondary">{seedInfo?.title ?? preview.seed_id}</div>
+								<div class="truncate text-sm text-text-secondary">{seedInfo?.title ?? preview.test_case_id}</div>
 								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
 							</div>
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>

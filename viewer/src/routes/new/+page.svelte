@@ -33,7 +33,7 @@
 	];
 
 	interface KnownBehavior { name: string; definition: string; suiteId: string }
-	interface KnownSuite { suite_id: string; risk_name: string; behavior_count: number }
+	interface KnownSuite { suite_id: string; behavior_name: string; behavior_category_count: number }
 	interface JudgeDimension { name: string; description: string; rubric: string }
 	interface EvalFactor { name: string; levels: string[] }
 
@@ -178,7 +178,7 @@
 		const q = suiteSearch.trim().toLowerCase();
 		if (!q) return knownSuites;
 		return knownSuites.filter(
-			(s) => s.suite_id.toLowerCase().includes(q) || s.risk_name.toLowerCase().includes(q)
+			(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
 		);
 	});
 
@@ -219,7 +219,7 @@
 	);
 	let summaryTaxonomy = $derived(
 		step2Source === 'existing' && selectedSuite
-			? `Copied from ${selectedSuite.risk_name}`
+			? `Copied from ${selectedSuite.behavior_name}`
 			: step2Source === 'new'
 				? 'Taxonomy'
 				: '—'
@@ -738,10 +738,10 @@
 											<ul class="ActionList" role="listbox">
 												{#each filteredSuites as s}
 													<li class="ActionList-item" role="option" aria-selected="false">
-														<button class="ActionList-content w-full text-left" onclick={() => { selectedSuite = s; suiteSearch = s.risk_name; showSuiteDropdown = false; markDirty(); }}>
+														<button class="ActionList-content w-full text-left" onclick={() => { selectedSuite = s; suiteSearch = s.behavior_name; showSuiteDropdown = false; markDirty(); }}>
 															<span class="block">
-																<span class="text-sm font-medium text-text">{s.risk_name}</span>
-																<span class="mt-0.5 block text-xs text-text-muted">{s.suite_id} · {s.behavior_count} categories</span>
+																<span class="text-sm font-medium text-text">{s.behavior_name}</span>
+																<span class="mt-0.5 block text-xs text-text-muted">{s.suite_id} · {s.behavior_category_count} categories</span>
 															</span>
 														</button>
 													</li>
@@ -754,10 +754,10 @@
 							{#if selectedSuite}
 								<div class="rounded-md border border-border bg-bg p-4">
 									<div class="mb-2 flex items-center justify-between">
-										<span class="text-sm font-semibold text-text">{selectedSuite.risk_name}</span>
+										<span class="text-sm font-semibold text-text">{selectedSuite.behavior_name}</span>
 										<button class="text-xs text-interactive hover:underline" onclick={() => { selectedSuite = null; suiteSearch = ''; }}>Clear</button>
 									</div>
-									<p class="text-xs text-text-muted">{selectedSuite.suite_id} · {selectedSuite.behavior_count} behavior categories</p>
+									<p class="text-xs text-text-muted">{selectedSuite.suite_id} · {selectedSuite.behavior_category_count} behavior categories</p>
 								</div>
 							{/if}
 							{#if showSuiteDropdown}

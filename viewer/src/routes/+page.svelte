@@ -22,14 +22,14 @@
 		if (search) {
 			const q = search.toLowerCase();
 			items = items.filter(
-				(s) => s.suite_id.toLowerCase().includes(q) || s.concept_name.toLowerCase().includes(q)
+				(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
 			);
 		}
 		if (statusFilter !== 'all') items = items.filter((s) => s.status === statusFilter);
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
-			if (sortBy === 'name') return a.concept_name.localeCompare(b.concept_name);
+			if (sortBy === 'name') return a.behavior_name.localeCompare(b.behavior_name);
 			if (sortBy === 'runs') return b.run_count - a.run_count;
 			return 0;
 		});
@@ -200,16 +200,16 @@
 					</span>
 				</div>
 				<a href="/suite/{suite.suite_id}" class="card-heading mt-1 block text-base font-semibold text-text no-underline">
-					{suite.concept_name}
+					{suite.behavior_name}
 				</a>
 				<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
 					<a href="/suite/{suite.suite_id}?section=policy" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Behavior categories</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_count}</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_category_count}</div>
 					</a>
 					<a href="/suite/{suite.suite_id}?section=seeds" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Evaluation test set</div>
-						<div class="mt-1 text-sm text-text-secondary">{suite.seed_count + suite.scenario_seed_count}</div>
+						<div class="mt-1 text-sm text-text-secondary">{suite.prompt_test_case_count + suite.scenario_test_case_count}</div>
 					</a>
 					<a href="/suite/{suite.suite_id}?section=results" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Evaluation results</div>
@@ -243,12 +243,12 @@
 					{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="px-4 py-2.5 align-middle">
-							<a href="/suite/{suite.suite_id}" class="card-heading mt-1.5 block text-base font-semibold text-text no-underline hover:text-interactive hover:underline">{suite.concept_name}</a>
+							<a href="/suite/{suite.suite_id}" class="card-heading mt-1.5 block text-base font-semibold text-text no-underline hover:text-interactive hover:underline">{suite.behavior_name}</a>
 							<p class="truncate font-mono text-[10px] text-text-muted" style="margin:0 0 6px;">{suite.suite_id}</p>
 						</td>
 						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.created_at ? new Date(suite.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</td>
-						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.behavior_count}</td>
-						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.seed_count + suite.scenario_seed_count}</td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.behavior_category_count}</td>
+						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.prompt_test_case_count + suite.scenario_test_case_count}</td>
 						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.run_count}</td>
 						<td class="px-4 py-2.5 align-middle">
 							<span class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}"><span>{sc.icon}</span> {sc.label}</span>

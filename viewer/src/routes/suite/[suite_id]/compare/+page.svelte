@@ -133,7 +133,7 @@ function capitalize(s: string): string {
 	<nav aria-label="Breadcrumb">
 		<ol class="Breadcrumb">
 			<li class="Breadcrumb-item"><a href="/">Evaluation suites</a></li>
-			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.policy?.concept?.name ?? data.suite_id}</a></li>
+			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.taxonomy?.behavior?.name ?? data.suite_id}</a></li>
 			<li class="Breadcrumb-item" aria-current="page">Compare runs</li>
 		</ol>
 	</nav>
@@ -142,7 +142,7 @@ function capitalize(s: string): string {
 	<div class="mt-5">
 		<div class="text-[12px] font-medium text-text-muted">Comparison</div>
 		<h1 class="text-2xl font-semibold leading-tight text-text" style="margin-top:2px;">
-			Comparing {data.runs.length} runs on {data.policy?.concept?.name ?? data.suite_id}
+			Comparing {data.runs.length} runs on {data.taxonomy?.behavior?.name ?? data.suite_id}
 		</h1>
 
 		<div class="mt-4">

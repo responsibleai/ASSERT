@@ -786,9 +786,9 @@
 				{:else if judgeStatus(item) === 'unjudged'}
 					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
 				{/if}
-				{#if item.factors}
+				{#if item.dimensions}
 					<span class="flex flex-wrap items-center gap-1.5">
-						{#each Object.entries(item.factors) as [name, value]}
+						{#each Object.entries(item.dimensions) as [name, value]}
 							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
 								{formatFactorLabel(name)}: {value}
 							</span>

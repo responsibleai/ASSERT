@@ -32,12 +32,12 @@
 	);
 	let metricNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
-	let sortedBehaviors = $derived(data.policy?.behaviors ?? []);
+	let sortedBehaviors = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
 	let allRuns = $derived(mergeRunLists(data.runs, data.auditRuns));
-	let conceptName = $derived(data.policy?.concept?.name ?? data.policy?.risk?.name ?? data.suite_id);
-	let conceptDef = $derived(data.policy?.concept?.definition ?? data.policy?.risk?.definition ?? '');
+	let conceptName = $derived(data.taxonomy?.behavior?.name ?? data.taxonomy?.risk?.name ?? data.suite_id);
+	let conceptDef = $derived(data.taxonomy?.behavior?.definition ?? data.taxonomy?.risk?.definition ?? '');
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
 	let systematizationMode = $derived(systematizationModeFor(data.systematization));
 	let hasSystematization = $derived(Boolean(data.systematization));
@@ -52,7 +52,7 @@
 
 	let visibleBehaviors = $derived.by(() => {
 		const q = behaviorSearch.trim().toLowerCase();
-		let items = data.policy?.behaviors ?? [];
+		let items = data.taxonomy?.behavior_categories ?? [];
 		if (q) {
 			items = items.filter((behavior) => {
 				const name = (behavior.name ?? '').toLowerCase();
@@ -245,16 +245,16 @@
 
 	async function openEvalDrawer(entry: BehaviorEvalEntry, idx: number) {
 		const { kind, sample } = entry;
-		if (!behaviorEvalRunId || !sample.seed_id) return;
+		if (!behaviorEvalRunId || !sample.test_case_id) return;
 		drawerNavIdx = idx;
-		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${kind}:${sample.seed_id}`;
+		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${kind}:${sample.test_case_id}`;
 		if (drawerCache[cacheKey]) {
 			drawerItem = drawerCache[cacheKey];
 			return;
 		}
 		drawerLoading = true;
 		try {
-			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/${kind}/${encodeURIComponent(sample.seed_id)}`);
+			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/${kind}/${encodeURIComponent(sample.test_case_id)}`);
 			if (!res.ok) throw new Error('Failed to load result');
 			const item = await res.json();
 			drawerCache = { ...drawerCache, [cacheKey]: item };
