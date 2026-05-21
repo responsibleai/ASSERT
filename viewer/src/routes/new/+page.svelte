@@ -1,16 +1,15 @@
 <script lang="ts">
 	/*
-	 * New evaluation wizard — ported from the legacy React/Next prototype.
+	 * New evaluation wizard.
 	 *
-	 * Status: UI complete. Read-only data hooks wired to /api/behaviors,
-	 * /api/suites, and /api/dimensions. The submit handler is currently a STUB
-	 * that logs the full form payload to the console and routes back to the
-	 * landing page.
-	 *
-	 * TODO(engineer): wire `handleSubmit` to an actual run-creation endpoint
-	 * (e.g. POST /api/runs) that writes a `config.yaml` to disk and triggers
-	 * `p2m run --config <generated.yaml>`. See `payload` shape inside
-	 * `handleSubmit` below for the wizard's collected state.
+	 * Hydrates from /api/behaviors, /api/suites, /api/dimensions, /api/models.
+	 * On submit, POSTs the collected wizard state to /api/runs, which:
+	 *   - validates the payload (returns 400 on errors)
+	 *   - reserves artifacts/results/<suite>/<run>/ atomically
+	 *   - writes eval_config.yaml (single-YAML authoring; behavior description
+	 *     lives inline in behavior.description)
+	 *   - spawns `p2m run --config <generated.yaml>` detached
+	 * On success the wizard navigates to /suite/<suite>/<run>/monitor.
 	 */
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -23,19 +22,28 @@
 		{ id: 3, label: 'Summary & submit' }
 	] as const;
 
-	const MODEL_OPTIONS = [
+	const FALLBACK_MODEL_OPTIONS = [
 		'openai/gpt-5.2',
 		'openai/gpt-4.1',
 		'openai/gpt-4.1-mini',
 		'openai/gpt-4.1-nano',
 		'openai/o3',
 		'openai/o4-mini'
-	];
+	] as const;
+
+	// Populated from /api/models on mount; defaults to the fallback list so the
+	// wizard remains usable on a fresh install with no model env vars configured.
+	let modelOptions = $state<string[]>([...FALLBACK_MODEL_OPTIONS]);
+
+	interface ModelCatalogResponse {
+		models?: { id?: string }[];
+		defaultModel?: string;
+	}
 
 	interface KnownBehavior { name: string; definition: string; suiteId: string }
 	interface KnownSuite { suite_id: string; behavior_name: string; behavior_category_count: number }
 	interface JudgeDimension { name: string; description: string; rubric: string }
-	interface EvalFactor { name: string; levels: string[] }
+	interface EvalDimension { name: string; levels: string[] }
 
 	// ── Catalog data ────────────────────────────────────────────────
 	let knownBehaviors = $state<KnownBehavior[]>([]);
@@ -64,23 +72,23 @@
 
 	// Step 2
 	let step2Source = $state<'new' | 'existing' | null>(null);
-	let querySeedsEnabled = $state(true);
+	let promptTestCasesEnabled = $state(true);
 	let promptEvalEnabled = $state(true);
-	let auditSeedsEnabled = $state(false);
+	let scenarioTestCasesEnabled = $state(false);
 	let scenarioEvalEnabled = $state(false);
-	let taxonomyConfig = $state({ model: 'openai/gpt-5.2', subRisks: 25, temperature: 1, maxTokens: 16000, deepResearchAgent: false });
-	let taxonomyExpanded = $state(true);
-	let factorBasedExpanded = $state(false);
-	let evalFactors = $state<EvalFactor[]>([]);
-	let newFactorName = $state('');
+	let systematizeConfig = $state({ model: 'openai/gpt-5.2', behaviorCategoryCount: 25, temperature: 1, maxTokens: 16000, deepResearchAgent: false });
+	let systematizeExpanded = $state(true);
+	let dimensionBasedExpanded = $state(false);
+	let evalDimensions = $state<EvalDimension[]>([]);
+	let newDimensionName = $state('');
 	let selectedCategories = $state<Set<string>>(new Set());
-	let querySeedsExpanded = $state(true);
+	let promptTestCasesExpanded = $state(true);
 	let promptEvalExpanded = $state(true);
-	let auditSeedsExpanded = $state(false);
+	let scenarioTestCasesExpanded = $state(false);
 	let scenarioEvalExpanded = $state(false);
-	let querySeedsConfig = $state({ model: 'openai/gpt-4.1', budget: 100, temperature: 1, maxTokens: 4000 });
+	let promptTestCasesConfig = $state({ model: 'openai/gpt-4.1', budget: 100, temperature: 1, maxTokens: 4000 });
 	let promptEvalConfig = $state({ targetModel: 'openai/gpt-4.1', judgeModel: 'openai/gpt-5.2' });
-	let auditSeedsConfig = $state({
+	let scenarioTestCasesConfig = $state({
 		modality: 'conversation' as 'conversation' | 'agentic',
 		model: 'openai/gpt-4.1',
 		budget: 5,
@@ -100,7 +108,7 @@
 	let newVariationDim = $state({ name: '', description: '' });
 	let scenarioEvalConfig = $state({
 		target: { model: 'openai/gpt-4.1', temperature: 0.2, maxTokens: 8000 },
-		auditor: { model: 'openai/gpt-4.1', temperature: 0.2, maxTokens: 8000 },
+		tester: { model: 'openai/gpt-4.1', temperature: 0.2, maxTokens: 8000 },
 		judge: { model: 'openai/gpt-5.2', temperature: 0, maxTokens: 12000, judgePasses: 1 },
 		maxTurns: 10
 	});
@@ -129,12 +137,26 @@
 	}
 
 	// ── Data loading ────────────────────────────────────────────────
-	onMount(async () => {
+	onMount(() => {
+		void loadCatalogs();
+
+		const handler = (e: BeforeUnloadEvent) => {
+			if (isDirty) {
+				e.preventDefault();
+				e.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', handler);
+		return () => window.removeEventListener('beforeunload', handler);
+	});
+
+	async function loadCatalogs() {
 		try {
-			const [bRes, sRes, dRes] = await Promise.all([
+			const [bRes, sRes, dRes, mRes] = await Promise.all([
 				fetch('/api/behaviors'),
 				fetch('/api/suites'),
-				fetch('/api/dimensions')
+				fetch('/api/dimensions'),
+				fetch('/api/models')
 			]);
 			if (bRes.ok) knownBehaviors = await bRes.json();
 			behaviorsLoading = false;
@@ -150,20 +172,55 @@
 				}
 				judgeDimensions = merged;
 			}
+			if (mRes.ok) {
+				applyModelCatalog((await mRes.json()) as ModelCatalogResponse);
+			}
 		} catch {
 			behaviorsLoading = false;
 			suitesLoading = false;
 		}
+	}
 
-		const handler = (e: BeforeUnloadEvent) => {
-			if (isDirty) {
-				e.preventDefault();
-				e.returnValue = '';
-			}
+	function applyModelCatalog(catalog: ModelCatalogResponse) {
+		const envModels = (catalog.models ?? [])
+			.map((m) => m?.id)
+			.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+		if (envModels.length === 0) return;
+
+		modelOptions = uniqueStrings(envModels);
+		const desired =
+			catalog.defaultModel && modelOptions.includes(catalog.defaultModel)
+				? catalog.defaultModel
+				: modelOptions[0];
+		if (desired && !isDirty) {
+			replaceDefaultModels(desired);
+		}
+	}
+
+	function uniqueStrings(values: string[]): string[] {
+		const seen = new Set<string>();
+		const out: string[] = [];
+		for (const v of values) {
+			const trimmed = v.trim();
+			if (!trimmed || seen.has(trimmed)) continue;
+			seen.add(trimmed);
+			out.push(trimmed);
+		}
+		return out;
+	}
+
+	function replaceDefaultModels(model: string) {
+		systematizeConfig = { ...systematizeConfig, model };
+		promptTestCasesConfig = { ...promptTestCasesConfig, model };
+		promptEvalConfig = { targetModel: model, judgeModel: model };
+		scenarioTestCasesConfig = { ...scenarioTestCasesConfig, model };
+		scenarioEvalConfig = {
+			...scenarioEvalConfig,
+			target: { ...scenarioEvalConfig.target, model },
+			tester: { ...scenarioEvalConfig.tester, model },
+			judge: { ...scenarioEvalConfig.judge, model }
 		};
-		window.addEventListener('beforeunload', handler);
-		return () => window.removeEventListener('beforeunload', handler);
-	});
+	}
 
 	// ── Derived ─────────────────────────────────────────────────────
 	let filteredBehaviors = $derived.by(() => {
@@ -196,7 +253,7 @@
 	let step1Valid = $derived(step1BehaviorValid && step1ContextValid && step1ToolsValid);
 	let step2Valid = $derived.by(() => {
 		if (!step2Source) return false;
-		if (!querySeedsEnabled || !promptEvalEnabled) return false;
+		if (!promptTestCasesEnabled || !promptEvalEnabled) return false;
 		if (step2Source === 'new') return true;
 		return selectedSuite !== null;
 	});
@@ -224,31 +281,31 @@
 				? 'Taxonomy'
 				: '—'
 	);
-	let summaryQueryPipeline = $derived(
-		querySeedsEnabled
-			? `Query seeds → ${querySeedsConfig.model.split('/')[1]}${factorBasedExpanded ? ' (dimension-based)' : ''}`
+	let summaryTestCasesPipeline = $derived(
+		promptTestCasesEnabled
+			? `Query seeds → ${promptTestCasesConfig.model.split('/')[1]}${dimensionBasedExpanded ? ' (dimension-based)' : ''}`
 			: '—'
 	);
-	let summaryAuditPipeline = $derived(
-		auditSeedsEnabled || scenarioEvalEnabled
-			? [auditSeedsEnabled && 'Audit seeds', scenarioEvalEnabled && 'Scenario eval']
+	let summaryScenarioPipeline = $derived(
+		scenarioTestCasesEnabled || scenarioEvalEnabled
+			? [scenarioTestCasesEnabled && 'Audit seeds', scenarioEvalEnabled && 'Scenario eval']
 					.filter(Boolean)
 					.join(' → ') || '—'
 			: '—'
 	);
 
-	let factorCrossProduct = $derived.by(() => {
-		if (!factorBasedExpanded) return null;
-		const categoryCount = selectedCategories.size || taxonomyConfig.subRisks;
+	let dimensionCrossProduct = $derived.by(() => {
+		if (!dimensionBasedExpanded) return null;
+		const categoryCount = selectedCategories.size || systematizeConfig.behaviorCategoryCount;
 		const parts: { name: string; count: number }[] = [
 			{ name: 'behavior categories', count: categoryCount }
 		];
-		for (const f of evalFactors) {
+		for (const f of evalDimensions) {
 			const validLevels = f.levels.filter((l) => l.trim().length > 0);
 			if (validLevels.length > 0) parts.push({ name: f.name, count: validLevels.length });
 		}
 		const combinations = parts.reduce((acc, p) => acc * p.count, 1);
-		const budget = querySeedsConfig.budget;
+		const budget = promptTestCasesConfig.budget;
 		const perCombo = combinations > 0 ? Math.max(1, Math.round(budget / combinations)) : budget;
 		return { parts, combinations, budget, perCombo };
 	});
@@ -271,15 +328,15 @@
 
 	function handleScenarioEvalChange(checked: boolean) {
 		scenarioEvalEnabled = checked;
-		if (checked) auditSeedsEnabled = true;
+		if (checked) scenarioTestCasesEnabled = true;
 		if (!checked) scenarioEvalExpanded = false;
 		markDirty();
 	}
-	function handleAuditSeedsChange(checked: boolean) {
-		auditSeedsEnabled = checked;
+	function handleScenarioTestCasesChange(checked: boolean) {
+		scenarioTestCasesEnabled = checked;
 		if (!checked) {
 			scenarioEvalEnabled = false;
-			auditSeedsExpanded = false;
+			scenarioTestCasesExpanded = false;
 			scenarioEvalExpanded = false;
 		}
 		markDirty();
@@ -301,73 +358,113 @@
 			source: step2Source,
 			...(step2Source === 'existing'
 				? { existingSuiteId: selectedSuite?.suite_id }
-				: { taxonomization: { mode: 'quick', config: taxonomyConfig } }),
-			queryPipeline: {
-				querySeeds: querySeedsEnabled,
-				config: querySeedsConfig,
-				...(factorBasedExpanded
+				: { systematize: { mode: 'quick', config: systematizeConfig } }),
+			testCasesPipeline: {
+				promptTestCases: promptTestCasesEnabled,
+				config: promptTestCasesConfig,
+				...(dimensionBasedExpanded
 					? {
-						factorBased: true,
-						factors: evalFactors
+						dimensionBased: true,
+						dimensions: evalDimensions
 							.map((f) => ({ name: f.name, levels: f.levels.filter((l) => l.trim()) }))
 							.filter((f) => f.levels.length > 0),
 						selectedCategories: [...selectedCategories]
 					}
 					: {})
 			},
-			rolloutPipeline: { promptEval: promptEvalEnabled, config: promptEvalConfig },
-			auditPipeline: {
-				auditSeeds: auditSeedsEnabled,
+			inferencePipeline: { promptEval: promptEvalEnabled, config: promptEvalConfig },
+			scenarioPipeline: {
+				scenarioTestCases: scenarioTestCasesEnabled,
 				scenarioEval: scenarioEvalEnabled,
-				auditSeedsConfig,
+				scenarioTestCasesConfig,
 				scenarioEvalConfig,
 				variationDimensions,
 				judgeDimensions
 			},
 			suiteId: suiteId.trim() || undefined,
-			runId: runId.trim()
+			runId: runId.trim(),
+			toolsMode,
+			...(toolsMode === 'simulated' && simulatedToolsDescription.trim()
+				? { simulatedToolsDescription: simulatedToolsDescription.trim() }
+				: {}),
+			...(toolsMode === 'real' && realToolsYaml.trim()
+				? {
+					realToolsYaml,
+					...(realToolsFileName ? { realToolsFileName } : {})
+				}
+				: {})
 		};
 
-		// TODO(engineer): replace this stub with a POST to /api/runs that
-		// (1) serializes `payload` into eval_config.yaml under artifacts/results/<suite>/<run>/
-		// (2) spawns `p2m run --config <that file>` (or calls the Python entrypoint directly)
-		// (3) returns { suite_id, run_id } on success.
-		// eslint-disable-next-line no-console
-		console.log('[new-eval wizard] submit payload (stub):', payload);
-		await new Promise((r) => setTimeout(r, 400));
+		let response: Response;
+		try {
+			response = await fetch('/api/runs', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			});
+		} catch (err) {
+			submitError = `Network error contacting /api/runs: ${(err as Error).message ?? String(err)}`;
+			submitting = false;
+			return;
+		}
+
+		let body: { suiteId?: string; runId?: string; warnings?: string[]; error?: string; details?: string[] } = {};
+		try {
+			body = await response.json();
+		} catch {
+			// fall through with empty body; surface the HTTP status below
+		}
+
+		if (!response.ok) {
+			const detailText = body?.details?.length ? `\n${body.details.join('\n')}` : '';
+			submitError = `${body?.error ?? `HTTP ${response.status}`}${detailText}`;
+			submitting = false;
+			return;
+		}
+
+		if (body?.warnings?.length) {
+			// eslint-disable-next-line no-console
+			console.warn('[new-eval wizard] backend warnings:', body.warnings);
+		}
 
 		isDirty = false;
-		submitting = false;
-		submitError = 'Submit is not yet wired to the backend. Payload logged to the browser console.';
+		const targetSuite = body.suiteId ?? '';
+		const targetRun = body.runId ?? runId.trim();
+		if (targetSuite && targetRun) {
+			void goto(`/suite/${encodeURIComponent(targetSuite)}/${encodeURIComponent(targetRun)}/monitor`);
+		} else {
+			submitting = false;
+			submitError = 'Run started, but the server did not return a suite/run id to navigate to.';
+		}
 	}
 
-	function addLevel(fIdx: number) {
-		const next = evalFactors.map((f, i) => (i === fIdx ? { ...f, levels: [...f.levels, ''] } : f));
-		evalFactors = next;
+	function addLevel(dIdx: number) {
+		const next = evalDimensions.map((f, i) => (i === dIdx ? { ...f, levels: [...f.levels, ''] } : f));
+		evalDimensions = next;
 	}
-	function removeLevel(fIdx: number, lIdx: number) {
-		evalFactors = evalFactors.map((f, i) =>
-			i === fIdx ? { ...f, levels: f.levels.filter((_, li) => li !== lIdx) } : f
+	function removeLevel(dIdx: number, lIdx: number) {
+		evalDimensions = evalDimensions.map((f, i) =>
+			i === dIdx ? { ...f, levels: f.levels.filter((_, li) => li !== lIdx) } : f
 		);
 	}
-	function updateLevel(fIdx: number, lIdx: number, value: string) {
-		evalFactors = evalFactors.map((f, i) =>
-			i === fIdx ? { ...f, levels: f.levels.map((l, li) => (li === lIdx ? value : l)) } : f
+	function updateLevel(dIdx: number, lIdx: number, value: string) {
+		evalDimensions = evalDimensions.map((f, i) =>
+			i === dIdx ? { ...f, levels: f.levels.map((l, li) => (li === lIdx ? value : l)) } : f
 		);
 	}
-	function trimLevels(fIdx: number) {
-		evalFactors = evalFactors.map((f, i) =>
-			i === fIdx ? { ...f, levels: f.levels.filter((l) => l.trim()) } : f
+	function trimLevels(dIdx: number) {
+		evalDimensions = evalDimensions.map((f, i) =>
+			i === dIdx ? { ...f, levels: f.levels.filter((l) => l.trim()) } : f
 		);
 	}
-	function removeFactor(fIdx: number) {
-		evalFactors = evalFactors.filter((_, i) => i !== fIdx);
+	function removeDimension(dIdx: number) {
+		evalDimensions = evalDimensions.filter((_, i) => i !== dIdx);
 	}
-	function addFactor() {
-		const name = newFactorName.trim();
+	function addDimension() {
+		const name = newDimensionName.trim();
 		if (!name) return;
-		evalFactors = [...evalFactors, { name, levels: [''] }];
-		newFactorName = '';
+		evalDimensions = [...evalDimensions, { name, levels: [''] }];
+		newDimensionName = '';
 	}
 	function removeCategory(cat: string) {
 		const next = new Set(selectedCategories);
@@ -777,51 +874,51 @@
 										class="pipeline-row"
 										role="button"
 										tabindex="0"
-										aria-expanded={taxonomyExpanded}
-										onclick={() => (taxonomyExpanded = !taxonomyExpanded)}
-										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); taxonomyExpanded = !taxonomyExpanded; } }}
+										aria-expanded={systematizeExpanded}
+										onclick={() => (systematizeExpanded = !systematizeExpanded)}
+										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); systematizeExpanded = !systematizeExpanded; } }}
 									>
 										<div class="pipeline-row-label">
 											<span class="flex items-center gap-1.5 text-sm font-medium text-text">
 												Taxonomy
-												{#if taxonomyConfig.deepResearchAgent}
+												{#if systematizeConfig.deepResearchAgent}
 													<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" class="text-interactive" aria-label="Deep Research Agent enabled"><title>Deep Research Agent enabled</title><path d="M7.53 1.282a.5.5 0 0 1 .94 0l.478 1.306a4 4 0 0 0 2.384 2.385l1.307.478a.5.5 0 0 1 0 .938l-1.307.478a4 4 0 0 0-2.384 2.385l-.478 1.306a.5.5 0 0 1-.94 0l-.478-1.306a4 4 0 0 0-2.385-2.385L3.36 6.389a.5.5 0 0 1 0-.938l1.307-.478A4 4 0 0 0 7.053 2.59l.478-1.307Zm5.49 7.078a.25.25 0 0 1 .47 0l.279.763a2.25 2.25 0 0 0 1.342 1.342l.762.279a.25.25 0 0 1 0 .469l-.762.279a2.25 2.25 0 0 0-1.342 1.342l-.28.762a.25.25 0 0 1-.469 0l-.279-.762a2.25 2.25 0 0 0-1.342-1.342l-.762-.28a.25.25 0 0 1 0-.469l.762-.279a2.25 2.25 0 0 0 1.342-1.342l.28-.762Z"/></svg>
 												{/if}
 											</span>
 											<span class="text-xs text-text-muted">Generate behavior categories from risk definition.</span>
 										</div>
-										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{taxonomyConfig.model.split('/')[1]}</span>
+										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{systematizeConfig.model.split('/')[1]}</span>
 										<span class="pipeline-row-chevron">
-											<svg class="h-4 w-4 transition-transform {taxonomyExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+											<svg class="h-4 w-4 transition-transform {systematizeExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
 										</span>
 									</div>
-									{#if taxonomyExpanded}
+									{#if systematizeExpanded}
 										<div class="mt-3 grid gap-3" style="max-width: 560px; grid-template-columns: 1.8fr 1fr 1fr 1fr;">
 											<div>
 												<label for="tax-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
-												<select id="tax-model" class="form-select w-full text-sm" value={taxonomyConfig.model} onchange={(e) => { taxonomyConfig = { ...taxonomyConfig, model: e.currentTarget.value }; markDirty(); }}>
-													{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												<select id="tax-model" class="form-select w-full text-sm" value={systematizeConfig.model} onchange={(e) => { systematizeConfig = { ...systematizeConfig, model: e.currentTarget.value }; markDirty(); }}>
+													{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 												</select>
 											</div>
 											<div>
 												<label for="tax-budget" class="mb-0.5 block text-[10px] text-text-muted">Categories</label>
-												<input id="tax-budget" type="number" step="1" min="1" class="form-control w-full text-sm" value={taxonomyConfig.subRisks} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, subRisks: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="tax-budget" type="number" step="1" min="1" class="form-control w-full text-sm" value={systematizeConfig.behaviorCategoryCount} oninput={(e) => { systematizeConfig = { ...systematizeConfig, behaviorCategoryCount: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 											<div>
 												<label for="tax-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
-												<input id="tax-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={taxonomyConfig.temperature} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="tax-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={systematizeConfig.temperature} oninput={(e) => { systematizeConfig = { ...systematizeConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 											<div>
 												<label for="tax-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
-												<input id="tax-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={taxonomyConfig.maxTokens} oninput={(e) => { taxonomyConfig = { ...taxonomyConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="tax-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={systematizeConfig.maxTokens} oninput={(e) => { systematizeConfig = { ...systematizeConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 										</div>
 										<label class="mt-3 flex items-start gap-2 text-xs text-text-secondary" style="max-width: 560px;">
 											<input
 												type="checkbox"
 												class="primer-checkbox shrink-0 mt-0.5"
-												checked={taxonomyConfig.deepResearchAgent}
-												onchange={(e) => { taxonomyConfig = { ...taxonomyConfig, deepResearchAgent: e.currentTarget.checked }; markDirty(); }}
+												checked={systematizeConfig.deepResearchAgent}
+												onchange={(e) => { systematizeConfig = { ...systematizeConfig, deepResearchAgent: e.currentTarget.checked }; markDirty(); }}
 											/>
 											<span class="flex flex-col gap-0.5">
 												<span class="flex items-center gap-1.5 text-text">
@@ -847,64 +944,64 @@
 									class="pipeline-row"
 									role="button"
 									tabindex="0"
-									aria-expanded={querySeedsExpanded}
-									onclick={() => (querySeedsExpanded = !querySeedsExpanded)}
-									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); querySeedsExpanded = !querySeedsExpanded; } }}
+									aria-expanded={promptTestCasesExpanded}
+									onclick={() => (promptTestCasesExpanded = !promptTestCasesExpanded)}
+									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); promptTestCasesExpanded = !promptTestCasesExpanded; } }}
 								>
 									<div class="pipeline-row-label">
 										<span class="block text-sm font-medium text-text">Query seeds</span>
 										<span class="text-xs text-text-muted">Create test prompts across categories.</span>
 									</div>
-									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{querySeedsConfig.model.split('/')[1]}</span>
+									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{promptTestCasesConfig.model.split('/')[1]}</span>
 									<span class="pipeline-row-chevron">
-										<svg class="h-4 w-4 transition-transform {querySeedsExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+										<svg class="h-4 w-4 transition-transform {promptTestCasesExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
 									</span>
 								</div>
-								{#if querySeedsExpanded}
+								{#if promptTestCasesExpanded}
 									<div class="mt-3 grid gap-3" style="max-width: 560px; grid-template-columns: 1.8fr 1fr 1fr 1fr;">
 										<div>
 											<label for="qs-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
-											<select id="qs-model" class="form-select w-full text-sm" value={querySeedsConfig.model} onchange={(e) => { querySeedsConfig = { ...querySeedsConfig, model: e.currentTarget.value }; markDirty(); }}>
-												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+											<select id="qs-model" class="form-select w-full text-sm" value={promptTestCasesConfig.model} onchange={(e) => { promptTestCasesConfig = { ...promptTestCasesConfig, model: e.currentTarget.value }; markDirty(); }}>
+												{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 											</select>
 										</div>
 										<div>
 											<label for="qs-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
-											<input id="qs-budget" type="number" step="10" min="1" class="form-control w-full text-sm" value={querySeedsConfig.budget} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
+											<input id="qs-budget" type="number" step="10" min="1" class="form-control w-full text-sm" value={promptTestCasesConfig.budget} oninput={(e) => { promptTestCasesConfig = { ...promptTestCasesConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
 										</div>
 										<div>
 											<label for="qs-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
-											<input id="qs-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={querySeedsConfig.temperature} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+											<input id="qs-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={promptTestCasesConfig.temperature} oninput={(e) => { promptTestCasesConfig = { ...promptTestCasesConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
 										</div>
 										<div>
 											<label for="qs-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
-											<input id="qs-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={querySeedsConfig.maxTokens} oninput={(e) => { querySeedsConfig = { ...querySeedsConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+											<input id="qs-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={promptTestCasesConfig.maxTokens} oninput={(e) => { promptTestCasesConfig = { ...promptTestCasesConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
 										</div>
 									</div>
 
-									<!-- Advanced: factor-based -->
+									<!-- Advanced: dimension-based -->
 									<div class="mt-3" style="max-width: 600px;">
-										<button type="button" class="flex items-center gap-1.5 text-xs font-medium text-text transition-colors hover:text-text" onclick={() => (factorBasedExpanded = !factorBasedExpanded)}>
-											<svg class="h-3.5 w-3.5 transition-transform {factorBasedExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+										<button type="button" class="flex items-center gap-1.5 text-xs font-medium text-text transition-colors hover:text-text" onclick={() => (dimensionBasedExpanded = !dimensionBasedExpanded)}>
+											<svg class="h-3.5 w-3.5 transition-transform {dimensionBasedExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 											Advanced: Test set dimension-based prompt generation
 										</button>
-										{#if factorBasedExpanded}
+										{#if dimensionBasedExpanded}
 											<div class="mt-3 space-y-4 rounded-lg border border-border bg-bg p-4">
 												<p class="text-xs text-text-muted">Generate prompts as a cross-product of test set dimensions. Each dimension defines axes of variation; prompts are generated for every combination.</p>
-												{#each evalFactors as factor, fIdx}
+												{#each evalDimensions as dimension, dIdx}
 													<div class="rounded-md border border-border p-3">
 														<div class="mb-2 flex items-center justify-between">
-															<span class="text-xs font-semibold text-text">{factor.name}</span>
-															<button type="button" class="text-xs text-text-muted transition-colors hover:text-score-fail" onclick={() => removeFactor(fIdx)}>
+															<span class="text-xs font-semibold text-text">{dimension.name}</span>
+															<button type="button" class="text-xs text-text-muted transition-colors hover:text-score-fail" onclick={() => removeDimension(dIdx)}>
 																<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
 															</button>
 														</div>
 														<div class="mb-2 flex flex-wrap gap-1.5">
-															{#each factor.levels as level, lIdx}
+															{#each dimension.levels as level, lIdx}
 																{#if level.trim()}
 																	<span class="dim-chip cursor-pointer">
 																		{level}
-																		<button type="button" class="ml-0.5 text-text-muted transition-colors hover:text-score-fail" onclick={() => removeLevel(fIdx, lIdx)}>
+																		<button type="button" class="ml-0.5 text-text-muted transition-colors hover:text-score-fail" onclick={() => removeLevel(dIdx, lIdx)}>
 																			<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
 																		</button>
 																	</span>
@@ -917,14 +1014,14 @@
 																			placeholder={`Level ${lIdx + 1}`}
 																			autofocus
 																			value={level}
-																			oninput={(e) => updateLevel(fIdx, lIdx, e.currentTarget.value)}
-																			onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); if (e.key === 'Escape') removeLevel(fIdx, lIdx); }}
-																			onblur={() => trimLevels(fIdx)}
+																			oninput={(e) => updateLevel(dIdx, lIdx, e.currentTarget.value)}
+																			onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); if (e.key === 'Escape') removeLevel(dIdx, lIdx); }}
+																			onblur={() => trimLevels(dIdx)}
 																		/>
 																	</span>
 																{/if}
 															{/each}
-															<button type="button" class="dim-chip dim-chip-new" onclick={() => addLevel(fIdx)}>+ Level</button>
+															<button type="button" class="dim-chip dim-chip-new" onclick={() => addLevel(dIdx)}>+ Level</button>
 														</div>
 													</div>
 												{/each}
@@ -934,11 +1031,11 @@
 														class="form-control text-sm"
 														style="min-width: 240px;"
 														placeholder="Test set dimension name"
-														value={newFactorName}
-														oninput={(e) => (newFactorName = e.currentTarget.value)}
-														onkeydown={(e) => { if (e.key === 'Enter' && newFactorName.trim()) addFactor(); }}
+														value={newDimensionName}
+														oninput={(e) => (newDimensionName = e.currentTarget.value)}
+														onkeydown={(e) => { if (e.key === 'Enter' && newDimensionName.trim()) addDimension(); }}
 													/>
-													<button class="btn" disabled={!newFactorName.trim()} onclick={addFactor}>Add</button>
+													<button class="btn" disabled={!newDimensionName.trim()} onclick={addDimension}>Add</button>
 												</div>
 											</div>
 										{/if}
@@ -975,13 +1072,13 @@
 										<div>
 											<label for="pe-target" class="mb-0.5 block text-[10px] text-text-muted">Target model</label>
 											<select id="pe-target" class="form-select w-full text-sm" value={promptEvalConfig.targetModel} onchange={(e) => { promptEvalConfig = { ...promptEvalConfig, targetModel: e.currentTarget.value }; markDirty(); }}>
-												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 											</select>
 										</div>
 										<div>
 											<label for="pe-judge" class="mb-0.5 block text-[10px] text-text-muted">Judge model</label>
 											<select id="pe-judge" class="form-select w-full text-sm" value={promptEvalConfig.judgeModel} onchange={(e) => { promptEvalConfig = { ...promptEvalConfig, judgeModel: e.currentTarget.value }; markDirty(); }}>
-												{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 											</select>
 										</div>
 									</div>
@@ -999,29 +1096,29 @@
 									<input
 										type="checkbox"
 										class="primer-checkbox shrink-0"
-										checked={auditSeedsEnabled}
-										onchange={(e) => { handleAuditSeedsChange(e.currentTarget.checked); if (e.currentTarget.checked) auditSeedsExpanded = true; }}
+										checked={scenarioTestCasesEnabled}
+										onchange={(e) => { handleScenarioTestCasesChange(e.currentTarget.checked); if (e.currentTarget.checked) scenarioTestCasesExpanded = true; }}
 										onclick={(e) => e.stopPropagation()}
 									/>
 									<div
 										class="pipeline-row"
 										role="button"
 										tabindex="0"
-										aria-expanded={auditSeedsExpanded}
-										onclick={() => (auditSeedsExpanded = !auditSeedsExpanded)}
-										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); auditSeedsExpanded = !auditSeedsExpanded; } }}
+										aria-expanded={scenarioTestCasesExpanded}
+										onclick={() => (scenarioTestCasesExpanded = !scenarioTestCasesExpanded)}
+										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scenarioTestCasesExpanded = !scenarioTestCasesExpanded; } }}
 									>
 										<div class="pipeline-row-label">
 											<span class="block text-sm font-medium text-text">Prompt seeds <span class="font-normal text-text-muted">(optional)</span></span>
 											<span class="text-xs text-text-muted">Generate audit-style multi-turn seed prompts.</span>
 										</div>
-										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{auditSeedsConfig.model.split('/')[1]}</span>
+										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{scenarioTestCasesConfig.model.split('/')[1]}</span>
 										<span class="pipeline-row-chevron">
-											<svg class="h-4 w-4 transition-transform {auditSeedsExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+											<svg class="h-4 w-4 transition-transform {scenarioTestCasesExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
 										</span>
 									</div>
 								</div>
-								{#if auditSeedsExpanded}
+								{#if scenarioTestCasesExpanded}
 									<div class="ml-7 mt-3 space-y-4" style="max-width: 600px;">
 										<div>
 											<div class="mb-1 block text-[10px] text-text-muted">Modality</div>
@@ -1030,15 +1127,15 @@
 													<button
 														type="button"
 														role="radio"
-														aria-checked={auditSeedsConfig.modality === m}
+														aria-checked={scenarioTestCasesConfig.modality === m}
 														class="wizard-seg-btn"
-														class:selected={auditSeedsConfig.modality === m}
-														onclick={() => { auditSeedsConfig = { ...auditSeedsConfig, modality: m as 'conversation' | 'agentic' }; markDirty(); }}
+														class:selected={scenarioTestCasesConfig.modality === m}
+														onclick={() => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, modality: m as 'conversation' | 'agentic' }; markDirty(); }}
 													>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
 												{/each}
 											</div>
 											<p class="mt-1 text-[10px] text-text-muted">
-												{auditSeedsConfig.modality === 'conversation'
+												{scenarioTestCasesConfig.modality === 'conversation'
 													? 'Standard multi-turn conversation between auditor and target.'
 													: 'Agentic multi-turn interaction with tool-use capabilities.'}
 											</p>
@@ -1046,21 +1143,21 @@
 										<div class="grid grid-cols-4 gap-3">
 											<div>
 												<label for="as-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
-												<select id="as-model" class="form-select w-full text-sm" value={auditSeedsConfig.model} onchange={(e) => { auditSeedsConfig = { ...auditSeedsConfig, model: e.currentTarget.value }; markDirty(); }}>
-													{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+												<select id="as-model" class="form-select w-full text-sm" value={scenarioTestCasesConfig.model} onchange={(e) => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, model: e.currentTarget.value }; markDirty(); }}>
+													{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 												</select>
 											</div>
 											<div>
 												<label for="as-budget" class="mb-0.5 block text-[10px] text-text-muted">Budget</label>
-												<input id="as-budget" type="number" min="1" class="form-control w-full text-sm" value={auditSeedsConfig.budget} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="as-budget" type="number" min="1" class="form-control w-full text-sm" value={scenarioTestCasesConfig.budget} oninput={(e) => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, budget: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 											<div>
 												<label for="as-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
-												<input id="as-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={auditSeedsConfig.temperature} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="as-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioTestCasesConfig.temperature} oninput={(e) => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, temperature: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 											<div>
 												<label for="as-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
-												<input id="as-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={auditSeedsConfig.maxTokens} oninput={(e) => { auditSeedsConfig = { ...auditSeedsConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
+												<input id="as-tokens" type="number" step="500" min="1" class="form-control w-full text-sm" value={scenarioTestCasesConfig.maxTokens} oninput={(e) => { scenarioTestCasesConfig = { ...scenarioTestCasesConfig, maxTokens: Number(e.currentTarget.value) }; markDirty(); }} />
 											</div>
 										</div>
 										<div>
@@ -1138,7 +1235,7 @@
 												<div>
 													<label for="se-target-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
 													<select id="se-target-model" class="form-select w-full text-sm" value={scenarioEvalConfig.target.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, target: { ...scenarioEvalConfig.target, model: e.currentTarget.value } }; markDirty(); }}>
-														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+														{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 													</select>
 												</div>
 												<div>
@@ -1155,18 +1252,18 @@
 											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Auditor</span>
 											<div class="grid gap-3" style="grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr;">
 												<div>
-													<label for="se-auditor-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
-													<select id="se-auditor-model" class="form-select w-full text-sm" value={scenarioEvalConfig.auditor.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, model: e.currentTarget.value } }; markDirty(); }}>
-														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+													<label for="se-tester-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
+													<select id="se-tester-model" class="form-select w-full text-sm" value={scenarioEvalConfig.tester.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, tester: { ...scenarioEvalConfig.tester, model: e.currentTarget.value } }; markDirty(); }}>
+														{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 													</select>
 												</div>
 												<div>
-													<label for="se-auditor-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
-													<input id="se-auditor-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioEvalConfig.auditor.temperature} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, temperature: Number(e.currentTarget.value) } }; markDirty(); }} />
+													<label for="se-tester-temp" class="mb-0.5 block text-[10px] text-text-muted">Temperature</label>
+													<input id="se-tester-temp" type="number" step="0.1" min="0" max="2" class="form-control w-full text-sm" value={scenarioEvalConfig.tester.temperature} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, tester: { ...scenarioEvalConfig.tester, temperature: Number(e.currentTarget.value) } }; markDirty(); }} />
 												</div>
 												<div>
-													<label for="se-auditor-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
-													<input id="se-auditor-tokens" type="number" step="1000" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.auditor.maxTokens} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, auditor: { ...scenarioEvalConfig.auditor, maxTokens: Number(e.currentTarget.value) } }; markDirty(); }} />
+													<label for="se-tester-tokens" class="mb-0.5 block text-[10px] text-text-muted">Max tokens</label>
+													<input id="se-tester-tokens" type="number" step="1000" min="1" class="form-control w-full text-sm" value={scenarioEvalConfig.tester.maxTokens} oninput={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, tester: { ...scenarioEvalConfig.tester, maxTokens: Number(e.currentTarget.value) } }; markDirty(); }} />
 												</div>
 											</div>
 										</div>
@@ -1176,7 +1273,7 @@
 												<div>
 													<label for="se-judge-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
 													<select id="se-judge-model" class="form-select w-full text-sm" value={scenarioEvalConfig.judge.model} onchange={(e) => { scenarioEvalConfig = { ...scenarioEvalConfig, judge: { ...scenarioEvalConfig.judge, model: e.currentTarget.value } }; markDirty(); }}>
-														{#each MODEL_OPTIONS as m}<option value={m}>{m}</option>{/each}
+														{#each modelOptions as m}<option value={m}>{m}</option>{/each}
 													</select>
 												</div>
 												<div>
@@ -1255,9 +1352,9 @@
 						<div class="flex justify-between"><span class="text-text-muted">Measurement suite</span><span class="font-medium text-text">{suiteId.trim() || '(new)'}</span></div>
 						<div class="flex justify-between"><span class="text-text-muted">Run</span><span class="font-medium text-text">{runId.trim() || 'v1'}</span></div>
 						{#if step2Source === 'new'}
-							<div class="flex justify-between"><span class="text-text-muted">Query pipeline</span><span class="font-medium text-text">{summaryQueryPipeline}</span></div>
-							{#if auditSeedsEnabled || scenarioEvalEnabled}
-								<div class="flex justify-between"><span class="text-text-muted">Audit pipeline</span><span class="font-medium text-text">{summaryAuditPipeline}</span></div>
+							<div class="flex justify-between"><span class="text-text-muted">Query pipeline</span><span class="font-medium text-text">{summaryTestCasesPipeline}</span></div>
+							{#if scenarioTestCasesEnabled || scenarioEvalEnabled}
+								<div class="flex justify-between"><span class="text-text-muted">Audit pipeline</span><span class="font-medium text-text">{summaryScenarioPipeline}</span></div>
 							{/if}
 						{/if}
 					</div>
