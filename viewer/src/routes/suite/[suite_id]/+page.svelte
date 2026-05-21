@@ -6,6 +6,8 @@
 	import { renderMarkdown } from '$lib/markdown.js';
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
+	import type { SuiteHeavyData } from '$lib/server/data.js';
+	import { fade } from 'svelte/transition';
 
 	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
 
@@ -26,6 +28,28 @@
 	let drawerNavIdx = $state(-1);
 	let drawerLoading = $state(false);
 	let drawerCache = $state<Record<string, ViewerResultItem>>({});
+	let heavyData = $state<SuiteHeavyData | null>(null);
+	let heavyError = $state<string | null>(null);
+	let heavyPending = $derived(heavyData === null && heavyError === null);
+
+	$effect(() => {
+		const promise = data.streamed?.heavy;
+		if (!promise) return;
+		let cancelled = false;
+		heavyData = null;
+		heavyError = null;
+		promise.then(
+			(result) => {
+				if (!cancelled) heavyData = result;
+			},
+			(err) => {
+				if (!cancelled) heavyError = err instanceof Error ? err.message : String(err);
+			}
+		);
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	let requiredBaseMetrics = $derived(
 		getRequiredBaseMetricNames((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)
@@ -35,7 +59,7 @@
 	let sortedBehaviors = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
-	let allRuns = $derived(mergeRunLists(data.runs, data.auditRuns));
+	let allRuns = $derived(mergeRunLists(heavyData?.runs ?? [], heavyData?.auditRuns ?? []));
 	let conceptName = $derived(data.taxonomy?.behavior?.name ?? data.taxonomy?.risk?.name ?? data.suite_id);
 	let conceptDef = $derived(data.taxonomy?.behavior?.definition ?? data.taxonomy?.risk?.definition ?? '');
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
@@ -82,7 +106,7 @@
 
 	let evalCountsByBehavior = $derived.by(() => {
 		const map = new Map<string, number>();
-		for (const [behavior, count] of Object.entries(data.evalCountsByBehavior ?? {})) {
+		for (const [behavior, count] of Object.entries(heavyData?.evalCountsByBehavior ?? {})) {
 			map.set(behavior, count);
 		}
 		return map;
@@ -190,21 +214,36 @@
 		return run.prompt?.metrics?.target ?? run.audit?.metrics?.target ?? '—';
 	}
 
+	let behaviorEvalLoadedFor = $state<string | null>(null);
+
 	function loadBehaviorEvalResults(behavior: string) {
 		behaviorEvalError = null;
 		behaviorEvalSamples = [];
-		if (!data.primaryEvalRunId) {
-			behaviorEvalError = 'No evaluation runs available.';
+		if (heavyPending) {
+			behaviorEvalRunId = null;
+			behaviorEvalLoadedFor = null;
 			return;
 		}
-		behaviorEvalRunId = data.primaryEvalRunId;
-		const prompts = data.primaryRunPromptsByBehavior?.[behavior] ?? [];
-		const scenarios = data.primaryRunScenariosByBehavior?.[behavior] ?? [];
+		if (!heavyData?.primaryEvalRunId) {
+			behaviorEvalError = 'No evaluation runs available.';
+			behaviorEvalLoadedFor = behavior;
+			return;
+		}
+		behaviorEvalRunId = heavyData.primaryEvalRunId;
+		const prompts = heavyData.primaryRunPromptsByBehavior?.[behavior] ?? [];
+		const scenarios = heavyData.primaryRunScenariosByBehavior?.[behavior] ?? [];
 		behaviorEvalSamples = [
 			...prompts.map((sample): BehaviorEvalEntry => ({ kind: 'prompt', sample })),
 			...scenarios.map((sample): BehaviorEvalEntry => ({ kind: 'scenario', sample }))
 		];
+		behaviorEvalLoadedFor = behavior;
 	}
+
+	$effect(() => {
+		if (heavyData && selectedBehavior && behaviorEvalLoadedFor !== selectedBehavior) {
+			loadBehaviorEvalResults(selectedBehavior);
+		}
+	});
 
 	function selectBehavior(name: string) {
 		if (selectedBehavior === name) {
@@ -227,6 +266,7 @@
 		panelTab = 'definition';
 		behaviorEvalSamples = [];
 		behaviorEvalError = null;
+		behaviorEvalLoadedFor = null;
 	}
 
 	function sampleComplianceStatus(sample: JudgedSample): 'flagged' | 'compliant' | 'error' | 'pending' {
@@ -359,18 +399,45 @@
 					</button>
 				</span>
 				{#if selectedCompareRuns.size > 0}<button class="btn btn-invisible btn-small" onclick={() => selectedCompareRuns = new Set()}>Clear</button>{/if}
-				<span class="text-xs text-text-muted">{allRuns.length} runs</span>
+				<span class="text-xs text-text-muted">
+					{#if heavyPending}
+						<span class="inline-block h-3 w-12 animate-pulse rounded bg-surface-2 align-middle"></span>
+					{:else}
+						{allRuns.length} runs
+					{/if}
+				</span>
 			</div>
 		</div>
 		<p class="mt-1 text-sm leading-5 text-text-muted">View all evaluation runs for this policy-defined behavior. Select up to {MAX_COMPARE_RUNS} runs, then click Compare.</p>
 	</div>
 
-	{#if allRuns.length === 0}
-		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center">
+	{#if heavyPending}
+		<div class="overflow-hidden rounded-lg border border-border" transition:fade={{ duration: 120 }}>
+			<div class="border-b border-border bg-surface px-3 py-2">
+				<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
+			</div>
+			{#each Array(3) as _, idx}
+				<div class="flex items-center gap-3 px-3 py-2.5 {idx > 0 ? 'border-t border-border/50' : ''}">
+					<div class="h-3 w-3 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-32 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-24 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-20 animate-pulse rounded bg-surface-2"></div>
+					<div class="ml-auto h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+					<div class="h-3 w-12 animate-pulse rounded bg-surface-2"></div>
+				</div>
+			{/each}
+		</div>
+	{:else if heavyError}
+		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center" transition:fade={{ duration: 120 }}>
+			<p class="text-sm text-score-fail">Failed to load run details: {heavyError}</p>
+		</div>
+	{:else if allRuns.length === 0}
+		<div class="rounded-lg border border-border bg-surface px-6 py-8 text-center" transition:fade={{ duration: 120 }}>
 			<p class="text-sm text-text-secondary">No evaluation results yet.</p>
 		</div>
 	{:else}
-		<div class="overflow-hidden rounded-lg border border-border">
+		<div class="overflow-hidden rounded-lg border border-border" transition:fade={{ duration: 120 }}>
 			<table class="w-full text-left text-sm">
 				<thead>
 					<tr class="border-b border-border bg-surface">
@@ -573,7 +640,13 @@
 						</div>
 						<span class="text-left text-xs text-text-muted">{pCount}</span>
 						<span class="text-left text-xs text-text-muted">{sCount}</span>
-						<span class="text-left text-xs text-text-muted">{evalCountsByBehavior.get(behavior.name) ?? 0}</span>
+						<span class="text-left text-xs text-text-muted">
+							{#if heavyPending}
+								<span class="inline-block h-3 w-6 animate-pulse rounded bg-surface-2 align-middle"></span>
+							{:else}
+								{evalCountsByBehavior.get(behavior.name) ?? 0}
+							{/if}
+						</span>
 						<span class="flex justify-end text-text-muted">
 							<svg class="h-4 w-4 transition-transform {selectedBehavior === behavior.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
 						</span>
@@ -675,7 +748,17 @@
 							<h4 class="text-xs font-medium text-text">Evaluation results</h4>
 							<span class="ml-auto text-xs text-text-muted">{behaviorEvalSamples.length} result{behaviorEvalSamples.length !== 1 ? 's' : ''}</span>
 						</div>
-						{#if behaviorEvalError}
+						{#if heavyPending}
+							<div class="space-y-2">
+								{#each Array(2) as _}
+									<div class="rounded-lg border border-border bg-bg p-3">
+										<div class="h-3 w-16 animate-pulse rounded bg-surface-2"></div>
+										<div class="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2"></div>
+										<div class="mt-1 h-3 w-1/2 animate-pulse rounded bg-surface-2"></div>
+									</div>
+								{/each}
+							</div>
+						{:else if behaviorEvalError}
 							<div class="py-6 text-center"><p class="text-sm text-score-fail">{behaviorEvalError}</p></div>
 						{:else if behaviorEvalSamples.length === 0}
 							<div class="py-8 text-center"><p class="text-sm text-text-secondary">No evaluation results for this category.</p></div>

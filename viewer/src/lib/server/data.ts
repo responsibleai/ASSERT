@@ -1043,13 +1043,19 @@ export function loadManifest(suiteId: string, runId: string): Manifest | null {
 	return loadRunSnapshot(suiteId, runId).manifest;
 }
 
-export function loadSuitePageData(suiteId: string) {
-	const snapshot = loadSuiteSnapshot(suiteId);
-	if (!snapshot) return null;
+export interface SuiteHeavyData {
+	runs: RunListItem[];
+	auditRuns: AuditRunListItem[];
+	evalCountsByBehavior: Record<string, number>;
+	primaryEvalRunId: string | null;
+	primaryRunPromptsByBehavior: Record<string, JudgedSample[]>;
+	primaryRunScenariosByBehavior: Record<string, JudgedSample[]>;
+}
 
-	const promptSeeds = buildPromptSeeds(snapshot);
-	const scenarioSeeds = buildScenarioSeeds(snapshot);
-
+async function loadSuiteHeavyData(
+	suiteId: string,
+	snapshot: SuiteSnapshot
+): Promise<SuiteHeavyData> {
 	const runs: RunListItem[] = [];
 	const auditRuns: AuditRunListItem[] = [];
 	const evalCountsByBehavior: Record<string, number> = {};
@@ -1122,19 +1128,33 @@ export function loadSuitePageData(suiteId: string) {
 		: {};
 
 	return {
-		suite_id: suiteId,
-		suite: snapshot.suite,
-		taxonomy: normalizePolicy(snapshot.taxonomy),
-		promptSeeds,
-		scenarioSeeds,
 		runs,
 		auditRuns,
 		evalCountsByBehavior,
 		primaryEvalRunId,
 		primaryRunPromptsByBehavior,
-		primaryRunScenariosByBehavior,
+		primaryRunScenariosByBehavior
+	};
+}
+
+export function loadSuitePageData(suiteId: string) {
+	const snapshot = loadSuiteSnapshot(suiteId);
+	if (!snapshot) return null;
+
+	const promptSeeds = buildPromptSeeds(snapshot);
+	const scenarioSeeds = buildScenarioSeeds(snapshot);
+
+	return {
+		suite_id: suiteId,
+		suite: snapshot.suite,
+		taxonomy: normalizePolicy(snapshot.taxonomy),
+		promptSeeds,
+		scenarioSeeds,
 		dimensionDefs: loadDimensions(),
-		systematization: snapshot.systematization
+		systematization: snapshot.systematization,
+		streamed: {
+			heavy: loadSuiteHeavyData(suiteId, snapshot)
+		}
 	};
 }
 
