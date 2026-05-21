@@ -120,6 +120,7 @@ interface BehaviorComparison {
 	behavior: string;
 	metrics: Record<string, Record<string, CompareMetricSummary>>;
 	deltas: Record<string, number>;
+	deltaByRun: Record<string, Record<string, number>>;
 }
 
 function hasKind(row: Record<string, unknown>, expected: 'prompt' | 'scenario'): boolean {
@@ -862,7 +863,8 @@ function buildBehaviorComparisons(
 				comparisonByBehavior.set(behavior, {
 					behavior,
 					metrics: Object.fromEntries(allMetrics.map((metric) => [metric, {}])),
-					deltas: {}
+					deltas: {},
+					deltaByRun: {}
 				});
 			}
 
@@ -888,11 +890,23 @@ function buildBehaviorComparisons(
 	}
 
 	const comparisons = Array.from(comparisonByBehavior.values());
+	const baselineRunId = runIds[0];
+	const variantRunIds = runIds.slice(1);
 	for (const comparison of comparisons) {
 		for (const metric of allMetrics) {
-			const first = comparison.metrics[metric]?.[runIds[0]];
-			const last = comparison.metrics[metric]?.[runIds[runIds.length - 1]];
-			comparison.deltas[metric] = (last?.rate ?? 0) - (first?.rate ?? 0);
+			const baseline = comparison.metrics[metric]?.[baselineRunId];
+			const deltasForMetric: Record<string, number> = {};
+			let largestDelta = 0;
+
+			for (const runId of variantRunIds) {
+				const variant = comparison.metrics[metric]?.[runId];
+				const delta = (variant?.rate ?? 0) - (baseline?.rate ?? 0);
+				deltasForMetric[runId] = delta;
+				if (Math.abs(delta) > Math.abs(largestDelta)) largestDelta = delta;
+			}
+
+			comparison.deltaByRun[metric] = deltasForMetric;
+			comparison.deltas[metric] = largestDelta;
 		}
 	}
 

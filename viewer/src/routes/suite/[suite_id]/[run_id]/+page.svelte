@@ -797,8 +797,8 @@
 		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each allMetrics as m}
 				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
-				<div class="rounded-lg border border-border bg-surface px-5 py-4">
-					<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{m.name}</div>
+				<div class="min-w-0 rounded-lg border border-border bg-surface px-5 py-4">
+					<div class="truncate text-[11px] font-semibold uppercase tracking-wider text-text-muted" title={m.key} aria-label={m.key}>{m.name}</div>
 					{#if m.description}
 					<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}
@@ -1037,8 +1037,8 @@
 		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each auditAllMetrics as m}
 				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
-				<div class="rounded-lg border border-border bg-surface px-5 py-4">
-					<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{m.name}</div>
+				<div class="min-w-0 rounded-lg border border-border bg-surface px-5 py-4">
+					<div class="truncate text-[11px] font-semibold uppercase tracking-wider text-text-muted" title={m.key} aria-label={m.key}>{m.name}</div>
 					{#if m.description}
 					<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}

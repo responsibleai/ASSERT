@@ -16,7 +16,7 @@
 
 const RUN_COLORS = ['#a78bfa', '#60a5fa', '#2dd4bf', '#fbbf24'];
 
-// Baseline is always the first run
+// Selected baseline defaults to the first run
 let baselineIdx = $state(0);
 
 // Expanded behavior rows
@@ -28,15 +28,41 @@ let disagreementsOnly = $state(false);
 // Active metric for comparison
 let activeMetric = $state('policy_violation');
 
+let runIds = $derived(data.runs.map((run) => run.run_id));
+let deltaRunIds = $derived(data.runs.filter((_, i) => i !== baselineIdx).map((run) => run.run_id));
+
+type BehaviorComparisonRow = (typeof data.comparisons)[number];
+
 function metricLabel(m: string): string {
 	return m.replace(/_/g, ' ');
 }
 
-// Re-sort comparisons by active metric's delta
+function runLabel(run: { model: string; display_name: string; run_id: string }): string {
+	return run.model.split('/').pop() ?? run.display_name ?? run.run_id;
+}
+
+function deltaHeaderTitle(run: { display_name: string; run_id: string }): string {
+	const baseline = data.runs[baselineIdx];
+	const baselineLabel = baseline?.display_name ?? baseline?.run_id ?? 'baseline';
+	return `Delta vs ${baselineLabel}: ${run.display_name}`;
+}
+
+function comparisonRate(row: BehaviorComparisonRow, metric: string, runId: string): number {
+	return row.metrics[metric]?.[runId]?.rate ?? 0;
+}
+
+function deltaForRun(row: BehaviorComparisonRow, metric: string, runId: string): number {
+	const baselineRunId = data.runs[baselineIdx]?.run_id ?? runIds[0];
+	return comparisonRate(row, metric, runId) - comparisonRate(row, metric, baselineRunId);
+}
+
+function maxAbsDelta(row: BehaviorComparisonRow, metric: string): number {
+	return Math.max(0, ...deltaRunIds.map((runId) => Math.abs(deltaForRun(row, metric, runId))));
+}
+
+// Re-sort comparisons by active metric's largest baseline delta
 let sortedComparisons = $derived.by(() => {
-	return [...data.comparisons].sort((a, b) =>
-		Math.abs(b.deltas[activeMetric] ?? 0) - Math.abs(a.deltas[activeMetric] ?? 0)
-	);
+	return [...data.comparisons].sort((a, b) => maxAbsDelta(b, activeMetric) - maxAbsDelta(a, activeMetric));
 });
 
 function toggleRow(behavior: string) {
@@ -79,8 +105,6 @@ function deltaArrow(d: number): string {
 	return '';
 }
 
-let runIds = $derived(data.runs.map((run) => run.run_id));
-
 function getMatchedSamples(behavior: string) {
 	return buildMatchedSampleRows(
 		data.samplesByBehavior[behavior] ?? {},
@@ -108,11 +132,13 @@ function summaryGridTemplate(): string {
 }
 
 function comparisonGridTemplate(runCount: number): string {
-	return `minmax(14rem, 1fr) repeat(${runCount}, 100px) 80px`;
+	const deltaCount = Math.max(runCount - 1, 0);
+	return `minmax(14rem, 1fr) repeat(${runCount}, 100px) repeat(${deltaCount}, 88px)`;
 }
 
 function comparisonTableMinWidth(runCount: number): string {
-	return `${14 + runCount * 6.25 + 5}rem`;
+	const deltaCount = Math.max(runCount - 1, 0);
+	return `${14 + runCount * 6.25 + deltaCount * 5.5}rem`;
 }
 
 function sampleGridTemplate(runCount: number): string {
@@ -173,11 +199,13 @@ function sampleGridMinWidth(runCount: number): string {
 	<section class="space-y-3">
 		<!-- Metric picker -->
 		{#if data.allMetrics.length > 1}
-			<div class="flex items-center gap-1.5">
+			<div class="flex flex-wrap items-center gap-1.5">
 				{#each data.allMetrics as metric}
 					<button
 						onclick={() => { activeMetric = metric; }}
-						class="rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150
+						title={metric}
+						aria-label={metric}
+						class="max-w-48 truncate rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150
 							{activeMetric === metric
 								? 'bg-interactive text-white'
 								: 'text-text-muted hover:text-text hover:bg-surface-2'}"
@@ -187,7 +215,7 @@ function sampleGridMinWidth(runCount: number): string {
 				{/each}
 			</div>
 		{:else}
-			<h2 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{metricLabel(activeMetric)}</h2>
+			<h2 class="max-w-full truncate text-[11px] font-semibold uppercase tracking-wider text-text-muted" title={activeMetric} aria-label={activeMetric}>{metricLabel(activeMetric)}</h2>
 		{/if}
 
 		<div class="grid gap-4" style="grid-template-columns: {summaryGridTemplate()};">
@@ -291,9 +319,13 @@ function sampleGridMinWidth(runCount: number): string {
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
 					{#each data.runs as run, i}
-						<span class="text-center" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
+						<span class="min-w-0 truncate text-center" title={run.model} aria-label={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run)}</span>
 					{/each}
-					<span class="text-right">Delta</span>
+					{#each data.runs as run, i}
+						{#if i !== baselineIdx}
+							<span class="min-w-0 truncate text-right" title={deltaHeaderTitle(run)} aria-label={deltaHeaderTitle(run)}>Δ {run.display_name}</span>
+						{/if}
+					{/each}
 				</div>
 
 				<!-- Rows -->
@@ -302,7 +334,6 @@ function sampleGridMinWidth(runCount: number): string {
 					{@const matched = isExpanded ? getMatchedSamples(row.behavior) : []}
 					{@const showAll = showAllMap[row.behavior] ?? false}
 					{@const displaySamples = showAll ? matched : matched.slice(0, 3)}
-					{@const rowDelta = row.deltas[activeMetric] ?? 0}
 
 					<div class="border-b border-border/50 last:border-b-0">
 						<!-- Row -->
@@ -334,12 +365,17 @@ function sampleGridMinWidth(runCount: number): string {
 							</div>
 						{/each}
 
-						<!-- Delta -->
-						<div class="text-right">
-							<span class="text-xs font-semibold tabular-nums {deltaClass(rowDelta)}">
-								{deltaText(rowDelta)} {deltaArrow(rowDelta)}
-							</span>
-						</div>
+						<!-- Deltas vs selected baseline -->
+						{#each data.runs as run, i}
+							{#if i !== baselineIdx}
+								{@const rowDelta = deltaForRun(row, activeMetric, run.run_id)}
+								<div class="text-right">
+									<span class="text-xs font-semibold tabular-nums {deltaClass(rowDelta)}">
+										{deltaText(rowDelta)} {deltaArrow(rowDelta)}
+									</span>
+								</div>
+							{/if}
+						{/each}
 						</button>
 
 						<!-- Expanded sample pairs -->

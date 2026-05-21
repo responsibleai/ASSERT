@@ -11,7 +11,10 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 	if (!runsParam) throw error(400, 'Missing "runs" query parameter');
 
-	const runIds = runsParam.split(',').filter(Boolean);
+	const runIds = runsParam
+		.split(',')
+		.map((runId) => runId.trim())
+		.filter(Boolean);
 	if (runIds.length < 2) throw error(400, 'Need at least 2 runs to compare');
 	if (runIds.length > 4) throw error(400, 'Maximum 4 runs to compare');
 
