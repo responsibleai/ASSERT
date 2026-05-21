@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Generate an HTML report from tau2↔p2m correlation results.
+"""Generate HTML reports from tau2↔p2m correlation results.
+
+Produces two reports:
+  - report.html          — all models with both tau2 + p2m data
+  - report_filtered.html — only models with ≥ min_sims tau2 simulations
 
 Usage:
-    python generate_report.py                   # uses results/ dir
-    python generate_report.py --out report.html # custom output path
-    python generate_report.py --no-open         # skip auto-open
+    python generate_report.py                         # both reports, no browser
+    python generate_report.py --open                  # auto-open in browser
+    python generate_report.py --min-sims 100          # custom sim threshold
 """
 from __future__ import annotations
 
@@ -42,14 +46,62 @@ def fig_to_base64(fig) -> str:
     return base64.b64encode(buf.read()).decode()
 
 
-def build_report(results_dir: Path, sim_dir: Path) -> str:
+DEFAULT_MIN_SIMS = 50
+
+
+def _recompute_correlations(
+    tau2_rewards: dict[str, float],
+    p2m_scores: dict[str, dict[str, float]],
+) -> dict[str, dict]:
+    """Compute Spearman ρ for the given model subset."""
+    from scipy.stats import spearmanr
+
+    common = sorted(set(tau2_rewards) & {m for m in p2m_scores if p2m_scores[m]})
+    if len(common) < 3:
+        return {}
+
+    all_dims: set[str] = set()
+    for scores in p2m_scores.values():
+        all_dims.update(scores.keys())
+
+    correlations: dict[str, dict] = {}
+    for dim in sorted(all_dims):
+        tau2_vals, p2m_vals = [], []
+        for m in common:
+            if dim in p2m_scores[m]:
+                val = p2m_scores[m][dim]
+                if dim != "_overall":
+                    val = 1.0 - val
+                p2m_vals.append(val)
+                tau2_vals.append(tau2_rewards[m])
+        if len(p2m_vals) < 3:
+            continue
+        rho, pval = spearmanr(tau2_vals, p2m_vals)
+        correlations[dim] = {"rho": rho, "pval": pval, "n": len(p2m_vals)}
+
+    return correlations
+
+
+def build_report(
+    results_dir: Path,
+    sim_dir: Path,
+    *,
+    min_sims: int | None = None,
+    subtitle: str | None = None,
+) -> str:
+    """Build an HTML report.
+
+    Args:
+        min_sims: If set, exclude models with fewer than this many tau2 simulations.
+        subtitle: Extra text appended to the report title.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mticker
     import pandas as pd
     import seaborn as sns
-    from scipy.stats import spearmanr  # noqa: F401
+    from scipy.stats import spearmanr
 
     sns.set_theme(style="whitegrid", font_scale=1.0)
 
@@ -57,8 +109,22 @@ def build_report(results_dir: Path, sim_dir: Path) -> str:
     tau2_rewards = results["tau2_rewards"]
     tau2_samples = results.get("tau2_sample_sizes", {})
     p2m_scores = results["p2m_scores"]
-    correlations = results["correlations"]
     models = results.get("models_compared", sorted(set(tau2_rewards) & set(p2m_scores)))
+
+    # ── Filter models by minimum simulation count ─────────────────
+    if min_sims is not None:
+        excluded = [m for m in models if tau2_samples.get(m, 0) < min_sims]
+        models = [m for m in models if tau2_samples.get(m, 0) >= min_sims]
+        if excluded:
+            print(f"  Filtered out {len(excluded)} models with <{min_sims} sims: "
+                  f"{', '.join(slug(m) for m in excluded)}")
+        if len(models) < 2:
+            return ""  # not enough data for a meaningful report
+
+    # Re-compute correlations for this subset
+    tau2_subset = {m: tau2_rewards[m] for m in models if m in tau2_rewards}
+    p2m_subset = {m: p2m_scores[m] for m in models if m in p2m_scores}
+    correlations = _recompute_correlations(tau2_subset, p2m_subset)
 
     charts: list[tuple[str, str]] = []  # (title, base64_png)
 
@@ -262,11 +328,15 @@ def build_report(results_dir: Path, sim_dir: Path) -> str:
             f'<img src="data:image/png;base64,{b64}" /></div>\n'
         )
 
+    report_title = "τ²-bench ↔ p2m Correlation Report"
+    if subtitle:
+        report_title += f" — {subtitle}"
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>τ²-bench ↔ p2m Correlation Report</title>
+<title>{report_title}</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
          max-width: 1200px; margin: 0 auto; padding: 20px; color: #333; }}
@@ -290,7 +360,7 @@ def build_report(results_dir: Path, sim_dir: Path) -> str:
 </style>
 </head>
 <body>
-<h1>τ²-bench ↔ p2m Correlation Report</h1>
+<h1>{report_title}</h1>
 
 <div class="summary-box">
   <div class="metric"><strong>{n_models}</strong> Models</div>
@@ -342,28 +412,52 @@ p2m scores are inverted (1 − rate) so higher = better, matching τ² conventio
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate τ²↔p2m correlation HTML report.")
+    parser = argparse.ArgumentParser(description="Generate τ²↔p2m correlation HTML reports.")
     parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR,
                         help="Directory containing correlation_results.json")
     parser.add_argument("--sim-dir", type=Path, default=SIM_DIR,
                         help="Directory containing raw simulation JSONs")
     parser.add_argument("--out", type=Path, default=None,
-                        help="Output HTML path (default: results/report.html)")
-    parser.add_argument("--no-open", action="store_true",
-                        help="Don't auto-open the report in browser")
+                        help="Output HTML path for the full report (default: results/report.html)")
+    parser.add_argument("--min-sims", type=int, default=DEFAULT_MIN_SIMS,
+                        help=f"Min tau2 simulations to include in filtered report (default: {DEFAULT_MIN_SIMS})")
+    parser.add_argument("--open", action="store_true",
+                        help="Auto-open reports in browser after generation")
     args = parser.parse_args()
 
     out_path = args.out or (args.results_dir / "report.html")
+    out_filtered = out_path.with_name(
+        out_path.stem + "_filtered" + out_path.suffix
+    )
 
     print(f"Loading results from {args.results_dir}/")
-    html = build_report(args.results_dir, args.sim_dir)
 
-    out_path.write_text(html)
-    print(f"Report saved to {out_path}")
+    # ── Full report (all models) ──────────────────────────────────
+    html_all = build_report(args.results_dir, args.sim_dir, subtitle="All Models")
+    if html_all:
+        out_path.write_text(html_all)
+        print(f"Full report saved to {out_path}")
+    else:
+        print("Not enough data for full report.")
 
-    if not args.no_open:
+    # ── Filtered report (high-sim models only) ────────────────────
+    html_filtered = build_report(
+        args.results_dir, args.sim_dir,
+        min_sims=args.min_sims,
+        subtitle=f"Filtered (≥{args.min_sims} sims)",
+    )
+    if html_filtered:
+        out_filtered.write_text(html_filtered)
+        print(f"Filtered report saved to {out_filtered}")
+    else:
+        print(f"Not enough models with ≥{args.min_sims} sims for filtered report.")
+
+    if args.open:
         import webbrowser
-        webbrowser.open(out_path.as_uri())
+        if html_all:
+            webbrowser.open(out_path.as_uri())
+        if html_filtered:
+            webbrowser.open(out_filtered.as_uri())
 
 
 if __name__ == "__main__":
