@@ -845,7 +845,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     default=DEFAULT_COMPARE_METRIC,
     shell_complete=_complete_metric,
     show_default=True,
-    help="Bad-event dimension to use for the top behavior-category delta table.",
+    help="Judge dimension to use for the top behavior-category delta table.",
 )
 @click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
@@ -1060,7 +1060,7 @@ def _run_within_suite_compare(
     "--metric",
     default=DEFAULT_COMPARE_METRIC,
     show_default=True,
-    help="Bad-event dimension to compare.",
+    help="Judge dimension to compare.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
