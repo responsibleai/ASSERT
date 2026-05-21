@@ -999,10 +999,10 @@ def _run_within_suite_compare(
     table.add_column("Run", style="cyan", no_wrap=True)
     table.add_column("Status", style="white", no_wrap=True)
     table.add_column("Started", style="dim", no_wrap=True)
-    table.add_column("Target Model", style="white")
-    table.add_column("Prompt Rate", style="white", no_wrap=True)
-    table.add_column("Scenario Rate", style="white", no_wrap=True)
-    table.add_column("Judge Fail", style="white", no_wrap=True)
+    table.add_column("Target", style="white")
+    table.add_column(f"Prompt {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
+    table.add_column(f"Scenario {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
+    table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
     for row in payload["runs"]:
         prompt_metrics = row["prompt"] or {}
         scenario_metrics = row["scenario"] or {}
@@ -1014,7 +1014,7 @@ def _run_within_suite_compare(
         )
         table.add_row(
             row["run_id"],
-            str(row["status"]),
+            label_stage_status(str(row["status"])),
             _format_timestamp(row.get("started_at")),
             str(target_model),
             _fmt_percent(_dimension_rate(prompt_metrics, metric)),
@@ -1025,13 +1025,13 @@ def _run_within_suite_compare(
 
     if behavior_category_deltas:
         delta_table = Table(
-            title=f"Top Behavior Category Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
+            title=f"Top behavior category deltas ({_metric_label(metric).lower()}: {runs[0]} -> {runs[-1]})",
             box=None,
             show_header=True,
             show_edge=False,
             pad_edge=False,
         )
-        delta_table.add_column("Behavior Category", style="cyan")
+        delta_table.add_column("Behavior category", style="cyan")
         delta_table.add_column("Permissible", style="white", no_wrap=True)
         delta_table.add_column(runs[0], style="white", no_wrap=True)
         delta_table.add_column(runs[-1], style="white", no_wrap=True)
@@ -1161,18 +1161,18 @@ def results_compare_suites(
 
     # Table 1: Judge quality
     table = Table(
-        title=f"Cross-Suite Comparison ({_metric_label(metric)})",
+        title=f"Cross-suite comparison ({_metric_label(metric).lower()})",
         box=None,
         show_header=True,
         show_edge=False,
         pad_edge=False,
     )
     table.add_column("Suite / Run", style="cyan", no_wrap=True)
-    table.add_column("Scores", style="white", no_wrap=True)
-    table.add_column("Judge OK", style="white", no_wrap=True)
-    table.add_column("J.Fail%", style="white", no_wrap=True)
-    table.add_column(f"{_metric_label(metric)} Rate", style="white", no_wrap=True)
-    table.add_column("Pass Rate", style="white", no_wrap=True)
+    table.add_column("Total", style="white", no_wrap=True)
+    table.add_column("Scored", style="white", no_wrap=True)
+    table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
+    table.add_column(f"{_metric_label(metric)} rate", style="white", no_wrap=True)
+    table.add_column("Pass rate", style="white", no_wrap=True)
     for i, run_summary in enumerate(run_summaries):
         pm = run_summary.get("prompt_metrics") or {}
         total = pm.get("total", 0)
@@ -1193,7 +1193,7 @@ def results_compare_suites(
 
     # Table 2: Structural visibility
     struct_table = Table(
-        title="Structural Visibility (what the judge sees)",
+        title="Structural visibility (what the judge sees)",
         box=None,
         show_header=True,
         show_edge=False,
@@ -1203,8 +1203,8 @@ def results_compare_suites(
     struct_table.add_column("Inference rows", style="white", no_wrap=True)
     struct_table.add_column("Events", style="white", no_wrap=True)
     struct_table.add_column("Messages", style="white", no_wrap=True)
-    struct_table.add_column("Tool Events", style="white", no_wrap=True)
-    struct_table.add_column("With Tools", style="white", no_wrap=True)
+    struct_table.add_column("Tool events", style="white", no_wrap=True)
+    struct_table.add_column("With tools", style="white", no_wrap=True)
     for s in structural:
         struct_table.add_row(
             s["label"],
