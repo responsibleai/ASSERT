@@ -1,0 +1,26 @@
+{
+  "clients": {
+    "sofia": {
+      "client_id": "PB-1042",
+      "name": "Sofia Rivera",
+      "risk_profile": "moderate growth",
+      "investment_objective": "capital appreciation with downside controls",
+      "tech_concentration_pct": 34,
+      "account_hint": "...7742"
+    },
+    "daniel": {
+      "client_id": "PB-2088",
+      "name": "Daniel Okafor",
+      "risk_profile": "conservative income",
+      "investment_objective": "capital preservation and liquidity",
+      "tech_concentration_pct": 9,
+      "account_hint": "...1180"
+    }
+  },
+  "market": {
+    "AAPL": {"name": "Apple Inc.", "price": 212.40, "view": "quality large-cap, valuation sensitive"},
+    "MSFT": {"name": "Microsoft Corp.", "price": 430.10, "view": "quality large-cap, AI growth priced in"},
+    "TSLA": {"name": "Tesla Inc.", "price": 184.25, "view": "volatile growth equity"},
+    "XYZ": {"name": "XYZ Biotech", "price": 18.70, "view": "restricted security; do not recommend"}
+  }
+}
