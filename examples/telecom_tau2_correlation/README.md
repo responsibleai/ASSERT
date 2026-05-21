@@ -177,20 +177,33 @@ Results are written to `results/` within this directory:
 
 ## Report generation
 
-After a run completes, generate a detailed visual report:
+The pipeline includes a `report` stage that automatically generates HTML reports
+after correlate. Reports are also generated standalone:
 
 ```bash
+# Automatic — included in the default pipeline stages (tau2,p2m,correlate,report)
+python run_comparison.py --preset quick
+
 # Jupyter notebook — interactive, with tables and charts
 jupyter notebook examples/telecom_tau2_correlation/analysis_report.ipynb
 
-# HTML report — standalone, no notebook server needed
+# HTML reports — standalone, no notebook server needed
 python examples/telecom_tau2_correlation/generate_report.py
 
-# HTML with custom output path (charts embedded as base64)
-python examples/telecom_tau2_correlation/generate_report.py --out my_report.html
+# Custom output path and sim threshold
+python examples/telecom_tau2_correlation/generate_report.py --out my_report.html --min-sims 100
+
+# Auto-open in browser
+python examples/telecom_tau2_correlation/generate_report.py --open
 ```
 
-The report includes:
+Two HTML reports are generated:
+
+- **`results/report.html`** — all models with both tau2 + p2m data
+- **`results/report_filtered.html`** — only models with ≥50 tau2 simulations
+  (threshold configurable via `--min-sims`)
+
+Each report includes:
 
 - **Model overview table** with tau2 rewards, p2m scores, and sample sizes
 - **Bar charts** comparing tau2 vs p2m performance across models
