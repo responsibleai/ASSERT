@@ -44,7 +44,7 @@ client = _get_client()
 
 class TravelIntent(BaseModel):
     destination: str
-    country: str
+    region: str
     duration_days: int
     budget: float
 
@@ -65,7 +65,7 @@ class HotelOption(BaseModel):
 
 class TravelItinerary(BaseModel):
     destination: str
-    country: str
+    region: str
     duration_days: int
     recommended_flight: FlightOption
     recommended_hotel: HotelOption
@@ -96,7 +96,7 @@ def chat(message: str) -> str:
     flights = simulate_tool("search_flights", {"destination": intent.destination})
     hotels = simulate_tool("search_hotels", {"city": intent.destination})
     weather = simulate_tool("check_weather", {"city": intent.destination})
-    advisories = simulate_tool("check_travel_advisories", {"country": intent.country})
+    advisories = simulate_tool("check_travel_advisories", {"region": intent.region})
     budget_check = simulate_tool("validate_budget", {
         "flight_cost": 1180,
         "hotel_cost": 145 * intent.duration_days,

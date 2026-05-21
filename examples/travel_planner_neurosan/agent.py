@@ -90,7 +90,7 @@ def classify_intent(message: str) -> dict[str, Any]:
         raw = _llm_call(
             system=(
                 "Extract travel parameters as JSON: "
-                '{"destination": str, "country": str, "days": int, "budget": float}. '
+                '{"destination": str, "region": str, "days": int, "budget": float}. '
                 "Return ONLY valid JSON."
             ),
             user=message,
@@ -99,7 +99,7 @@ def classify_intent(message: str) -> dict[str, Any]:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
-            parsed = {"destination": "Tokyo", "country": "Japan", "days": 7, "budget": 3000}
+            parsed = {"destination": "Tokyo", "region": "Japan", "days": 7, "budget": 3000}
         span.set_attribute("output.value", json.dumps(parsed))
         return parsed
 
@@ -132,12 +132,12 @@ def search_hotels(destination: str) -> str:
         return summary
 
 
-def check_safety(destination: str, country: str) -> str:
+def check_safety(destination: str, region: str) -> str:
     """Agent 4: Check weather and advisories."""
     with _tracer.start_as_current_span("safety_advisor") as span:
         span.set_attribute("openinference.span.kind", "AGENT")
         weather = _tool_call("check_weather", {"city": destination})
-        advisories = _tool_call("check_travel_advisories", {"country": country})
+        advisories = _tool_call("check_travel_advisories", {"region": region})
         summary = _llm_call(
             system="Summarize weather and safety information concisely.",
             user=f"Weather: {weather}\nAdvisories: {advisories}",
@@ -182,12 +182,12 @@ def chat(message: str) -> str:
 
         intent = classify_intent(message)
         dest = intent.get("destination", "Tokyo")
-        country = intent.get("country", "Japan")
+        region = intent.get("region", "Japan")
         budget = intent.get("budget", 3000)
 
         flights = search_flights(dest)
         hotels = search_hotels(dest)
-        safety = check_safety(dest, country)
+        safety = check_safety(dest, region)
         result = optimize_itinerary(message, flights, hotels, safety, budget)
 
         span.set_attribute("output.value", result)

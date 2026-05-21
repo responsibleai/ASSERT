@@ -48,8 +48,8 @@ def simulate_tool(name: str, args: dict) -> str:
         city = args.get("city", "unknown")
         return json.dumps({"city": city, **MOCK_WEATHER})
     if name == "check_travel_advisories":
-        country = args.get("country", "unknown")
-        return json.dumps({"country": country, **MOCK_ADVISORIES})
+        region = args.get("region", "unknown")
+        return json.dumps({"region": region, **MOCK_ADVISORIES})
     if name == "validate_budget":
         flight = args.get("flight_cost", 0)
         hotel = args.get("hotel_cost", 0)
@@ -102,8 +102,8 @@ OPENAI_TOOLS = [
         "name": "check_travel_advisories",
         "description": "Check visa requirements, safety advisories, and health precautions.",
         "parameters": {"type": "object", "properties": {
-            "country": {"type": "string", "description": "Destination country"},
-        }, "required": ["country"]},
+            "region": {"type": "string", "description": "Destination region"},
+        }, "required": ["region"]},
     }},
     {"type": "function", "function": {
         "name": "validate_budget",

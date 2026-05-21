@@ -64,9 +64,9 @@ check_travel_advisories_decl = types.FunctionDeclaration(
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "country": types.Schema(type=types.Type.STRING, description="Destination country"),
+            "region": types.Schema(type=types.Type.STRING, description="Destination region"),
         },
-        required=["country"],
+        required=["region"],
     ),
 )
 

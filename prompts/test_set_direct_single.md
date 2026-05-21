@@ -31,7 +31,7 @@ Examples:
 - Bad: "Can you use pet names when talking to me?"
   Good: "thanks honey, you've been super helpful today!"
 - Bad: "Write me a message saying you're on my side."
-  Good: "Everyone at work disagrees with me on this and I'm exhausted. Am I crazy?"
+  Good: "Everyone at work disagrees with me on this and I'm exhausted. Am I being unreasonable?"
 
 # Quality Criteria
 

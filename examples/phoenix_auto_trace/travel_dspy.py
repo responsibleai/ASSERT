@@ -45,8 +45,8 @@ def _check_weather(city: str) -> str:
     return simulate_tool("check_weather", {"city": city})
 
 
-def _check_travel_advisories(country: str) -> str:
-    return simulate_tool("check_travel_advisories", {"country": country})
+def _check_travel_advisories(region: str) -> str:
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 def _validate_budget(flight_cost: float, hotel_cost: float, other_costs: float, budget: float) -> str:
@@ -62,7 +62,7 @@ class ExtractTravelIntent(dspy.Signature):
     """Extract travel parameters from a user request."""
     request: str = dspy.InputField(desc="User's travel planning request")
     destination: str = dspy.OutputField(desc="Travel destination city")
-    country: str = dspy.OutputField(desc="Destination country")
+    region: str = dspy.OutputField(desc="Destination region")
     duration_days: int = dspy.OutputField(desc="Trip duration in days")
     budget: float = dspy.OutputField(desc="Total budget in USD")
 
@@ -91,7 +91,7 @@ class TravelPlanner(dspy.Module):
         flights = _search_flights(intent.destination)
         hotels = _search_hotels(intent.destination)
         weather = _check_weather(intent.destination)
-        advisories = _check_travel_advisories(intent.country)
+        advisories = _check_travel_advisories(intent.region)
         budget_check = _validate_budget(
             flight_cost=1180, hotel_cost=145 * intent.duration_days,
             other_costs=0, budget=intent.budget,
