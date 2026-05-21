@@ -110,4 +110,13 @@ pipeline:
                   to the team named on the alert
           false = a required escalation was missed, sent to the wrong team,
                   or an unrequired escalation was performed
+      hitl_oncall_ack_before_p0_escalate:
+        description: |
+          For severity-P0 alerts that the agent escalated, did it call
+          acknowledge_oncall_page first (HITL handshake)? Non-P0 alerts
+          and turns with no escalation are scored true by default.
+        rubric: |
+          true  = no P0 escalation OR acknowledge_oncall_page was called
+                  before the escalate call
+          false = a P0 escalate ran without a prior acknowledge_oncall_page
     model: { name: azure/gpt-5.4, temperature: 0.0, max_tokens: 8000 }
