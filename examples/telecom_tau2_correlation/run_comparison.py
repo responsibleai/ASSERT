@@ -13,10 +13,10 @@ Usage:
     python run_comparison.py --preset full
 
     # Custom: specific stages and models
-    python run_comparison.py --stages tau2,correlate --models azure/gpt-5.4-mini azure/grok-4
+    python run_comparison.py --stages tau2 --models azure/gpt-5.4-mini azure/grok-4
 
     # Full pipeline including report generation
-    python run_comparison.py --stages tau2,p2m,correlate,report
+    python run_comparison.py --stages tau2,p2m,report
 
     # Dry-run to see what would execute
     python run_comparison.py --preset quick --dry-run
@@ -842,141 +842,6 @@ def collect_p2m_scores(suite_name: str, runs: dict[str, str]) -> dict[str, dict[
     return scores
 
 
-# ── Stage: correlate ────────────────────────────────────────────────
-def _tau2_sample_sizes(tau2_rewards: dict[str, float]) -> dict[str, int]:
-    """Return {model: n_simulations} from tau2 output files on disk."""
-    sizes: dict[str, int] = {}
-    for model in tau2_rewards:
-        slug = model_slug(model)
-        path = TAU2_DATA_DIR / "simulations" / f"telecom_{slug}.json"
-        n, _ = _tau2_sim_count(path)
-        sizes[model] = n
-    return sizes
-
-
-def compute_correlation(
-    tau2_rewards: dict[str, float],
-    p2m_scores: dict[str, dict[str, float]],
-) -> dict[str, dict]:
-    """Compute Spearman rank correlation between tau2 and p2m scores.
-
-    Returns {dimension: {"rho": float, "pval": float, "n": int}, ...}
-    including _overall.
-    """
-    try:
-        from scipy.stats import spearmanr
-    except ImportError:
-        logger.error("scipy is required for correlation. Install: pip install scipy")
-        sys.exit(1)
-
-    # Only models present in both
-    common = sorted(set(tau2_rewards) & {m for m in p2m_scores if p2m_scores[m]})
-    if len(common) < 3:
-        logger.error("Need ≥3 models with results in both benchmarks, got %d", len(common))
-        return {}
-
-    tau2_vals = [tau2_rewards[m] for m in common]
-
-    # Get all dimensions from p2m
-    all_dims = set()
-    for model_scores in p2m_scores.values():
-        all_dims.update(model_scores.keys())
-
-    correlations: dict[str, dict] = {}
-    for dim in sorted(all_dims):
-        p2m_vals = []
-        tau2_matched = []
-        for m in common:
-            if dim in p2m_scores[m]:
-                # For violation dimensions, invert so higher = better (like tau2)
-                val = p2m_scores[m][dim]
-                if dim != "_overall":
-                    val = 1.0 - val  # convert violation rate to success rate
-                p2m_vals.append(val)
-                tau2_matched.append(tau2_rewards[m])
-
-        if len(p2m_vals) < 3:
-            continue
-
-        rho, pval = spearmanr(tau2_matched, p2m_vals)
-        correlations[dim] = {"rho": rho, "pval": pval, "n": len(p2m_vals)}
-        logger.info("Spearman ρ [%s]: %.4f (p=%.4f, n=%d)", dim, rho, pval, len(p2m_vals))
-
-    return correlations
-
-
-def save_results(
-    tau2_rewards: dict[str, float],
-    p2m_scores: dict[str, dict[str, float]],
-    correlations: dict[str, dict],
-) -> Path:
-    """Save combined results to a JSON file."""
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    tau2_samples = _tau2_sample_sizes(tau2_rewards)
-    output = {
-        "tau2_rewards": tau2_rewards,
-        "tau2_sample_sizes": tau2_samples,
-        "p2m_scores": p2m_scores,
-        "correlations": correlations,
-        "models_compared": sorted(set(tau2_rewards) & set(p2m_scores)),
-    }
-    out_path = RESULTS_DIR / "correlation_results.json"
-    out_path.write_text(json.dumps(output, indent=2))
-    logger.info("Results saved to %s", out_path)
-    return out_path
-
-
-def print_summary(
-    tau2_rewards: dict[str, float],
-    p2m_scores: dict[str, dict[str, float]],
-    correlations: dict[str, dict],
-) -> None:
-    """Print a human-readable summary table with sample sizes."""
-    common = sorted(set(tau2_rewards) & set(p2m_scores))
-    if not common:
-        print("No common models with results in both benchmarks.")
-        return
-
-    tau2_samples = _tau2_sample_sizes(tau2_rewards)
-
-    # Header
-    print("\n" + "=" * 72)
-    print("TELECOM τ²-bench ↔ p2m CORRELATION RESULTS")
-    print("=" * 72)
-
-    # Model scores table
-    print(f"\n{'Model':<25} {'tau2 reward':>12} {'tau2 n':>7} {'p2m overall':>12}")
-    print("-" * 57)
-    for m in common:
-        tau2_r = tau2_rewards.get(m, float("nan"))
-        p2m_o = p2m_scores.get(m, {}).get("_overall", float("nan"))
-        n_sims = tau2_samples.get(m, 0)
-        print(f"{model_slug(m):<25} {tau2_r:>12.4f} {n_sims:>7} {p2m_o:>12.4f}")
-
-    # Correlation table
-    if correlations:
-        print(f"\n{'Dimension':<30} {'Spearman ρ':>10} {'p-value':>10} {'n':>4}")
-        print("-" * 55)
-        for dim in sorted(correlations):
-            c = correlations[dim]
-            rho = c["rho"] if isinstance(c, dict) else c
-            pval = c.get("pval", float("nan")) if isinstance(c, dict) else float("nan")
-            n = c.get("n", 0) if isinstance(c, dict) else 0
-            sig = "*" if pval < 0.05 else ""
-            print(f"{dim:<30} {rho:>10.4f} {pval:>10.4f} {n:>4} {sig}")
-
-    # Data reliability note
-    low_sample = [m for m in common if tau2_samples.get(m, 0) < 50]
-    if low_sample:
-        print(f"\n⚠ Low tau2 sample count (<50 sims): "
-              f"{', '.join(model_slug(m) for m in low_sample)}")
-        print("  Correlation may be unreliable for these models.")
-        print("  Consider re-running with: "
-              f"--stages tau2 --models {' '.join(low_sample)}")
-
-    print("=" * 72 + "\n")
-
-
 # ── Cost / progress helpers ─────────────────────────────────────────
 def print_tau2_cost_summary(outputs: dict[str, Path]) -> None:
     """Print cost summary from tau2 simulation results."""
@@ -1084,8 +949,8 @@ def main() -> None:
     parser.add_argument(
         "--stages",
         type=lambda s: s.split(","),
-        default=["tau2", "p2m", "correlate", "report"],
-        help="Comma-separated stages to run (default: tau2,p2m,correlate,report)",
+        default=["tau2", "p2m", "report"],
+        help="Comma-separated stages to run (default: tau2,p2m,report)",
     )
     parser.add_argument(
         "--models",
@@ -1204,7 +1069,7 @@ def main() -> None:
     user_model = args.user_model
 
     stages = [s.strip() for s in args.stages]
-    valid_stages = {"tau2", "p2m", "correlate", "report"}
+    valid_stages = {"tau2", "p2m", "report"}
     for s in stages:
         if s not in valid_stages:
             parser.error(f"Unknown stage '{s}'. Valid: {', '.join(valid_stages)}")
@@ -1263,7 +1128,6 @@ def main() -> None:
             tau2_rewards = collect_tau2_rewards(existing_tau2)
         else:
             logger.info("Skipped tau2 stage.")
-        # Save intermediate so a later --stages=correlate can pick this up
         if tau2_rewards:
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             (RESULTS_DIR / "tau2_rewards.json").write_text(
@@ -1289,31 +1153,10 @@ def main() -> None:
             p2m_scores = collect_p2m_scores(suite_name, existing_p2m)
         else:
             logger.info("Skipped p2m stage.")
-        # Save intermediate so a later --stages=correlate can pick this up
         if p2m_scores:
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             (RESULTS_DIR / "p2m_scores.json").write_text(
                 json.dumps(p2m_scores, indent=2) + "\n")
-
-    if "correlate" in stages:
-        logger.info("═══ STAGE: correlate ═══")
-        # Load intermediates if not computed in this run
-        if not tau2_rewards:
-            f = RESULTS_DIR / "tau2_rewards.json"
-            if f.exists():
-                tau2_rewards = json.loads(f.read_text())
-                logger.info("Loaded %d tau2 rewards from intermediate file", len(tau2_rewards))
-        if not p2m_scores:
-            f = RESULTS_DIR / "p2m_scores.json"
-            if f.exists():
-                p2m_scores = json.loads(f.read_text())
-                logger.info("Loaded %d p2m scores from intermediate file", len(p2m_scores))
-        if not tau2_rewards or not p2m_scores:
-            logger.error("Need both tau2 and p2m results. Run those stages first.")
-            sys.exit(1)
-        correlations = compute_correlation(tau2_rewards, p2m_scores)
-        save_results(tau2_rewards, p2m_scores, correlations)
-        print_summary(tau2_rewards, p2m_scores, correlations)
 
     if "report" in stages:
         logger.info("═══ STAGE: report ═══")
@@ -1327,7 +1170,7 @@ def main() -> None:
             report_path.write_text(html)
             logger.info("Report saved to %s", report_path)
         else:
-            logger.warning("Not enough data for report (need ≥2 models with both tau2 + p2m).")
+            logger.warning("No data found for report. Run tau2/p2m stages first.")
 
     logger.info("Done.")
 
