@@ -17,6 +17,7 @@ from rich.table import Table
 
 from p2m.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from p2m.display import label_metric, label_stage, label_stage_status, label_status
 from p2m.logging_config import configure_logging
 from p2m.stages import STAGE_NAMES
 
@@ -114,8 +115,13 @@ def _fmt_binary_counts(counts: dict[int, int]) -> str:
     return f"0:{counts.get(0, 0)} 1:{counts.get(1, 0)}"
 
 
+def _fmt_flagged_pass(counts: dict[int, int]) -> str:
+    """Render the flagged/pass counts using the viewer's terminology."""
+    return f"{counts.get(1, 0)} flagged / {counts.get(0, 0)} pass"
+
+
 def _metric_label(metric: str) -> str:
-    return metric.replace("_", " ")
+    return label_metric(metric)
 
 
 def _resolve_results_dir(results_dir: Path) -> Path:
@@ -614,18 +620,18 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
         table.add_column("Run", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         table.add_column("Started", style="dim", no_wrap=True)
-        table.add_column("Prompt Viol.", style="white", no_wrap=True)
-        table.add_column("Prompt Overref.", style="white", no_wrap=True)
-        table.add_column("Scenario Viol.", style="white", no_wrap=True)
-        table.add_column("Judge Fail", style="white", no_wrap=True)
-        table.add_column("Target Model", style="white")
+        table.add_column("Prompt policy violations", style="white", no_wrap=True)
+        table.add_column("Prompt overrefusals", style="white", no_wrap=True)
+        table.add_column("Scenario policy violations", style="white", no_wrap=True)
+        table.add_column("Judge failures", style="white", no_wrap=True)
+        table.add_column("Target", style="white")
         for run_summary in suite_summary["runs"]:
             prompt_metrics = run_summary.get("prompt_metrics") or {}
             scenario_metrics = run_summary.get("scenario_metrics") or {}
             target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "-"
             table.add_row(
                 run_summary["run_id"],
-                run_summary["status"],
+                label_stage_status(run_summary["status"]),
                 _format_timestamp(run_summary.get("started_at")),
                 _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
                 _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
@@ -662,7 +668,7 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
             str(suite_summary["prompt_test_case_count"]),
             str(suite_summary["scenario_test_case_count"]),
             str(suite_summary["run_count"]),
-            str(suite_summary["status"]),
+            label_status(suite_summary["status"]),
         )
     console.print(table)
 
@@ -700,7 +706,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         summary.add_column("Value", style="white")
         summary.add_row("Suite", suite_summary["suite_id"])
         summary.add_row("Behavior", str(suite_summary["behavior_name"]))
-        summary.add_row("Status", str(suite_summary["status"]))
+        summary.add_row("Status", label_status(suite_summary["status"]))
         summary.add_row("Created", _format_timestamp(suite_summary.get("created_at")))
         summary.add_row("Behavior Categories", str(suite_summary["behavior_category_count"]))
         summary.add_row("Prompt Test Cases", str(suite_summary["prompt_test_case_count"]))
@@ -713,16 +719,16 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
             table.add_column("Run", style="cyan", no_wrap=True)
             table.add_column("Status", style="white", no_wrap=True)
             table.add_column("Current Stage", style="white", no_wrap=True)
-            table.add_column("Prompt Viol.", style="white", no_wrap=True)
-            table.add_column("Prompt Overref.", style="white", no_wrap=True)
-            table.add_column("Scenario Viol.", style="white", no_wrap=True)
+            table.add_column("Prompt policy violations", style="white", no_wrap=True)
+            table.add_column("Prompt overrefusals", style="white", no_wrap=True)
+            table.add_column("Scenario policy violations", style="white", no_wrap=True)
             for run_summary in suite_summary["runs"]:
                 prompt_metrics = run_summary.get("prompt_metrics") or {}
                 scenario_metrics = run_summary.get("scenario_metrics") or {}
                 table.add_row(
                     run_summary["run_id"],
-                    run_summary["status"],
-                    str(run_summary["current_stage"]),
+                    label_stage_status(run_summary["status"]),
+                    label_stage(run_summary["current_stage"]),
                     _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
                     _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
                     _fmt_percent(_dimension_rate(scenario_metrics, "policy_violation")),
@@ -751,8 +757,8 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     summary.add_column("Value", style="white")
     summary.add_row("Suite", suite)
     summary.add_row("Run", run_summary["run_id"])
-    summary.add_row("Status", str(run_summary["status"]))
-    summary.add_row("Current Stage", str(run_summary["current_stage"]))
+    summary.add_row("Status", label_stage_status(run_summary["status"]))
+    summary.add_row("Current Stage", label_stage(run_summary["current_stage"]))
     summary.add_row("Started", _format_timestamp(run_summary.get("started_at")))
     summary.add_row("Ended", _format_timestamp(run_summary.get("ended_at")))
     summary.add_row("Path", run_summary["path"])
@@ -768,7 +774,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_column("Stage", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         for stage_name, meta in stage_meta.items():
-            table.add_row(stage_name, str(meta))
+            table.add_row(label_stage(stage_name), label_stage_status(str(meta)))
         console.print(table)
 
     prompt_metrics = run_summary.get("prompt_metrics")
@@ -780,20 +786,20 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Judge Model", str(prompt_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(prompt_metrics["total"]))
         table.add_row("Scored", str(prompt_metrics["scored_total"]))
-        table.add_row("Judge Failures", _fmt_percent(prompt_metrics.get("judge_failure_rate")))
+        table.add_row(label_metric("judge_failure_rate"), _fmt_percent(prompt_metrics.get("judge_failure_rate")))
         console.print(table)
         if prompt_metrics.get("dimensions"):
             dim_table = Table(title="Prompt Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Bad Event Rate", style="white", no_wrap=True)
-            dim_table.add_column("Count", style="white", no_wrap=True)
-            dim_table.add_column("Value Mix", style="white", no_wrap=True)
+            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Scored", style="white", no_wrap=True)
+            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
             for name, summary in sorted(prompt_metrics["dimensions"].items()):
                 dim_table.add_row(
-                    _metric_label(name),
+                    label_metric(name),
                     _fmt_percent(summary.get("rate")),
                     str(summary.get("count", 0)),
-                    _fmt_binary_counts(summary.get("counts", {})),
+                    _fmt_flagged_pass(summary.get("counts", {})),
                 )
             console.print(dim_table)
 
@@ -807,20 +813,20 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
-        table.add_row("Judge Failures", _fmt_percent(scenario_metrics.get("judge_failure_rate")))
+        table.add_row(label_metric("judge_failure_rate"), _fmt_percent(scenario_metrics.get("judge_failure_rate")))
         console.print(table)
         if scenario_metrics.get("dimensions"):
             dim_table = Table(title="Scenario Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Bad Event Rate", style="white", no_wrap=True)
-            dim_table.add_column("Count", style="white", no_wrap=True)
-            dim_table.add_column("Value Mix", style="white", no_wrap=True)
+            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Scored", style="white", no_wrap=True)
+            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
             for name, summary in sorted(scenario_metrics["dimensions"].items()):
                 dim_table.add_row(
-                    _metric_label(name),
+                    label_metric(name),
                     _fmt_percent(summary.get("rate")),
                     str(summary.get("count", 0)),
-                    _fmt_binary_counts(summary.get("counts", {})),
+                    _fmt_flagged_pass(summary.get("counts", {})),
                 )
             console.print(dim_table)
 
