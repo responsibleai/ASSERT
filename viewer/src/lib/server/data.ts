@@ -1049,26 +1049,77 @@ export function loadSuitePageData(suiteId: string) {
 
 	const promptSeeds = buildPromptSeeds(snapshot);
 	const scenarioSeeds = buildScenarioSeeds(snapshot);
-	const { runs, auditRuns } = buildRunListEntries(snapshot);
 
-	const promptsByRunBehavior: Record<string, Record<string, JudgedSample[]>> = {};
-	const scenariosByRunBehavior: Record<string, Record<string, JudgedSample[]>> = {};
-	for (const run of runs) {
-		if (!run.has_judged && !run.has_scenario_scores) continue;
-		const runSnapshot = loadRunSnapshot(suiteId, run.run_id, snapshot.seedRows, {
+	const runs: RunListItem[] = [];
+	const auditRuns: AuditRunListItem[] = [];
+	const evalCountsByBehavior: Record<string, number> = {};
+	let primaryEvalRunId: string | null = null;
+	let primaryRunSnapshot: RunSnapshot | null = null;
+
+	for (const runId of snapshot.runIds) {
+		const runSnapshot = loadRunSnapshot(suiteId, runId, snapshot.seedRows, {
 			includeTranscripts: false
 		});
-		if (run.has_judged) {
-			promptsByRunBehavior[run.run_id] = groupSamplesByBehavior(
-				buildJudgedPromptsFromSnapshot(runSnapshot)
-			);
+		const manifest = runSnapshot.manifest;
+		const promptScores = buildPromptMetricSamplesFromScoreRows(
+			runSnapshot.runId,
+			runSnapshot.runtimeMode,
+			runSnapshot.scoreRows
+		);
+		const auditScores = buildAuditMetricScoresFromScoreRows(
+			runSnapshot.runtimeMode,
+			runSnapshot.scoreRows
+		);
+
+		const hasPromptScores = promptScores.length > 0;
+		const hasAuditScores = auditScores.length > 0;
+		const hasScoreStage = manifest?.stages?.judge != null;
+
+		const addedToRuns =
+			(hasPromptScores || hasScoreStage) &&
+			!(manifest?.status === 'failed' && !hasPromptScores);
+		const addedToAuditRuns =
+			(hasAuditScores || hasScoreStage) &&
+			!(manifest?.status === 'failed' && !hasAuditScores);
+
+		if (addedToRuns) {
+			runs.push({
+				run_id: runId,
+				has_judged: hasPromptScores,
+				has_scenario_scores: hasAuditScores,
+				manifest,
+				metrics: hasPromptScores ? computeRunMetrics(promptScores) : null
+			});
 		}
-		if (run.has_scenario_scores) {
-			scenariosByRunBehavior[run.run_id] = groupSamplesByBehavior(
-				buildJudgedScenariosFromSnapshot(runSnapshot)
-			);
+		if (addedToAuditRuns) {
+			auditRuns.push({
+				run_id: runId,
+				has_scores: hasAuditScores,
+				manifest,
+				metrics: hasAuditScores ? computeAuditRunMetrics(auditScores) : null
+			});
+		}
+
+		if (hasPromptScores || hasAuditScores) {
+			for (const row of runSnapshot.scoreRows) {
+				const behavior = readRowBehavior(row);
+				if (!behavior) continue;
+				evalCountsByBehavior[behavior] = (evalCountsByBehavior[behavior] ?? 0) + 1;
+			}
+		}
+
+		if (primaryEvalRunId === null && (addedToRuns || addedToAuditRuns)) {
+			primaryEvalRunId = runId;
+			primaryRunSnapshot = runSnapshot;
 		}
 	}
+
+	const primaryRunPromptsByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
+		? groupSamplesByBehavior(buildJudgedPromptsFromSnapshot(primaryRunSnapshot))
+		: {};
+	const primaryRunScenariosByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
+		? groupSamplesByBehavior(buildJudgedScenariosFromSnapshot(primaryRunSnapshot))
+		: {};
 
 	return {
 		suite_id: suiteId,
@@ -1078,8 +1129,10 @@ export function loadSuitePageData(suiteId: string) {
 		scenarioSeeds,
 		runs,
 		auditRuns,
-		promptsByRunBehavior,
-		scenariosByRunBehavior,
+		evalCountsByBehavior,
+		primaryEvalRunId,
+		primaryRunPromptsByBehavior,
+		primaryRunScenariosByBehavior,
 		dimensionDefs: loadDimensions(),
 		systematization: snapshot.systematization
 	};

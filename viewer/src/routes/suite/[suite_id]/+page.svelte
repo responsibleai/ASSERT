@@ -82,15 +82,9 @@
 
 	let evalCountsByBehavior = $derived.by(() => {
 		const map = new Map<string, number>();
-		const accumulate = (source: Record<string, Record<string, JudgedSample[]>> | undefined) => {
-			for (const runMap of Object.values(source ?? {})) {
-				for (const [behavior, samples] of Object.entries(runMap)) {
-					map.set(behavior, (map.get(behavior) ?? 0) + samples.length);
-				}
-			}
-		};
-		accumulate(data.promptsByRunBehavior);
-		accumulate(data.scenariosByRunBehavior);
+		for (const [behavior, count] of Object.entries(data.evalCountsByBehavior ?? {})) {
+			map.set(behavior, count);
+		}
 		return map;
 	});
 
@@ -199,15 +193,13 @@
 	function loadBehaviorEvalResults(behavior: string) {
 		behaviorEvalError = null;
 		behaviorEvalSamples = [];
-		const evalRun = allRuns.find((run) => run.prompt !== null || run.audit !== null);
-		if (!evalRun) {
+		if (!data.primaryEvalRunId) {
 			behaviorEvalError = 'No evaluation runs available.';
 			return;
 		}
-		const runId = evalRun.prompt_run_id ?? evalRun.audit_run_id ?? evalRun.run_id;
-		behaviorEvalRunId = runId;
-		const prompts = data.promptsByRunBehavior?.[runId]?.[behavior] ?? [];
-		const scenarios = data.scenariosByRunBehavior?.[runId]?.[behavior] ?? [];
+		behaviorEvalRunId = data.primaryEvalRunId;
+		const prompts = data.primaryRunPromptsByBehavior?.[behavior] ?? [];
+		const scenarios = data.primaryRunScenariosByBehavior?.[behavior] ?? [];
 		behaviorEvalSamples = [
 			...prompts.map((sample): BehaviorEvalEntry => ({ kind: 'prompt', sample })),
 			...scenarios.map((sample): BehaviorEvalEntry => ({ kind: 'scenario', sample }))
