@@ -25,6 +25,8 @@ similar relative model rankings despite different methodologies.
 | `telecom_tools.yaml` | 14 agent tool schemas in p2m YAML format |
 | `models.yaml` | Model inventory, endpoint mapping, and presets |
 | `run_comparison.py` | Orchestration script -- runs tau2, p2m, and correlation analysis |
+| `analysis_report.ipynb` | Jupyter notebook with tables, charts, and statistical interpretation |
+| `generate_report.py` | Standalone HTML report generator (no notebook server needed) |
 | `smoke_test.py` | Quick connectivity check for each configured endpoint |
 
 ## Prerequisites
@@ -172,6 +174,35 @@ Results are written to `results/` within this directory:
 - `results/tau2_rewards.json` -- tau2 mean rewards per model
 - `results/p2m_scores.json` -- p2m judged scores per model
 - `artifacts/results/telecom-tau2-correlation/` -- p2m run artifacts
+
+## Report generation
+
+After a run completes, generate a detailed visual report:
+
+```bash
+# Jupyter notebook — interactive, with tables and charts
+jupyter notebook examples/telecom_tau2_correlation/analysis_report.ipynb
+
+# HTML report — standalone, no notebook server needed
+python examples/telecom_tau2_correlation/generate_report.py
+
+# HTML with custom output path (charts embedded as base64)
+python examples/telecom_tau2_correlation/generate_report.py --out my_report.html
+```
+
+The report includes:
+
+- **Model overview table** with tau2 rewards, p2m scores, and sample sizes
+- **Bar charts** comparing tau2 vs p2m performance across models
+- **Correlation heatmap** showing Spearman ρ and p-values per dimension
+- **p2m dimension breakdown** with per-model violation rates
+- **Scatter plots** for each dimension (tau2 reward vs p2m score)
+- **Reward distribution histograms** per model (from raw simulation data)
+- **Per-task analysis** highlighting tasks where models disagree most
+- **Data quality checks** flagging low sample sizes and power concerns
+
+Both formats read from `results/correlation_results.json` and
+`data/simulations/` — re-run after each pipeline execution to refresh.
 
 ## Design decisions
 
