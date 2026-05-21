@@ -37,6 +37,7 @@ from p2m.core.artifact_cache import (
 )
 from p2m.core.config_model import RunManifest, SuiteMetadata
 from p2m.core.io import write_json
+from p2m.display import label_metric
 from p2m.core.model_client import (
     LLMAuthError,
     LLMInputError,
@@ -366,6 +367,78 @@ def _print_stage_done(
         log.info(f"{tag} \u2713 Done ({elapsed:.1f}s){suffix}")
 
 
+def _log_run_headline(run_root: Path) -> None:
+    """Log the same headline numbers a user sees on the viewer's run page.
+
+    Pulls scores from ``run_root/scores.jsonl`` and prints target/judge plus the
+    headline rates (policy violation, overrefusal, judge failure). Silently
+    does nothing if the judge stage hasn't produced scores yet — that matches
+    the viewer's behavior, which only shows the headline once scores exist.
+    """
+    # Imported lazily to avoid a hard dependency for callers that import the
+    # runner without ever invoking it (e.g. test scaffolding).
+    from p2m.results import (
+        compute_prompt_metrics,
+        compute_scenario_metrics,
+    )
+    from p2m.core.io import load_jsonl
+
+    scores_path = run_root / "scores.jsonl"
+    if not scores_path.exists():
+        return
+    score_rows = load_jsonl(scores_path)
+    if not score_rows:
+        return
+
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
+    prompt_metrics = compute_prompt_metrics(prompt_rows)
+    scenario_metrics = compute_scenario_metrics(scenario_rows)
+    primary = prompt_metrics or scenario_metrics
+    if primary is None:
+        return
+
+    target = primary.get("target") or "—"
+    judge = primary.get("judge_model") or "—"
+    total = (prompt_metrics or {}).get("total", 0) + (scenario_metrics or {}).get("total", 0)
+    scored = (prompt_metrics or {}).get("scored_total", 0) + (scenario_metrics or {}).get("scored_total", 0)
+
+    log.info("Headline:")
+    log.info(f"  Target: {target}")
+    log.info(f"  Judge:  {judge}")
+    log.info(f"  Total:  {total} ({scored} scored)")
+
+    def _fmt_rate(value: Any) -> str:
+        if value is None or not isinstance(value, (int, float)):
+            return "—"
+        return f"{value * 100:.1f}%"
+
+    def _emit(label: str, prompt_value: Any, scenario_value: Any) -> None:
+        parts: list[str] = []
+        if prompt_metrics is not None:
+            parts.append(f"prompt {_fmt_rate(prompt_value)}")
+        if scenario_metrics is not None:
+            parts.append(f"scenario {_fmt_rate(scenario_value)}")
+        if parts:
+            log.info(f"  {label}: {' · '.join(parts)}")
+
+    _emit(
+        label_metric("policy_violation_rate"),
+        (prompt_metrics or {}).get("policy_violation_rate"),
+        (scenario_metrics or {}).get("policy_violation_rate"),
+    )
+    _emit(
+        label_metric("overrefusal_rate"),
+        (prompt_metrics or {}).get("overrefusal_rate"),
+        (scenario_metrics or {}).get("overrefusal_rate"),
+    )
+    _emit(
+        label_metric("judge_failure_rate"),
+        (prompt_metrics or {}).get("judge_failure_rate"),
+        (scenario_metrics or {}).get("judge_failure_rate"),
+    )
+
+
 def run_pipeline(
     *,
     config: str,
@@ -640,6 +713,7 @@ def run_pipeline(
     if failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
+            _log_run_headline(run_root)
             log.info("Results:")
             scores_path = run_root / "scores.jsonl"
             metrics_path = run_root / "metrics.json"
