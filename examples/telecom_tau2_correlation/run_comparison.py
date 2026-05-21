@@ -1321,28 +1321,13 @@ def main() -> None:
 
         sim_dir = TAU2_DATA_DIR / "simulations"
 
-        # Full report (all models)
-        html_all = build_report(RESULTS_DIR, sim_dir, subtitle="All Models")
-        if html_all:
-            full_path = RESULTS_DIR / "report.html"
-            full_path.write_text(html_all)
-            logger.info("Full report saved to %s", full_path)
+        html = build_report(RESULTS_DIR, sim_dir, min_sims=DEFAULT_MIN_SIMS)
+        if html:
+            report_path = RESULTS_DIR / "report.html"
+            report_path.write_text(html)
+            logger.info("Report saved to %s", report_path)
         else:
-            logger.warning("Not enough data for full report.")
-
-        # Filtered report (exclude noisy low-sim models)
-        html_filtered = build_report(
-            RESULTS_DIR, sim_dir,
-            min_sims=DEFAULT_MIN_SIMS,
-            subtitle=f"Filtered (≥{DEFAULT_MIN_SIMS} sims)",
-        )
-        if html_filtered:
-            filtered_path = RESULTS_DIR / "report_filtered.html"
-            filtered_path.write_text(html_filtered)
-            logger.info("Filtered report saved to %s", filtered_path)
-        else:
-            logger.warning("Not enough models with ≥%d sims for filtered report.",
-                           DEFAULT_MIN_SIMS)
+            logger.warning("Not enough data for report (need ≥2 models with both tau2 + p2m).")
 
     logger.info("Done.")
 

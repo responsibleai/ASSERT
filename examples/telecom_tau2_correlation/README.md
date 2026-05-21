@@ -197,13 +197,15 @@ python examples/telecom_tau2_correlation/generate_report.py --out my_report.html
 python examples/telecom_tau2_correlation/generate_report.py --open
 ```
 
-Two HTML reports are generated:
+A single `results/report.html` is generated containing:
 
-- **`results/report.html`** — all models with both tau2 + p2m data
-- **`results/report_filtered.html`** — only models with ≥50 tau2 simulations
+- **Data status** — all tau2/p2m models, coverage gaps, simulation counts
+- **Full analysis** — correlations across all overlapping models
+- **Filtered analysis** — only models with ≥50 tau2 simulations
   (threshold configurable via `--min-sims`)
+- **Reward distributions** — histograms from raw simulation data
 
-Each report includes:
+Each analysis section includes:
 
 - **Model overview table** with tau2 rewards, p2m scores, and sample sizes
 - **Bar charts** comparing tau2 vs p2m performance across models
