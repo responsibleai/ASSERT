@@ -668,7 +668,7 @@
 	</div>
 
 	{#if selectedBehavior && selectedBehaviorData}
-		<div class="sticky top-16 max-h-[calc(100vh-120px)] w-[520px] shrink-0 self-start overflow-y-auto rounded-lg border border-border bg-surface">
+		<div class="sticky top-16 max-h-[calc(100vh-120px)] w-[520px] shrink-0 self-start overflow-y-auto [scrollbar-gutter:stable] rounded-lg border border-border bg-surface">
 			<div class="sticky top-0 z-10 border-b border-border bg-surface">
 				<div class="px-5 py-3">
 				<div class="flex items-start justify-between gap-3">
