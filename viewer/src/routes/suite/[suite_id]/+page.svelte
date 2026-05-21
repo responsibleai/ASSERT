@@ -512,7 +512,7 @@
 		<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Behavior categories</h2>
 		<span class="shrink-0 text-xs text-text-muted">{visibleBehaviors.length} of {sortedBehaviors.length} categories</span>
 	</div>
-	<p class="mt-1 text-sm leading-5 text-text-muted">Browse behavior categories generated from a systematized taxonomy for {conceptName}. Click to view definitions, test scenarios, and results.</p>
+	<p class="mt-1 text-sm leading-5 text-text-muted">Browse behavior categories systematized for {conceptName}. Click to view definitions, test scenarios, and results.</p>
 </div>
 
 <div class="flex gap-5">

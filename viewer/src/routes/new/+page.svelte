@@ -303,17 +303,17 @@
 		step2Source === 'existing' && selectedSuite
 			? `Copied from ${selectedSuite.behavior_name}`
 			: step2Source === 'new'
-				? 'Taxonomy'
+				? 'Behavior categories'
 				: '—'
 	);
 	let summaryTestCasesPipeline = $derived(
 		promptTestCasesEnabled
-			? `Query seeds → ${promptTestCasesConfig.model.split('/')[1]}${dimensionBasedExpanded ? ' (dimension-based)' : ''}`
+			? `Prompt test cases → ${promptTestCasesConfig.model.split('/')[1]}${dimensionBasedExpanded ? ' (dimension-based)' : ''}`
 			: '—'
 	);
 	let summaryScenarioPipeline = $derived(
 		scenarioTestCasesEnabled || scenarioEvalEnabled
-			? [scenarioTestCasesEnabled && 'Audit seeds', scenarioEvalEnabled && 'Scenario eval']
+			? [scenarioTestCasesEnabled && 'Scenario test cases', scenarioEvalEnabled && 'Scenario eval']
 					.filter(Boolean)
 					.join(' → ') || '—'
 			: '—'
@@ -740,7 +740,7 @@
 							onclick={() => { toolsMode = 'simulated'; markDirty(); }}
 						>
 							<span class="text-sm font-medium text-text">Simulated tools</span>
-							<span class="block text-xs text-text-muted">Describe tools in natural language; the auditor simulates results.</span>
+							<span class="block text-xs text-text-muted">Describe tools in natural language; the tester simulates results.</span>
 						</button>
 						<button
 							type="button"
@@ -853,7 +853,7 @@
 					<!-- Suite picker (existing) -->
 					{#if step2Source === 'existing'}
 						<div class="mb-6">
-							<p class="mb-4 text-sm text-text-muted">Generate new evaluation set (seed prompts only) from behavior categories in a pre-existing suite.</p>
+							<p class="mb-4 text-sm text-text-muted">Generate new evaluation set (prompt test cases only) from behavior categories in a pre-existing suite.</p>
 							<div class="relative mb-4">
 								<label for="suite-search" class="mb-1 block text-xs font-semibold text-text-secondary">Select suite <span class="text-score-fail">*</span></label>
 								<div class="relative">
@@ -907,7 +907,7 @@
 						</div>
 					{/if}
 
-					<!-- Taxonomy pipeline (new mode) -->
+					<!-- Behavior categories pipeline (new mode) -->
 					<p class="mb-2 text-[16px] font-semibold text-text">Evaluation pipeline</p>
 					{#if step2Source === 'new'}
 						<div class="mb-5">
@@ -924,12 +924,12 @@
 									>
 										<div class="pipeline-row-label">
 											<span class="flex items-center gap-1.5 text-sm font-medium text-text">
-												Taxonomy
+												Behavior categories
 												{#if systematizeConfig.deepResearchAgent}
 													<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" class="text-interactive" aria-label="Deep Research Agent enabled"><title>Deep Research Agent enabled</title><path d="M7.53 1.282a.5.5 0 0 1 .94 0l.478 1.306a4 4 0 0 0 2.384 2.385l1.307.478a.5.5 0 0 1 0 .938l-1.307.478a4 4 0 0 0-2.384 2.385l-.478 1.306a.5.5 0 0 1-.94 0l-.478-1.306a4 4 0 0 0-2.385-2.385L3.36 6.389a.5.5 0 0 1 0-.938l1.307-.478A4 4 0 0 0 7.053 2.59l.478-1.307Zm5.49 7.078a.25.25 0 0 1 .47 0l.279.763a2.25 2.25 0 0 0 1.342 1.342l.762.279a.25.25 0 0 1 0 .469l-.762.279a2.25 2.25 0 0 0-1.342 1.342l-.28.762a.25.25 0 0 1-.469 0l-.279-.762a2.25 2.25 0 0 0-1.342-1.342l-.762-.28a.25.25 0 0 1 0-.469l.762-.279a2.25 2.25 0 0 0 1.342-1.342l.28-.762Z"/></svg>
 												{/if}
 											</span>
-											<span class="text-xs text-text-muted">Generate behavior categories from risk definition.</span>
+											<span class="text-xs text-text-muted">Generate behavior categories from behavior definition.</span>
 										</div>
 										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{systematizeConfig.model.split('/')[1]}</span>
 										<span class="pipeline-row-chevron">
@@ -966,9 +966,9 @@
 												<span class="flex items-center gap-1.5 text-text">
 													<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" class="text-interactive shrink-0" aria-hidden="true"><path d="M7.53 1.282a.5.5 0 0 1 .94 0l.478 1.306a4 4 0 0 0 2.384 2.385l1.307.478a.5.5 0 0 1 0 .938l-1.307.478a4 4 0 0 0-2.384 2.385l-.478 1.306a.5.5 0 0 1-.94 0l-.478-1.306a4 4 0 0 0-2.385-2.385L3.36 6.389a.5.5 0 0 1 0-.938l1.307-.478A4 4 0 0 0 7.053 2.59l.478-1.307Zm5.49 7.078a.25.25 0 0 1 .47 0l.279.763a2.25 2.25 0 0 0 1.342 1.342l.762.279a.25.25 0 0 1 0 .469l-.762.279a2.25 2.25 0 0 0-1.342 1.342l-.28.762a.25.25 0 0 1-.469 0l-.279-.762a2.25 2.25 0 0 0-1.342-1.342l-.762-.28a.25.25 0 0 1 0-.469l.762-.279a2.25 2.25 0 0 0 1.342-1.342l.28-.762Z"/></svg>
 													<span class="font-medium">Use Deep Research Agent</span>
-													<InfoTooltip direction="se" label="Systematize risk by 1) combining a research-grounded analysis, 2) a simulated expert (Delphi-style) discussion to surface how risks manifest in GenAI, and 3) a validator that refines outputs using social science–based criteria. The output is a taxonomy." />
+													<InfoTooltip direction="se" label="Systematize the behavior by 1) combining a research-grounded analysis, 2) a simulated expert (Delphi-style) discussion to surface how the behavior manifests in GenAI, and 3) a validator that refines outputs using social science–based criteria. The output is a set of behavior categories." />
 												</span>
-												<span class="text-text-muted">Slower and more expensive, but produces a more thorough, research-grounded taxonomy.</span>
+												<span class="text-text-muted">Slower and more expensive, but produces a more thorough, research-grounded set of behavior categories.</span>
 											</span>
 										</label>
 									{/if}
@@ -991,7 +991,7 @@
 									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); promptTestCasesExpanded = !promptTestCasesExpanded; } }}
 								>
 									<div class="pipeline-row-label">
-										<span class="block text-sm font-medium text-text">Query seeds</span>
+										<span class="block text-sm font-medium text-text">Prompt test cases</span>
 										<span class="text-xs text-text-muted">Create test prompts across categories.</span>
 									</div>
 									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{promptTestCasesConfig.model.split('/')[1]}</span>
@@ -1100,7 +1100,7 @@
 								>
 									<div class="pipeline-row-label">
 										<span class="block text-sm font-medium text-text">Prompt evaluation</span>
-										<span class="text-xs text-text-muted">Run seeds against target model and judge responses.</span>
+										<span class="text-xs text-text-muted">Run prompt test cases against target model and judge responses.</span>
 									</div>
 									<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{promptEvalConfig.targetModel.split('/')[1]}</span>
 									<span class="pipeline-row-chevron">
@@ -1126,7 +1126,7 @@
 					<!-- Audit pipeline -->
 					<div class="mb-5">
 						<div class="divide-y divide-border rounded-lg border border-border">
-							<!-- Audit seeds row -->
+							<!-- Scenario test cases row -->
 							<div class="p-3">
 								<div class="flex items-center gap-3">
 									<input
@@ -1145,8 +1145,8 @@
 										onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scenarioTestCasesExpanded = !scenarioTestCasesExpanded; } }}
 									>
 										<div class="pipeline-row-label">
-											<span class="block text-sm font-medium text-text">Prompt seeds <span class="font-normal text-text-muted">(optional)</span></span>
-											<span class="text-xs text-text-muted">Generate audit-style multi-turn seed prompts.</span>
+											<span class="block text-sm font-medium text-text">Scenario test cases <span class="font-normal text-text-muted">(optional)</span></span>
+											<span class="text-xs text-text-muted">Generate multi-turn scenario test cases.</span>
 										</div>
 										<span class="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-text-muted">{scenarioTestCasesConfig.model.split('/')[1]}</span>
 										<span class="pipeline-row-chevron">
@@ -1172,7 +1172,7 @@
 											</div>
 											<p class="mt-1 text-[10px] text-text-muted">
 												{scenarioTestCasesConfig.modality === 'conversation'
-													? 'Standard multi-turn conversation between auditor and target.'
+													? 'Standard multi-turn conversation between tester and target.'
 													: 'Agentic multi-turn interaction with tool-use capabilities.'}
 											</p>
 										</div>
@@ -1281,7 +1281,7 @@
 											</div>
 										</div>
 										<div>
-											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Auditor</span>
+											<span class="mb-1.5 block text-[10px] font-semibold text-text-muted">Tester</span>
 											<div class="grid gap-3" style="grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr;">
 												<div>
 													<label for="se-tester-model" class="mb-0.5 block text-[10px] text-text-muted">Model</label>
@@ -1370,7 +1370,7 @@
 					<h3 class="mb-3 text-base font-semibold text-text">Summary</h3>
 					<div class="space-y-2.5 rounded-md border border-border bg-bg p-4 text-sm">
 						<div class="flex items-baseline justify-between gap-3">
-							<span class="shrink-0 text-text-muted">Risk</span>
+							<span class="shrink-0 text-text-muted">Behavior</span>
 							<span class="min-w-0 break-words text-right font-medium text-text">{summaryRisk}</span>
 						</div>
 						{#if applicationContext.trim()}
@@ -1380,7 +1380,7 @@
 							<div><span class="mb-0.5 block text-text-muted">System prompt</span><span class="block whitespace-pre-wrap break-words text-text">{systemPrompt.trim()}</span></div>
 						{/if}
 						<div class="flex items-baseline justify-between gap-3">
-							<span class="shrink-0 text-text-muted">Taxonomy</span>
+							<span class="shrink-0 text-text-muted">Behavior categories</span>
 							<span class="min-w-0 break-words text-right font-medium text-text">{summaryTaxonomy}</span>
 						</div>
 						<div class="flex items-baseline justify-between gap-3">

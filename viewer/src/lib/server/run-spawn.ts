@@ -305,7 +305,7 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 
 	if (!promptTestCasesEnabled && !promptEvalEnabled && !scenarioTestCasesEnabled && !scenarioEvalEnabled) {
 		errors.push(
-			'At least one pipeline (query seeds, prompt eval, audit seeds, or scenario eval) must be enabled.'
+			'At least one pipeline (prompt test cases, prompt eval, scenario test cases, or scenario eval) must be enabled.'
 		);
 	}
 	if (!promptEvalEnabled && !scenarioEvalEnabled) {
@@ -314,7 +314,7 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 		);
 	}
 	if (scenarioEvalEnabled && !scenarioTestCasesEnabled) {
-		errors.push('Scenario eval requires audit seeds to be enabled as well.');
+		errors.push('Scenario eval requires scenario test cases to be enabled as well.');
 	}
 	const scenarioJudgePasses =
 		scenarioEvalEnabled && scenarioCfg.judge?.judgePasses !== undefined
