@@ -10,9 +10,9 @@ Fix (verified by these tests): ``_load_metrics_summary`` now sources all
 four outcome columns from the run's ``scores.jsonl`` (via
 :func:`p2m.results.load_run_summary`). The runner's ``metrics.json``
 is no longer consulted for outcome data, and the suite-root
-compatibility ``seeds.jsonl`` is not consulted either -- it only
+compatibility ``test_set.jsonl`` is not consulted either -- it only
 refreshes on full-success runs and would produce stale or blank
-readings for partial-seeds runs that exit 0 but skip cache
+readings for partial-test_set runs that exit 0 but skip cache
 finalization.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _import_benchmark_module() -> object:
 
 
 def _scenario_score_row(
-    seed_id: str,
+    test_case_id: str,
     *,
     policy_violation: bool,
     overrefusal: bool,
@@ -57,7 +57,7 @@ def _scenario_score_row(
 
     Requirements for the row to be classified as a *successful scenario*:
 
-    * ``auditor_model`` non-empty (so ``load_run_summary`` puts it in
+    * ``tester_model`` non-empty (so ``load_run_summary`` puts it in
       ``scenario_rows`` rather than ``prompt_rows``).
     * ``judge_status='ok'`` and ``verdict.node_judgments`` is a list, so
       :func:`infer_judge_status` returns ``'ok'``.
@@ -66,12 +66,12 @@ def _scenario_score_row(
       ``compute_dimension_summary`` counts them.
     """
     return {
-        "seed_id": seed_id,
-        "kind": "scenario",
-        "concept": "concept",
+        "test_case_id": test_case_id,
+        "type": "scenario",
+        "behavior": "behavior",
         "target": "target-model",
         "judge_model": "judge-model",
-        "auditor_model": "auditor-model",
+        "tester_model": "tester-model",
         "judge_status": "ok",
         "verdict": {
             "node_judgments": [{"node": "behavior-1"}],
@@ -93,7 +93,7 @@ class LoadMetricsSummaryTest(unittest.TestCase):
         suite_id: str,
         run_id: str,
         *,
-        seed_rows: list[dict[str, object]],
+        test_case_rows: list[dict[str, object]],
         score_rows: list[dict[str, object]],
         write_manifest: bool = True,
     ) -> Path:
@@ -102,9 +102,9 @@ class LoadMetricsSummaryTest(unittest.TestCase):
         run_dir = suite_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        seeds_path = suite_dir / "seeds.jsonl"
-        seeds_path.write_text(
-            "\n".join(json.dumps(row) for row in seed_rows) + ("\n" if seed_rows else ""),
+        test_set_path = suite_dir / "test_set.jsonl"
+        test_set_path.write_text(
+            "\n".join(json.dumps(row) for row in test_case_rows) + ("\n" if test_case_rows else ""),
             encoding="utf-8",
         )
         scores_path = run_dir / "scores.jsonl"
@@ -129,10 +129,10 @@ class LoadMetricsSummaryTest(unittest.TestCase):
                 repo_root,
                 "suite-bench",
                 "run-001",
-                seed_rows=[
-                    {"kind": "prompt", "seed_id": "p-1"},
+                test_case_rows=[
+                    {"type": "prompt", "test_case_id": "p-1"},
                     *(
-                        {"kind": "scenario", "seed_id": f"s-{i}"}
+                        {"type": "scenario", "test_case_id": f"s-{i}"}
                         for i in range(4)
                     ),
                 ],
@@ -152,7 +152,7 @@ class LoadMetricsSummaryTest(unittest.TestCase):
             self.assertEqual(summary["scenario_seeds_generated"], 4)
             # All 4 scenario score rows are scored ('ok').
             self.assertEqual(summary["scenarios_scored"], 4)
-            # 1/4 policy violations, 1/4 overrefusals.
+            # 1/4 taxonomy violations, 1/4 overrefusals.
             self.assertAlmostEqual(summary["policy_violation_true_rate"], 0.25)
             self.assertAlmostEqual(summary["overrefusal_true_rate"], 0.25)
 
@@ -183,7 +183,7 @@ class LoadMetricsSummaryTest(unittest.TestCase):
                 repo_root,
                 "suite-bench",
                 "run-002",
-                seed_rows=[{"kind": "scenario", "seed_id": "s-0"}],
+                test_case_rows=[{"type": "scenario", "test_case_id": "s-0"}],
                 score_rows=[
                     _scenario_score_row("s-0", policy_violation=True, overrefusal=False),
                 ],
@@ -201,7 +201,7 @@ class LoadMetricsSummaryTest(unittest.TestCase):
                             "overrefusal": {"true_rate": 0.88},
                         },
                     },
-                    "seed_metrics": {"scenario_count": 999},
+                    "test_set_metrics": {"scenario_count": 999},
                 }),
                 encoding="utf-8",
             )
@@ -214,15 +214,15 @@ class LoadMetricsSummaryTest(unittest.TestCase):
             self.assertAlmostEqual(summary["policy_violation_true_rate"], 1.0)
             self.assertAlmostEqual(summary["overrefusal_true_rate"], 0.0)
 
-    def test_ignores_stale_suite_root_seeds_jsonl(self) -> None:
-        """The suite-root ``seeds.jsonl`` compatibility file refreshes
-        only when the seeds stage cleanly finalizes its cacheable
-        artifact. For partial-seeds runs that exit 0 but skip
+    def test_ignores_stale_suite_root_test_set_jsonl(self) -> None:
+        """The suite-root ``test_set.jsonl`` compatibility file refreshes
+        only when the test_set stage cleanly finalizes its cacheable
+        artifact. For partial-test_set runs that exit 0 but skip
         finalization (the runner gate added in this PR), that file is
         either missing (first-ever run) or stale (prior run's count).
 
         This test plants a deliberately-misleading suite-root
-        ``seeds.jsonl`` with a wrong scenario count and asserts the
+        ``test_set.jsonl`` with a wrong scenario count and asserts the
         scanner still reports the count from THIS run's
         ``scores.jsonl`` -- not the suite-root file.
         """
@@ -232,10 +232,10 @@ class LoadMetricsSummaryTest(unittest.TestCase):
                 repo_root,
                 "suite-bench",
                 "run-003",
-                # Suite-root seeds.jsonl claims 99 scenarios (the
+                # Suite-root test_set.jsonl claims 99 scenarios (the
                 # "stale prior run" shape).
-                seed_rows=[
-                    {"kind": "scenario", "seed_id": f"stale-{i}"}
+                test_case_rows=[
+                    {"type": "scenario", "test_case_id": f"stale-{i}"}
                     for i in range(99)
                 ],
                 # But this run actually only scored 2 scenarios.

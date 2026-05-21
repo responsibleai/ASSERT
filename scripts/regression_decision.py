@@ -2,11 +2,11 @@
 
 For each metric:
 
-* **Per-seed binary** (signal_rate, policy_violation_rate, overrefusal_rate,
+* **Per-test-case binary** (signal_rate, policy_violation_rate, overrefusal_rate,
   judge_failure_rate) — paired McNemar's exact test on 2x2 contingency
-  table over the seed ids common to both runs.
-* **Suite-level** (construct_coverage, separation_strength, etc.) — paired
-  bootstrap on jointly-resampled seed ids, with BCa-corrected 95% CI on
+  table over the test-case ids common to both runs.
+* **Dataset-level** (construct_coverage, separation_strength, etc.) — paired
+  bootstrap on jointly-resampled test-case ids, with BCa-corrected 95% CI on
   the delta.
 
 Significance is one-sided (regression-only): we only flag `Degraded` when
@@ -30,8 +30,8 @@ from scripts.regression_metrics import (
     AUXILIARY_METRICS,
     CANONICAL_METRICS,
     DIRECTIONS,
-    PER_SEED_BINARY,
-    SUITE_LEVEL,
+    PER_TEST_CASE_BINARY,
+    DATASET_LEVEL,
     MetricResult,
     compute_all,
     metric_to_jsonable,
@@ -55,7 +55,7 @@ DEFAULT_MDE: dict[str, float] = {
     "failure_mode_count": 2.0,
 }
 
-# Bootstrap replicates for suite-level deltas.
+# Bootstrap replicates for dataset-level deltas.
 DEFAULT_BOOTSTRAP = 2000
 
 # Minimum N for a metric to be eligible for hard-gate. Below this we WARN
@@ -86,7 +86,7 @@ class MetricComparison:
     n_pairs: int
     test: str  # "mcnemar" | "bootstrap" | "skipped"
     p_value: float | None  # one-sided regression p-value
-    ci_low: float | None  # 95% CI for delta (suite-level only)
+    ci_low: float | None  # 95% CI for delta (dataset-level only)
     ci_high: float | None
     effect: str
     detail: dict[str, Any] = field(default_factory=dict)
@@ -159,7 +159,7 @@ def paired_bootstrap_ci(
 
     Returns (mean_delta, ci_low, ci_high) using the percentile method on
     means of resampled (with replacement) deltas. Deltas are assumed to be
-    paired-by-seed-id and supplied in matched order.
+    paired-by-test-case-id and supplied in matched order.
     """
     n = len(deltas)
     if n == 0:
@@ -239,7 +239,7 @@ def _classify_effect(
     return EFFECT_INCONCLUSIVE
 
 
-def compare_per_seed_binary(
+def compare_per_test_case_binary(
     name: str,
     baseline: MetricResult,
     treatment: MetricResult,
@@ -248,12 +248,12 @@ def compare_per_seed_binary(
     alpha: float,
     mde: float,
 ) -> MetricComparison:
-    common = sorted(set(baseline.per_seed) & set(treatment.per_seed))
+    common = sorted(set(baseline.per_test_case) & set(treatment.per_test_case))
     n = len(common)
     b = c = 0
     for sid in common:
-        bv = baseline.per_seed[sid]
-        tv = treatment.per_seed[sid]
+        bv = baseline.per_test_case[sid]
+        tv = treatment.per_test_case[sid]
         if bv == 1 and tv == 0:
             b += 1
         elif bv == 0 and tv == 1:
@@ -287,7 +287,7 @@ def compare_per_seed_binary(
         treatment_value=treatment.value,
         mean_diff=mean_diff,
         direction=direction,
-        granularity="per_seed_binary",
+        granularity="per_test_case_binary",
         n_pairs=n,
         test="mcnemar",
         p_value=p,
@@ -298,7 +298,7 @@ def compare_per_seed_binary(
     )
 
 
-def compare_suite_level(
+def compare_dataset_level(
     name: str,
     baseline: MetricResult,
     treatment: MetricResult,
@@ -309,16 +309,16 @@ def compare_suite_level(
     n_pairs: int,
     n_resamples: int = DEFAULT_BOOTSTRAP,
 ) -> MetricComparison:
-    """Compare a suite-level metric.
+    """Compare a dataset-level metric.
 
-    Suite metrics are not naturally per-seed, so we have no per-seed delta
+    Dataset metrics are not naturally per-test-case, so we have no per-test-case delta
     series. We use a deterministic delta + simple z-style approximation:
     if the absolute delta exceeds the MDE, p is placeholder-set based on
-    n_pairs (as a power signal). This keeps suite metrics ADVISORY in v1
+    n_pairs (as a power signal). This keeps dataset metrics ADVISORY in v1
     while still surfacing big swings to reviewers.
     """
     mean_diff = treatment.value - baseline.value
-    # Without per-seed deltas, true significance requires a more complex
+    # Without per-test-case deltas, true significance requires a more complex
     # design. For v1 we report the delta + warn-only effect classification.
     p_value = 0.5 if abs(mean_diff) < mde else 0.05
     effect = _classify_effect(
@@ -335,7 +335,7 @@ def compare_suite_level(
         treatment_value=treatment.value,
         mean_diff=mean_diff,
         direction=direction,
-        granularity="suite",
+        granularity="dataset",
         n_pairs=n_pairs,
         test="bootstrap",
         p_value=p_value,
@@ -377,7 +377,7 @@ def decide(
     alpha: float = DEFAULT_ALPHA,
     mdes: dict[str, float] | None = None,
     directions_override: dict[str, str | None] | None = None,
-    n_seeds: int | None = None,
+    test_set_size: int | None = None,
 ) -> dict[str, Any]:
     """Run all comparisons + Holm gate and return a JSON-safe report.
 
@@ -387,12 +387,12 @@ def decide(
         mdes: per-metric minimum detectable effect (raw units). Falls back to ``DEFAULT_MDE``.
         directions_override: optional per-metric direction; useful for
             ``policy_violation_rate`` whose direction depends on target.
-        n_seeds: total seed count fed into the runs (used to size the
-            suite-level pseudo-N for power warnings).
+        test_set_size: total test-set size fed into the runs (used to size the
+            dataset-level pseudo-N for power warnings).
     """
     mdes = {**DEFAULT_MDE, **(mdes or {})}
     directions = {**DIRECTIONS, **(directions_override or {})}
-    n_pairs_suite = n_seeds or 0
+    n_pairs_suite = test_set_size or 0
 
     comparisons: list[MetricComparison] = []
     for name in CANONICAL_METRICS + AUXILIARY_METRICS:
@@ -400,15 +400,15 @@ def decide(
         t = treatment.get(name)
         if b is None or t is None:
             continue
-        if name in PER_SEED_BINARY:
-            cmp_ = compare_per_seed_binary(
+        if name in PER_TEST_CASE_BINARY:
+            cmp_ = compare_per_test_case_binary(
                 name, b, t,
                 direction=directions.get(name),
                 alpha=alpha,
                 mde=mdes[name],
             )
-        elif name in SUITE_LEVEL:
-            cmp_ = compare_suite_level(
+        elif name in DATASET_LEVEL:
+            cmp_ = compare_dataset_level(
                 name, b, t,
                 direction=directions.get(name),
                 alpha=alpha,
@@ -430,9 +430,9 @@ def decide(
     reasons: list[str] = []
     for cmp_ in canonical_cmps:
         if cmp_.effect == EFFECT_DEGRADED and rejected_by_name.get(cmp_.name):
-            # Hard-gate only on stable per-seed metrics in v1; suite-level
+            # Hard-gate only on stable per-test-case metrics in v1; dataset-level
             # canonical metrics are advisory until calibration confirms power.
-            if cmp_.granularity == "per_seed_binary":
+            if cmp_.granularity == "per_test_case_binary":
                 decision = DECISION_BLOCK
                 reasons.append(
                     f"{cmp_.name}: degraded by {cmp_.mean_diff:+.4f} "
@@ -442,7 +442,7 @@ def decide(
                 if decision == DECISION_PASS:
                     decision = DECISION_WARN
                 reasons.append(
-                    f"{cmp_.name} (suite-level, advisory v1): degraded by "
+                    f"{cmp_.name} (dataset-level, advisory v1): degraded by "
                     f"{cmp_.mean_diff:+.4f}"
                 )
         elif cmp_.effect == EFFECT_TOO_FEW:
@@ -452,7 +452,7 @@ def decide(
                 f"{cmp_.name}: only {cmp_.n_pairs} paired samples "
                 f"(<{MIN_N_FOR_GATE}); cannot gate"
             )
-        elif cmp_.effect == EFFECT_INCONCLUSIVE and cmp_.granularity == "per_seed_binary":
+        elif cmp_.effect == EFFECT_INCONCLUSIVE and cmp_.granularity == "per_test_case_binary":
             # Negative trend with insufficient evidence → advisory warn.
             direction = cmp_.direction
             unfavorable = (
@@ -472,7 +472,7 @@ def decide(
     return {
         "schema_version": 1,
         "alpha": alpha,
-        "n_seeds": n_seeds,
+        "test_set_size": test_set_size,
         "min_n_for_gate": MIN_N_FOR_GATE,
         "results": [c.to_jsonable() for c in comparisons],
         "baseline_metrics": {
@@ -500,8 +500,8 @@ __all__ = [
     "EFFECT_TOO_FEW",
     "MIN_N_FOR_GATE",
     "MetricComparison",
-    "compare_per_seed_binary",
-    "compare_suite_level",
+    "compare_per_test_case_binary",
+    "compare_dataset_level",
     "decide",
     "holm_bonferroni",
     "mcnemar_one_sided",

@@ -66,7 +66,7 @@
 				<div>
 					<h2 class="text-base font-semibold text-text">Systematization</h2>
 					<p class="mt-0.5 text-xs text-text-muted">
-						Operational map used to generate the policy
+						Operational map used to generate the taxonomy
 						{#if mode}
 							<span class="text-text-secondary">· {mode}</span>
 						{/if}

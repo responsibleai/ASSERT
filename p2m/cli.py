@@ -15,7 +15,7 @@ from click.shell_completion import CompletionItem
 from rich.console import Console
 from rich.table import Table
 
-from p2m.core.io import load_json, load_jsonl, get_permissible_flag
+from p2m.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from p2m.logging_config import configure_logging
 from p2m.stages import STAGE_NAMES
@@ -23,8 +23,7 @@ from p2m.stages import STAGE_NAMES
 ROOT = Path(__file__).resolve().parent.parent
 JUDGE_DIMENSIONS_PATH = ROOT / "examples" / "eval-definitions" / "judge_dimensions.yaml"
 DEFAULT_RESULTS_DIR = ROOT / "artifacts" / "results"
-DEFAULT_LOGS_DIR = ROOT / "logs"
-DEFAULT_PLOTS_DIR = ROOT / "plots"
+
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
     "max_content_width": 100,
@@ -34,8 +33,8 @@ CONTEXT_SETTINGS = {
 DEFAULT_COMPARE_METRIC = "policy_violation"
 
 _RUNNER_MODULE: Any | None = None
-_SEED_METRICS_MODULE: Any | None = None
-_ANALYZE_TAXONOMIES_MODULE: Any | None = None
+_TEST_SET_METRICS_MODULE: Any | None = None
+
 
 
 class SuggestingGroup(click.Group):
@@ -60,22 +59,13 @@ def _load_runner_module():
     return _RUNNER_MODULE
 
 
-def _load_seed_metrics():
-    global _SEED_METRICS_MODULE
-    if _SEED_METRICS_MODULE is None:
-        from p2m.analysis import seed_metrics
+def _load_test_set_metrics():
+    global _TEST_SET_METRICS_MODULE
+    if _TEST_SET_METRICS_MODULE is None:
+        from p2m.analysis import test_set_metrics
 
-        _SEED_METRICS_MODULE = seed_metrics
-    return _SEED_METRICS_MODULE
-
-
-def _load_analyze_taxonomies():
-    global _ANALYZE_TAXONOMIES_MODULE
-    if _ANALYZE_TAXONOMIES_MODULE is None:
-        from p2m.analysis import analyze_policies as analyze_taxonomies
-
-        _ANALYZE_TAXONOMIES_MODULE = analyze_taxonomies
-    return _ANALYZE_TAXONOMIES_MODULE
+        _TEST_SET_METRICS_MODULE = test_set_metrics
+    return _TEST_SET_METRICS_MODULE
 
 
 def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
@@ -310,11 +300,11 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         ),
         None,
     ) or "-"
-    auditor_model = next(
+    tester_model = next(
         (
-            row.get("auditor_model")
+            row.get("tester_model")
             for row in rows
-            if isinstance(row.get("auditor_model"), str) and row.get("auditor_model")
+            if isinstance(row.get("tester_model"), str) and row.get("tester_model")
         ),
         None,
     ) or "-"
@@ -335,7 +325,7 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal") or 0.0,
         "dimensions": dimensions,
         "target": target,
-        "auditor_model": auditor_model,
+        "tester_model": tester_model,
         "judge_model": judge_model,
     }
 
@@ -343,8 +333,8 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    prompt_rows = [row for row in score_rows if not row.get("auditor_model")]
-    scenario_rows = [row for row in score_rows if row.get("auditor_model")]
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
     stages = (manifest or {}).get("stages", {})
     has_scores = isinstance(stages, dict) and stages.get("judge") is not None
@@ -370,23 +360,23 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     }
 
 
-def _count_seed_kinds(path: Path) -> tuple[int, int]:
+def _count_test_case_types(path: Path) -> tuple[int, int]:
     rows = load_jsonl(path)
     prompt_count = 0
     scenario_count = 0
     for row in rows:
-        kind = row.get("kind")
-        if kind == "prompt":
+        row_type = row.get("type")
+        if row_type == "prompt":
             prompt_count += 1
-        elif kind == "scenario":
+        elif row_type == "scenario":
             scenario_count += 1
     return prompt_count, scenario_count
 
 
 def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
     suite_meta = load_json(suite_dir / "suite.json")
-    policy = load_json(suite_dir / "policy.json")
-    if suite_meta is None and policy is None:
+    taxonomy = load_json(suite_dir / "taxonomy.json")
+    if suite_meta is None and taxonomy is None:
         return None
 
     run_summaries = []
@@ -401,29 +391,29 @@ def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
         (run_summary.get("prompt_metrics") is not None) or (run_summary.get("scenario_metrics") is not None)
         for run_summary in run_summaries
     )
-    seed_count, scenario_seed_count = _count_seed_kinds(suite_dir / "seeds.jsonl")
+    prompt_test_case_count, scenario_test_case_count = _count_test_case_types(suite_dir / "test_set.jsonl")
 
     created_at = (suite_meta or {}).get("created_at")
 
-    risk_name = suite_dir.name
-    risk_block = (policy or {}).get("risk")
-    if isinstance(risk_block, dict) and isinstance(risk_block.get("name"), str) and risk_block.get("name"):
-        risk_name = risk_block["name"]
+    behavior_name = suite_dir.name
+    behavior_block = (taxonomy or {}).get("behavior")
+    if isinstance(behavior_block, dict) and isinstance(behavior_block.get("name"), str) and behavior_block.get("name"):
+        behavior_name = behavior_block["name"]
 
     if has_results:
         status = "has_results"
-    elif seed_count or scenario_seed_count:
-        status = "seeds_ready"
+    elif prompt_test_case_count or scenario_test_case_count:
+        status = "test_set_ready"
     else:
-        status = "policy_only"
+        status = "systematized"
 
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "risk_name": risk_name,
-        "sub_risk_count": len((policy or {}).get("sub_risks") or []),
-        "seed_count": seed_count,
-        "scenario_seed_count": scenario_seed_count,
+        "behavior_name": behavior_name,
+        "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
+        "prompt_test_case_count": prompt_test_case_count,
+        "scenario_test_case_count": scenario_test_case_count,
         "run_count": len(run_summaries),
         "runs": run_summaries,
         "status": status,
@@ -446,7 +436,7 @@ def _load_all_suites(results_dir: Path) -> list[dict[str, Any]]:
     return suites
 
 
-def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, dict[str, Any]]:
+def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in rows:
         if infer_judge_status(row) != "ok":
@@ -454,9 +444,9 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
         value = get_verdict_dimension(row.get("verdict"), metric)
         if not is_valid_event_flag(value):
             continue
-        sub_risk = str(row.get("sub_risk") or "")
+        behavior_category = row_behavior(row)
         bucket = grouped.setdefault(
-            sub_risk,
+            behavior_category,
             {
                 "true_count": 0,
                 "count": 0,
@@ -466,10 +456,10 @@ def _subrisk_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str
         bucket["true_count"] += int(value)
         bucket["count"] += 1
     result = {}
-    for sub_risk, bucket in grouped.items():
+    for behavior_category, bucket in grouped.items():
         if bucket["count"] <= 0:
             continue
-        result[sub_risk] = {
+        result[behavior_category] = {
             "rate": bucket["true_count"] / bucket["count"],
             "count": bucket["count"],
             "permissible": bucket["permissible"],
@@ -535,7 +525,7 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     help=(
         "Force a stage to rerun even if cached. Repeat to force multiple stages. "
         "Forcing an upstream stage implicitly forces every configured downstream stage, "
-        "so cached transcripts and scores can't silently survive a regenerated input."
+        "so cached inference rows and scores can't silently survive a regenerated input."
     ),
     show_envvar=True,
 )
@@ -658,19 +648,19 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
     console = _console(no_color=no_color)
     table = Table(title=f"Suites ({results_root})", box=None, show_header=True, show_edge=False, pad_edge=False)
     table.add_column("Suite", style="cyan", no_wrap=True)
-    table.add_column("Risk", style="white")
-    table.add_column("Sub-Risks", style="white", no_wrap=True)
-    table.add_column("Prompt Seeds", style="white", no_wrap=True)
-    table.add_column("Scenario Seeds", style="white", no_wrap=True)
+    table.add_column("Behavior", style="white")
+    table.add_column("Behavior Categories", style="white", no_wrap=True)
+    table.add_column("Prompt Test Cases", style="white", no_wrap=True)
+    table.add_column("Scenario Test Cases", style="white", no_wrap=True)
     table.add_column("Runs", style="white", no_wrap=True)
     table.add_column("Status", style="dim", no_wrap=True)
     for suite_summary in suites:
         table.add_row(
             suite_summary["suite_id"],
-            str(suite_summary["risk_name"]),
-            str(suite_summary["sub_risk_count"]),
-            str(suite_summary["seed_count"]),
-            str(suite_summary["scenario_seed_count"]),
+            str(suite_summary["behavior_name"]),
+            str(suite_summary["behavior_category_count"]),
+            str(suite_summary["prompt_test_case_count"]),
+            str(suite_summary["scenario_test_case_count"]),
             str(suite_summary["run_count"]),
             str(suite_summary["status"]),
         )
@@ -709,12 +699,12 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         summary.add_column("Field", style="cyan", no_wrap=True)
         summary.add_column("Value", style="white")
         summary.add_row("Suite", suite_summary["suite_id"])
-        summary.add_row("Risk", str(suite_summary["risk_name"]))
+        summary.add_row("Behavior", str(suite_summary["behavior_name"]))
         summary.add_row("Status", str(suite_summary["status"]))
         summary.add_row("Created", _format_timestamp(suite_summary.get("created_at")))
-        summary.add_row("Sub-Risks", str(suite_summary["sub_risk_count"]))
-        summary.add_row("Prompt Seeds", str(suite_summary["seed_count"]))
-        summary.add_row("Scenario Seeds", str(suite_summary["scenario_seed_count"]))
+        summary.add_row("Behavior Categories", str(suite_summary["behavior_category_count"]))
+        summary.add_row("Prompt Test Cases", str(suite_summary["prompt_test_case_count"]))
+        summary.add_row("Scenario Test Cases", str(suite_summary["scenario_test_case_count"]))
         summary.add_row("Runs", str(suite_summary["run_count"]))
         console.print(summary)
 
@@ -813,7 +803,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
         table.add_row("Target", str(scenario_metrics.get("target") or "-"))
-        table.add_row("Auditor Model", str(scenario_metrics.get("auditor_model") or "-"))
+        table.add_row("Tester Model", str(scenario_metrics.get("tester_model") or "-"))
         table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
@@ -849,9 +839,9 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     default=DEFAULT_COMPARE_METRIC,
     shell_complete=_complete_metric,
     show_default=True,
-    help="Bad-event dimension to use for the top sub-risk delta table.",
+    help="Bad-event dimension to use for the top behavior-category delta table.",
 )
-@click.option("--limit", default=8, show_default=True, type=int, help="Maximum sub-risks to show in the delta table.")
+@click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
 @click.pass_context
@@ -944,18 +934,18 @@ def _run_within_suite_compare(
     if metric not in available_metrics:
         _error(f"Metric '{metric}' was not found in the compared prompt judgments. Available: {sorted(available_metrics)}")
 
-    subrisk_deltas: list[dict[str, Any]] = []
+    behavior_category_deltas: list[dict[str, Any]] = []
     if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
-        first_map = _subrisk_metric_map(run_summaries[0]["prompt_rows"], metric)
-        last_map = _subrisk_metric_map(run_summaries[-1]["prompt_rows"], metric)
-        for sub_risk in sorted(set(first_map) | set(last_map)):
-            first = first_map.get(sub_risk)
-            last = last_map.get(sub_risk)
+        first_map = _behavior_category_metric_map(run_summaries[0]["prompt_rows"], metric)
+        last_map = _behavior_category_metric_map(run_summaries[-1]["prompt_rows"], metric)
+        for behavior_category in sorted(set(first_map) | set(last_map)):
+            first = first_map.get(behavior_category)
+            last = last_map.get(behavior_category)
             if first is None or last is None:
                 continue
-            subrisk_deltas.append(
+            behavior_category_deltas.append(
                 {
-                    "sub_risk": sub_risk,
+                    "behavior_category": behavior_category,
                     "permissible": first.get("permissible"),
                     "first_rate": first["rate"],
                     "last_rate": last["rate"],
@@ -964,9 +954,9 @@ def _run_within_suite_compare(
                     "last_count": last["count"],
                 }
             )
-        subrisk_deltas.sort(key=lambda row: abs(row["delta"]), reverse=True)
+        behavior_category_deltas.sort(key=lambda row: abs(row["delta"]), reverse=True)
         if limit >= 0:
-            subrisk_deltas = subrisk_deltas[:limit]
+            behavior_category_deltas = behavior_category_deltas[:limit]
 
     run_rows = []
     for run_summary in run_summaries:
@@ -986,7 +976,7 @@ def _run_within_suite_compare(
         "suite_id": suite,
         "metric": metric,
         "runs": run_rows,
-        "subrisk_deltas": subrisk_deltas,
+        "behavior_category_deltas": behavior_category_deltas,
     }
     if as_json:
         _echo_json(payload)
@@ -1027,22 +1017,22 @@ def _run_within_suite_compare(
         )
     console.print(table)
 
-    if subrisk_deltas:
+    if behavior_category_deltas:
         delta_table = Table(
-            title=f"Top Sub-Risk Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
+            title=f"Top Behavior Category Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
             box=None,
             show_header=True,
             show_edge=False,
             pad_edge=False,
         )
-        delta_table.add_column("Sub-Risk", style="cyan")
+        delta_table.add_column("Behavior Category", style="cyan")
         delta_table.add_column("Permissible", style="white", no_wrap=True)
         delta_table.add_column(runs[0], style="white", no_wrap=True)
         delta_table.add_column(runs[-1], style="white", no_wrap=True)
         delta_table.add_column("Delta", style="white", no_wrap=True)
-        for row in subrisk_deltas:
+        for row in behavior_category_deltas:
             delta_table.add_row(
-                row["sub_risk"],
+                row["behavior_category"],
                 str(bool(row["permissible"])),
                 _fmt_percent(row["first_rate"]),
                 _fmt_percent(row["last_rate"]),
@@ -1114,32 +1104,32 @@ def results_compare_suites(
         run_summaries.append(run_summary)
         labels.append(f"{suite_id}/{run_id}")
 
-    # Count structural visibility from transcripts
+    # Count structural visibility from inference rows
     structural: list[dict[str, Any]] = []
     for i, suite_run in enumerate(suite_runs):
         parts = suite_run.strip("/").split("/")
         suite_id = parts[0]
         run_id = parts[1] if len(parts) > 1 else "run-1"
-        transcripts_path = results_root / suite_id / run_id / "transcripts.jsonl"
-        transcript_rows = load_jsonl(transcripts_path)
-        total_events = sum(len(r.get("events", [])) for r in transcript_rows)
+        inference_set_path = results_root / suite_id / run_id / "inference_set.jsonl"
+        inference_rows = load_jsonl(inference_set_path)
+        total_events = sum(len(r.get("events", [])) for r in inference_rows)
         tool_events = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             for e in r.get("events", [])
             if e.get("edit", {}).get("type") == "tool_call"
         )
         msg_events = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             for e in r.get("events", [])
             if e.get("edit", {}).get("type") == "add_message"
         )
         with_tools = sum(
-            1 for r in transcript_rows
+            1 for r in inference_rows
             if any(e.get("edit", {}).get("type") == "tool_call" for e in r.get("events", []))
         )
         structural.append({
             "label": labels[i],
-            "transcripts": len(transcript_rows),
+            "inference_rows": len(inference_rows),
             "total_events": total_events,
             "msg_events": msg_events,
             "tool_events": tool_events,
@@ -1204,7 +1194,7 @@ def results_compare_suites(
         pad_edge=False,
     )
     struct_table.add_column("Suite / Run", style="cyan", no_wrap=True)
-    struct_table.add_column("Transcripts", style="white", no_wrap=True)
+    struct_table.add_column("Inference rows", style="white", no_wrap=True)
     struct_table.add_column("Events", style="white", no_wrap=True)
     struct_table.add_column("Messages", style="white", no_wrap=True)
     struct_table.add_column("Tool Events", style="white", no_wrap=True)
@@ -1212,33 +1202,33 @@ def results_compare_suites(
     for s in structural:
         struct_table.add_row(
             s["label"],
-            str(s["transcripts"]),
+            str(s["inference_rows"]),
             str(s["total_events"]),
             str(s["msg_events"]),
             str(s["tool_events"]),
-            f"{s['with_tools']}/{s['transcripts']}",
+            f"{s['with_tools']}/{s['inference_rows']}",
         )
     console.print(struct_table)
 
 
 @cli.group(cls=SuggestingGroup, short_help="Run post-hoc analysis commands")
 def analysis():
-    """Post-hoc analysis commands for seeds and inspect logs."""
+    """Post-hoc analysis commands for test_set and inspect logs."""
 
 
-@analysis.command("seed-metrics", short_help="Compute coverage and diversity metrics for seed files")
-@click.option("--policy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Policy JSON to score against.")
-@click.option("--seeds", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Seed JSONL file to analyze.")
+@analysis.command("test-set-metrics", short_help="Compute coverage and diversity metrics for test-set files")
+@click.option("--taxonomy", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Taxonomy JSON to score against.")
+@click.option("--test_set", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Test-set JSONL file to analyze.")
 @click.option("--embed-model", default="text-embedding-3-large", show_default=True, help="Embedding model name.")
 @click.option("--embed-backend", type=click.Choice(["openai", "hf"]), default="openai", show_default=True, help="Embedding backend.")
 @click.option("--k", "k_values", multiple=True, type=int, help="Coverage@k values. Repeat to provide multiple values.")
 @click.option("--example-distance-thresh", default=0.2, type=float, show_default=True, help="Cosine distance threshold for example coverage.")
 @click.option("--presence-coverage", is_flag=True, help="Use simple presence coverage instead of coverage@k.")
-@click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "seed_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
+@click.option("--out-json", default=ROOT / "artifacts" / "analysis" / "test_set_metrics.json", type=click.Path(path_type=Path), show_default=True, help="Where to write the JSON report.")
 @click.option("--out-md", default=None, type=click.Path(path_type=Path), help="Optional Markdown report path.")
-def analysis_seed_metrics(
-    policy: Path,
-    seeds: Path,
+def analysis_test_set_metrics(
+    taxonomy: Path,
+    test_set: Path,
     embed_model: str,
     embed_backend: str,
     k_values: tuple[int, ...],
@@ -1247,11 +1237,11 @@ def analysis_seed_metrics(
     out_json: Path,
     out_md: Optional[Path],
 ):
-    """Compute seed metrics from the packaged CLI instead of calling the script directly."""
-    seed_metrics = _load_analysis_module(_load_seed_metrics)
-    cfg = seed_metrics.Config(
-        policy_path=str(policy),
-        seeds_path=str(seeds),
+    """Compute test-set metrics from the packaged CLI instead of calling the script directly."""
+    test_set_metrics = _load_analysis_module(_load_test_set_metrics)
+    cfg = test_set_metrics.Config(
+        taxonomy_path=str(taxonomy),
+        test_set_path=str(test_set),
         embed_model=embed_model,
         embed_backend=embed_backend,
         k_list=list(k_values) if k_values else [1, 2, 3],
@@ -1261,7 +1251,7 @@ def analysis_seed_metrics(
         out_md=str(out_md) if out_md else None,
     )
     try:
-        seed_metrics.compute_metrics(cfg)
+        test_set_metrics.compute_metrics(cfg)
     except ModuleNotFoundError as exc:
         _handle_missing_analysis_dependency(exc)
     click.echo(f"Wrote {out_json}")
@@ -1269,32 +1259,7 @@ def analysis_seed_metrics(
         click.echo(f"Wrote {out_md}")
 
 
-@analysis.command("policy-logs", short_help="Summarize legacy policy-eval logs and write plots")
-@click.option("--logs-dir", default=DEFAULT_LOGS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory containing legacy .eval archives.")
-@click.option("--out-dir", default=DEFAULT_PLOTS_DIR, type=click.Path(path_type=Path), show_default=True, help="Directory for plots.")
-@click.option("--csv", default=None, type=click.Path(path_type=Path), help="Optional flattened CSV output path.")
-def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
-    """Analyze legacy policy-eval logs without leaving the packaged CLI."""
-    analyze_taxonomies = _load_analysis_module(_load_analyze_taxonomies)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    df = analyze_taxonomies.load_all(logs_dir)
-    grouped = df.groupby(["risk", "model"]).agg(
-        overall_mean=("overall_raw", "mean"),
-        norm_mean=("score_norm", "mean"),
-        passes=("verdict", lambda series: (series == "pass").mean()),
-        n=("verdict", "count"),
-    )
-    click.echo("\nSummary (per risk/model):")
-    click.echo(grouped.reset_index().to_markdown(index=False))
-    if csv:
-        analyze_taxonomies.write_csv(df, csv)
-        click.echo(f"\nWrote {csv}")
-    analyze_taxonomies.plot_overall(df, out_dir)
-    analyze_taxonomies.plot_dimensions(df, out_dir)
-
-
-@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running rollout")
+@cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running inference")
 @click.option(
     "--traces",
     required=True,
@@ -1311,14 +1276,14 @@ def analysis_policy_logs(logs_dir: Path, out_dir: Path, csv: Optional[Path]):
 @click.option("--group-by", default="session.id", show_default=True, help="OTel attribute to group spans by")
 @click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
 def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
-    """Judge pre-collected OTel traces without running rollout."""
+    """Judge pre-collected OTel traces without running inference."""
     from p2m.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")
-    transcript_rows = parse_otel_traces(traces, group_by=group_by)
-    click.echo(f"Found {len(transcript_rows)} conversations")
+    inference_rows = parse_otel_traces(traces, group_by=group_by)
+    click.echo(f"Found {len(inference_rows)} conversations")
 
-    if not transcript_rows:
+    if not inference_rows:
         click.echo("No conversations found in traces. Check your group_by attribute.")
         raise SystemExit(1)
 
@@ -1329,18 +1294,18 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     out_dir = output or (DEFAULT_RESULTS_DIR / "judge-traces")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    # Write parsed transcripts to output directory
-    transcripts_path = Path(out_dir) / "transcripts.jsonl"
-    with open(transcripts_path, "w") as f:
-        for row in transcript_rows:
+    # Write parsed inference rows to output directory
+    inference_set_path = Path(out_dir) / "inference_set.jsonl"
+    with open(inference_set_path, "w") as f:
+        for row in inference_rows:
             f.write(json.dumps(row) + "\n")
-    click.echo(f"Wrote {len(transcript_rows)} transcripts to {transcripts_path}")
+    click.echo(f"Wrote {len(inference_rows)} inference rows to {inference_set_path}")
 
-    click.echo(f"Judging {len(transcript_rows)} conversations...")
-    # Full judge execution requires LLM access; the transcripts are ready
+    click.echo(f"Judging {len(inference_rows)} conversations...")
+    # Full judge execution requires LLM access; the inference rows are ready
     # for the judge stage to consume.
-    click.echo(f"Transcripts written to {transcripts_path}")
-    click.echo("Run the full pipeline with --force-stage judge to score these transcripts.")
+    click.echo(f"Inference set written to {inference_set_path}")
+    click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
 if __name__ == "__main__":

@@ -85,9 +85,9 @@ class RunnerStageFilterTest(unittest.TestCase):
     # --force-stage cascade tests (added Apr 28 2026 alongside the
     # downstream cascade fix in p2m/runner.py).
     #
-    # Without cascade, `--force-stage seeds` regenerates seeds.jsonl
-    # but rollout silently keeps the prior transcripts (its resume
-    # cache keys on seed_id, and seed ids are deterministic enough
+    # Without cascade, `--force-stage test_set` regenerates test_set.jsonl
+    # but inference silently keeps the prior transcripts (its resume
+    # cache keys on test_case_id, and test case ids are deterministic enough
     # to collide). Same hazard for judge against scores.jsonl. The
     # cascade extends the explicit forced set to every stage at or
     # downstream of the lowest forced index in PIPELINE_STAGE_ORDER.
@@ -101,25 +101,25 @@ class RunnerStageFilterTest(unittest.TestCase):
     def test_force_stage_cascade_only_includes_downstream(self) -> None:
         seen: list[str] = []
         suite_modules = {
-            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
-            "design": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="design.json", run=self._async_recorder("design", seen)),
-            "seeds": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="seeds.jsonl", run=self._async_recorder("seeds", seen)),
-            "rollout": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("rollout", seen)),
+            "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
+            "stratification": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="stratification.json", run=self._async_recorder("stratification", seen)),
+            "test_set": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="test_set.jsonl", run=self._async_recorder("test_set", seen)),
+            "inference": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("inference", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
         }
 
         with TemporaryDirectory() as tmp_dir:
             suite_root = Path(tmp_dir) / "suite"
             suite_root.mkdir(parents=True)
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
-            (suite_root / "design.json").write_text("{}", encoding="utf-8")
-            (suite_root / "seeds.jsonl").write_text("", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "stratification.json").write_text("{}", encoding="utf-8")
+            (suite_root / "test_set.jsonl").write_text("", encoding="utf-8")
             ctx = {
                 "stages": [
-                    ("policy", {}),
-                    ("design", {}),
-                    ("seeds", {}),
-                    ("rollout", {}),
+                    ("taxonomy", {}),
+                    ("stratification", {}),
+                    ("test_set", {}),
+                    ("inference", {}),
                     ("judge", {}),
                 ],
                 "suite_root": str(suite_root),
@@ -141,27 +141,27 @@ class RunnerStageFilterTest(unittest.TestCase):
                 patch("p2m.runner.STAGES", suite_modules),
                 patch("sys.stderr", new_callable=io.StringIO) as fake_err,
             ):
-                rc = run_pipeline(config="config.yaml", force_stages=["seeds"])
+                rc = run_pipeline(config="config.yaml", force_stages=["test_set"])
 
         self.assertEqual(rc, 0)
-        # policy + design are upstream of seeds in PIPELINE_STAGE_ORDER
-        # and have cached outputs, so they stay skipped. seeds is the
-        # explicit force; rollout + judge get cascaded in.
-        self.assertEqual(seen, ["seeds", "rollout", "judge"])
+        # taxonomy + stratification are upstream of test_set in PIPELINE_STAGE_ORDER
+        # and have cached outputs, so they stay skipped. test_set is the
+        # explicit force; inference + judge get cascaded in.
+        self.assertEqual(seen, ["test_set", "inference", "judge"])
 
     def test_force_stage_no_cascade_when_only_terminal_stage_forced(self) -> None:
         seen: list[str] = []
         suite_modules = {
-            "policy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="policy.json", run=self._async_recorder("policy", seen)),
+            "taxonomy": SimpleNamespace(SCOPE="suite", SUITE_OUTPUT="taxonomy.json", run=self._async_recorder("taxonomy", seen)),
             "judge": SimpleNamespace(SCOPE="run", SUITE_OUTPUT=None, run=self._async_recorder("judge", seen)),
         }
 
         with TemporaryDirectory() as tmp_dir:
             suite_root = Path(tmp_dir) / "suite"
             suite_root.mkdir(parents=True)
-            (suite_root / "policy.json").write_text("{}", encoding="utf-8")
+            (suite_root / "taxonomy.json").write_text("{}", encoding="utf-8")
             ctx = {
-                "stages": [("policy", {}), ("judge", {})],
+                "stages": [("taxonomy", {}), ("judge", {})],
                 "suite_root": str(suite_root),
                 "run_root": str(Path(tmp_dir) / "run"),
             }

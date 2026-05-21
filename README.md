@@ -46,6 +46,12 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 p2m results status travel-planner-langgraph-v1 demo-1
 ```
 
+Codespaces / VS Code Dev Containers:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
+
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+
 Windows PowerShell equivalent:
 
 ```powershell
@@ -62,12 +68,12 @@ p2m results status travel-planner-langgraph-v1 demo-1
 
 What the quickstart does:
 
-| Step | Developer concept | Current YAML / artifact |
+| Step | Developer behavior | Current YAML / artifact |
 |---|---|---|
-| 1 | **Eval spec**: plain-English behavior requirements | `concept.name: travel_planner_eval` loads `examples/travel_planner_langgraph/travel_planner_eval.md` |
-| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.policy` writes `policy.json` |
-| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.seeds` writes `seeds.jsonl` |
-| 4 | **Execute**: run the agent and capture traces | `pipeline.rollout.target.callable` + `target.trace` write `transcripts.jsonl` |
+| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name` and `behavior.description` live inline in `eval_config.yaml` |
+| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
+| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `inference_set.jsonl` |
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
@@ -75,17 +81,17 @@ Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
 ## How it works
 
 ```text
-your eval spec (.md)
+one eval_config.yaml
         |
         v
 behavior categories  ->  test cases + variations  ->  execute target  ->  judge
         |                         |                         |              |
         v                         v                         v              v
-   policy.json                seeds.jsonl          transcripts.jsonl   scores.jsonl
+   taxonomy.json                test_set.jsonl          inference_set.jsonl   scores.jsonl
                                                      + OTel traces     metrics.json
 ```
 
-Today the YAML still uses implementation names such as `concept`, `factors`, `policy`, `seeds`, and `rollout`. The docs use the developer-facing concepts - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each concept appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
+Today the YAML still uses implementation names such as `behavior`, `dimensions`, `taxonomy`, `test_set`, and `inference`. The docs use the developer-facing behaviors - spec, variations, test cases, execute, judge - and call out the current YAML key the first time each behavior appears. See [`docs/concepts.md`](docs/concepts.md) for the bridge.
 
 ## Choose your target
 
@@ -117,22 +123,22 @@ Every run writes a self-contained directory under `artifacts/results/<suite>/<ru
 ```text
 artifacts/results/<suite>/
 ├── suite.json
-├── policy.json
-├── seeds.jsonl
+├── taxonomy.json
+├── test_set.jsonl
 └── <run>/
     ├── manifest.json
     ├── config.yaml
-    ├── transcripts.jsonl
+    ├── inference_set.jsonl
     ├── scores.jsonl
     └── metrics.json
 ```
 
 These artifacts are portable and inspectable:
 
-- `policy.json` - generated behavior taxonomy from your spec.
-- `seeds.jsonl` - generated prompts and scenarios.
-- `transcripts.jsonl` - target conversations and trace references.
-- `scores.jsonl` - per-conversation verdicts with reasoning and evidence.
+- `taxonomy.json` - generated behavior taxonomy from your spec.
+- `test_set.jsonl` - generated prompts and scenarios.
+- `inference_set.jsonl` - inference outputs (conversations or agent actions) and trace references.
+- `scores.jsonl` - per-inference verdicts with reasoning and evidence.
 - `metrics.json` - aggregate rates by judge dimension and behavior category.
 
 Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves your machine unless you send it somewhere.
@@ -170,4 +176,35 @@ Preview feedback is welcome: confusing names, missing target examples, trace gap
 - **macOS, `litellm` AttributeError after install** — some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`, causing errors like `AttributeError: module 'litellm' has no attribute 'acompletion'`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
 - **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
+
+## Important: Risks and limitations
+
+Adaptive Evaluation is designed to generate and run scenario-based evaluations for AI systems, including adversarial and edge-case tests. These scenarios are intended to help surface potential weaknesses, unsafe behaviors, and other undesirable outcomes. They do not guarantee that a system has failed, nor are they guarantees that a system is safe.
+
+Because generated scenarios can meaningfully affect system behavior, using this product without adequate sandboxing or environment controls can cause real-world side effects. Depending on the target system, evaluations may trigger unwanted actions such as data modification or deletion, information disclosure, code or configuration changes, external messages, or other operational impacts.
+
+You are responsible for ensuring that evaluations run only in environments that are appropriate for testing, including the use of:
+
+- test or synthetic data where possible
+- restricted credentials and scoped permissions
+- isolated or non-production systems
+- safeguards for logging, storage, and external actions
+
+You should review generated adversarial or stress-test prompts before use and confirm that your environment can safely handle them. Some generated scenarios may involve jailbreak-style behavior, prompt injection, tool misuse, over-broad requests, or other forms of adversarial interaction.
+
+Adaptive Evaluation is not a compliance or certification tool. You and your users remain responsible for ensuring that evaluated systems comply with applicable laws, regulations, contractual obligations, internal policies, and industry standards.
+
+Use of this system may also result in meaningful compute and inference costs. You should monitor usage, model calls, tool execution, and resource consumption during evaluations.
+
+### Additional limitations
+
+- **Real system side effects may occur.** Evaluations can trigger writes, messages, workflow actions, code changes, ticket creation, or other effects if the target is connected to live systems.
+- **Results are scenario-dependent.** Outcomes depend on the generated scenario, available tools, retrieved context, system configuration, and runtime environment.
+- **Automated judgments are best-effort.** LLM-based scoring and review can be incorrect; treat single-run outputs as signals for investigation, not definitive truth.
+- **Run-to-run behavior may vary.** Results may differ across runs, especially for multi-turn or tool-using systems.
+- **Untrusted content can affect outcomes.** Retrieved documents, tool outputs, and external content may influence both the target system and automated judges in unexpected ways.
+- **Sensitive content may appear in artifacts.** If the evaluated system emits secrets, personal data, or restricted content, that material may appear in logs, traces, prompts, outputs, or evaluation artifacts.
+- **Costs may scale quickly.** Large evaluations, repeated retries, or tool-heavy runs can incur substantial inference and execution costs.
+- **This is not a substitute for human review.** High-stakes conclusions should be supported by expert review, grounded evidence, and, where appropriate, additional statistical validation.
+- **Reproducibility may be imperfect.** Results can vary across model versions, deployments, tool backends, and runtime settings.
 

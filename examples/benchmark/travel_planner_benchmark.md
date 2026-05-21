@@ -4,12 +4,12 @@ A travel planning AI must reliably use its tools, respect user constraints,
 and produce accurate, internally consistent itineraries grounded in real
 tool output.
 
-This concept is **quality-only by design**. It deliberately omits adversarial
-and safety-themed behaviors (prompt-injection probing, jailbreak attempts,
-sycophancy bait, stereotyping prompts) so that the auditor generates
+This behavior is **quality-only by design**. It deliberately omits adversarial
+and safety-themed behavior_categories (prompt-injection probing, jailbreak attempts,
+sycophancy bait, stereotyping prompts) so that the tester generates
 realistic, non-adversarial user prompts. That keeps the benchmark focused
-on measuring rollout / judge throughput at scale rather than safety
-robustness, and avoids tripping content filters with adversarial seeds.
+on measuring inference / judge throughput at scale rather than safety
+robustness, and avoids tripping content filters with adversarial test_set.
 
 ## Quality failures
 

@@ -14,7 +14,7 @@ from scripts import regression_metrics as rm
 
 
 def _score(
-    seed_id: str,
+    test_case_id: str,
     behavior: str,
     *,
     judge_status: str = "ok",
@@ -31,7 +31,7 @@ def _score(
     """
     if judge_status != "ok":
         return {
-            "seed_id": seed_id,
+            "test_case_id": test_case_id,
             "factors": {"behavior": behavior},
             "judge_status": judge_status,
             "verdict": None,
@@ -41,7 +41,7 @@ def _score(
         "overrefusal": False if overrefusal is None else overrefusal,
     }
     return {
-        "seed_id": seed_id,
+        "test_case_id": test_case_id,
         "factors": {"behavior": behavior},
         "judge_status": judge_status,
         "verdict": {"dimensions": dimensions, "node_judgments": []},
@@ -69,8 +69,8 @@ class SignalRateTest(unittest.TestCase):
         ]
         result = rm.signal_rate(rows)
         self.assertEqual(result.value, 1.0)
-        self.assertEqual(result.granularity, "per_seed_binary")
-        self.assertEqual(set(result.per_seed.values()), {1})
+        self.assertEqual(result.granularity, "per_test_case_binary")
+        self.assertEqual(set(result.per_test_case.values()), {1})
 
     def test_judge_failed_is_noise(self) -> None:
         rows = [
@@ -80,8 +80,8 @@ class SignalRateTest(unittest.TestCase):
         ]
         result = rm.signal_rate(rows)
         self.assertEqual(result.value, 0.5)
-        self.assertEqual(result.per_seed["s1"], 1)
-        self.assertEqual(result.per_seed["s2"], 0)
+        self.assertEqual(result.per_test_case["s1"], 1)
+        self.assertEqual(result.per_test_case["s2"], 0)
 
     def test_empty(self) -> None:
         self.assertEqual(rm.signal_rate([]).value, 0.0)
@@ -97,7 +97,7 @@ class PolicyViolationRateTest(unittest.TestCase):
         ]
         result = rm.policy_violation_rate(rows)
         self.assertEqual(result.value, 0.5)
-        self.assertEqual(len(result.per_seed), 4)
+        self.assertEqual(len(result.per_test_case), 4)
 
     def test_skips_judge_failed(self) -> None:
         rows = [
@@ -108,7 +108,7 @@ class PolicyViolationRateTest(unittest.TestCase):
         result = rm.policy_violation_rate(rows)
         # Only s1 counts.
         self.assertEqual(result.value, 1.0)
-        self.assertEqual(set(result.per_seed), {"s1"})
+        self.assertEqual(set(result.per_test_case), {"s1"})
 
 
 class OverrefusalRateTest(unittest.TestCase):
@@ -129,8 +129,8 @@ class JudgeFailureRateTest(unittest.TestCase):
         ]
         result = rm.judge_failure_rate(rows)
         self.assertEqual(result.value, 0.5)
-        self.assertEqual(result.per_seed["s2"], 1)
-        self.assertEqual(result.per_seed["s1"], 0)
+        self.assertEqual(result.per_test_case["s2"], 1)
+        self.assertEqual(result.per_test_case["s1"], 0)
 
 
 class ConstructCoverageTest(unittest.TestCase):

@@ -59,7 +59,7 @@ async def log_heartbeat(message: str, *, interval: float = 15.0):
 
     Usage::
 
-        async with log_heartbeat("Converting policy"):
+        async with log_heartbeat("Converting taxonomy"):
             result = await slow_llm_call(...)
 
     Logs "{message} (still working, {elapsed}s elapsed)" every *interval*

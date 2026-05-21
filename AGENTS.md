@@ -1,10 +1,10 @@
 # Adaptive Eval Agent Orientation
 
-This file is for coding assistants such as GitHub Copilot, Claude Code, Cursor, and similar tools. It gives a short, customer-safe map of this private-preview repository.
+This file is for coding assistants such as GitHub Copilot, Claude Code, Cursor, and similar tools. It gives a short, customer-safe map of this preview repository.
 
 ## What this repo is
 
-Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting conversations against the spec.
+Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting inference outputs (conversations or agent actions) against the spec.
 
 Use this mental model:
 
@@ -33,22 +33,22 @@ Start with these files:
 
 ## Current preview terminology
 
-Use the developer-friendly concepts in prose, and mention current YAML keys when needed.
+Use the developer-friendly behaviors in prose, and mention current YAML keys when needed.
 
-| Concept to explain | Current YAML / artifact |
+| Behavior to explain | Current YAML / artifact |
 |---|---|
-| Eval spec | `concept.name`, `concept.md`, `<name>.md` |
+| Eval spec | `behavior.name`, `behavior.description` in `eval_config.yaml` |
 | Target description | `context` |
-| Variations | `factors` |
-| Behavior categories | `pipeline.policy`, `policy.json` |
-| Test cases | `pipeline.seeds`, `seeds.jsonl` |
-| Execute | `pipeline.rollout`, `transcripts.jsonl` |
-| Target | `pipeline.rollout.target` |
+| Variations | `dimensions` |
+| Behavior categories | `pipeline.systematize`, `taxonomy.json` |
+| Test cases | `pipeline.test_set`, `test_set.jsonl` |
+| Execute | `pipeline.inference`, `inference_set.jsonl` |
+| Target | `pipeline.inference.target` |
 | Trace capture | `target.trace` |
 | Judge | `pipeline.judge`, `scores.jsonl` |
 | Metrics | `metrics.json` |
 
-Do not rename schema fields unless explicitly asked. Some naming is still evolving, but the private-preview docs should stay aligned with the current branch.
+Do not rename schema fields unless explicitly asked. Some naming is still evolving, but the preview docs should stay aligned with the current branch.
 
 ## Target selection
 
@@ -96,8 +96,8 @@ p2m run --config examples/travel_planner_langgraph/eval_config.yaml
 1. Ask what target shape the developer has: framework agent, custom runtime, Python function, or hosted model.
 2. Create or adapt an eval spec markdown file.
 3. Add `context` describing the agent, tools, users, and constraints.
-4. Add `factors` only when systematic variation matters.
-5. Configure the target in `pipeline.rollout.target`.
+4. Add `dimensions` only when systematic variation matters.
+5. Configure the target in `pipeline.inference.target`.
 6. Add judge dimensions with concrete descriptions and rubrics.
 7. Run `p2m run --config <path>`.
 
@@ -107,7 +107,7 @@ Read artifacts in this order:
 
 1. `metrics.json`
 2. `scores.jsonl`
-3. `transcripts.jsonl`
+3. `inference_set.jsonl`
 4. Phoenix/OpenInference traces, if configured
 5. `config.yaml`
 

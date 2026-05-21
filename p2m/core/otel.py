@@ -6,11 +6,11 @@ Follows OpenInference semantic conventions for LLM/agent span attributes.
 Usage:
     from p2m.core.otel import parse_otel_traces
 
-    transcripts = parse_otel_traces(
+    inference_rows = parse_otel_traces(
         "traces.json",
         group_by="session.id",
     )
-    # Returns list[dict] in p2m transcript row format (same as transcripts.jsonl)
+    # Returns list[dict] in p2m inference-row format (same as inference_set.jsonl)
 """
 
 from __future__ import annotations
@@ -58,15 +58,15 @@ def parse_otel_traces(
     *,
     group_by: str = "session.id",
 ) -> list[dict[str, Any]]:
-    """Parse OTLP JSON export into p2m transcript rows.
+    """Parse OTLP JSON export into p2m inference rows.
 
     Args:
         path: Path to OTLP JSON file.
         group_by: Span attribute key to group spans into conversations.
 
     Returns:
-        List of transcript row dicts, one per conversation. Each row has the
-        same schema as a row in transcripts.jsonl:
+        List of inference row dicts, one per conversation. Each row has the
+        same schema as a row in inference_set.jsonl:
         {
             "metadata": {...},
             "events": [...],
@@ -83,7 +83,7 @@ def parse_otel_traces(
 
         rows.append({
             "metadata": {
-                "kind": "otel_import",
+                "type": "otel_import",
                 "session_id": session_id,
                 "runtime_mode": "otel_traced",
             },
@@ -426,7 +426,7 @@ class FileTraceExporter:
 
 
 class InMemoryTraceExporter:
-    """Collects spans in-memory during a rollout. For testing and CI."""
+    """Collects spans in-memory during a inference. For testing and CI."""
 
     def __init__(self) -> None:
         self._spans: list[OTelSpan] = []
@@ -460,12 +460,12 @@ class LiveOTelExporter:
     # ``asyncio.Lock()`` would bind to whichever loop happened to be running
     # at first use and then raise in any subsequent ``asyncio.run()``. We
     # cache (loop, lock) and recreate when the loop changes so:
-    #   - within one rollout (one event loop), all concurrent sessions share
+    #   - within one inference (one event loop), all concurrent sessions share
     #     the same lock and serialize the clear-invoke-export cycle;
     #   - tests / repeated runs that create new event loops still work.
     # NOTE: ``threading.Lock`` MUST NOT be used here — it would block the
     # entire event loop across the inner ``await`` and deadlock when
-    # ``rollout.concurrency > 1``.
+    # ``inference.concurrency > 1``.
     _lock: asyncio.Lock | None = None
     _lock_loop: asyncio.AbstractEventLoop | None = None
 
@@ -766,7 +766,7 @@ class SpanNode:
         """Serialize to a judge-friendly dict with selective field inclusion."""
         d: dict[str, Any] = {
             "span_id": self.span.span_id,
-            "kind": self.span.kind,
+            "type": self.span.kind,
             "name": self.span.attributes.get(_LANGGRAPH_NODE_KEY, self.span.name),
             "latency_ms": round(self.span.latency_ms, 1),
         }
@@ -949,7 +949,7 @@ def extract_for_judge(
         for root in tree:
             chunk = {
                 "agent": root.span.attributes.get(_LANGGRAPH_NODE_KEY, root.span.name),
-                "kind": root.span.kind,
+                "type": root.span.kind,
                 "span_count": root.size,
                 "tree": root.to_dict(
                     include_input=False,

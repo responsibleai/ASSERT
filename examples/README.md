@@ -2,7 +2,7 @@
 
 Runnable configs and sample agents for Adaptive Eval.
 
-Start with the LangGraph travel planner. It is the customer-preview flagship because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, transcripts, OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
+Start with the LangGraph travel planner. It is the customer-preview flagship because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
 
 > **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) so the judge can score tool use and routing, not just the final response.
 
@@ -38,8 +38,8 @@ examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
-├── concepts/                   reusable eval spec definitions
+├── behavior_specs/             reusable behavior spec references
 └── agents/                     simple tool modules and tool schemas
 ```
 
-See [`concepts\README.md`](concepts/README.md) for reusable concept definitions.
+See [`behavior_specs/README.md`](behavior_specs/README.md) for reusable behavior spec references.

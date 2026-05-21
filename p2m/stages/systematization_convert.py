@@ -1,4 +1,4 @@
-"""Convert a systematization artifact to a structured policy JSON."""
+"""Convert a systematization artifact to a structured taxonomy JSON."""
 
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from p2m.core.config_model import (
     ModelConfig,
 )
 from p2m.core.model_client import GenerateOptions, generate_structured
-from p2m.stages.policy import policy_schema
+from p2m.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 GUIDELINE_PROMPT = (BASE_DIR / "prompts" / "systematization_convert_single.md").read_text(encoding="utf-8")
 
-POLICY_SCHEMA: dict[str, Any] = policy_schema()
-DEFAULT_BEHAVIOR_COUNT_HINT = 30
+TAXONOMY_SCHEMA: dict[str, Any] = taxonomy_schema()
+DEFAULT_BEHAVIOR_CATEGORY_COUNT_HINT = 30
 
 
 def _require_nonempty_string(value: Any, *, field: str) -> str:
@@ -68,50 +68,50 @@ def _normalize_definition_of_terms(payload: Any) -> list[dict[str, Any]]:
     return terms
 
 
-def _normalize_behaviors(payload: Any) -> list[dict[str, Any]]:
+def _normalize_behavior_categories(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
-        raise ValueError("systematization_convert returned invalid behaviors")
-    behaviors = []
+        raise ValueError("systematization_convert returned invalid behavior_categories")
+    behavior_categories = []
     for behavior_payload in payload:
         if not isinstance(behavior_payload, dict):
-            raise ValueError("systematization_convert returned invalid behaviors")
+            raise ValueError("systematization_convert returned invalid behavior_categories")
         permissible = behavior_payload.get("permissible")
         if not isinstance(permissible, bool):
-            raise ValueError("systematization_convert returned invalid behaviors.permissible")
-        behaviors.append(
+            raise ValueError("systematization_convert returned invalid behavior_categories.permissible")
+        behavior_categories.append(
             {
-                "name": _require_nonempty_string(behavior_payload.get("name"), field="behaviors.name"),
+                "name": _require_nonempty_string(behavior_payload.get("name"), field="behavior_categories.name"),
                 "definition": _require_nonempty_string(
                     behavior_payload.get("definition"),
-                    field="behaviors.definition",
+                    field="behavior_categories.definition",
                 ),
                 "examples": _require_examples(
                     behavior_payload.get("examples"),
-                    field="behaviors.examples",
+                    field="behavior_categories.examples",
                 ),
                 "permissible": permissible,
             }
         )
-    if not behaviors:
-        raise ValueError("systematization_convert returned no behaviors")
-    return behaviors
+    if not behavior_categories:
+        raise ValueError("systematization_convert returned no behavior_categories")
+    return behavior_categories
 
 
-async def run_systematization_to_policy(
+async def run_systematization_to_taxonomy(
     *,
     systematization_path: str,
-    save_path: str = "artifacts/taxonomies/policy.json",
+    save_path: str = "artifacts/taxonomies/taxonomy.json",
     model_cfg: ModelConfig | None = None,
-    behavior_count_hint: int = DEFAULT_BEHAVIOR_COUNT_HINT,
+    behavior_category_count_hint: int = DEFAULT_BEHAVIOR_CATEGORY_COUNT_HINT,
 ) -> Path:
-    """Convert the systematization artifact into the policy JSON artifact."""
+    """Convert the systematization artifact into the taxonomy JSON artifact."""
     if model_cfg is None:
         model_cfg = ModelConfig(
             name=DEFAULT_SYSTEMATIZATION_MODEL,
             temperature=DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE,
             max_tokens=DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
         )
-    log.debug(f"systematization_convert: model={model_cfg.name}, behavior_count_hint={behavior_count_hint}")
+    log.debug(f"systematization_convert: model={model_cfg.name}, behavior_category_count_hint={behavior_category_count_hint}")
     data_path = Path(systematization_path).expanduser()
     if not data_path.is_absolute():
         data_path = BASE_DIR / data_path
@@ -123,9 +123,9 @@ async def run_systematization_to_policy(
         raise ValueError(
             f"Invalid JSON in systematization file {data_path}: {exc}"
         ) from exc
-    concept = str(data.get("concept") or "").strip()
-    if not concept:
-        raise ValueError("systematization_convert requires systematization.json to include concept")
+    behavior = str(data.get("behavior") or "").strip()
+    if not behavior:
+        raise ValueError("systematization_convert requires systematization.json to include behavior")
     systematization_text = str(data.get("systematization") or "").strip()
     if not systematization_text:
         raise ValueError("systematization_convert requires a non-empty systematization")
@@ -134,7 +134,7 @@ async def run_systematization_to_policy(
         raise ValueError("systematization_convert requires summary_items to be a list when present")
 
     prompt = (
-        GUIDELINE_PROMPT.replace("{{behavior_count}}", str(behavior_count_hint))
+        GUIDELINE_PROMPT.replace("{{behavior_category_count}}", str(behavior_category_count_hint))
         + "\n\n# SYSTEMATIZATION\n"
         + systematization_text
     )
@@ -146,18 +146,18 @@ async def run_systematization_to_policy(
         temperature = None
 
     # Retry structured generation up to 2 times if the model returns
-    # a response that doesn't parse into a valid policy dict.  This is
+    # a response that doesn't parse into a valid taxonomy dict.  This is
     # a transient LLM output quality issue — the model occasionally
     # produces malformed JSON even with response_format set.
     _MAX_PARSE_ATTEMPTS = 2
-    policy_payload: dict[str, Any] | None = None
+    taxonomy_payload: dict[str, Any] | None = None
     last_text = ""
     for _attempt in range(_MAX_PARSE_ATTEMPTS):
         response = await generate_structured(
             model_cfg.name,
             prompt,
-            schema_name="policy",
-            json_schema=POLICY_SCHEMA,
+            schema_name="taxonomy",
+            json_schema=TAXONOMY_SCHEMA,
             options=GenerateOptions(
                 temperature=temperature,
                 max_tokens=model_cfg.max_tokens,
@@ -165,41 +165,41 @@ async def run_systematization_to_policy(
             ),
         )
         if isinstance(response.parsed, dict) and response.parsed:
-            policy_payload = response.parsed
+            taxonomy_payload = response.parsed
             break
         last_text = response.text or ""
         if _attempt < _MAX_PARSE_ATTEMPTS - 1:
             logging.warning(
-                "Policy generation returned unparseable output (attempt %d/%d), retrying",
+                "Taxonomy generation returned unparseable output (attempt %d/%d), retrying",
                 _attempt + 1,
                 _MAX_PARSE_ATTEMPTS,
             )
 
-    if not isinstance(policy_payload, dict) or not policy_payload:
+    if not isinstance(taxonomy_payload, dict) or not taxonomy_payload:
         raise ValueError(
-            f"systematization_convert returned no structured policy after "
+            f"systematization_convert returned no structured taxonomy after "
             f"{_MAX_PARSE_ATTEMPTS} attempts (last response: {last_text[:200]}). "
             f"This is usually a transient model issue — rerun the command to retry. "
             f"If it persists, check your endpoint's token rate limit and quota."
         )
 
-    concept_block = policy_payload.get("concept")
-    if not isinstance(concept_block, dict):
-        raise ValueError("systematization_convert returned invalid concept")
-    concept_definition = _require_nonempty_string(concept_block.get("definition"), field="concept.definition")
-    terms = _normalize_definition_of_terms(policy_payload.get("definition_of_terms"))
-    behaviors = _normalize_behaviors(policy_payload.get("behaviors"))
-    policy = {
-        "concept": {
-            "name": concept,
-            "definition": concept_definition,
+    behavior_block = taxonomy_payload.get("behavior")
+    if not isinstance(behavior_block, dict):
+        raise ValueError("systematization_convert returned invalid behavior")
+    behavior_definition = _require_nonempty_string(behavior_block.get("definition"), field="behavior.definition")
+    terms = _normalize_definition_of_terms(taxonomy_payload.get("definition_of_terms"))
+    behavior_categories = _normalize_behavior_categories(taxonomy_payload.get("behavior_categories"))
+    taxonomy = {
+        "behavior": {
+            "name": behavior,
+            "definition": behavior_definition,
         },
         "definition_of_terms": terms,
-        "behaviors": behaviors,
+        "behavior_categories": behavior_categories,
         "meta": {
             "source": "systematization",
             "systematization_path": systematization_path,
-            "slug": concept,
+            "slug": behavior,
             "run_id": uuid.uuid4().hex[:8],
         },
     }
@@ -207,5 +207,5 @@ async def run_systematization_to_policy(
     if not output_path.is_absolute():
         output_path = BASE_DIR / output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(taxonomy, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path

@@ -1,0 +1,23 @@
+{
+  "name": "Adaptive Eval",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "postCreateCommand": "python -m pip install --upgrade pip && python -m pip install -e \".[otel,langgraph,dev]\" && cp -n .env.example .env",
+  "forwardPorts": [
+    6006
+  ],
+  "portsAttributes": {
+    "6006": {
+      "label": "Phoenix",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-yaml"
+      ]
+    }
+  }
+}

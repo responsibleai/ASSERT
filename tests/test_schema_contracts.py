@@ -14,9 +14,9 @@ from p2m.core.judge import (
     build_judge_schema,
     render_output_schema,
 )
-from p2m.stages.seeds import (
-    SEED_SCHEMA,
-    SEED_SCHEMA_WITH_TOOLS,
+from p2m.stages.test_set import (
+    TEST_CASE_SCHEMA,
+    TEST_CASE_SCHEMA_WITH_TOOLS,
     output_schema_example,
 )
 from p2m.core.io import fill_template
@@ -26,25 +26,25 @@ class SeedSchemaExampleTest(unittest.TestCase):
     def test_generated_example_parses_as_json(self) -> None:
         example = output_schema_example("prompt")
         parsed = json.loads(example)
-        self.assertIn("seeds", parsed)
-        self.assertIsInstance(parsed["seeds"], list)
-        self.assertEqual(len(parsed["seeds"]), 1)
+        self.assertIn("test_set", parsed)
+        self.assertIsInstance(parsed["test_set"], list)
+        self.assertEqual(len(parsed["test_set"]), 1)
 
     def test_generated_example_validates_against_schema(self) -> None:
         """Every key in the example must be a property in the schema."""
         example = json.loads(output_schema_example("prompt"))
-        seed = example["seeds"][0]
-        schema_props = set(SEED_SCHEMA["properties"].keys())
+        seed = example["test_set"][0]
+        schema_props = set(TEST_CASE_SCHEMA["properties"].keys())
         self.assertEqual(set(seed.keys()), schema_props)
 
     def test_generated_tool_example_validates_against_schema(self) -> None:
-        example = json.loads(output_schema_example("prompt", tool_source="per_seed"))
-        seed = example["seeds"][0]
-        schema_props = set(SEED_SCHEMA_WITH_TOOLS["properties"].keys())
+        example = json.loads(output_schema_example("prompt", tool_source="per_test_case"))
+        seed = example["test_set"][0]
+        schema_props = set(TEST_CASE_SCHEMA_WITH_TOOLS["properties"].keys())
         self.assertEqual(set(seed.keys()), schema_props)
 
     def test_schema_required_fields_match_properties(self) -> None:
-        for schema in (SEED_SCHEMA, SEED_SCHEMA_WITH_TOOLS):
+        for schema in (TEST_CASE_SCHEMA, TEST_CASE_SCHEMA_WITH_TOOLS):
             with self.subTest(schema=schema):
                 self.assertEqual(
                     set(schema["required"]),
@@ -102,8 +102,8 @@ class JudgeSchemaCompatibilityTest(unittest.TestCase):
 
     def test_with_dimensions(self) -> None:
         dims = [
-            {"name": "policy_violation", "description": "Bad event", "rubric": "true = bad", "kind": "event"},
-            {"name": "harm_actionability", "description": "Bad event", "rubric": "true = bad", "kind": "event"},
+            {"name": "policy_violation", "description": "Bad event", "rubric": "true = bad", "type": "event"},
+            {"name": "harm_actionability", "description": "Bad event", "rubric": "true = bad", "type": "event"},
         ]
         self._assert_schemas_compatible(dims)
 

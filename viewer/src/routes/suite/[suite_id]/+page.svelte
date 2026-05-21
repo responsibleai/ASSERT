@@ -12,7 +12,7 @@
 	let descExpanded = $state(false);
 	let metaOpen = $state(false);
 	let selectedBehavior = $state<string | null>(null);
-	let panelTab = $state<'definition' | 'seeds' | 'evaluations'>('definition');
+	let panelTab = $state<'definition' | 'test_set' | 'evaluations'>('definition');
 	let selectedCompareRuns = $state<Set<string>>(new Set());
 	let expandedRunIds = $state<Set<string>>(new Set());
 	let behaviorEvalSamples = $state<BehaviorEvalEntry[]>([]);
@@ -28,17 +28,17 @@
 	);
 	let metricNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
-	let sortedBehaviors = $derived(data.policy?.behaviors ?? []);
+	let sortedBehaviorCategories = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
 	let allRuns = $derived(mergeRunLists(data.runs, data.auditRuns));
-	let conceptName = $derived(data.policy?.concept?.name ?? data.policy?.risk?.name ?? data.suite_id);
-	let conceptDef = $derived(data.policy?.concept?.definition ?? data.policy?.risk?.definition ?? '');
+	let conceptName = $derived(data.taxonomy?.behavior?.name ?? data.taxonomy?.risk?.name ?? data.suite_id);
+	let conceptDef = $derived(data.taxonomy?.behavior?.definition ?? data.taxonomy?.risk?.definition ?? '');
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
 	let systematizationMode = $derived(systematizationModeFor(data.systematization));
 	let hasSystematization = $derived(Boolean(data.systematization));
 	let canCompare = $derived(selectedCompareRuns.size >= 2);
-	const panelTabs = ['definition', 'seeds', 'evaluations'] as const;
+	const panelTabs = ['definition', 'test_set', 'evaluations'] as const;
 
 	let promptCountsByBehavior = $derived.by(() => {
 		const map = new Map<string, number>();
@@ -68,9 +68,9 @@
 
 	let selectedBehaviorData = $derived.by(() => {
 		if (!selectedBehavior) return null;
-		const idx = sortedBehaviors.findIndex((behavior) => behavior.name === selectedBehavior);
+		const idx = sortedBehaviorCategories.findIndex((behavior) => behavior.name === selectedBehavior);
 		if (idx < 0) return null;
-		const behavior = sortedBehaviors[idx];
+		const behavior = sortedBehaviorCategories[idx];
 		return {
 			...behavior,
 			idx,
@@ -168,7 +168,7 @@
 		loadBehaviorEvalResults(name);
 	}
 
-	function selectPanelTab(tab: 'definition' | 'seeds' | 'evaluations') {
+	function selectPanelTab(tab: 'definition' | 'test_set' | 'evaluations') {
 		panelTab = tab;
 		if (tab === 'evaluations' && selectedBehavior) loadBehaviorEvalResults(selectedBehavior);
 	}
@@ -188,16 +188,16 @@
 
 	async function openEvalDrawer(entry: BehaviorEvalEntry, idx: number) {
 		const { kind, sample } = entry;
-		if (!behaviorEvalRunId || !sample.seed_id) return;
+		if (!behaviorEvalRunId || !sample.test_case_id) return;
 		drawerNavIdx = idx;
-		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${kind}:${sample.seed_id}`;
+		const cacheKey = `${data.suite_id}:${behaviorEvalRunId}:${kind}:${sample.test_case_id}`;
 		if (drawerCache[cacheKey]) {
 			drawerItem = drawerCache[cacheKey];
 			return;
 		}
 		drawerLoading = true;
 		try {
-			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/${kind}/${encodeURIComponent(sample.seed_id)}`);
+			const res = await fetch(`/api/runs/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(behaviorEvalRunId)}/${kind}/${encodeURIComponent(sample.test_case_id)}`);
 			if (!res.ok) throw new Error('Failed to load result');
 			const item = await res.json();
 			drawerCache = { ...drawerCache, [cacheKey]: item };
@@ -247,7 +247,7 @@
 			{data.suite?.created_at ? new Date(data.suite.created_at).toLocaleDateString() : '—'}
 		</span>
 		<span class="inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted">
-			{sortedBehaviors.length} categories · {promptSeedItems.length + scenarioSeedItems.length} evaluation sets · {allRuns.length} evaluations
+			{sortedBehaviorCategories.length} categories · {promptSeedItems.length + scenarioSeedItems.length} evaluation sets · {allRuns.length} evaluations
 		</span>
 		{#if hasSystematization}
 			<button class="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted transition-colors hover:text-text-secondary" onclick={() => metaOpen = !metaOpen}>
@@ -262,7 +262,7 @@
 				<span class="text-xs text-text-muted"><span class="text-text-secondary">systematization:</span> present</span>
 				{#if systematizationMode}<span class="text-xs text-text-muted"><span class="text-text-secondary">mode:</span> {systematizationMode}</span>{/if}
 				{#if summaryItemCount > 0}<span class="text-xs text-text-muted"><span class="text-text-secondary">pattern summaries:</span> {summaryItemCount}</span>{/if}
-				<span class="text-xs text-text-muted"><span class="text-text-secondary">behavior categories:</span> {sortedBehaviors.length}</span>
+				<span class="text-xs text-text-muted"><span class="text-text-secondary">behavior categories:</span> {sortedBehaviorCategories.length}</span>
 			</div>
 		</div>
 	{/if}
@@ -295,7 +295,7 @@
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Type</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Target</th>
-						<th class="px-3 py-2 text-right text-xs font-medium text-text-muted">Policy violation</th>
+						<th class="px-3 py-2 text-right text-xs font-medium text-text-muted">Taxonomy violation</th>
 						<th class="px-3 py-2 text-right text-xs font-medium text-text-muted">Total</th>
 					</tr>
 				</thead>
@@ -374,10 +374,10 @@
 		<div class="mb-3 flex shrink-0 items-center gap-3 bg-bg pb-1">
 			<h2 class="shrink-0 text-sm font-semibold text-text">Behavior categories</h2>
 			<div class="flex-1 border-t border-border"></div>
-			<span class="shrink-0 text-xs text-text-muted">{sortedBehaviors.length} categories</span>
+			<span class="shrink-0 text-xs text-text-muted">{sortedBehaviorCategories.length} categories</span>
 		</div>
 
-		{#if sortedBehaviors.length === 0}
+		{#if sortedBehaviorCategories.length === 0}
 			<div class="rounded-lg border border-border bg-surface px-6 py-10 text-center">
 				<p class="text-sm text-text-secondary">No behavior categories generated yet.</p>
 				<p class="mt-1 text-xs text-text-muted">Run the pipeline to generate behavior categories.</p>
@@ -386,12 +386,12 @@
 			<div class="overflow-hidden rounded-lg border border-border">
 				<div class="grid items-center border-b border-border bg-surface px-4 py-2" style="grid-template-columns: 1fr 1fr 80px 80px 80px; column-gap: 12px">
 					<span class="text-left text-xs font-medium text-text-muted">Behavior category</span>
-					<span class="text-left text-xs font-medium text-text-muted">Policy status</span>
+					<span class="text-left text-xs font-medium text-text-muted">Taxonomy status</span>
 					<span class="text-right text-xs font-medium text-text-muted">Prompts</span>
 					<span class="text-right text-xs font-medium text-text-muted">Scenarios</span>
 					<span class="text-right text-xs font-medium text-text-muted">Evaluations</span>
 				</div>
-				{#each sortedBehaviors as behavior, idx}
+				{#each sortedBehaviorCategories as behavior, idx}
 					{@const pCount = promptCountsByBehavior.get(behavior.name) ?? 0}
 					{@const sCount = scenarioCountsByBehavior.get(behavior.name) ?? 0}
 					<div
@@ -439,7 +439,7 @@
 							class="border-b-2 px-3 py-2 text-xs font-medium transition-colors {panelTab === tab ? 'border-interactive text-text' : 'border-transparent text-text-muted hover:border-border hover:text-text-secondary'}"
 							onclick={() => selectPanelTab(tab)}
 						>
-							{tab === 'definition' ? 'Definition' : tab === 'seeds' ? `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}` : `Evaluations${behaviorEvalSamples.length > 0 ? ` ${behaviorEvalSamples.length}` : ''}`}
+							{tab === 'definition' ? 'Definition' : tab === 'test_set' ? `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}` : `Evaluations${behaviorEvalSamples.length > 0 ? ` ${behaviorEvalSamples.length}` : ''}`}
 						</button>
 					{/each}
 				</div>
@@ -463,7 +463,7 @@
 							</div>
 						{/if}
 					</div>
-				{:else if panelTab === 'seeds'}
+				{:else if panelTab === 'test_set'}
 					<div class="space-y-6">
 						<div>
 							<div class="mb-2 flex items-center gap-2">
@@ -522,7 +522,7 @@
 										<div><span class="text-[10px] font-medium text-text-muted">User prompt</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.prompt}</p></div>
 										{#if sample.response}<div><span class="text-[10px] font-medium text-text-muted">Target response</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.response}</p></div>{/if}
 										<span class="text-xs font-medium {status === 'flagged' ? 'text-score-fail' : status === 'compliant' ? 'text-score-pass' : status === 'error' ? 'text-yellow-500' : 'text-text-muted'}">
-											{status === 'flagged' ? 'Policy violation' : status === 'compliant' ? 'Pass' : status === 'error' ? 'Judge failed' : 'Pending'}
+											{status === 'flagged' ? 'Taxonomy violation' : status === 'compliant' ? 'Pass' : status === 'error' ? 'Judge failed' : 'Pending'}
 										</span>
 									</div>
 								</button>
@@ -539,7 +539,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
 		<div class="rounded-lg border border-border bg-surface p-6 text-center">
 			<div class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-text-muted border-t-interactive"></div>
-			<p class="mt-2 text-sm text-text-muted">Loading conversation...</p>
+			<p class="mt-2 text-sm text-text-muted">Loading result...</p>
 		</div>
 	</div>
 {/if}
@@ -557,3 +557,4 @@
 		onNext={() => navigateDrawer(1)}
 	/>
 {/if}
+

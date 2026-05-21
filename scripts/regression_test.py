@@ -1,25 +1,25 @@
 """PR regression test — real implementation.
 
 Runs the pipeline at the baseline + treatment commits against the two
-golden risk specs (``tests/regression/config_{safety,quality}.yaml``) with
-a shared seed budget, computes the science-efficacy metrics, runs paired
-statistical tests (McNemar for per-seed binary, bootstrap delta for
-suite-level), and emits a Holm-Bonferroni-gated decision report consumed
+golden failure-mode configs (``tests/regression/config_{safety,quality}.yaml``) with
+a shared test-set size, computes the science-efficacy metrics, runs paired
+statistical tests (McNemar for per-test-case binary, bootstrap delta for
+dataset-level), and emits a Holm-Bonferroni-gated decision report consumed
 by the ``science.yml`` workflow's PR summary step.
 
 Determinism contract
 --------------------
-Stages ``policy``, ``design``, ``seeds`` are FROZEN across baseline +
+Stages ``systematize``, ``stratification``, ``test_set`` are FROZEN across baseline +
 treatment unless the diff shows a file that affects those stages. This
-keeps the comparison a true paired-by-seed-id comparison of rollout +
+keeps the comparison a true paired-by-test-case-id comparison of inference +
 judge changes. Set ``--rerun-upstream-stages`` to force regeneration on
 both commits (e.g. for prompt-tuning PRs).
 
 Caching
 -------
 Baseline runs are cached by ``(base_sha, config_hash, judge_model,
-n_seeds, script_hash)``. PRs against the same base commit reuse the
-cached baseline transcripts/scores; only the treatment is re-run.
+test_set_size, script_hash)``. PRs against the same base commit reuse the
+cached baseline inference outputs/scores; only the treatment is re-run.
 
 Output
 ------
@@ -70,14 +70,14 @@ DEFAULT_CONFIGS: tuple[Path, ...] = (
 
 # Files whose change requires rerunning upstream (cacheable) stages.
 UPSTREAM_STAGE_GLOBS: tuple[str, ...] = (
-    "p2m/stages/policy.py",
-    "p2m/stages/design.py",
-    "p2m/stages/seeds.py",
+    "p2m/stages/systematize.py",
+    "p2m/stages/stratification.py",
+    "p2m/stages/test_set.py",
     "p2m/core/artifact_cache.py",
-    "prompts/policy_system.md",
-    "prompts/seeds_system.md",
-    "prompts/seeds_user.md",
-    "prompts/design_system.md",
+    "prompts/systematize_system.md",
+    "prompts/test_set_direct_single.md",
+    "prompts/test_set_scenario_single.md",
+    "prompts/test_set_stratification.md",
 )
 
 
@@ -89,17 +89,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--baseline", required=True, help="Baseline commit SHA")
     p.add_argument("--treatment", required=True, help="Treatment commit SHA")
     p.add_argument(
-        "--seeds",
+        "--test_set",
         type=int,
         default=100,
-        help="Per-spec seed budget (split equally across prompt + scenario)",
+        help="Per-spec test-set size (split equally across prompt + scenario)",
     )
     p.add_argument(
         "--configs",
         nargs="+",
         type=Path,
         default=list(DEFAULT_CONFIGS),
-        help="Risk-spec config YAMLs",
+        help="Failure-mode config YAMLs",
     )
     p.add_argument(
         "--artifacts-dir",
@@ -115,7 +115,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--rerun-upstream-stages",
         action="store_true",
-        help="Force rerunning policy/design/seeds on both commits",
+        help="Force rerunning systematize/stratification/test_set on both commits",
     )
     p.add_argument(
         "--enforce",
@@ -137,9 +137,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--upstream-model",
         default="azure/gpt-5.4",
         help=(
-            "Override the model used for policy + seeds + auditor stages. "
+            "Override the model used for systematize + test_set + tester stages. "
             "Defaults to gpt-5.4: configs ship with gpt-5.4-mini for cost, "
-            "but adversarial scenario seed schemas trip its content filter "
+            "but adversarial scenario test-case schemas trip its content filter "
             "/ structured-output handling, dropping payloads silently."
         ),
     )
@@ -177,15 +177,15 @@ def upstream_stages_dirty(files: list[str]) -> bool:
 # ── Pipeline runner ────────────────────────────────────────────────────────
 
 
-def _config_hash(path: Path, *, n_seeds: int, judge_model: str) -> str:
+def _config_hash(path: Path, *, test_set_size: int, judge_model: str) -> str:
     h = hashlib.sha256()
     h.update(path.read_bytes())
-    h.update(f"\nseeds={n_seeds}\njudge={judge_model}\n".encode())
+    h.update(f"\ntest_set={test_set_size}\njudge={judge_model}\n".encode())
     return h.hexdigest()[:16]
 
 
-def _suite_dir_for(config: Path, commit_sha: str, n_seeds: int, judge_model: str) -> Path:
-    cfg_hash = _config_hash(config, n_seeds=n_seeds, judge_model=judge_model)
+def _suite_dir_for(config: Path, commit_sha: str, test_set_size: int, judge_model: str) -> Path:
+    cfg_hash = _config_hash(config, test_set_size=test_set_size, judge_model=judge_model)
     label = config.stem  # "config_safety" / "config_quality"
     return REPO_ROOT / "artifacts" / "regression-runs" / f"{label}-{commit_sha[:7]}-{cfg_hash}"
 
@@ -205,7 +205,7 @@ def ensure_worktree(commit_sha: str) -> Path:
     wt = _worktree_path_for(commit_sha)
     if wt.exists():
         log.info("reusing worktree at %s", wt)
-        _apply_seed_diagnostic(wt)
+        _apply_test_set_diagnostic(wt)
         return wt
     wt.parent.mkdir(parents=True, exist_ok=True)
     log.info("creating worktree for %s at %s", commit_sha[:7], wt)
@@ -213,47 +213,42 @@ def ensure_worktree(commit_sha: str) -> Path:
         ["git", "worktree", "add", "--detach", str(wt), commit_sha],
         cwd=REPO_ROOT,
     )
-    _apply_seed_diagnostic(wt)
+    _apply_test_set_diagnostic(wt)
     return wt
 
 
-def _apply_seed_diagnostic(worktree: Path) -> None:
-    """Patch the worktree's ``p2m/stages/seeds.py`` to print response details
-    on the ``invalid seeds payload`` failure path.
-
-    Diagnostic-only — applied to both baseline and treatment worktrees so
-    we can see what Azure actually returned when scenario seed gen fails.
-    """
-    target = worktree / "p2m" / "stages" / "seeds.py"
+def _apply_test_set_diagnostic(worktree: Path) -> None:
+    """Patch ``p2m/stages/test_set.py`` to print response details on invalid payloads."""
+    target = worktree / "p2m" / "stages" / "test_set.py"
     if not target.exists():
         return
     try:
         text = target.read_text(encoding="utf-8")
     except OSError:
         return
-    if "[DEBUG SEEDS-FAIL]" in text:
+    if "[DEBUG TEST_SET-FAIL]" in text:
         return
     sentinel = (
-        '        if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):\n'
-        '            raise ValueError(f"{kind} seed generation returned invalid seeds payload")\n'
+        '            if not isinstance(payload, dict) or not isinstance(payload.get("test_set"), list):\n'
+        '                raise ValueError(f"{kind} test-case generation returned invalid test_set payload")\n'
     )
     if sentinel not in text:
-        log.warning("seed diagnostic sentinel not found in %s; skipping patch", target)
+        log.warning("test_set diagnostic sentinel not found in %s; skipping patch", target)
         return
     replacement = (
-        '        if not isinstance(payload, dict) or not isinstance(payload.get("seeds"), list):\n'
-        '            print(f"\\n[DEBUG SEEDS-FAIL] kind={kind} behavior={behavior_name}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] finish_reason={response.finish_reason}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] status={response.status}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] incomplete={response.incomplete_details}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] usage={response.usage}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] text_len={len(response.text or \'\')}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] text[:1500]={(response.text or \'\')[:1500]!r}", flush=True)\n'
-        '            print(f"[DEBUG SEEDS-FAIL] parsed_type={type(payload).__name__}", flush=True)\n'
-        '            raise ValueError(f"{kind} seed generation returned invalid seeds payload")\n'
+        '            if not isinstance(payload, dict) or not isinstance(payload.get("test_set"), list):\n'
+        '                print(f"\\n[DEBUG TEST_SET-FAIL] kind={kind} behavior={behavior_name}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] finish_reason={response.finish_reason}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] status={response.status}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] incomplete={response.incomplete_details}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] usage={response.usage}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] text_len={len(response.text or \'\')}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] text[:1500]={(response.text or \'\')[:1500]!r}", flush=True)\n'
+        '                print(f"[DEBUG TEST_SET-FAIL] parsed_type={type(payload).__name__}", flush=True)\n'
+        '                raise ValueError(f"{kind} test-case generation returned invalid test_set payload")\n'
     )
     target.write_text(text.replace(sentinel, replacement, 1), encoding="utf-8")
-    log.info("applied seed diagnostic to %s", target)
+    log.info("applied test_set diagnostic to %s", target)
 
 
 def remove_worktree(commit_sha: str) -> None:
@@ -276,7 +271,7 @@ def _render_config(
     *,
     suite_name: str,
     run_label: str,
-    n_seeds: int,
+    test_set_size: int,
     judge_model: str,
     upstream_model: str,
     target_dir: Path,
@@ -284,15 +279,15 @@ def _render_config(
     """Materialise a per-run YAML with the requested overrides.
 
     The CLI only accepts ``--config``; sample sizes, models, and output
-    location (suite/run) all come from the YAML body. We mutate a copy
+    location (dataset/run) all come from the YAML body. We mutate a copy
     and write it inside ``target_dir`` (typically the worktree's
     ``tests/regression/``) so sibling concept markdown is found and the
     run is fully self-contained.
 
-    ``upstream_model`` overrides the model used for policy + seed
-    generation + auditor (per-stage). The default ``gpt-5.4-mini`` in
+    ``upstream_model`` overrides the model used for behavior categorization,
+    test-set generation, and tester stages (per-stage). The default ``gpt-5.4-mini`` in
     the source configs has been observed to crash on adversarial
-    scenario seed schemas (returns null/empty parsed payloads — likely
+    scenario test-case schemas (returns null/empty parsed payloads — likely
     content-filter rejection). Bumping all upstream stages to the
     long-context judge avoids the failure at modest cost.
     """
@@ -301,34 +296,38 @@ def _render_config(
     cfg["run"] = run_label
 
     pipeline = cfg.setdefault("pipeline", {})
+    test_set_key = "test_set" if "test_set" in pipeline or "seeds" not in pipeline else "seeds"
+    systematize_key = "systematize" if "systematize" in pipeline or "policy" not in pipeline else "policy"
+    inference_key = "inference" if "inference" in pipeline or "rollout" not in pipeline else "rollout"
 
     # Sample sizes
-    seeds_cfg = pipeline.setdefault("seeds", {})
-    half = n_seeds // 2
-    seeds_cfg.setdefault("prompt", {})["sample_size"] = half
-    seeds_cfg.setdefault("scenario", {})["sample_size"] = n_seeds - half
+    test_set_cfg = pipeline.setdefault(test_set_key, {})
+    half = test_set_size // 2
+    test_set_cfg.setdefault("prompt", {})["sample_size"] = half
+    test_set_cfg.setdefault("scenario", {})["sample_size"] = test_set_size - half
 
     # Models — judge first
     pipeline.setdefault("judge", {}).setdefault("model", {})["name"] = judge_model
 
-    # Upstream stages: policy, both seed generators, auditor.
-    # Seed generation must have enough max_tokens for the full batch:
-    # at sample_size=200 + behavior_count=5, each call produces ~20–40
-    # seeds with rich descriptions. The project default
+    # Upstream stages: behavior categorization, both test-case generators, tester.
+    # Test-case generation must have enough max_tokens for the full batch:
+    # at test_set=200 + behavior_count=5, each call produces ~20–40
+    # test cases with rich descriptions. The project default
     # (DEFAULT_GENERATION_MAX_TOKENS=3000) truncates these, leaving an
-    # incomplete JSON that fails to parse → "invalid seeds payload".
-    pipeline.setdefault("policy", {}).setdefault("model", {})["name"] = upstream_model
-    prompt_model = seeds_cfg.setdefault("prompt", {}).setdefault("model", {})
+    # incomplete JSON that fails to parse → "invalid test_set payload".
+    pipeline.setdefault(systematize_key, {}).setdefault("model", {})["name"] = upstream_model
+    prompt_model = test_set_cfg.setdefault("prompt", {}).setdefault("model", {})
     prompt_model["name"] = upstream_model
     prompt_model["max_tokens"] = 16000
-    scenario_model = seeds_cfg.setdefault("scenario", {}).setdefault("model", {})
+    scenario_model = test_set_cfg.setdefault("scenario", {}).setdefault("model", {})
     scenario_model["name"] = upstream_model
     scenario_model["max_tokens"] = 16000
-    rollout = pipeline.setdefault("rollout", {})
-    rollout.setdefault("auditor", {}).setdefault("model", {})["name"] = upstream_model
-    # Bump rollout concurrency so seeds=200 finishes in workflow timeout.
+    inference = pipeline.setdefault(inference_key, {})
+    tester_key = "tester" if inference_key == "inference" or "auditor" not in inference else "auditor"
+    inference.setdefault(tester_key, {}).setdefault("model", {})["name"] = upstream_model
+    # Bump inference concurrency so test_set=200 finishes in workflow timeout.
     # qualevalexpeus has generous Azure quota for these deployments.
-    rollout["concurrency"] = max(int(rollout.get("concurrency", 2) or 2), 10)
+    inference["concurrency"] = max(int(inference.get("concurrency", 2) or 2), 10)
 
     target_dir.mkdir(parents=True, exist_ok=True)
     out = target_dir / f"_regression_{source.stem}_{run_label}.yaml"
@@ -340,7 +339,7 @@ def run_pipeline(
     config: Path,
     *,
     commit_sha: str,
-    n_seeds: int,
+    test_set_size: int,
     judge_model: str,
     upstream_model: str,
     extra_overrides: dict[str, Any] | None = None,
@@ -352,7 +351,7 @@ def run_pipeline(
     survive worktree teardown and the workflow's actions/cache step can
     persist them across PR runs.
     """
-    suite_dir = _suite_dir_for(config, commit_sha, n_seeds, judge_model)
+    suite_dir = _suite_dir_for(config, commit_sha, test_set_size, judge_model)
     run_label = f"reg-{commit_sha[:7]}"
     final_run_dir = suite_dir / run_label
     if (final_run_dir / SCORES_FILE).exists():
@@ -371,7 +370,7 @@ def run_pipeline(
         config_in_wt,
         suite_name=suite_name,
         run_label=run_label,
-        n_seeds=n_seeds,
+        test_set_size=test_set_size,
         judge_model=judge_model,
         upstream_model=upstream_model,
         # Sibling files (concept markdown, etc.) are resolved relative
@@ -448,7 +447,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"## 🧪 Regression Test — {_ICONS.get(decision, '?')} {decision}")
     lines.append("")
     lines.append(
-        f"alpha (per-test) = {report['alpha']}, n_seeds = {report.get('n_seeds')}"
+        f"alpha (per-test) = {report['alpha']}, test_set_size = {report.get('test_set_size')}"
     )
     lines.append("")
     lines.append("| Metric | Granularity | Direction | Baseline | Treatment | Δ | p | Effect |")
@@ -503,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
             baseline_dir = run_pipeline(
                 config,
                 commit_sha=args.baseline,
-                n_seeds=args.seeds,
+                test_set_size=args.test_set,
                 judge_model=args.judge_model,
                 upstream_model=args.upstream_model,
             )
@@ -511,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
             treatment_dir = run_pipeline(
                 config,
                 commit_sha=args.treatment,
-                n_seeds=args.seeds,
+                test_set_size=args.test_set,
                 judge_model=args.judge_model,
                 upstream_model=args.upstream_model,
             )
@@ -538,7 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         baseline_metrics,
         treatment_metrics,
         alpha=args.alpha,
-        n_seeds=args.seeds * len(args.configs),
+        test_set_size=args.test_set * len(args.configs),
     )
     report["per_config"] = per_config_results
     report["baseline_sha"] = args.baseline

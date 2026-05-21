@@ -74,9 +74,9 @@
 								</button>
 								{#if seedOpen}
 									<div class="mt-2 pl-4" transition:slide={{ duration: 150, easing: quintOut }}>
-										{#if entry.factors && Object.keys(entry.factors).length > 0}
+										{#if entry.dimensions && Object.keys(entry.dimensions).length > 0}
 											<div class="mb-2 flex flex-wrap gap-1.5">
-												{#each Object.entries(entry.factors) as [name, value]}
+												{#each Object.entries(entry.dimensions) as [name, value]}
 													<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
 														{formatFactorLabel(name)}: {value}
 													</span>

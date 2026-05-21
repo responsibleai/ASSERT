@@ -111,7 +111,7 @@ export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | 
 		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		dimensions,
 		target: scores[0]?.target ?? '',
-		auditor_model: scores[0]?.auditor_model ?? '',
+		tester_model: scores[0]?.tester_model ?? '',
 		judge_model: scores[0]?.judge_model ?? ''
 	};
 }

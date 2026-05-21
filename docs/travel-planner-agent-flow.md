@@ -12,19 +12,19 @@ This page visualizes the flagship customer-preview example:
 
 ```mermaid
 flowchart TD
-  subgraph P2M["Adaptive Eval rollout loop"]
+  subgraph P2M["Adaptive Eval inference loop"]
     Seed["generated test case"]
-    Auditor["auditor LLM<br/>next user turn"]
+    Tester["tester LLM<br/>next user turn"]
     Runtime["CallableSession.run_turn<br/>calls target callable"]
-    Transcript["transcripts.jsonl<br/>conversation + trace refs"]
+    InferenceSet["inference_set.jsonl<br/>conversation or agent actions + trace refs"]
     Judge["judge stage<br/>scores against spec"]
 
-    Seed --> Auditor
-    Auditor -->|"user turn"| Runtime
-    Runtime -->|"target response"| Auditor
-    Auditor --> Transcript
-    Runtime --> Transcript
-    Transcript --> Judge
+    Seed --> Tester
+    Tester -->|"user turn"| Runtime
+    Runtime -->|"target response"| Tester
+    Tester --> InferenceSet
+    Runtime --> InferenceSet
+    InferenceSet --> Judge
   end
 
   subgraph AutoTrace["examples.travel_planner_langgraph.auto_trace"]
@@ -92,7 +92,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
   participant Seed as Test Case
-  participant Auditor as Auditor LLM
+  participant Tester as Tester LLM
   participant Runtime as CallableSession
   participant Trace as Phoenix OTel
   participant Graph as LangGraph Agent
@@ -100,11 +100,11 @@ sequenceDiagram
   participant Tools as ToolNode + travel tools
   participant Judge as Judge
 
-  Seed->>Auditor: initialize objective
+  Seed->>Tester: initialize objective
 
-  loop up to rollout.max_turns
-    Auditor->>Auditor: generate next user message
-    Auditor->>Runtime: user turn
+  loop up to inference.max_turns
+    Tester->>Tester: generate next user message
+    Tester->>Runtime: user turn
     Runtime->>Graph: chat_sync(message)
     Graph->>LLM: intent_classifier
     LLM-->>Graph: intent, destination, budget
@@ -129,7 +129,7 @@ sequenceDiagram
     end
 
     Graph-->>Runtime: final AIMessage.content
-    Runtime-->>Auditor: target response
+    Runtime-->>Tester: target response
     Runtime-->>Trace: captured spans
   end
 

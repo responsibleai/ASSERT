@@ -1,4 +1,4 @@
-"""Judge transcript prefixes at fixed rollout-turn checkpoints and plot flagged rate."""
+"""Judge transcript prefixes at fixed inference-turn checkpoints and plot flagged rate."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import yaml
 from p2m.core.config_model import (
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
-    DEFAULT_ROLLOUT_CONCURRENCY,
+    DEFAULT_INFERENCE_CONCURRENCY,
 )
 from p2m.core.io import (
     append_jsonl_row,
@@ -52,7 +52,7 @@ class CheckpointJudgeConfig:
 @dataclass(frozen=True)
 class CheckpointTask:
     output_index: int
-    transcript_row: dict[str, Any]
+    inference_row: dict[str, Any]
     checkpoint_turn: int
     final_transcript_turns: int
     transcript: Transcript
@@ -60,18 +60,18 @@ class CheckpointTask:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Judge transcript prefixes at fixed rollout-turn checkpoints.",
+        description="Judge transcript prefixes at fixed inference-turn checkpoints.",
     )
     parser.add_argument(
         "--run-dir",
         required=True,
-        help="Completed run directory containing transcripts.jsonl and config.yaml.",
+        help="Completed run directory containing inference_set.jsonl and config.yaml.",
     )
     parser.add_argument(
         "--checkpoint-step",
         type=int,
         default=5,
-        help="Checkpoint interval in rollout turns.",
+        help="Checkpoint interval in inference turns.",
     )
     parser.add_argument(
         "--dimension",
@@ -175,14 +175,14 @@ def load_checkpoint_judge_config(
             for value in judge_dimensions_override
         ]
 
-    rollout_stage_raw = pipeline_raw.get("rollout")
-    rollout_concurrency = DEFAULT_ROLLOUT_CONCURRENCY
-    if isinstance(rollout_stage_raw, dict) and rollout_stage_raw.get("concurrency") is not None:
-        rollout_concurrency = _require_positive_int(
-            int(rollout_stage_raw["concurrency"]),
-            field_name="pipeline.rollout.concurrency",
+    inference_stage_raw = pipeline_raw.get("inference")
+    inference_concurrency = DEFAULT_INFERENCE_CONCURRENCY
+    if isinstance(inference_stage_raw, dict) and inference_stage_raw.get("concurrency") is not None:
+        inference_concurrency = _require_positive_int(
+            int(inference_stage_raw["concurrency"]),
+            field_name="pipeline.inference.concurrency",
         )
-    concurrency = concurrency_override if concurrency_override is not None else rollout_concurrency
+    concurrency = concurrency_override if concurrency_override is not None else inference_concurrency
     if concurrency <= 0:
         raise ValueError("concurrency must be > 0")
 
@@ -199,12 +199,12 @@ def load_checkpoint_judge_config(
 def transcript_from_row(row: dict[str, Any]) -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            tester_model=str(row.get("tester_model") or ""),
+            dimensions=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -221,17 +221,17 @@ def _event_views(event: TranscriptEvent) -> list[str]:
     return [str(event.view)]
 
 
-def is_rollout_turn_start(event: TranscriptEvent) -> bool:
+def is_inference_turn_start(event: TranscriptEvent) -> bool:
     return (
         "target" in _event_views(event)
-        and event.actor == "auditor"
+        and event.actor == "tester"
         and isinstance(event.edit, AddMessageEdit)
         and event.edit.message.role == "user"
     )
 
 
-def count_rollout_turns(transcript: Transcript) -> int:
-    return sum(1 for event in transcript.events if is_rollout_turn_start(event))
+def count_inference_turns(transcript: Transcript) -> int:
+    return sum(1 for event in transcript.events if is_inference_turn_start(event))
 
 
 def checkpoint_turns(final_turns: int, checkpoint_step: int) -> list[int]:
@@ -248,7 +248,7 @@ def slice_transcript_at_turn(transcript: Transcript, checkpoint_turn: int) -> Tr
     seen_turns = 0
 
     for event in transcript.events:
-        if is_rollout_turn_start(event):
+        if is_inference_turn_start(event):
             if seen_turns >= checkpoint_turn:
                 break
             seen_turns += 1
@@ -463,17 +463,17 @@ async def run_checkpoint_judge(
         raise ValueError("checkpoint_step must be > 0")
 
     resolved_run_dir = resolve_path(run_dir)
-    transcripts_path = resolved_run_dir / "transcripts.jsonl"
+    inference_set_path = resolved_run_dir / "inference_set.jsonl"
     config_path = resolved_run_dir / "config.yaml"
-    policy_path = resolved_run_dir.parent / "policy.json"
+    taxonomy_path = resolved_run_dir.parent / "taxonomy.json"
     resolved_out_dir = resolve_path(out_dir) if out_dir is not None else (resolved_run_dir / "checkpoint_judge")
 
-    if not transcripts_path.exists():
-        raise FileNotFoundError(f"Transcript file not found: {transcripts_path}")
+    if not inference_set_path.exists():
+        raise FileNotFoundError(f"Inference set file not found: {inference_set_path}")
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
-    if not policy_path.exists():
-        raise FileNotFoundError(f"Policy file not found: {policy_path}")
+    if not taxonomy_path.exists():
+        raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
 
     config = load_checkpoint_judge_config(
         config_path,
@@ -483,11 +483,11 @@ async def run_checkpoint_judge(
         concurrency_override=concurrency_override,
     )
 
-    transcript_rows = load_jsonl(transcripts_path)
-    if not transcript_rows:
-        raise ValueError(f"No transcripts found in {transcripts_path}")
+    inference_rows = load_jsonl(inference_set_path)
+    if not inference_rows:
+        raise ValueError(f"No inference rows found in {inference_set_path}")
 
-    policy_raw = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy_raw = json.loads(taxonomy_path.read_text(encoding="utf-8"))
     permissible_by_name = permissible_by_behavior(policy_raw)
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
@@ -502,14 +502,14 @@ async def run_checkpoint_judge(
 
     tasks: list[CheckpointTask] = []
     output_index = 0
-    for row in transcript_rows:
+    for row in inference_rows:
         transcript = transcript_from_row(row)
-        final_turns = count_rollout_turns(transcript)
+        final_turns = count_inference_turns(transcript)
         for checkpoint_turn in checkpoint_turns(final_turns, checkpoint_step):
             tasks.append(
                 CheckpointTask(
                     output_index=output_index,
-                    transcript_row=row,
+                    inference_row=row,
                     checkpoint_turn=checkpoint_turn,
                     final_transcript_turns=final_turns,
                     transcript=transcript,
@@ -519,7 +519,7 @@ async def run_checkpoint_judge(
 
     if not tasks:
         raise ValueError(
-            f"No checkpoint prefixes available at step {checkpoint_step} in {transcripts_path}"
+            f"No checkpoint prefixes available at step {checkpoint_step} in {inference_set_path}"
         )
 
     resolved_out_dir.mkdir(parents=True, exist_ok=True)
@@ -549,26 +549,26 @@ async def run_checkpoint_judge(
                 response_schema=judge_contract["response_schema"],
             )
             behavior = str(
-                row_behavior(task.transcript_row)
+                row_behavior(task.inference_row)
                 or ""
             )
             row = {
-                "kind": task.transcript_row.get("kind", ""),
-                "seed_id": task.transcript_row.get("seed_id", ""),
-                "concept": task.transcript_row.get("concept", ""),
+                "type": task.inference_row.get("kind", ""),
+                "test_case_id": task.inference_row.get("test_case_id", ""),
+                "behavior": task.inference_row.get("behavior", ""),
                 "permissible": policy_permissible(
                     permissible_by_name,
                     behavior,
                 ),
-                "target": task.transcript_row.get("target", ""),
-                "auditor_model": task.transcript_row.get("auditor_model", ""),
+                "target": task.inference_row.get("target", ""),
+                "tester_model": task.inference_row.get("tester_model", ""),
                 "checkpoint_turn": task.checkpoint_turn,
                 "final_transcript_turns": task.final_transcript_turns,
                 "judge_model": config.judge_model,
                 "judge_status": judge_result["judge_status"],
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
-                "factors": {"behavior": behavior},
+                "dimensions": {"behavior": behavior},
             }
             if judge_result.get("multi_judge") is not None:
                 row["multi_judge"] = judge_result["multi_judge"]

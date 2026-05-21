@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from p2m.core.io import (
-    load_seeds,
+    load_test_cases,
     resolve_path,
     write_jsonl,
 )
@@ -26,11 +26,11 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         transcript = Transcript(
             metadata=TranscriptMetadata(
                 kind="scenario",
-                seed_id="seed-1",
-                concept="concept",
+                test_case_id="test-case-1",
+                behavior="behavior",
                 target="target",
-                factors={"behavior": "behavior"},
-                auditor_model="auditor",
+                dimensions={"behavior": "behavior"},
+                tester_model="tester",
             )
         )
         transcript.add_event(
@@ -70,24 +70,24 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             {"type": "string"},
         )
 
-    def test_utils_shim_write_jsonl_and_load_seeds_round_trip(self) -> None:
+    def test_utils_shim_write_jsonl_and_load_test_cases_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "seeds.jsonl"
+            path = Path(tmp_dir) / "test_set.jsonl"
             write_jsonl(path, [{"prompt": "one"}, {"prompt": "two"}])
 
-            rows = load_seeds(path)
+            rows = load_test_cases(path)
             self.assertEqual(rows, [{"prompt": "one"}, {"prompt": "two"}])
 
-    def test_utils_shim_load_seeds_skips_malformed_lines_when_not_strict(self) -> None:
+    def test_utils_shim_load_test_cases_skips_malformed_lines_when_not_strict(self) -> None:
         with TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "seeds.jsonl"
+            path = Path(tmp_dir) / "test_set.jsonl"
             path.write_text('{"prompt":"ok"}\nnot-json\n', encoding="utf-8")
 
-            rows = load_seeds(path, strict=False)
+            rows = load_test_cases(path, strict=False)
             self.assertEqual(rows, [{"prompt": "ok"}])
 
             with self.assertRaises(ValueError):
-                load_seeds(path, strict=True)
+                load_test_cases(path, strict=True)
 
     def test_built_in_dimensions_include_required_base_metrics(self) -> None:
         self.assertEqual(
@@ -254,7 +254,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[1].role, "user")
             return ModelResponse(
                 parsed=None,
-                text="Let me think through the policy carefully before deciding.",
+                text="Let me think through the taxonomy carefully before deciding.",
                 model=model,
             )
 
@@ -318,7 +318,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(model, "azure/gpt-5.4")
             return ModelResponse(
                 parsed=None,
-                text="Let me think through the policy carefully before deciding.",
+                text="Let me think through the taxonomy carefully before deciding.",
                 model=model,
             )
 
@@ -346,8 +346,8 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_build_judge_contract_uses_highlight_citations(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": []},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            policy_raw={"behavior_categories": []},
             judge_dimensions=[],
             schema_name="xml_judgment",
         )
@@ -359,12 +359,12 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("highlights", contract["response_schema"]["json_schema"]["required"])
         self.assertEqual(contract["response_schema"]["json_schema"]["properties"]["highlights"]["type"], "string")
         self.assertNotIn("citations", contract["response_schema"]["json_schema"]["properties"])
-        self.assertIn('"behaviors": []', contract["system_prompt"])
+        self.assertIn('"behavior_categories": []', contract["system_prompt"])
 
     def test_build_judge_contract_uses_behavior_names_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
             judge_dimensions=[],
             schema_name="xml_judgment",
         )
@@ -379,15 +379,15 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
     def test_build_judge_contract_rejects_duplicate_behavior_names(self) -> None:
         with self.assertRaisesRegex(ValueError, "duplicate name"):
             build_judge_contract(
-                template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "a"}]},
+                template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+                policy_raw={"behavior_categories": [{"name": "a"}, {"name": "a"}]},
                 judge_dimensions=[],
             )
 
     def test_build_judge_contract_strips_behavior_names_in_enum(self) -> None:
         contract = build_judge_contract(
-            template="Judge {{policy_json}} {{dimensions_section}} {{output_schema}}",
-            policy_raw={"behaviors": [{"name": "  a  "}, {"name": "b"}]},
+            template="Judge {{taxonomy_json}} {{dimensions_section}} {{output_schema}}",
+            policy_raw={"behavior_categories": [{"name": "  a  "}, {"name": "b"}]},
             judge_dimensions=[],
         )
         node_schema = contract["response_schema"]["json_schema"]["properties"]["node_judgments"]
@@ -506,7 +506,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -549,7 +549,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                policy_raw={"behavior_categories": []},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -579,7 +579,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                policy_raw={"behavior_categories": []},
             )
 
         self.assertEqual(result["judge_status"], "judge_failed")
@@ -631,7 +631,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -680,7 +680,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "judge_failed")
@@ -726,7 +726,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}]},
+                policy_raw={"behavior_categories": [{"name": "a"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -765,7 +765,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": []},
+                policy_raw={"behavior_categories": []},
             )
 
         self.assertEqual(result["judge_status"], "ok")
@@ -811,7 +811,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 transcript=transcript,
                 index_to_message_id=index_to_message_id,
                 score_keys=["policy_violation", "overrefusal"],
-                policy_raw={"behaviors": [{"name": "a"}, {"name": "b"}]},
+                policy_raw={"behavior_categories": [{"name": "a"}, {"name": "b"}]},
             )
 
         self.assertEqual(result["judge_status"], "ok")

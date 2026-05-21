@@ -1,7 +1,7 @@
 # Science Regression Gate — paired t-test on canonical efficacy metrics.
 #
-# Runs the pipeline at the PR's base + head SHAs against both golden risk
-# specs (safety + quality), computes 6 canonical science-efficacy metrics
+# Runs the pipeline at the PR's base + head SHAs against both golden failure-mode
+# configs (safety + quality), computes 6 canonical science-efficacy metrics
 # plus 4 auxiliary aggregates, runs paired statistical tests, and gates
 # the PR with Holm-Bonferroni-corrected significance over the canonical
 # metrics. Auxiliaries are reported but advisory.
@@ -14,10 +14,10 @@
 # Phase 2 (engineer follow-up): drop `continue-on-error`.
 #
 # Sample sizes via PR labels:
-#   seeds:50    — quick iteration (~6 min per commit)
-#   seeds:100   — default
-#   seeds:200   — pre-release
-#   seeds:500   — nightly / calibration
+#   test_set:50    — quick iteration (~6 min per commit)
+#   test_set:100   — default
+#   test_set:200   — pre-release
+#   test_set:500   — nightly / calibration
 #
 # Triggers on any PR touching pipeline code, prompts, or the regression
 # harness itself.
@@ -33,9 +33,18 @@ on:
       - 'scripts/regression_*.py'
       - 'tests/regression/**'
       - '.github/workflows/science.yml'
+  schedule:
+    # Daily regression sentinel on main. 12:00 UTC ≈ 05:00 PT / 08:00 ET — finishes before US workday.
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      test_set:
+        description: "test_set size (50, 100, 200, 500)"
+        required: false
+        default: "100"
 
 concurrency:
-  group: science-${{ github.head_ref }}
+  group: science-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -107,28 +116,54 @@ jobs:
           cat artifacts/phoenix/phoenix.log || true
           exit 1
 
-      - name: Detect seed budget from PR labels
-        id: seeds
+      - name: Resolve test-set size
+        id: test_set
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ' ') || '' }}
+          DISPATCH_TEST_SET: ${{ inputs.test_set || '100' }}
         run: |
-          SEEDS=100
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
-          for label in $LABELS; do
-            case $label in
-              seeds:*) SEEDS="${label#seeds:}" ;;
-            esac
-          done
-          echo "count=$SEEDS" >> "$GITHUB_OUTPUT"
-          echo "Using $SEEDS seeds per spec"
+          TEST_SET=100
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            for label in $PR_LABELS; do
+              case $label in
+                test_set:*) TEST_SET="${label#test_set:}" ;;
+              esac
+            done
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$DISPATCH_TEST_SET" ]; then
+            TEST_SET="$DISPATCH_TEST_SET"
+          fi
+          echo "count=$TEST_SET" >> "$GITHUB_OUTPUT"
+          echo "Using $TEST_SET test cases per config"
+
+      - name: Resolve baseline and treatment refs
+        id: refs
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASELINE="${{ github.event.pull_request.base.sha }}"
+            TREATMENT="${{ github.sha }}"
+          else
+            git fetch origin main
+            BASELINE="$(git rev-list -1 --before='7 days ago' origin/main)"
+            if [ -z "$BASELINE" ]; then
+              BASELINE="$(git rev-list --max-parents=0 origin/main | tail -1)"
+            fi
+            TREATMENT="$(git rev-parse origin/main)"
+          fi
+          echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
+          echo "treatment=$TREATMENT" >> "$GITHUB_OUTPUT"
+          echo "Baseline: $BASELINE"
+          echo "Treatment: $TREATMENT"
 
       - name: Compute cache key
         id: cache_key
-        # Cache baseline runs by (base sha, judge model, seed count, script
+        # Cache baseline runs by (base sha, judge model, test-set size, script
         # hash, configs hash). Same-base PRs reuse the baseline; only
         # treatment is re-run.
         run: |
           SCRIPT_HASH=$(sha256sum scripts/regression_test.py scripts/regression_metrics.py scripts/regression_decision.py | sha256sum | cut -c1-16)
           CFG_HASH=$(sha256sum tests/regression/config_*.yaml | sha256sum | cut -c1-16)
-          KEY="science-baseline-${{ github.event.pull_request.base.sha }}-${{ env.P2M_JUDGE_DEPLOYMENT }}-${{ steps.seeds.outputs.count }}-${SCRIPT_HASH}-${CFG_HASH}"
+          KEY="science-baseline-${{ steps.refs.outputs.baseline }}-${{ env.P2M_JUDGE_DEPLOYMENT }}-${{ steps.test_set.outputs.count }}-${SCRIPT_HASH}-${CFG_HASH}"
           echo "key=$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Restore cached baseline runs
@@ -142,9 +177,9 @@ jobs:
         id: gate
         run: |
           python scripts/regression_test.py \
-            --baseline "${{ github.event.pull_request.base.sha }}" \
-            --treatment "${{ github.sha }}" \
-            --seeds "${{ steps.seeds.outputs.count }}" \
+            --baseline "${{ steps.refs.outputs.baseline }}" \
+            --treatment "${{ steps.refs.outputs.treatment }}" \
+            --test_set "${{ steps.test_set.outputs.count }}" \
             --judge-model "azure/${{ env.P2M_JUDGE_DEPLOYMENT }}" \
             --artifacts-dir artifacts/regression
 

@@ -57,17 +57,17 @@ class HolmBonferroniTest(unittest.TestCase):
         self.assertEqual(rejected, [True, True, False])
 
 
-def _per_seed(name: str, per_seed: dict[str, int]) -> MetricResult:
+def _per_test_case(name: str, per_test_case: dict[str, int]) -> MetricResult:
     return MetricResult(
         name=name,
-        value=sum(per_seed.values()) / len(per_seed) if per_seed else 0.0,
-        granularity="per_seed_binary",
-        per_seed=per_seed,
+        value=sum(per_test_case.values()) / len(per_test_case) if per_test_case else 0.0,
+        granularity="per_test_case_binary",
+        per_test_case=per_test_case,
     )
 
 
 def _suite(name: str, value: float) -> MetricResult:
-    return MetricResult(name=name, value=value, granularity="suite", per_seed={})
+    return MetricResult(name=name, value=value, granularity="dataset", per_test_case={})
 
 
 def _build_baseline_treatment_pair(
@@ -86,10 +86,10 @@ def _build_baseline_treatment_pair(
     bl_judge_failed = {f"s{i}": 0 for i in range(n)}
     tr_judge_failed = {f"s{i}": 0 for i in range(n)}
     baseline = {
-        "signal_rate": _per_seed("signal_rate", bl_signal),
-        "policy_violation_rate": _per_seed("policy_violation_rate", bl_pv),
-        "overrefusal_rate": _per_seed("overrefusal_rate", bl_overrefusal),
-        "judge_failure_rate": _per_seed("judge_failure_rate", bl_judge_failed),
+        "signal_rate": _per_test_case("signal_rate", bl_signal),
+        "policy_violation_rate": _per_test_case("policy_violation_rate", bl_pv),
+        "overrefusal_rate": _per_test_case("overrefusal_rate", bl_overrefusal),
+        "judge_failure_rate": _per_test_case("judge_failure_rate", bl_judge_failed),
         "construct_coverage": _suite("construct_coverage", 1.0),
         "separation_strength": _suite("separation_strength", 0.5),
         "discrimination_power": _suite("discrimination_power", 0.5),
@@ -98,10 +98,10 @@ def _build_baseline_treatment_pair(
         "item_saturation": _suite("item_saturation", 0.0),
     }
     treatment = {
-        "signal_rate": _per_seed("signal_rate", tr_signal),
-        "policy_violation_rate": _per_seed("policy_violation_rate", tr_pv),
-        "overrefusal_rate": _per_seed("overrefusal_rate", tr_overrefusal),
-        "judge_failure_rate": _per_seed("judge_failure_rate", tr_judge_failed),
+        "signal_rate": _per_test_case("signal_rate", tr_signal),
+        "policy_violation_rate": _per_test_case("policy_violation_rate", tr_pv),
+        "overrefusal_rate": _per_test_case("overrefusal_rate", tr_overrefusal),
+        "judge_failure_rate": _per_test_case("judge_failure_rate", tr_judge_failed),
         "construct_coverage": _suite("construct_coverage", 1.0),
         "separation_strength": _suite("separation_strength", 0.5),
         "discrimination_power": _suite("discrimination_power", 0.5),
@@ -115,32 +115,32 @@ def _build_baseline_treatment_pair(
 class DecideTest(unittest.TestCase):
     def test_no_change_passes(self) -> None:
         baseline, treatment = _build_baseline_treatment_pair()
-        report = rd.decide(baseline, treatment, n_seeds=200)
+        report = rd.decide(baseline, treatment, test_set_size=200)
         self.assertEqual(report["decision"]["decision"], rd.DECISION_PASS)
 
     def test_signal_rate_collapse_blocks(self) -> None:
-        # Treatment loses signal on half the seeds → degraded on signal_rate.
+        # Treatment loses signal on half the test cases → degraded on signal_rate.
         # Direction is higher_is_better, so going down is bad.
         baseline, treatment = _build_baseline_treatment_pair(n=100)
-        # Tank treatment signal: 50 seeds drop to 0.
-        treatment["signal_rate"] = _per_seed(
+        # Tank treatment signal: 50 test cases drop to 0.
+        treatment["signal_rate"] = _per_test_case(
             "signal_rate",
             {f"s{i}": (0 if i < 50 else 1) for i in range(100)},
         )
-        report = rd.decide(baseline, treatment, n_seeds=200)
+        report = rd.decide(baseline, treatment, test_set_size=200)
         self.assertEqual(report["decision"]["decision"], rd.DECISION_BLOCK)
         signal_result = next(r for r in report["results"] if r["metric_name"] == "signal_rate")
         self.assertEqual(signal_result["effect"], rd.EFFECT_DEGRADED)
 
     def test_overrefusal_explosion_blocks(self) -> None:
-        # Treatment overrefuses on 40 of 100 seeds (baseline=0).
+        # Treatment overrefuses on 40 of 100 test cases (baseline=0).
         # overrefusal_rate is lower_is_better, so going up = degraded.
         baseline, treatment = _build_baseline_treatment_pair(n=100)
-        treatment["overrefusal_rate"] = _per_seed(
+        treatment["overrefusal_rate"] = _per_test_case(
             "overrefusal_rate",
             {f"s{i}": (1 if i < 40 else 0) for i in range(100)},
         )
-        report = rd.decide(baseline, treatment, n_seeds=200)
+        report = rd.decide(baseline, treatment, test_set_size=200)
         # overrefusal_rate is auxiliary, so it should NOT block — only warn.
         self.assertEqual(report["decision"]["decision"], rd.DECISION_PASS)
         # But the comparison should still be reported.
@@ -149,22 +149,22 @@ class DecideTest(unittest.TestCase):
 
     def test_too_few_samples_warns(self) -> None:
         baseline, treatment = _build_baseline_treatment_pair(n=5)
-        report = rd.decide(baseline, treatment, n_seeds=10)
+        report = rd.decide(baseline, treatment, test_set_size=10)
         self.assertEqual(report["decision"]["decision"], rd.DECISION_WARN)
-        # All per-seed metrics should be EFFECT_TOO_FEW.
+        # All per-test-case metrics should be EFFECT_TOO_FEW.
         for r in report["results"]:
-            if r["granularity"] == "per_seed_binary":
+            if r["granularity"] == "per_test_case_binary":
                 self.assertEqual(r["effect"], rd.EFFECT_TOO_FEW)
 
     def test_judge_failure_rate_explosion_warns_not_blocks(self) -> None:
         # judge_failure_rate is auxiliary; even with strong significance,
         # decision must not BLOCK on it alone.
         baseline, treatment = _build_baseline_treatment_pair(n=100)
-        treatment["judge_failure_rate"] = _per_seed(
+        treatment["judge_failure_rate"] = _per_test_case(
             "judge_failure_rate",
             {f"s{i}": (1 if i < 50 else 0) for i in range(100)},
         )
-        report = rd.decide(baseline, treatment, n_seeds=200)
+        report = rd.decide(baseline, treatment, test_set_size=200)
         self.assertNotEqual(report["decision"]["decision"], rd.DECISION_BLOCK)
 
     def test_holm_protects_against_one_off(self) -> None:
@@ -174,12 +174,12 @@ class DecideTest(unittest.TestCase):
         baseline, treatment = _build_baseline_treatment_pair(n=100)
         # 8 baseline=1/treatment=0 vs 0 baseline=0/treatment=1 → p~0.004
         # which is below 0.01 (single-test) but above 0.01/6 (Holm-min).
-        # Construct: drop 8 of the 100 signal seeds.
-        treatment["signal_rate"] = _per_seed(
+        # Construct: drop 8 of the 100 signal test cases.
+        treatment["signal_rate"] = _per_test_case(
             "signal_rate",
             {f"s{i}": (0 if i < 8 else 1) for i in range(100)},
         )
-        report = rd.decide(baseline, treatment, n_seeds=200, alpha=0.01)
+        report = rd.decide(baseline, treatment, test_set_size=200, alpha=0.01)
         # 0.004 > 0.001667 → Holm rejects, no block. (See _classify_effect:
         # mean_diff=-0.08 >= MDE=0.05 so Effect=Degraded, but Holm guard).
         # Effect itself can still be Degraded — the gate just doesn't block.
@@ -187,10 +187,10 @@ class DecideTest(unittest.TestCase):
 
 
 class CompareApiTest(unittest.TestCase):
-    def test_compare_per_seed_binary_records_discordants(self) -> None:
-        baseline = _per_seed("signal_rate", {"s1": 1, "s2": 1, "s3": 0, "s4": 1})
-        treatment = _per_seed("signal_rate", {"s1": 1, "s2": 0, "s3": 1, "s4": 1})
-        cmp_ = rd.compare_per_seed_binary(
+    def test_compare_per_test_case_binary_records_discordants(self) -> None:
+        baseline = _per_test_case("signal_rate", {"s1": 1, "s2": 1, "s3": 0, "s4": 1})
+        treatment = _per_test_case("signal_rate", {"s1": 1, "s2": 0, "s3": 1, "s4": 1})
+        cmp_ = rd.compare_per_test_case_binary(
             "signal_rate", baseline, treatment,
             direction="higher_is_better",
             alpha=0.01,

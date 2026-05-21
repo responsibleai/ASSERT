@@ -76,7 +76,7 @@ class ViewerRunnerTest(unittest.TestCase):
                         "status": "failed",
                         "started_at": 1774565712.0,
                         "stages": {
-                            "rollout": "failed",
+                            "inference": "failed",
                             "judge": "completed",
                         },
                     }
@@ -105,7 +105,7 @@ class ViewerRunnerTest(unittest.TestCase):
             self.assertEqual(payload["status"], "failed")
             self.assertEqual(payload["exitCode"], 1)
             self.assertIsNone(payload["currentStage"])
-            self.assertEqual(payload["stages"], {"rollout": "error", "judge": "completed"})
+            self.assertEqual(payload["stages"], {"inference": "error", "judge": "completed"})
     def test_get_active_runs_lists_only_running_manifests(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -124,7 +124,7 @@ class ViewerRunnerTest(unittest.TestCase):
                     {
                         "status": "running",
                         "started_at": "2026-03-31T00:00:00Z",
-                        "stages": {"rollout": "running", "judge": "pending"},
+                        "stages": {"inference": "running", "judge": "pending"},
                     }
                 ),
                 encoding="utf-8",
@@ -134,7 +134,7 @@ class ViewerRunnerTest(unittest.TestCase):
                     {
                         "status": "completed",
                         "started_at": "2026-03-30T23:00:00Z",
-                        "stages": {"rollout": "completed", "judge": "completed"},
+                        "stages": {"inference": "completed", "judge": "completed"},
                     }
                 ),
                 encoding="utf-8",
@@ -162,7 +162,7 @@ class ViewerRunnerTest(unittest.TestCase):
             self.assertEqual(payload[0]["suiteId"], "suite-a")
             self.assertEqual(payload[0]["runId"], "run-live")
             self.assertEqual(payload[0]["status"], "running")
-            self.assertEqual(payload[0]["currentStage"], "rollout")
+            self.assertEqual(payload[0]["currentStage"], "inference")
 
     def test_load_run_status_payload_rejects_unsafe_ids(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:

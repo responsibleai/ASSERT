@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -44,6 +43,11 @@ from p2m.core.model_client import (
     LLMRateLimitError,
     UsageAccumulator,
     track_usage,
+)
+from p2m.core.runtime_safety import (
+    ManifestHeartbeat,
+    PipelineWatchdog,
+    run_stage_coro,
 )
 from p2m.stages import STAGES
 
@@ -121,53 +125,52 @@ def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: 
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
     """Print a human-readable stage header."""
     tag = f"[{stage_name}]"
-    risk = ctx.get("risk") or ctx.get("concept") or ""
-    if stage_name == "policy":
-        label = risk.replace("\n", " ").strip()
+    behavior = ctx.get("behavior") or ""
+    if stage_name == "systematize":
+        label = behavior.replace("\n", " ").strip()
         if len(label) > 80:
             label = label[:77] + "..."
-        policy_model = ""
+        systematize_model = ""
         if isinstance(raw_cfg.get("model"), dict):
-            policy_model = raw_cfg["model"].get("name", "")
-        model_suffix = f" ({policy_model})" if policy_model else ""
+            systematize_model = raw_cfg["model"].get("name", "")
+        model_suffix = f" ({systematize_model})" if systematize_model else ""
         log.info(f'{tag} Generating behavior taxonomy for "{label}"{model_suffix}')
     elif stage_name == "systematization":
-        log.info(f"{tag} Refining policy structure...")
-    elif stage_name == "design":
+        log.info(f"{tag} Refining taxonomy structure...")
+    elif stage_name == "__legacy_stratification":
         level_count = raw_cfg.get("level_count")
         factor_count = 0
-        factors = ctx.get("factors") or []
-        if isinstance(factors, list):
-            factor_count = len(factors)
-        # Always-present "behavior" factor is generated automatically.
+        dimensions = ctx.get("dimensions") or []
+        if isinstance(dimensions, list):
+            factor_count = len(dimensions)
+        # Always-present "behavior" dimension is generated automatically.
         # Surface it in the count for accuracy.
         synthetic_behavior_factor = 1
         total_factors = factor_count + synthetic_behavior_factor
-        design_model = ""
+        stratification_model = ""
         if isinstance(raw_cfg.get("model"), dict):
-            design_model = raw_cfg["model"].get("name", "")
-        model_suffix = f" ({design_model})" if design_model else ""
+            stratification_model = raw_cfg["model"].get("name", "")
+        model_suffix = f" ({stratification_model})" if stratification_model else ""
         if level_count and factor_count:
-            log.info(f"{tag} Designing seed-coverage grid: {total_factors} factors x {level_count} levels each{model_suffix}...")
+            log.info(f"{tag} Building stratification coverage grid: {total_factors} dimensions x {level_count} levels each{model_suffix}...")
         elif factor_count:
-            log.info(f"{tag} Designing seed-coverage grid: {total_factors} factors{model_suffix}...")
+            log.info(f"{tag} Building stratification coverage grid: {total_factors} dimensions{model_suffix}...")
         else:
-            log.info(f"{tag} Designing seed-coverage grid (behavior factor only){model_suffix}...")
-    elif stage_name == "seeds":
+            log.info(f"{tag} Building stratification coverage grid (behavior dimension only){model_suffix}...")
+    elif stage_name == "test_set":
         prompt_budget = 0
         scenario_budget = 0
         if isinstance(raw_cfg.get("prompt"), dict):
             prompt_budget = raw_cfg["prompt"].get("budget", 0) or raw_cfg["prompt"].get("sample_size", 0)
         if isinstance(raw_cfg.get("scenario"), dict):
             scenario_budget = raw_cfg["scenario"].get("budget", 0) or raw_cfg["scenario"].get("sample_size", 0)
-        behavior_count = 0
-        policy_path = Path(ctx["suite_root"]) / "policy.json"
-        if policy_path.exists():
+        behavior_category_count = 0
+        taxonomy_path = Path(ctx["suite_root"]) / "taxonomy.json"
+        if taxonomy_path.exists():
             try:
-                policy_data = json.loads(policy_path.read_text(encoding="utf-8"))
-                behavior_count = len(
-                    policy_data.get("behaviors")
-                    or policy_data.get("sub_risks")
+                policy_data = json.loads(taxonomy_path.read_text(encoding="utf-8"))
+                behavior_category_count = len(
+                    policy_data.get("behavior_categories")
                     or []
                 )
             except Exception:
@@ -178,30 +181,30 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         if scenario_budget:
             parts.append(f"{scenario_budget} scenario{'s' if scenario_budget != 1 else ''}")
         detail = f" ({' + '.join(parts)}" if parts else ""
-        if detail and behavior_count:
-            detail += f" from {behavior_count} behaviors)"
+        if detail and behavior_category_count:
+            detail += f" from {behavior_category_count} behavior categories)"
         elif detail:
             detail += ")"
-        seed_models = set()
+        test_case_models = set()
         for kind_key in ("prompt", "scenario"):
             kind_cfg = raw_cfg.get(kind_key)
             if isinstance(kind_cfg, dict) and isinstance(kind_cfg.get("model"), dict):
-                seed_models.add(kind_cfg["model"].get("name", ""))
-        seed_models.discard("")
-        model_suffix = f" ({', '.join(sorted(seed_models))})" if seed_models else ""
+                test_case_models.add(kind_cfg["model"].get("name", ""))
+        test_case_models.discard("")
+        model_suffix = f" ({', '.join(sorted(test_case_models))})" if test_case_models else ""
         log.info(f"{tag} Generating test cases{detail}{model_suffix}...")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         target = ctx.get("target")
         target_name = ""
         if target and target.model:
             target_name = target.model.name or ""
         if target and target.callable:
             target_name = target.callable or target_name
-        auditor_name = ""
-        if isinstance(raw_cfg.get("auditor"), dict) and isinstance(raw_cfg["auditor"].get("model"), dict):
-            auditor_name = raw_cfg["auditor"]["model"].get("name", "")
-        if auditor_name and target_name:
-            log.info(f"{tag} Running test cases (auditor: {auditor_name} \u2192 target: {target_name})...")
+        tester_name = ""
+        if isinstance(raw_cfg.get("tester"), dict) and isinstance(raw_cfg["tester"].get("model"), dict):
+            tester_name = raw_cfg["tester"]["model"].get("name", "")
+        if tester_name and target_name:
+            log.info(f"{tag} Running test cases (tester: {tester_name} \u2192 target: {target_name})...")
         elif target_name:
             log.info(f"{tag} Running test cases against target ({target_name})...")
         else:
@@ -216,9 +219,9 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
         else:
             judge_model = ""
         if judge_model:
-            log.info(f"{tag} Scoring transcripts with judge ({judge_model})...")
+            log.info(f"{tag} Scoring inference rows with judge ({judge_model})...")
         else:
-            log.info(f"{tag} Scoring transcripts...")
+            log.info(f"{tag} Scoring inference rows...")
     else:
         log.info(f"{tag} Starting...")
 
@@ -305,26 +308,26 @@ def _print_stage_done(
     tag = f"[{stage_name}]"
     s = summary or {}
     suffix = _format_usage_line(usage)
-    if stage_name == "policy":
-        count = s.get("behavior_count") or s.get("sub_risk_count", 0)
-        names = s.get("behavior_names") or s.get("sub_risk_names") or []
+    if stage_name == "systematize":
+        count = s.get("behavior_category_count", 0)
+        names = s.get("behavior_names") or []
         preview = ", ".join(names[:3])
         if len(names) > 3:
             preview += f", ... (+{count - 3} more)"
         if preview:
-            log.info(f"{tag} \u2713 Generated {count} behaviors: {preview} ({elapsed:.1f}s){suffix}")
+            log.info(f"{tag} \u2713 Generated {count} behavior_categories: {preview} ({elapsed:.1f}s){suffix}")
         else:
-            log.info(f"{tag} \u2713 Generated policy ({elapsed:.1f}s){suffix}")
-    elif stage_name == "design":
+            log.info(f"{tag} \u2713 Generated taxonomy ({elapsed:.1f}s){suffix}")
+    elif stage_name == "__legacy_stratification":
         factor_sizes = s.get("factor_sizes") or {}
         if factor_sizes:
             sizes_text = ", ".join(
                 f"{name}={size}" for name, size in factor_sizes.items()
             )
-            log.info(f"{tag} \u2713 Designed coverage grid ({sizes_text}) ({elapsed:.1f}s){suffix}")
+            log.info(f"{tag} \u2713 Built stratification coverage grid ({sizes_text}) ({elapsed:.1f}s){suffix}")
         else:
-            log.info(f"{tag} \u2713 Designed coverage grid ({elapsed:.1f}s){suffix}")
-    elif stage_name == "seeds":
+            log.info(f"{tag} \u2713 Built stratification coverage grid ({elapsed:.1f}s){suffix}")
+    elif stage_name == "test_set":
         total = s.get("total", 0)
         prompts = s.get("prompts", 0)
         scenarios = s.get("scenarios", 0)
@@ -335,7 +338,7 @@ def _print_stage_done(
             parts.append(f"{scenarios} scenario{'s' if scenarios != 1 else ''}")
         detail = " (" + ", ".join(parts) + ")" if parts else ""
         log.info(f"{tag} \u2713 Generated {total} test cases{detail} ({elapsed:.1f}s){suffix}")
-    elif stage_name == "rollout":
+    elif stage_name == "inference":
         count = s.get("count", 0)
         cached = s.get("cached_count", 0)
         new = s.get("new_count", count)
@@ -345,7 +348,7 @@ def _print_stage_done(
             extra = f" ({cached} cached)"
         else:
             extra = ""
-        log.info(f"{tag} \u2713 Completed {count} rollouts{extra} ({elapsed:.1f}s){suffix}")
+        log.info(f"{tag} \u2713 Completed {count} inferences{extra} ({elapsed:.1f}s){suffix}")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -362,7 +365,7 @@ def _print_stage_done(
             extra += f", {failures} failures"
         if errors:
             extra += f", {errors} errors"
-        log.info(f"{tag} \u2713 Scored {count} transcripts{cache_extra}{extra} ({elapsed:.1f}s){suffix}")
+        log.info(f"{tag} \u2713 Scored {count} inference rows{cache_extra}{extra} ({elapsed:.1f}s){suffix}")
     else:
         log.info(f"{tag} \u2713 Done ({elapsed:.1f}s){suffix}")
 
@@ -426,9 +429,9 @@ def run_pipeline(
         return 1
 
     # Cascade: forcing an upstream stage logically invalidates every stage
-    # downstream of it. Without this, `--force-stage seeds` regenerates seeds
-    # but rollout silently keeps the old transcripts (its resume cache keys on
-    # seed_id, and seed ids are deterministic so they collide with the prior
+    # downstream of it. Without this, `--force-stage test_set` regenerates test_set
+    # but inference silently keeps the old inference rows (its resume cache keys on
+    # test_case_id, and test case ids are deterministic so they collide with the prior
     # run's content). Same hazard for judge against scores.jsonl. Computing
     # the closure here keeps the workflow `--force-stage <upstream>` honest
     # without forcing users to remember the full downstream chain.
@@ -515,6 +518,72 @@ def run_pipeline(
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}
 
+    # Start the manifest heartbeat + pipeline watchdog as daemon threads.
+    # The heartbeat refreshes manifest.heartbeat_at + progress every 30s
+    # so external observers see live progress during long stages (inference
+    # can be 90+ minutes at high concurrency). The watchdog dumps every
+    # thread's stack to the log if no progress tick fires for 10 minutes,
+    # making the next hang self-diagnosing instead of requiring py-spy.
+    # Both are daemons so they cannot block process exit if the runner
+    # itself errors out before .stop().
+    heartbeat: ManifestHeartbeat | None = None
+    watchdog: PipelineWatchdog | None = None
+    if manifest is not None and run_root is not None:
+        heartbeat = ManifestHeartbeat(
+            manifest,
+            run_root,
+            _write_manifest,
+            interval_s=30.0,
+        )
+        watchdog = PipelineWatchdog(
+            idle_threshold_s=600.0,
+            check_interval_s=60.0,
+        )
+        heartbeat.attach_watchdog(watchdog)
+        ctx["_heartbeat"] = heartbeat
+        ctx["_watchdog"] = watchdog
+        heartbeat.start()
+        watchdog.start()
+
+    try:
+        return _run_stages_inner(
+            ctx=ctx,
+            stages_to_run=stages_to_run,
+            artifact_plans=artifact_plans,
+            requested_force_stages=requested_force_stages,
+            cache_supported=cache_supported,
+            manifest=manifest,
+            run_root=run_root,
+            pipeline_start=pipeline_start,
+            stage_usage=stage_usage,
+            heartbeat=heartbeat,
+            watchdog=watchdog,
+        )
+    finally:
+        if heartbeat is not None:
+            heartbeat.stop(write_final=True)
+        if watchdog is not None:
+            watchdog.stop()
+
+
+def _run_stages_inner(
+    *,
+    ctx: dict[str, Any],
+    stages_to_run: list[tuple[str, Any, dict[str, Any]]],
+    artifact_plans: dict[str, Any],
+    requested_force_stages: set[str],
+    cache_supported: bool,
+    manifest: RunManifest | None,
+    run_root: Path | None,
+    pipeline_start: float,
+    stage_usage: dict[str, dict[str, Any]],
+    heartbeat: ManifestHeartbeat | None,
+    watchdog: PipelineWatchdog | None,
+) -> int:
+    """Stage execution loop. Extracted so the outer function can manage
+    heartbeat/watchdog lifecycle in a single try/finally."""
+    failed_stage: str | None = None
+
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "running"
@@ -523,8 +592,18 @@ def run_pipeline(
         _print_stage_start(stage_name, ctx, raw_cfg)
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
+        # Tick the watchdog so it doesn't fire mid-stage on the previous
+        # stage's idle clock, and reset the heartbeat's progress payload
+        # so a stage that doesn't report progress (e.g. systematize, test_set)
+        # doesn't leave stale {"stage": "inference", "completed": 1000}
+        # in the manifest.
+        if watchdog is not None:
+            watchdog.tick()
+        if heartbeat is not None:
+            heartbeat.clear_progress()
+            heartbeat.set_progress(stage=stage_name)
         # Pass the per-stage "was this forced" flag through ctx so stages
-        # like rollout/judge can distinguish a real cache-mismatch warning
+        # like inference/judge can distinguish a real cache-mismatch warning
         # from a redundant one (the user already opted into discarding via
         # --force-stage, possibly via cascade). Stages that don't read
         # _stage_forced ignore it.
@@ -532,7 +611,18 @@ def run_pipeline(
         usage_acc: UsageAccumulator | None = None
         try:
             with track_usage() as usage_acc:
-                stage_result = asyncio.run(module.run(ctx, raw_cfg)) or {}
+                # run_stage_coro replaces asyncio.run with bounded teardown:
+                # if the stage's event loop can't shut down its default
+                # executor within 300s (typically because a user target left
+                # background work — unclosed httpx clients, OTel exporters
+                # — wedged in finalizers), we log a warning, detach the
+                # executor from the interpreter's atexit join, and proceed
+                # to the next stage. This is the harness's deadlock defense
+                # against well-meaning but cleanup-imperfect user agents.
+                stage_result = run_stage_coro(
+                    module.run(ctx, raw_cfg),
+                    cleanup_timeout_s=300.0,
+                ) or {}
             stage_errored_count = int(
                 ((stage_result or {}).get("_summary") or {}).get("errored_count", 0) or 0
             )
@@ -550,7 +640,7 @@ def run_pipeline(
                     # but no artifact.json sidecar is written, so
                     # _latest_matching_metadata will not match this dir
                     # on a future run with the same input hash. Without
-                    # this gate, a partial seeds.jsonl / transcripts.jsonl
+                    # this gate, a partial test_set.jsonl / inference_set.jsonl
                     # / scores.jsonl would silently masquerade as a
                     # complete artifact and be reused forever.
                     log.warning(
@@ -596,6 +686,17 @@ def run_pipeline(
             _print_stage_done(stage_name, elapsed, stage_result.get("_summary"), usage_acc)
         else:
             log.error(f"[{stage_name}] \u2717 Failed ({elapsed:.1f}s)")
+
+        # Tick the watchdog now that the stage has returned (success or
+        # fail). The stage may have been silent for the entire 300s
+        # bounded-cleanup wait; without this tick the watchdog would fire
+        # spuriously on the *next* stage's startup. We also clear the
+        # heartbeat's progress payload so it doesn't leak past the stage
+        # that owned it.
+        if watchdog is not None:
+            watchdog.tick()
+        if heartbeat is not None:
+            heartbeat.clear_progress()
 
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "completed" if ok else "failed"

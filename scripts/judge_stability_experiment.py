@@ -24,12 +24,12 @@ from p2m.stages.judge import JUDGE_SYSTEM_PROMPT
 def transcript_from_row(row: dict) -> Transcript:
     return Transcript(
         metadata=TranscriptMetadata(
-            kind=str(row.get("kind") or ""),
-            seed_id=str(row.get("seed_id") or ""),
-            concept=str(row.get("concept") or ""),
+            kind=str(row.get("type") or ""),
+            test_case_id=str(row.get("test_case_id") or ""),
+            behavior=str(row.get("behavior") or ""),
             target=str(row.get("target") or ""),
-            auditor_model=str(row.get("auditor_model") or ""),
-            factors=row_factors(row),
+            tester_model=str(row.get("tester_model") or ""),
+            dimensions=row_factors(row),
         ),
         events=[
             TranscriptEvent.model_validate(event)
@@ -52,10 +52,10 @@ class JudgeRunConfig:
 RESULTS_BASE = Path("artifacts/results/relationship-entanglement-v1")
 
 RUN_DIRS = [
-    "gpt54-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54mini-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt54nano-auditor_gpt54nano-target_gpt54-judge_30turns",
-    "gpt5rrf0726-auditor_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54mini-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt54nano-tester_gpt54nano-target_gpt54-judge_30turns",
+    "gpt5rrf0726-tester_gpt54nano-target_gpt54-judge_30turns",
 ]
 
 JUDGE_DIMENSIONS = ["harm_actionability", "overrefusal"]
@@ -90,7 +90,7 @@ ALL_CONFIGS = Q1_CONFIGS + Q2_CONFIGS + Q6_CONFIGS
 
 
 async def score_transcripts(
-    transcript_rows: list[dict],
+    inference_rows: list[dict],
     policy_raw: dict,
     judge_contract: dict,
     config: JudgeRunConfig,
@@ -120,10 +120,10 @@ async def score_transcripts(
                 response_schema=judge_contract["response_schema"],
             )
             score_row = {
-                "seed_id": row.get("seed_id", ""),
-                "concept": row.get("concept", ""),
+                "test_case_id": row.get("test_case_id", ""),
+                "behavior": row.get("behavior", ""),
                 "target": row.get("target", ""),
-                "auditor_model": row.get("auditor_model", ""),
+                "tester_model": row.get("tester_model", ""),
                 "judge_model": config.judge_model,
                 "judge_temperature": config.temperature,
                 "judge_n": config.judge_n,
@@ -132,22 +132,22 @@ async def score_transcripts(
                 "verdict": judge_result["verdict"],
             }
             behavior = row_behavior(row)
-            score_row["factors"] = {"behavior": behavior}
+            score_row["dimensions"] = {"behavior": behavior}
             score_row["permissible"] = policy_permissible(permissible_by_name, behavior)
             if judge_result.get("multi_judge") is not None:
                 score_row["multi_judge"] = judge_result["multi_judge"]
             return score_row
 
-    tasks = [asyncio.create_task(score_one(i, row)) for i, row in enumerate(transcript_rows)]
+    tasks = [asyncio.create_task(score_one(i, row)) for i, row in enumerate(inference_rows)]
     for coro in asyncio.as_completed(tasks):
         result = await coro
         results.append(result)
         status = result.get("judge_status", "?")
-        sid = result.get("seed_id", "?")
+        sid = result.get("test_case_id", "?")
         print(f"  {sid}: {status}")
 
-    # Sort by seed_id for deterministic output
-    results.sort(key=lambda r: r.get("seed_id", ""))
+    # Sort by test_case_id for deterministic output
+    results.sort(key=lambda r: r.get("test_case_id", ""))
     return results
 
 
@@ -168,8 +168,8 @@ async def run_experiment(
     print(f"\nRUN {run_dir_name}/{config.name}")
     print(f"  model={config.judge_model} temp={config.temperature} n={config.judge_n}")
 
-    transcripts = load_jsonl(run_dir / "transcripts.jsonl")
-    policy_raw = json.loads((run_dir.parent / "policy.json").read_text())
+    inference_rows = load_jsonl(run_dir / "inference_set.jsonl")
+    policy_raw = json.loads((run_dir.parent / "taxonomy.json").read_text())
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
@@ -177,7 +177,7 @@ async def run_experiment(
         schema_name="transcript_judgment",
     )
 
-    results = await score_transcripts(transcripts, policy_raw, judge_contract, config, concurrency)
+    results = await score_transcripts(inference_rows, policy_raw, judge_contract, config, concurrency)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(scores_path, results)
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         configs = ALL_CONFIGS
 
     total_calls = len(configs) * len(RUN_DIRS) * 50
-    print(f"Judge stability experiment: {len(configs)} configs × {len(RUN_DIRS)} run dirs × 50 seeds")
+    print(f"Judge stability experiment: {len(configs)} configs × {len(RUN_DIRS)} run dirs × 50 test_set")
     print(f"Total judge calls: ~{total_calls}")
     print(f"Concurrency: {args.concurrency}")
     print()

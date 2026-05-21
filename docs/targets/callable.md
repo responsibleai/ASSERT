@@ -43,7 +43,7 @@ Wire the target up in your config:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:
@@ -73,7 +73,7 @@ If your framework is not in the [auto-instrument list](https://github.com/Arize-
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       callable: examples.travel_planner_neurosan.agent:plan_trip_sync
       trace:
@@ -137,7 +137,7 @@ When your agent runs as a service you cannot import as Python, point at its URL:
 
 ```yaml
 pipeline:
-  rollout:
+  inference:
     target:
       endpoint: https://my-agent.internal/chat
 ```

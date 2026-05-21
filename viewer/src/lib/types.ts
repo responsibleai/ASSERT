@@ -1,4 +1,4 @@
-// Suite-level types (from suite.json, policy.json, seeds.jsonl)
+// Suite-level types (from suite.json, taxonomy.json, test_set.jsonl)
 
 export interface Suite {
 	created_at: string;
@@ -11,8 +11,8 @@ export interface Behavior {
 	permissible: boolean;
 }
 
-export interface Policy {
-	concept: {
+export interface Taxonomy {
+	behavior: {
 		name: string;
 		definition: string;
 	};
@@ -25,7 +25,7 @@ export interface Policy {
 		definition: string;
 		examples: string[];
 	}>;
-	behaviors: Behavior[];
+	behavior_categories: Behavior[];
 }
 
 export interface SeedPayload {
@@ -50,21 +50,19 @@ export interface SeedTool {
 export type SeedFactors = Record<string, string>;
 
 export interface PromptSeed {
-	seed_id: string;
-	concept: string;
+	test_case_id: string;
 	behavior: string;
 	definition: string;
 	seed: SeedPayload;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 export interface ScenarioSeed {
-	seed_id: string;
-	concept: string;
+	test_case_id: string;
 	behavior: string;
 	definition: string;
 	seed: SeedPayload;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 export interface ViewerSeedItem {
@@ -76,7 +74,7 @@ export interface ViewerSeedItem {
 	definition: string;
 	system_prompt?: string | null;
 	tools?: SeedPayload['tools'];
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 export interface ViewerSeedGroup {
@@ -86,7 +84,7 @@ export interface ViewerSeedGroup {
 	items: ViewerSeedItem[];
 }
 
-// Run-level types (from manifest.json, scores.jsonl + transcripts.jsonl)
+// Run-level types (from manifest.json, scores.jsonl + inference_set.jsonl)
 
 export type StageStatus = 'running' | 'completed' | 'failed';
 
@@ -179,10 +177,9 @@ export interface LlmCallTrace {
 }
 
 export interface JudgedSample {
-	seed_id?: string;
+	test_case_id?: string;
 	prompt: string;
 	response: string;
-	concept?: string | null;
 	behavior: string;
 	run_id?: string;
 	judge_model?: string;
@@ -196,7 +193,7 @@ export interface JudgedSample {
 	llm_calls?: LlmCallTrace[];
 	target_runtime_mode?: string | null;
 	multi_judge?: MultiJudge;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 export interface ViewerResultContext {
@@ -220,19 +217,19 @@ export interface ViewerResultItem {
 	llm_calls: LlmCallTrace[];
 	target_runtime_mode?: string | null;
 	context: ViewerResultContext;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 // Aggregated types for views
 
-export type SuiteStatus = 'policy_only' | 'seeds_ready' | 'has_results';
+export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
-	concept_name: string;
-	behavior_count: number;
-	seed_count: number;
-	scenario_seed_count: number;
+	behavior_name: string;
+	behavior_category_count: number;
+	prompt_test_case_count: number;
+	scenario_test_case_count: number;
 	run_count: number;
 	runs: string[];
 	status: SuiteStatus;
@@ -299,7 +296,7 @@ export interface AuditRunMetrics {
 	overrefusal_rate: number;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
-	auditor_model: string;
+	tester_model: string;
 	judge_model: string;
 }
 
@@ -397,24 +394,22 @@ export interface AuditTranscriptEvent {
 }
 
 export interface AuditTranscript {
-	seed_id: string;
-	concept: string;
+	test_case_id: string;
 	behavior: string;
 	events: AuditTranscriptEvent[];
 	llm_calls?: LlmCallTrace[];
 	stop_reason: string;
 	target: string;
-	auditor_model: string;
-	factors?: SeedFactors;
+	tester_model: string;
+	dimensions?: SeedFactors;
 }
 
 export interface AuditScore {
-	seed_id: string;
-	concept: string;
+	test_case_id: string;
 	behavior: string;
 	judge_model: string;
 	target?: string;
-	auditor_model?: string;
+	tester_model?: string;
 	verdict?: AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
@@ -424,7 +419,7 @@ export interface AuditScore {
 		stop_reason: string;
 	};
 	multi_judge?: MultiJudge;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 // --- Grouping types ---
@@ -434,7 +429,7 @@ export interface ScenarioSeedInfo {
 	description: string;
 	tools?: SeedTool[];
 	target_runtime_mode?: string | null;
-	factors?: SeedFactors;
+	dimensions?: SeedFactors;
 }
 
 export interface GroupContext {
