@@ -1,3 +1,10 @@
+"""Loader and minimal validator for `policies/guardrails.yaml`.
+
+The new YAML is keyed on the two tools (`lookup`, `draft`) plus the standard
+metadata sections. The loader checks the top-level keys are present and that
+the two tools have policy blocks.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,6 +26,8 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "evaluations",
 }
 
+REQUIRED_TOOLS = {"lookup", "draft"}
+
 
 @dataclass(frozen=True)
 class GuardrailsSpec:
@@ -27,14 +36,14 @@ class GuardrailsSpec:
 
     @property
     def tools(self) -> dict[str, Any]:
-        return self.raw.get("tools", {})
+        return self.raw.get("tools", {}) or {}
 
     @property
     def global_rules(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("global_rules", []))
+        return list(self.raw.get("global_rules", []) or [])
 
     def tool_policy(self, tool_name: str) -> dict[str, Any]:
-        return dict(self.tools.get(tool_name, {}))
+        return dict(self.tools.get(tool_name, {}) or {})
 
     def global_rule(self, rule_id: str) -> dict[str, Any] | None:
         for rule in self.global_rules:
@@ -43,10 +52,14 @@ class GuardrailsSpec:
         return None
 
     def approved_email_domains(self) -> list[str]:
-        classes = self.raw.get("data_classes", {})
-        confidential = classes.get("client_confidential", {})
-        domains = confidential.get("approved_domains", [])
+        classes = self.raw.get("data_classes", {}) or {}
+        confidential = classes.get("client_confidential", {}) or {}
+        domains = confidential.get("approved_domains", []) or []
         return [str(d).lower() for d in domains]
+
+    def sanctioned_countries(self) -> list[str]:
+        evals = self.raw.get("evaluations", {}) or {}
+        return [str(c).lower() for c in evals.get("sanctioned_countries", []) or []]
 
 
 class GuardrailsValidationError(ValueError):
@@ -78,10 +91,9 @@ def validate_guardrails(raw: dict[str, Any]) -> None:
         raise GuardrailsValidationError(
             "Missing required guardrails sections: " + ", ".join(missing)
         )
-
-    metadata = raw.get("metadata", {})
-    if "name" not in metadata or "version" not in metadata:
-        raise GuardrailsValidationError("metadata.name and metadata.version are required")
-
-    if not isinstance(raw.get("tools"), dict) or not raw["tools"]:
-        raise GuardrailsValidationError("tools must be a non-empty mapping")
+    tools = raw.get("tools") or {}
+    missing_tools = sorted(REQUIRED_TOOLS - set(tools.keys()))
+    if missing_tools:
+        raise GuardrailsValidationError(
+            "Missing required tool policies: " + ", ".join(missing_tools)
+        )
