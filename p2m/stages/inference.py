@@ -73,6 +73,33 @@ _INFERENCE_CONFIG_HASH_FILE = ".inference_config_hash"
 
 _VERSIONED_ARTIFACT_RE = re.compile(r"^v\d{4}$")
 
+_hosted_trace_registered = False
+
+
+def _ensure_hosted_trace_instrumentation() -> None:
+    """Register Phoenix auto-instrumentation so HostedSession LLM calls emit spans.
+
+    HostedSession uses litellm under the hood.  Calling ``phoenix.otel.register``
+    with ``auto_instrument=True`` detects the installed ``openinference-
+    instrumentation-litellm`` package and monkey-patches litellm so every
+    ``acompletion`` call is exported to Phoenix automatically.
+
+    Idempotent: only runs once per process.
+    """
+    global _hosted_trace_registered
+    if _hosted_trace_registered:
+        return
+    _hosted_trace_registered = True
+    try:
+        from phoenix.otel import register
+        register(auto_instrument=True)
+        log.info("Enabled Phoenix auto-instrumentation for hosted session tracing")
+    except ImportError:
+        log.warning(
+            "target.trace is set but arize-phoenix-otel is not installed. "
+            "Install it for hosted session tracing: pip install arize-phoenix-otel"
+        )
+
 
 def _is_versioned_test_set_artifact_path(path: Path) -> bool:
     """Return True if the path lives under a versioned cache directory.
@@ -521,6 +548,8 @@ def _build_target_session(
 
     if not target.model:
         raise ValueError("hosted target requires target.model")
+    if target.trace:
+        _ensure_hosted_trace_instrumentation()
     target_model = str(target.model.name)
     target_temperature = target.model.temperature
     target_max_tokens = target.model.max_tokens if target.model.max_tokens is not None else max_tokens

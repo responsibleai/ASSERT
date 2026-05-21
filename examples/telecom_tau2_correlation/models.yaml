@@ -1,0 +1,88 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Model inventory and presets for the telecom comparison study.
+#
+# Endpoints and API keys reference environment variable names — no secrets.
+# Set the env vars before running (or add them to .env):
+#   export AZURE_API_BASE_WESTUS2="https://..."
+#   export AZURE_API_BASE_AUSTRALIAEAST="https://..."
+#   export AZURE_API_KEY_WESTUS2="..."
+#   export AZURE_API_KEY_AUSTRALIAEAST="..."
+# ═══════════════════════════════════════════════════════════════════════
+
+endpoints:
+  default: AZURE_API_BASE
+  australiaeast: AZURE_API_BASE_AUSTRALIAEAST
+  westus2: AZURE_API_BASE_WESTUS2
+
+api_keys:
+  default: AZURE_API_KEY
+  australiaeast: AZURE_API_KEY_AUSTRALIAEAST
+  westus2: AZURE_API_KEY_WESTUS2
+
+# Endpoint that hosts p2m pipeline models (systematize, test_set, judge).
+# When AZURE_API_BASE is not set, the p2m subprocess uses this endpoint
+# as the default for all non-target litellm calls.
+pipeline_endpoint: australiaeast
+
+# tau2 user simulator model per endpoint.
+# Must be a deployment on the SAME endpoint (tau2 uses one AZURE_API_BASE).
+user_simulator:
+  australiaeast: azure/gpt-5.4-mini
+  westus2: azure/gpt-oss-120b
+
+presets:
+  quick:
+    description: Quick validation — 4 models across tiers, reduced test cases
+    trials: 2
+    concurrency: 5
+    test_cases: 10
+    max_turns: 5
+    judge_model: azure/gpt-5.4-mini
+  mini:
+    description: Few models, full task sets — fast path to real analysis results
+    trials: 4
+    concurrency: 2
+    test_cases: 70
+    max_turns: 5
+    judge_model: azure/gpt-5.4
+  full:
+    description: Thorough comparison — all deployed models, full trial count
+    trials: 4
+    concurrency: 10
+    test_cases: 70
+    max_turns: 5
+    judge_model: azure/gpt-5.4
+
+models:
+  # ── small/fast ──
+  - name: azure/gpt-oss-120b
+    endpoint: westus2
+    presets: [quick, mini, full]
+  - name: azure/DeepSeek-V3-0324
+    endpoint: westus2
+    presets: [full]
+  # ── fast-mid ──
+  - name: azure/gpt-5.4-mini
+    endpoint: australiaeast
+    presets: [quick, full]
+  - name: azure/grok-4-1-fast-reasoning
+    endpoint: westus2
+    presets: [full]
+  # ── strong-mid ──
+  - name: azure/DeepSeek-V3.2
+    endpoint: westus2
+    presets: [quick, full]
+  - name: azure/grok-4
+    endpoint: westus2
+    presets: [quick, mini, full]
+  # ── strong ──
+  - name: azure/gpt-5.4
+    endpoint: australiaeast
+    presets: [mini, full]
+  # ── frontier ──
+  - name: azure/grok-4-20-reasoning
+    endpoint: westus2
+    presets: [full]
+  - name: azure/grok-4.3
+    endpoint: westus2
+    presets: [full]

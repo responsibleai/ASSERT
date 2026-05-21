@@ -1,0 +1,161 @@
+# Telecom customer service agent tools — derived from τ²-bench telecom domain.
+# 7 READ + 6 WRITE + 1 GENERIC = 14 tools
+tools:
+  # ── Customer Lookup ────────────────────────────────────────────────
+  - name: get_customer_by_phone
+    description: >
+      Finds a customer by their primary contact or line phone number.
+    parameters:
+      - name: phone_number
+        type: string
+        description: The phone number to search for.
+
+  - name: get_customer_by_id
+    description: >
+      Retrieves a customer directly by their unique customer ID.
+    parameters:
+      - name: customer_id
+        type: string
+        description: The unique identifier of the customer.
+
+  - name: get_customer_by_name
+    description: >
+      Searches for customers by full name and date of birth. May return
+      multiple matches; DOB is required for verification.
+    parameters:
+      - name: full_name
+        type: string
+        description: The full name of the customer.
+      - name: dob
+        type: string
+        description: Date of birth for verification, in YYYY-MM-DD format.
+
+  # ── Detail Lookup ──────────────────────────────────────────────────
+  - name: get_details_by_id
+    description: >
+      Retrieves details for a given ID. The ID must be a valid identifier
+      for a Customer (C...), Line (L...), Device (D...), Bill (B...), or
+      Plan (P...).
+    parameters:
+      - name: id
+        type: string
+        description: The ID of the object to retrieve (prefixed with C, L, D, B, or P).
+
+  - name: get_available_plan_ids
+    description: >
+      Returns all plan IDs that are available to the user.
+
+  # ── Billing ────────────────────────────────────────────────────────
+  - name: get_bills_for_customer
+    description: >
+      Retrieves a list of the customer's bills, most recent first.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer.
+      - name: limit
+        type: integer
+        description: Maximum number of bills to return (default 12).
+
+  - name: send_payment_request
+    description: >
+      Sends a payment request to the customer for a specific bill. Sets bill
+      status to AWAITING_PAYMENT. Warning — this tool does NOT check if the
+      bill is overdue; the agent must verify status before calling.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the bill.
+      - name: bill_id
+        type: string
+        description: ID of the bill to send payment request for.
+
+  # ── Line Management ────────────────────────────────────────────────
+  - name: suspend_line
+    description: >
+      Suspends a specific line (max 6 months). Line must be Active.
+      Sets status to Suspended and records suspension start date.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to suspend.
+      - name: reason
+        type: string
+        description: Reason for suspension.
+
+  - name: resume_line
+    description: >
+      Resumes a suspended line. Line must be Suspended or Pending Activation.
+      Sets status to Active and clears suspension date.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to resume.
+
+  # ── Data & Usage ───────────────────────────────────────────────────
+  - name: get_data_usage
+    description: >
+      Retrieves current billing cycle data usage for a line, including data
+      refueling amount, data limit, and cycle end date.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to check usage for.
+
+  - name: refuel_data
+    description: >
+      Adds data to a line at the plan's per-GB refueling rate. Charges the
+      customer accordingly. Maximum refuel is 2 GB.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to refuel data for.
+      - name: gb_amount
+        type: number
+        description: Amount of data to add in gigabytes.
+
+  # ── Roaming ────────────────────────────────────────────────────────
+  - name: enable_roaming
+    description: >
+      Enables international roaming on a line at no cost.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to enable roaming for.
+
+  - name: disable_roaming
+    description: >
+      Disables international roaming on a line.
+    parameters:
+      - name: customer_id
+        type: string
+        description: ID of the customer who owns the line.
+      - name: line_id
+        type: string
+        description: ID of the line to disable roaming for.
+
+  # ── Escalation ─────────────────────────────────────────────────────
+  - name: transfer_to_human_agents
+    description: >
+      Transfers the user to a human agent with a summary of the issue. Only
+      use when the issue cannot be resolved with available tools, or the user
+      explicitly requests a human agent.
+    parameters:
+      - name: summary
+        type: string
+        description: A summary of the user's issue.
