@@ -15,6 +15,9 @@ Usage:
     # Custom: specific stages and models
     python run_comparison.py --stages tau2,correlate --models azure/gpt-5.4-mini azure/grok-4
 
+    # Full pipeline including report generation
+    python run_comparison.py --stages tau2,p2m,correlate,report
+
     # Dry-run to see what would execute
     python run_comparison.py --preset quick --dry-run
 """
@@ -1081,8 +1084,8 @@ def main() -> None:
     parser.add_argument(
         "--stages",
         type=lambda s: s.split(","),
-        default=["tau2", "p2m", "correlate"],
-        help="Comma-separated stages to run (default: tau2,p2m,correlate)",
+        default=["tau2", "p2m", "correlate", "report"],
+        help="Comma-separated stages to run (default: tau2,p2m,correlate,report)",
     )
     parser.add_argument(
         "--models",
@@ -1201,7 +1204,7 @@ def main() -> None:
     user_model = args.user_model
 
     stages = [s.strip() for s in args.stages]
-    valid_stages = {"tau2", "p2m", "correlate"}
+    valid_stages = {"tau2", "p2m", "correlate", "report"}
     for s in stages:
         if s not in valid_stages:
             parser.error(f"Unknown stage '{s}'. Valid: {', '.join(valid_stages)}")
@@ -1311,6 +1314,35 @@ def main() -> None:
         correlations = compute_correlation(tau2_rewards, p2m_scores)
         save_results(tau2_rewards, p2m_scores, correlations)
         print_summary(tau2_rewards, p2m_scores, correlations)
+
+    if "report" in stages:
+        logger.info("═══ STAGE: report ═══")
+        from generate_report import build_report, DEFAULT_MIN_SIMS
+
+        sim_dir = TAU2_DATA_DIR / "simulations"
+
+        # Full report (all models)
+        html_all = build_report(RESULTS_DIR, sim_dir, subtitle="All Models")
+        if html_all:
+            full_path = RESULTS_DIR / "report.html"
+            full_path.write_text(html_all)
+            logger.info("Full report saved to %s", full_path)
+        else:
+            logger.warning("Not enough data for full report.")
+
+        # Filtered report (exclude noisy low-sim models)
+        html_filtered = build_report(
+            RESULTS_DIR, sim_dir,
+            min_sims=DEFAULT_MIN_SIMS,
+            subtitle=f"Filtered (≥{DEFAULT_MIN_SIMS} sims)",
+        )
+        if html_filtered:
+            filtered_path = RESULTS_DIR / "report_filtered.html"
+            filtered_path.write_text(html_filtered)
+            logger.info("Filtered report saved to %s", filtered_path)
+        else:
+            logger.warning("Not enough models with ≥%d sims for filtered report.",
+                           DEFAULT_MIN_SIMS)
 
     logger.info("Done.")
 
