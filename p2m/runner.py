@@ -444,6 +444,7 @@ def run_pipeline(
     config: str,
     force_stages: list[str] | None = None,
     strict: bool = False,
+    concurrency: int | None = None,
 ) -> int:
     """Execute the configured stages sequentially and persist suite/run metadata."""
     # Suppress litellm's internal async logging warnings — they fire because
@@ -488,6 +489,21 @@ def run_pipeline(
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
         return 1
+
+    # CLI --concurrency wins over the YAML-resolved value so a single run can be
+    # widened or narrowed without editing the config. We mutate the live
+    # InferenceConfig instance (it's a regular dataclass, not frozen) because
+    # downstream stages read `ctx["evaluation"].inference.concurrency` directly.
+    if concurrency is not None:
+        evaluation = ctx.get("evaluation")
+        inference_cfg = getattr(evaluation, "inference", None) if evaluation is not None else None
+        if inference_cfg is not None:
+            inference_cfg.concurrency = concurrency
+            log.info(f"[runner] Concurrency override: {concurrency} (CLI --concurrency)")
+        else:
+            log.warning(
+                "[runner] --concurrency ignored: this config has no inference stage to override."
+            )
 
     requested_force_stages = set(force_stages or [])
     configured_stage_names = {stage_name for stage_name, _ in ctx["stages"]}

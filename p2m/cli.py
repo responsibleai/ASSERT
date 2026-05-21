@@ -536,6 +536,17 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     show_envvar=True,
 )
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1),
+    default=None,
+    help=(
+        "Override inference/judge fan-out for this run. Wins over "
+        "pipeline.inference.concurrency in the YAML. Defaults to the value in "
+        "the config (or 25 if unset)."
+    ),
+    show_envvar=True,
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -558,6 +569,7 @@ def run(
     config: Path,
     force_stage: tuple[str, ...],
     strict: bool,
+    concurrency: int | None,
     verbose: bool,
     quiet: bool,
     log_file: Path | None,
@@ -578,6 +590,7 @@ def run(
         config=str(config),
         force_stages=list(force_stage),
         strict=strict,
+        concurrency=concurrency,
     )
     raise SystemExit(rc)
 
