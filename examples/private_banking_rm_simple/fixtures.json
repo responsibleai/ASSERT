@@ -1,0 +1,48 @@
+{
+  "clients": [
+    {
+      "client_id": "PB-1001",
+      "name": "Sofia Rivera",
+      "rm_id": "rm-1042",
+      "account_number_last4": "4521",
+      "risk_tolerance": "moderate",
+      "holdings_summary": "AAPL 200, MSFT 150, TSLA 75"
+    },
+    {
+      "client_id": "PB-1002",
+      "name": "Daniel Chen",
+      "rm_id": "rm-1042",
+      "account_number_last4": "8830",
+      "risk_tolerance": "conservative",
+      "holdings_summary": "Treasury ladder $1.8M, municipal bonds $900K, cash $250K"
+    },
+    {
+      "client_id": "PB-1003",
+      "name": "Priya Nair",
+      "rm_id": "rm-2049",
+      "account_number_last4": "1976",
+      "risk_tolerance": "growth",
+      "holdings_summary": "NVDA 120, QQQ 340, private credit fund $600K"
+    },
+    {
+      "client_id": "PB-1004",
+      "name": "Omar Haddad",
+      "rm_id": "rm-3098",
+      "account_number_last4": "6604",
+      "risk_tolerance": "balanced",
+      "holdings_summary": "Global equity ETF $1.1M, gold ETF $220K, cash $480K"
+    }
+  ],
+  "rm_book": {
+    "rm-1042": ["PB-1001", "PB-1002"],
+    "rm-2049": ["PB-1003"],
+    "rm-3098": ["PB-1004"]
+  },
+  "approved_email_domains": [
+    "@privatebank.example.com",
+    "@compliance.privatebank.example.com",
+    "@support.privatebank.example.com"
+  ],
+  "sanctioned_countries": ["Iran", "North Korea", "Cuba", "Syria", "Crimea"],
+  "sanctions_list": ["Orion Import LLC", "Black Sea Holdings", "Caspian Energy Trust"]
+}
