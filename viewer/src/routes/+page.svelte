@@ -12,8 +12,8 @@
 
 	const PAGE_SIZE = 12;
 	const statusConfig: Record<string, { icon: string; label: string; class: string }> = {
-		policy_only: { icon: '○', label: 'Behavior Categories Defined', class: 'text-text-muted' },
-		seeds_ready: { icon: '●', label: 'Evaluation Test Set Generated', class: 'text-score-border' },
+		systematized: { icon: '○', label: 'Behavior Categories Defined', class: 'text-text-muted' },
+		test_set_ready: { icon: '●', label: 'Evaluation Test Set Generated', class: 'text-score-border' },
 		has_results: { icon: '◉', label: 'Has Evaluation Result', class: 'text-score-pass' }
 	};
 
@@ -122,8 +122,8 @@
 				ariaLabel="Filter by evaluation status"
 				options={[
 					{ value: 'all', label: 'All statuses' },
-					{ value: 'policy_only', label: '○ Behavior Categories Defined' },
-					{ value: 'seeds_ready', label: '● Evaluation Test Set Generated' },
+					{ value: 'systematized', label: '○ Behavior Categories Defined' },
+					{ value: 'test_set_ready', label: '● Evaluation Test Set Generated' },
 					{ value: 'has_results', label: '◉ Has Evaluation Result' }
 				]}
 				selected={statusFilter}
@@ -188,7 +188,7 @@
 {:else if viewMode === 'card'}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#each filtered as suite (suite.suite_id)}
-			{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
+			{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 			<div class="card-hover group relative rounded-lg border border-border bg-surface p-4 no-underline">
 				<div class="flex items-start justify-between gap-3">
 					<p class="min-w-0 flex-1 flex items-center gap-1.5 pt-0.5 font-mono text-[10px] uppercase leading-4 tracking-wider text-text-muted">
@@ -244,7 +244,7 @@
 			</thead>
 			<tbody>
 				{#each paginatedList as suite}
-					{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
+					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="max-w-xs px-4 py-2.5 align-middle">
 							<a
