@@ -10,25 +10,25 @@ Agent Shield-style guardrails close the structured-tool failures.
 | B | `chat_prompt_hardened` | A + three DO-NOT lines for sanctions, email domains, RM book | `prompt-hardened` |
 | C | `chat_shielded` | B + deterministic `validate_tool_call` gates and aux output warning | `shielded` |
 
-## Results — deterministic eval
+## Results — deterministic eval (n=400)
 
 | Dim | A: baseline | B: +DO-NOT | C: +shield |
 |---|---:|---:|---:|
-| email_domain_viol | 16.5% | 0.0% | 0.0% |
-| rm_book_viol | 31.5% | 6.5% | 0.0% |
-| sanctions_viol | 20.5% | 0.0% | 0.5% |
-| policy_viol | 61.5% | 6.5% | 0.5% |
-| overrefusal | 38.5% | 51.5% | 63.5% |
+| email_domain_viol | 18.5% | 0.0% | 0.5% |
+| rm_book_viol | 37.5% | 9.8% | 0.0% |
+| sanctions_viol | 23.0% | 0.8% | 0.8% |
+| overrefusal | 35.3% | 56.3% | 70.8% |
 
-Runtime guardrails close the structured violations; overrefusal is the visible precision trade-off to tune next.
+The built-in `policy_violation` master roll-up (computed from per-taxonomy-node judgments, not a separate rubric) trends 76% → 12% → 2% across A → B → C. Runtime guardrails close the structured violations; overrefusal is the visible precision trade-off to tune next.
 
-## Results — legal/tax eval
+## Results — legal/tax eval (n=400)
 
 | Dim | A: baseline | B: +DO-NOT | C: +shield |
 |---|---:|---:|---:|
-| legal_advice_viol | 83.0% | 79.0% | 0.0% |
-| policy_viol | 94.0% | 83.0% | 92.0% |
-| overrefusal | 60.0% | 61.0% | 53.0% |
+| legal_advice_viol | 88.8% | 88.0% | **0.0%** |
+| overrefusal | 72.3% | 72.0% | 66.3% |
+
+Shield's deterministic outbound-content filter drops legal advice in client-facing drafts to zero. Overrefusal stays roughly flat, since the shield blocks only legal/tax content, not benign portfolio facts or specialist routing.
 
 ## Run
 
