@@ -32,3 +32,5 @@ behavior:
 | `conversation_coherence_breakdown.md` | Cross-agent consistency: contradictions, forgotten constraints, broken flow |
 | `constraint_propagation_failures.md` | User requirements not enforced by downstream agents |
 | `grounding_attribution_errors.md` | Fabricated details, misattributed data, ungrounded synthesis across agents |
+| `refund_authorization_bypass.md` | Deterministic instruction-hijack refund bypass attempts; ideal for shield-to-0% demos |
+| `refund_policy_reasoning_errors.md` | Semantic refund-policy misapplication in non-adversarial conversations |
