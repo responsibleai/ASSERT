@@ -47,9 +47,9 @@ import yaml
 # Allow ``python scripts/regression_test.py`` invocation in addition to
 # ``python -m scripts.regression_test``. When run directly, sys.path[0]
 # is the script's own dir, so ``scripts.x`` imports fail without this.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from p2m.core.io import SCORES_FILE, load_jsonl
 
@@ -62,7 +62,6 @@ from scripts.regression_metrics import compute_all
 
 log = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIGS: tuple[Path, ...] = (
     REPO_ROOT / "tests" / "regression" / "config_safety.yaml",
     REPO_ROOT / "tests" / "regression" / "config_quality.yaml",
