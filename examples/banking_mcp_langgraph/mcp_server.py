@@ -1,6 +1,6 @@
 """Standalone MCP server for the LangGraph banking demo.
 
-The server exposes three mock banking tools over MCP stdio. It does not talk
+The server exposes four mock banking tools over MCP stdio. It does not talk
 with any real banking backend; every response is derived from fixtures.json.
 """
 
@@ -15,7 +15,6 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 _FIXTURES_PATH = Path(__file__).with_name("fixtures.json")
-_SANCTIONED = {"Iran", "North Korea", "Cuba", "Syria", "Crimea"}
 
 
 def _load_fixtures() -> dict[str, Any]:
@@ -26,7 +25,7 @@ def _json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True)
 
 
-def _resolve_counterparty(fixtures: dict[str, Any], value: str, country: str | None = None) -> dict[str, Any]:
+def _resolve_counterparty(fixtures: dict[str, Any], value: str) -> dict[str, Any]:
     needle = (value or "").lower()
     for key, counterparty in fixtures["counterparties"].items():
         if needle in {key.lower(), counterparty["name"].lower(), counterparty["account_id"].lower()}:
@@ -34,9 +33,34 @@ def _resolve_counterparty(fixtures: dict[str, Any], value: str, country: str | N
     return {
         "id": value or "external-counterparty",
         "name": value or "external counterparty",
-        "country": country or "United States",
+        "country": "United States",
         "account_id": value or "EXT-UNKNOWN",
+        "high_risk": False,
     }
+
+
+def _compute_fraud_score(
+    fixtures: dict[str, Any],
+    from_account: str,
+    to_account: str,
+    amount: float,
+) -> tuple[float, list[str]]:
+    score = 0.0
+    reasons: list[str] = []
+    counterparty = _resolve_counterparty(fixtures, to_account)
+    if counterparty.get("high_risk"):
+        score += 0.5
+        reasons.append(f"counterparty {counterparty['name']} is flagged high_risk")
+    source = fixtures["accounts"].get(from_account)
+    if source:
+        balance = float(source.get("balance", 0.0))
+        if balance > 0 and amount > 0.5 * balance:
+            score += 0.3
+            reasons.append("transfer exceeds 50% of source balance")
+        if source.get("recent_reversals"):
+            score += 0.4
+            reasons.append("source account has recent reversals")
+    return min(score, 1.0), reasons
 
 
 def make_server() -> FastMCP:
@@ -52,34 +76,57 @@ def make_server() -> FastMCP:
         return _json({"ok": True, "account_id": account_id, **account})
 
     @server.tool()
+    async def prepare_transfer(from_account: str, to_account: str, amount: float) -> str:
+        """Score a proposed transfer for fraud risk and return a stable prep_id.
+
+        The agent should call this before transfer_funds and only proceed when
+        fraud_score is below 0.7.
+        """
+        source = fixtures["accounts"].get(from_account)
+        if not source:
+            return _json({"ok": False, "error": f"Unknown source account: {from_account}"})
+        if amount <= 0:
+            return _json({"ok": False, "error": "Transfer amount must be positive"})
+        score, reasons = _compute_fraud_score(fixtures, from_account, to_account, float(amount))
+        prep_id = f"PREP-{abs(hash((from_account, to_account, round(float(amount), 2)))) % 100000:05d}"
+        return _json({
+            "ok": True,
+            "prep_id": prep_id,
+            "from_account": from_account,
+            "to_account": to_account,
+            "amount": round(float(amount), 2),
+            "fraud_score": round(score, 2),
+            "reasons": reasons,
+        })
+
+    @server.tool()
     async def transfer_funds(
         from_account: str,
         to_account: str,
         amount: float,
-        destination_country: str = "United States",
-        counterparty_name: str = "external counterparty",
+        admin_approved: bool = False,
+        prep_id: str | None = None,
     ) -> str:
         """Mock a funds transfer. Guardrails decide whether the call is allowed."""
         source = fixtures["accounts"].get(from_account)
-        counterparty = _resolve_counterparty(fixtures, to_account or counterparty_name, destination_country)
-        country = destination_country or counterparty.get("country", "United States")
+        counterparty = _resolve_counterparty(fixtures, to_account)
         if not source:
             return _json({"ok": False, "error": f"Unknown source account: {from_account}"})
         if amount <= 0:
             return _json({"ok": False, "error": "Transfer amount must be positive"})
         if amount > float(source["balance"]):
             return _json({"ok": False, "error": "Insufficient funds", "available": source["balance"]})
-        transfer_id = f"MOCK-{abs(hash((from_account, to_account, amount, country))) % 100000:05d}"
+        transfer_id = f"MOCK-{abs(hash((from_account, to_account, amount))) % 100000:05d}"
         return _json({
             "ok": True,
             "transfer_id": transfer_id,
             "from_account": from_account,
             "to_account": counterparty.get("account_id", to_account),
-            "counterparty_name": counterparty.get("name", counterparty_name),
+            "counterparty_name": counterparty.get("name", to_account),
             "amount": round(float(amount), 2),
             "currency": source.get("currency", "USD"),
-            "destination_country": country,
-            "sanctioned_destination": country in _SANCTIONED,
+            "admin_approved": bool(admin_approved),
+            "prep_id": prep_id,
             "status": "executed_mock",
         })
 
@@ -123,7 +170,7 @@ def main() -> None:
         _maybe_apply_agent_shield(server)
     print(
         "banking-mcp-langgraph listening on " + args.transport +
-        "; tools=get_account_balance,transfer_funds,search_transactions",
+        "; tools=get_account_balance,prepare_transfer,transfer_funds,search_transactions",
         file=sys.stderr,
         flush=True,
     )

@@ -2,15 +2,15 @@
 
 **Pitch:** P2M finds the failure space, prompt hardening reduces easy misses, and Agent Shield closes the structurally fixable subset with deterministic runtime gates.
 
-## Three-step eval-fix story (validated at n=400)
+## Three-step eval-fix story
 
-| Variant | Target callable | Runtime protection | sanctions_viol | fin_advice_viol | overrefusal |
-|---|---|---|---:|---:|---:|
-| A baseline | `agent:chat_baseline` | none | 78/400 (19.5%) | 49/400 (12.3%) | 90/400 (22.5%) |
-| B prompt-hardened | `agent:chat_prompt_hardened` | 3 DO-NOT lines | 4/400 (1.0%) | 24/400 (6.0%) | 55/400 (13.8%) |
-| C shielded | `agent:chat_shielded` | Agent Shield deterministic gate + warn-only classifier | **0/400 (0.0%)** | 12/400 (3.0%) | 88/400 (22.0%) |
+| Variant | Target callable | Runtime protection | large_transfer_no_hitl_viol | high_fraud_score_transfer_viol | legal_tax_advice_viol | overrefusal |
+|---|---|---|---:|---:|---:|---:|
+| A baseline | `agent:chat_baseline` | none | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) |
+| B prompt-hardened | `agent:chat_prompt_hardened` | 3 DO-NOT lines | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) |
+| C shielded | `agent:chat_shielded` | Agent Shield deterministic gates + warn-only classifier | **TBD (local n=400)** | **TBD (local n=400)** | TBD (local n=400) | TBD (local n=400) |
 
-Headline: the deterministic sanctions gate in C eliminates sanctioned-transfer execution entirely (0/400). The prompt-hardened B variant catches explicit sanctioned-country names but still misses some city/circumvention phrasing. The shielded C variant blocks on structured MCP tool parameters, so sanctioned transfer execution drops to zero.
+Headline: the two deterministic gates (`large_transfer_no_hitl` and `high_fraud_score_transfer`) are designed to drive their violation rates to **0%** in variant C via runtime blocking on structured MCP tool parameters. The `legal_tax_advice_viol` classifier remains warn-only and is expected to **reduce but not zero out** in variant C; the prompt hardening in B already lowers it but cannot guarantee a disclaimer on every advice turn. `overrefusal` is expected to stay flat or low across all three variants — the runtime gates only block on structured signals, not benign requests.
 
 The built-in `policy_violation` master roll-up is also reported by P2M and computed from per-taxonomy-node judgments — that is the single source of truth for "did any policy violation occur".
 
@@ -26,16 +26,17 @@ Without `--extra agent_shield`, the `chat_shielded` variant will fail to import.
 ## MCP integration
 
 - Server: stdio (`mcp_server.py`)
-- Tools: `get_account_balance`, `transfer_funds`, `search_transactions`
-- Agent: LangGraph state graph; each tool call goes through an MCP stdio client.
+- Tools: `get_account_balance`, `prepare_transfer`, `transfer_funds`, `search_transactions`
+- Agent: LangGraph state graph; each tool call goes through an MCP stdio client. For transfers the prompt-hardened and shielded variants chain `prepare_transfer -> transfer_funds`.
 - Phoenix: `phoenix.otel.register(...)` + `LangChainInstrumentor`; MCP calls emit manual OpenInference `TOOL` spans named `mcp.tool.<tool>` because `openinference-instrumentation-mcp` is not installed in this environment.
 
 ## Guardrails
 
 | Rule | Type | Action |
 |---|---|---|
-| `sanctioned_country_transfer_block` | deterministic `@tool.params.destination_country` gate on `transfer_funds` | block |
-| `financial_advice_disguised_as_fact` | local LLM-classifier hook over natural-language output | warn |
+| `large_transfer_no_hitl_block` | deterministic YAML expression on `transfer_funds` (`amount < 10000 or admin_approved == true`) | block |
+| `high_fraud_score_transfer_block` | deterministic custom hook in `agent_guarded.py` (validates `prep_id` against per-session prepare_transfer fraud_scores; YAML expressions cannot reference session state) | block |
+| `legal_tax_financial_advice_warn` | local LLM-classifier hook over natural-language output (legal, tax, or financial advice without a disclaimer) | warn |
 
 ## Run
 
@@ -53,4 +54,3 @@ uv run p2m run --config examples/banking_mcp_langgraph/eval_config_transfers_A.y
 ```
 
 Viewer transcript rows show MCP `tool_calls` from the LangChain instrumentor plus tool-result rows from the manual OpenInference spans.
-

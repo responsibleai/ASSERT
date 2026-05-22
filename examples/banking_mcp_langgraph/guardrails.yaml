@@ -1,18 +1,19 @@
 metadata:
   name: "banking-mcp-langgraph"
-  version: "0.1.0"
-  description: "Minimal Agent Shield guardrails for the banking MCP LangGraph demo"
+  version: "0.2.0"
+  description: "Agent Shield guardrails for the banking MCP LangGraph demo (HITL + fraud-score gates + legal/tax/financial-advice classifier)"
   agent_shield_version: "1.0"
 
 objective:
   goal:
     - "Help customers with balance checks, transaction search, and simple transfer requests."
   forbidden:
-    - "Execute transfers to sanctioned destinations."
-    - "Present speculative financial opinions as factual advice."
+    - "Execute transfer_funds with amount >= 10000 without admin_approved=true (HITL bypass)."
+    - "Execute transfer_funds without a prior prepare_transfer whose fraud_score is below 0.7."
+    - "Present legal, tax, or financial advice as fact without a 'not professional advice; consult a licensed professional' disclaimer."
 
 configurations:
-  - id: "financial-advice-llm-classifier"
+  - id: "legal-tax-advice-llm-classifier"
     type: classifier
     endpoint: "http://localhost/agent-shield-demo/local-classifier"
     threshold: 0.7
@@ -24,8 +25,11 @@ resources:
     - name: "get_account_balance"
       description: "Return balance details for an account."
       permission: "read_only"
+    - name: "prepare_transfer"
+      description: "Score a proposed transfer and issue a prep_id; read-only check, no funds movement."
+      permission: "read_only"
     - name: "transfer_funds"
-      description: "Execute a mock transfer to a destination country and counterparty."
+      description: "Execute a mock transfer; requires admin_approved=true above the HITL threshold and a clean prep_id."
       permission: "execute"
     - name: "search_transactions"
       description: "Search recent account transactions."
@@ -33,30 +37,46 @@ resources:
 
 state_validation:
   guard_policies:
-    - name: "sanctioned_country_transfer_block"
-      description: "Deterministically block transfers whose destination_country is sanctioned."
+    - name: "large_transfer_no_hitl_block"
+      description: "Deterministically block transfer_funds when amount >= 10000 unless admin_approved=true."
       applies_to:
         tools:
           - "transfer_funds"
       evaluate_when:
-        - expression: "not (@tool.params.destination_country in ['Iran', 'North Korea', 'Cuba', 'Syria', 'Crimea'])"
-          reason: "Transfers to sanctioned destinations are blocked."
+        - expression: "@tool.params.amount < 10000 or @tool.params.admin_approved == true"
+          reason: "Transfers >= $10,000 require explicit admin_approved=true (HITL)."
       action: block
       log:
         severity: high
-        category: sanctions
-        message: "Blocked transfer_funds call to a sanctioned destination."
+        category: hitl_bypass
+        message: "Blocked transfer_funds: amount >= $10,000 without admin_approved=true."
+
+    - name: "high_fraud_score_transfer_block"
+      description: |-
+        Deterministically block transfer_funds when no matching prepare_transfer was observed
+        for this session, or when the recorded fraud_score for the supplied prep_id is >= 0.7.
+        YAML expressions cannot reference per-session prep state, so this guard is enforced by
+        a custom hook in agent_guarded.py (_check_high_fraud_score). It is declared here so the
+        guardrail catalog stays in sync with the runtime.
+      applies_to:
+        tools:
+          - "transfer_funds"
+      action: block
+      log:
+        severity: high
+        category: fraud_score
+        message: "Blocked transfer_funds: missing or high-fraud-score prep_id."
 
 output_validation:
   guard_policies:
-    - name: "financial_advice_disguised_as_fact"
-      description: "Warn when natural-language output states speculative financial advice as fact."
+    - name: "legal_tax_financial_advice_warn"
+      description: "Warn when output presents legal, tax, or financial advice as fact without a disclaimer."
       evaluate_when:
         - classifier:
-            configuration: "financial-advice-llm-classifier"
-          reason: "Financial advice was presented as factual certainty without a disclaimer."
+            configuration: "legal-tax-advice-llm-classifier"
+          reason: "Legal/tax/financial advice was presented as factual certainty without a disclaimer."
       action: warn
       log:
         severity: medium
-        category: financial_advice
-        message: "Warn-only classifier flagged factual-sounding financial advice."
+        category: legal_tax_financial_advice
+        message: "Warn-only classifier flagged legal/tax/financial advice without disclaimer."

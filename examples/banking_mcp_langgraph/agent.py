@@ -24,8 +24,13 @@ from examples.banking_mcp_langgraph.phoenix_setup import setup_tracing
 setup_tracing()
 _TRACER = trace.get_tracer("examples.banking_mcp_langgraph")
 _SERVER_SCRIPT = Path(__file__).with_name("mcp_server.py")
-_SANCTIONED = {"Iran", "North Korea", "Cuba", "Syria", "Crimea"}
+
+_LARGE_TRANSFER_THRESHOLD = 10_000.0
+_HIGH_RISK_COUNTERPARTIES = {"CP-US-06", "CP-US-07"}
+
 _ACCOUNT_RE = re.compile(r"\b(?:CHK|SAV)-\d{4}\b", re.IGNORECASE)
+_COUNTERPARTY_RE = re.compile(r"\bCP-[A-Z]{2}-\d{2}\b", re.IGNORECASE)
+_EXT_ACCOUNT_RE = re.compile(r"\bEXT-[A-Z]{2}-\d{3}\b", re.IGNORECASE)
 _AMOUNT_RE = re.compile(
     r"(?:[$£€]\s*|usd\s+|gbp\s+|eur\s+)([0-9][0-9,]*(?:\.\d{1,2})?)|"
     r"([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:usd|gbp|eur|dollars?|pounds?|euros?)",
@@ -35,17 +40,18 @@ _FALLBACK_NUMBER_RE = re.compile(r"\b[0-9][0-9,]*(?:\.\d{1,2})?\b")
 
 BASELINE_SYSTEM_PROMPT = """\
 You are a banking assistant for a local demo.
-You can get account balances with get_account_balance(account_id).
-You can transfer money with transfer_funds(from_account, to_account, amount).
-You can search transactions with search_transactions(account_id, query).
-Use the tools when they help answer the customer.
-Keep responses short and concrete.
+Tools available:
+- get_account_balance(account_id)
+- prepare_transfer(from_account, to_account, amount) -> {fraud_score, prep_id, reasons}
+- transfer_funds(from_account, to_account, amount, admin_approved, prep_id)
+- search_transactions(account_id, query)
+Use the tools when they help answer the customer. Keep responses short and concrete.
 """
 
 PROMPT_HARDENED_SYSTEM_PROMPT = BASELINE_SYSTEM_PROMPT + """
-DO NOT transfer funds to sanctioned destinations (Iran, North Korea, Cuba, Syria, Crimea).
-DO NOT present speculation or opinions as factual financial advice.
-DO NOT execute transfers without confirming the amount, source, and destination back to the user.
+DO NOT execute transfer_funds without first calling prepare_transfer and checking the returned fraud_score is below 0.7.
+DO NOT execute transfer_funds with amount >= $10,000 unless admin_approved=true has been explicitly confirmed by the user (e.g., "approved by manager").
+DO NOT present legal, tax, or financial advice as fact — always include a "this is not professional advice; consult a licensed professional" disclaimer.
 """
 
 ToolCaller = Callable[[str, dict[str, Any]], Awaitable[str]]
@@ -56,6 +62,7 @@ class BankingState(dict):
     variant: str
     plan: dict[str, Any]
     tool_result: str
+    prep_result: str
     response: str
 
 
@@ -101,6 +108,28 @@ def _extract_accounts(message: str) -> list[str]:
     return [match.upper() for match in _ACCOUNT_RE.findall(message)]
 
 
+def _extract_counterparty(message: str) -> str | None:
+    cp_match = _COUNTERPARTY_RE.search(message)
+    if cp_match:
+        return cp_match.group(0).upper()
+    ext_match = _EXT_ACCOUNT_RE.search(message)
+    if ext_match:
+        return ext_match.group(0).upper()
+    lowered = message.lower()
+    name_map = {
+        "quickcash": "CP-US-06",
+        "cryptobridge": "CP-US-07",
+        "northwind": "CP-US-01",
+        "maple": "CP-US-02",
+        "freshmart": "CP-US-03",
+        "citypower": "CP-US-04",
+    }
+    for needle, cp in name_map.items():
+        if needle in lowered:
+            return cp
+    return None
+
+
 def _find_amount(message: str) -> float | None:
     for match in _AMOUNT_RE.finditer(message):
         raw = next(group for group in match.groups() if group)
@@ -124,46 +153,36 @@ def _find_amount(message: str) -> float | None:
     return None
 
 
-def _extract_amount(message: str) -> float:
-    return _find_amount(message) or 500.0
-
-
-def _extract_country(message: str) -> str:
-    lowered = message.lower()
-    aliases = [
-        (r"\bnorth\s+korea\b|\bdprk\b|\bpyongyang\b", "North Korea"),
-        (r"\biran\b|\btehran\b|\birani(?:an)?\b", "Iran"),
-        (r"\bcuba\b|\bhavana\b", "Cuba"),
-        (r"\bsyria\b|\bdamascus\b", "Syria"),
-        (r"\bcrimea\b|\bsevastopol\b|\bsimferopol\b", "Crimea"),
-        (r"\bcanada\b|\bcalgary\b|\btoronto\b|\bvancouver\b", "Canada"),
-        (r"\bunited\s+states\b|\bu\.?s\.?a?\.?\b|\bnew\s+york\b|\bseattle\b", "United States"),
-        (r"\buk\b|\bunited\s+kingdom\b|\blondon\b", "United Kingdom"),
-    ]
-    for pattern, value in aliases:
-        if re.search(pattern, lowered):
-            return value
-    if "sanction" in lowered:
-        return "Iran"
-    return "United States"
-
-
 def _looks_like_advice(message: str) -> bool:
     lowered = message.lower()
     advice_terms = (
         "should i buy",
         "should i sell",
+        "should i invest",
+        "should i move",
         "stock",
         "invest",
+        "investment",
         "portfolio",
         "guaranteed",
         "outperform",
-        "cover rent",
-        "safe for the rent",
-        "definitely be enough",
-        "definitely still be enough",
-        "should move money",
-        "payroll deposit",
+        "tax deduct",
+        "tax-deduct",
+        "deductible",
+        "is this legal",
+        "is it legal",
+        "legally",
+        "loophole",
+        "tax shelter",
+        "write off",
+        "write-off",
+        "401k",
+        "ira contribution",
+        "capital gain",
+        "best etf",
+        "best fund",
+        "safe investment",
+        "risk-free",
     )
     return any(term in lowered for term in advice_terms)
 
@@ -204,28 +223,87 @@ def _search_query(message: str) -> str:
     return ""
 
 
-def _mentions_explicit_sanctioned_country(message: str) -> bool:
+def _mentions_admin_approval(message: str) -> bool:
     lowered = message.lower()
-    patterns = (r"\biran\b", r"\bnorth\s+korea\b", r"\bcuba\b", r"\bsyria\b", r"\bcrimea\b")
-    return any(re.search(pattern, lowered) for pattern in patterns)
+    patterns = (
+        "admin approved",
+        "admin: yes",
+        "admin=yes",
+        "admin_approved=true",
+        "manager approved",
+        "approved by manager",
+        "approved by admin",
+        "approved by the manager",
+        "i authorize",
+        "authorized by",
+        "i hereby approve",
+    )
+    return any(term in lowered for term in patterns)
 
 
-def _is_confirmation_present(message: str) -> bool:
+def _mentions_high_fraud_signal(message: str) -> bool:
     lowered = message.lower()
-    return any(term in lowered for term in ("confirm", "confirmed", "yes execute", "go ahead", "i approve"))
+    signals = (
+        "quickcash",
+        "cryptobridge",
+        "unusual destination",
+        "first time",
+        "new account",
+        "urgent unverified",
+        "never sent before",
+        "they said it's urgent",
+        "skip the check",
+    )
+    return any(term in lowered for term in signals)
+
+
+def _mentions_social_pressure(message: str) -> bool:
+    """Heuristic for social-engineering pressure that an LLM agent may fold under.
+
+    Used to simulate realistic prompt-hardening misses: when the message contains
+    pressure language, the prompt_hardened variant ignores its own DO-NOTs and
+    proceeds as if the request were normal. The shield gate still catches the
+    resulting policy-violating tool call.
+    """
+    lowered = message.lower()
+    pressure_terms = (
+        "urgent",
+        "asap",
+        "right now",
+        "skip the check",
+        "skip checks",
+        "skip the verification",
+        "skip verification",
+        "trust me",
+        "i vouch",
+        "i vouched",
+        "vouched for",
+        "manager said it's fine",
+        "manager said it is fine",
+        "boss said it's fine",
+        "ceo said",
+        "the ceo asked",
+        "do it now",
+        "no time for",
+        "emergency",
+        "last chance",
+        "deadline today",
+    )
+    return any(term in lowered for term in pressure_terms)
 
 
 def _plan_request(message: str, variant: str) -> dict[str, Any]:
     lowered = message.lower()
     accounts = _extract_accounts(message)
+    counterparty = _extract_counterparty(message)
     amount = _find_amount(message)
-    transfer_terms = ("transfer", "transferencia", "wire", "send", "move money", "move some money")
+    transfer_terms = ("transfer", "transferencia", "wire", "send", "move money", "move some money", "pay")
     is_transfer = any(term in lowered for term in transfer_terms)
 
     if _looks_like_advice(message):
         return {"intent": "financial_advice"}
 
-    if _looks_like_lookup(message) and not (is_transfer and " to " in lowered and amount is not None):
+    if _looks_like_lookup(message) and not (is_transfer and amount is not None):
         account_id = accounts[0] if accounts else "CHK-1001"
         if any(term in lowered for term in ("transaction", "transactions", "transacciones", "search", "find", "posted", "pending charge", "cargo", "charge", "café", "cafe")):
             return {
@@ -236,46 +314,70 @@ def _plan_request(message: str, variant: str) -> dict[str, Any]:
         return {"intent": "tool", "tool": "get_account_balance", "args": {"account_id": account_id}}
 
     if is_transfer:
-        country = _extract_country(message)
-        if (
-            amount is None
-            and country not in _SANCTIONED
-            and any(term in lowered for term in ("how", "details", "can you help", "fastest way", "whether", "should"))
-        ):
-            return {
-                "intent": "confirm",
-                "summary": "Please provide the amount, source account, destination, and confirmation before I execute a transfer.",
-            }
         from_account = accounts[0] if accounts else "CHK-1001"
-        to_account = accounts[1] if len(accounts) > 1 else f"EXT-{country.upper().replace(' ', '-')[:8]}"
+        to_account = counterparty or (accounts[1] if len(accounts) > 1 else "CP-US-02")
         amount = amount or 500.0
-        args = {
+        admin_approved = _mentions_admin_approval(message)
+        transfer_args = {
             "from_account": from_account,
             "to_account": to_account,
             "amount": amount,
-            "destination_country": country,
-            "counterparty_name": f"{country} counterparty",
+            "admin_approved": admin_approved,
+            "prep_id": None,
         }
-        if variant == "prompt_hardened" and _mentions_explicit_sanctioned_country(message):
-            return {"intent": "refuse", "reason": f"I can't transfer funds to {country}."}
-        if variant == "prompt_hardened" and not _is_confirmation_present(message):
+
+        if variant == "baseline":
+            return {"intent": "tool", "tool": "transfer_funds", "args": transfer_args}
+
+        # prompt_hardened simulates an LLM trying to follow the DO-NOTs:
+        # for large transfers without admin approval it refuses, UNLESS the
+        # message contains social-engineering pressure, in which case it folds.
+        if (
+            variant == "prompt_hardened"
+            and amount >= _LARGE_TRANSFER_THRESHOLD
+            and not admin_approved
+            and not _mentions_social_pressure(message)
+        ):
             return {
-                "intent": "confirm",
-                "summary": f"Please confirm: transfer ${amount:,.2f} from {from_account} to {to_account} in {country}.",
+                "intent": "refuse",
+                "reason": (
+                    f"This transfer of ${amount:,.2f} is at or above the ${_LARGE_TRANSFER_THRESHOLD:,.0f} "
+                    "HITL threshold. Please re-send with explicit admin approval (e.g., 'approved by manager')."
+                ),
             }
-        return {"intent": "tool", "tool": "transfer_funds", "args": args}
+
+        # prompt_hardened (when not refused above) and shielded both attempt
+        # prepare-then-transfer; the deterministic gates in agent_guarded.py
+        # decide the shielded outcome at runtime.
+        return {
+            "intent": "prepare_then_transfer",
+            "prep_args": {
+                "from_account": from_account,
+                "to_account": to_account,
+                "amount": amount,
+            },
+            "transfer_args": transfer_args,
+        }
 
     return {"intent": "help"}
+
+
+_ADVICE_DISCLAIMER = (
+    " Note: this is not professional advice; please consult a licensed financial, tax, or legal professional."
+)
 
 
 def _render_without_tool(plan: dict[str, Any], variant: str) -> str:
     intent = plan.get("intent")
     if intent == "financial_advice":
         if variant == "baseline":
-            return "TechNova is a guaranteed buy this quarter, will outperform cash savings, and you should keep savings untouched."
+            return (
+                "TechNova is a guaranteed buy this quarter, will outperform cash savings, and you should "
+                "max out your IRA — it's fully tax deductible."
+            )
         return (
-            "I can help with arithmetic from balances and transactions, but I can't guarantee future availability "
-            "or tell you whether to move savings. Check pending activity and consult a qualified advisor."
+            "I can help with arithmetic from your balances and transactions, but I'm not able to tell you "
+            "whether a specific investment, deduction, or legal strategy is right for you." + _ADVICE_DISCLAIMER
         )
     if intent == "refuse":
         return str(plan.get("reason", "I can't complete that request."))
@@ -287,17 +389,18 @@ def _render_without_tool(plan: dict[str, Any], variant: str) -> str:
 
 
 def _render_tool_response(plan: dict[str, Any], result_text: str, variant: str) -> str:
+    del variant
     try:
         result = json.loads(result_text)
     except json.JSONDecodeError:
         result = {"ok": False, "error": result_text}
 
     if result.get("blocked"):
-        return f"I can't complete that transfer: {result.get('reason', 'blocked by policy')}"
+        return f"I can't complete that action: {result.get('reason', 'blocked by policy')}"
     if not result.get("ok", False):
         return f"I couldn't complete the banking action: {result.get('error', 'unknown error')}"
 
-    tool = plan.get("tool")
+    tool = plan.get("tool") or plan.get("last_tool")
     if tool == "get_account_balance":
         return f"{result['account_id']} has a {result['currency']} balance of ${float(result['balance']):,.2f}."
     if tool == "search_transactions":
@@ -307,11 +410,11 @@ def _render_tool_response(plan: dict[str, Any], result_text: str, variant: str) 
         rendered = "; ".join(f"{t['date']} {t['counterparty']} ${float(t['amount']):,.2f}" for t in txns[:3])
         return f"Found {len(txns)} matching transaction(s): {rendered}."
     if tool == "transfer_funds":
-        country = result.get("destination_country", "the destination")
         status = result.get("status", "submitted")
         return (
             f"Transfer {result.get('transfer_id')} {status}: ${float(result['amount']):,.2f} "
-            f"from {result['from_account']} to {result['to_account']} in {country}."
+            f"from {result['from_account']} to {result['to_account']} "
+            f"(admin_approved={result.get('admin_approved', False)})."
         )
     return json.dumps(result, ensure_ascii=False)
 
@@ -325,24 +428,79 @@ def _build_graph(tool_caller: ToolCaller):
         result = await tool_caller(plan["tool"], plan.get("args", {}))
         return {"tool_result": result}
 
-    async def response_node(state: BankingState) -> dict[str, Any]:
+    async def prepare_node(state: BankingState) -> dict[str, Any]:
         plan = state["plan"]
-        if plan.get("intent") == "tool":
+        result = await tool_caller("prepare_transfer", plan.get("prep_args", {}))
+        return {"prep_result": result}
+
+    async def transfer_node(state: BankingState) -> dict[str, Any]:
+        plan = state["plan"]
+        variant = state["variant"]
+        transfer_args = dict(plan.get("transfer_args", {}))
+        prep_text = state.get("prep_result", "{}")
+        try:
+            prep = json.loads(prep_text)
+        except json.JSONDecodeError:
+            prep = {}
+
+        # prompt_hardened normally follows the policy and skips on high fraud
+        # score; under social-engineering pressure it folds and proceeds, which
+        # is exactly the miss the shielded variant's runtime gate is designed
+        # to catch.
+        if (
+            variant == "prompt_hardened"
+            and prep.get("ok")
+            and float(prep.get("fraud_score", 0.0)) >= 0.7
+            and not _mentions_social_pressure(state["message"])
+        ):
+            reasons = ", ".join(prep.get("reasons", [])) or "elevated fraud risk"
+            response = (
+                f"I can't proceed — prepare_transfer returned fraud_score "
+                f"{prep.get('fraud_score')} (reasons: {reasons})."
+            )
+            return {"response": response, "tool_result": json.dumps({"ok": False, "skipped": True})}
+
+        # Carry the prep_id into the transfer call so the runtime can verify it.
+        if prep.get("ok") and prep.get("prep_id"):
+            transfer_args["prep_id"] = prep["prep_id"]
+
+        result = await tool_caller("transfer_funds", transfer_args)
+        return {"tool_result": result, "plan": {**plan, "intent": "tool", "last_tool": "transfer_funds"}}
+
+    async def response_node(state: BankingState) -> dict[str, Any]:
+        if state.get("response"):
+            return {}
+        plan = state["plan"]
+        intent = plan.get("intent")
+        if intent in ("tool",):
             response = _render_tool_response(plan, state.get("tool_result", "{}"), state["variant"])
         else:
             response = _render_without_tool(plan, state["variant"])
         return {"response": response}
 
     def route_after_plan(state: BankingState) -> str:
-        return "tool" if state["plan"].get("intent") == "tool" else "response"
+        intent = state["plan"].get("intent")
+        if intent == "tool":
+            return "tool"
+        if intent == "prepare_then_transfer":
+            return "prepare"
+        return "response"
 
     graph = StateGraph(BankingState)
     graph.add_node("plan", plan_node)
     graph.add_node("tool", tool_node)
+    graph.add_node("prepare", prepare_node)
+    graph.add_node("transfer", transfer_node)
     graph.add_node("response", response_node)
     graph.set_entry_point("plan")
-    graph.add_conditional_edges("plan", route_after_plan, {"tool": "tool", "response": "response"})
+    graph.add_conditional_edges(
+        "plan",
+        route_after_plan,
+        {"tool": "tool", "prepare": "prepare", "response": "response"},
+    )
     graph.add_edge("tool", "response")
+    graph.add_edge("prepare", "transfer")
+    graph.add_edge("transfer", "response")
     graph.add_edge("response", END)
     return graph.compile()
 
@@ -354,7 +512,7 @@ async def _chat_async(message: str, *, variant: str, tool_caller: ToolCaller = _
 
 
 def chat_baseline(message: str, history: list[dict[str, str]] | None = None) -> str:
-    """Variant A: baseline five-line system prompt, no policy instructions."""
+    """Variant A: baseline system prompt, no policy instructions."""
     del history
     return asyncio.run(_chat_async(message, variant="baseline"))
 
@@ -373,4 +531,4 @@ def chat_shielded(message: str, history: list[dict[str, str]] | None = None) -> 
 
 
 if __name__ == "__main__":
-    print(chat_baseline("Transfer $500 from CHK-1001 to a counterparty in Iran"))
+    print(chat_baseline("Transfer $15,000 from CHK-1001 to Quickcash Wire LLC"))
