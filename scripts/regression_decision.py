@@ -337,7 +337,7 @@ def compare_dataset_level(
         direction=direction,
         granularity="dataset",
         n_pairs=n_pairs,
-        test="bootstrap",
+        test="mde_threshold",
         p_value=p_value,
         ci_low=None,
         ci_high=None,
