@@ -530,6 +530,7 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     show_envvar=True,
 )
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
+@click.option("--override", "overrides", multiple=True, help="Override a config value, e.g. test_set.sample_size=10.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -552,6 +553,7 @@ def run(
     config: Path,
     force_stage: tuple[str, ...],
     strict: bool,
+    overrides: tuple[str, ...],
     verbose: bool,
     quiet: bool,
     log_file: Path | None,
@@ -572,6 +574,7 @@ def run(
         config=str(config),
         force_stages=list(force_stage),
         strict=strict,
+        overrides=list(overrides),
     )
     raise SystemExit(rc)
 

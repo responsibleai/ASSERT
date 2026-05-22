@@ -1,0 +1,106 @@
+# Guardrail spec for the private-banking RM v3 LangChain demo.
+
+metadata:
+  name: private-banking-rm-v3-langchain
+  version: "3.0.0"
+  agent_shield_version: "1.0"
+  description: >-
+    Deterministic structured-argument gates for portfolio lookup, email draft,
+    and wire proposal; HITL escalation for large wires; one auxiliary classifier
+    for legal/tax advice in email bodies.
+
+objective:
+  goal:
+    - Help a relationship manager look up assigned client portfolios.
+    - Draft client communications only to approved private-bank domains.
+    - Stage wire proposals only when sanctions and approval state allow it.
+  forbidden:
+    - Look up clients outside the current RM's assigned book.
+    - Email account or portfolio details to unapproved domains.
+    - Propose wires to sanctioned countries or sanctioned counterparties.
+    - Bypass dual approval for wires over USD 1,000,000.
+    - Present specific legal or tax advice as if the RM can provide it.
+
+variables:
+  - name: current_rm_id
+    type: string
+    default: rm-1042
+    lifetime: session
+  - name: current_rm_book
+    type: list
+    default: [PB-1001, PB-1002]
+    lifetime: session
+  - name: dual_approval_received
+    type: boolean
+    default: false
+    lifetime: session
+
+predicates:
+  client_assigned_to_rm: "@tool.params.client_id in current_rm_book"
+  recipient_domain_allowed: >-
+    domain(@tool.params.recipient) in ["@privatebank.example.com",
+    "@compliance.privatebank.example.com", "@support.privatebank.example.com"]
+  sanctioned_destination: >-
+    @tool.params.country in ["Iran", "North Korea", "Cuba", "Syria", "Crimea"]
+    or @tool.params.counterparty in ["Orion Import LLC", "Black Sea Holdings", "Caspian Energy Trust"]
+  large_wire_without_dual_approval: >-
+    @tool.params.amount > 1000000 and dual_approval_received != true
+
+state_validation:
+  guard_policies:
+    - name: portfolio_lookup_rm_assignment
+      enforcement_type: deterministic
+      description: lookup_portfolio is callable, but only for clients assigned to the current RM.
+      applies_to:
+        tools: [lookup_portfolio]
+      evaluate_when:
+        - expression: client_assigned_to_rm
+          reason: >-
+            Client data is scoped to the RM book. The current RM may not retrieve
+            another RM's client portfolio.
+
+    - name: wire_amount_country_sanctions
+      enforcement_type: deterministic
+      description: propose_wire is callable, but sanctioned destinations are blocked.
+      applies_to:
+        tools: [propose_wire]
+      evaluate_when:
+        - expression: "not sanctioned_destination"
+          reason: >-
+            The proposed wire country or counterparty appears on the sanctions list.
+            Block before the wire proposal tool is invoked.
+
+    - name: wire_dual_approval
+      enforcement_type: hitl
+      description: Wires over USD 1,000,000 require second-RM approval.
+      applies_to:
+        tools: [propose_wire]
+      evaluate_when:
+        - expression: "not large_wire_without_dual_approval"
+          reason: >-
+            Route high-value wires to the second-RM signoff queue before proposing.
+
+tool_execution_validation:
+  guard_policies:
+    - name: email_recipient_domain_allowlist
+      enforcement_type: deterministic
+      description: draft_email is callable, but recipients must be approved private-bank domains.
+      applies_to:
+        tools: [draft_email]
+      evaluate_when:
+        - expression: recipient_domain_allowed
+          reason: >-
+            The recipient domain is outside the approved private-bank, compliance,
+            and support domains.
+
+auxiliary_classifiers:
+  - name: legal_or_tax_advice_in_email_body
+    enforcement_type: auxiliary_llm_classifier
+    applies_to:
+      tools: [draft_email]
+      fields: [body]
+    effect: warn_and_route_to_specialist
+    model_env: PRIVATE_BANKING_RM_MODEL
+    reason: >-
+      Specific legal or tax advice is judgment-required. It is handled as an
+      auxiliary classifier, not as the deterministic headline gate set.
