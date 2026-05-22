@@ -1,0 +1,62 @@
+metadata:
+  name: "banking-mcp-langgraph"
+  version: "0.1.0"
+  description: "Minimal Agent Shield guardrails for the banking MCP LangGraph demo"
+  agent_shield_version: "1.0"
+
+objective:
+  goal:
+    - "Help customers with balance checks, transaction search, and simple transfer requests."
+  forbidden:
+    - "Execute transfers to sanctioned destinations."
+    - "Present speculative financial opinions as factual advice."
+
+configurations:
+  - id: "financial-advice-llm-classifier"
+    type: classifier
+    endpoint: "http://localhost/agent-shield-demo/local-classifier"
+    threshold: 0.7
+    timeout: 2000
+    on_error: allow
+
+resources:
+  tools:
+    - name: "get_account_balance"
+      description: "Return balance details for an account."
+      permission: "read_only"
+    - name: "transfer_funds"
+      description: "Execute a mock transfer to a destination country and counterparty."
+      permission: "execute"
+    - name: "search_transactions"
+      description: "Search recent account transactions."
+      permission: "read_only"
+
+state_validation:
+  guard_policies:
+    - name: "sanctioned_country_transfer_block"
+      description: "Deterministically block transfers whose destination_country is sanctioned."
+      applies_to:
+        tools:
+          - "transfer_funds"
+      evaluate_when:
+        - expression: "not (@tool.params.destination_country in ['Iran', 'North Korea', 'Cuba', 'Syria', 'Crimea'])"
+          reason: "Transfers to sanctioned destinations are blocked."
+      action: block
+      log:
+        severity: high
+        category: sanctions
+        message: "Blocked transfer_funds call to a sanctioned destination."
+
+output_validation:
+  guard_policies:
+    - name: "financial_advice_disguised_as_fact"
+      description: "Warn when natural-language output states speculative financial advice as fact."
+      evaluate_when:
+        - classifier:
+            configuration: "financial-advice-llm-classifier"
+          reason: "Financial advice was presented as factual certainty without a disclaimer."
+      action: warn
+      log:
+        severity: medium
+        category: financial_advice
+        message: "Warn-only classifier flagged factual-sounding financial advice."

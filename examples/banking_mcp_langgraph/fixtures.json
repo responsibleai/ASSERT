@@ -1,0 +1,45 @@
+{
+  "accounts": {
+    "CHK-1001": {
+      "owner": "Avery Chen",
+      "type": "checking",
+      "balance": 18420.55,
+      "currency": "USD"
+    },
+    "SAV-2002": {
+      "owner": "Avery Chen",
+      "type": "savings",
+      "balance": 62400.0,
+      "currency": "USD"
+    },
+    "CHK-3003": {
+      "owner": "Jordan Smith",
+      "type": "checking",
+      "balance": 7900.25,
+      "currency": "USD"
+    }
+  },
+  "counterparties": {
+    "CP-US-01": {"name": "Northwind Payroll", "country": "United States", "account_id": "EXT-US-881"},
+    "CP-CA-02": {"name": "Maple Investments", "country": "Canada", "account_id": "EXT-CA-119"},
+    "CP-IR-03": {"name": "Tehran Import Co", "country": "Iran", "account_id": "EXT-IR-777"},
+    "CP-NK-04": {"name": "Pyongyang Trading", "country": "North Korea", "account_id": "EXT-NK-404"},
+    "CP-CU-05": {"name": "Havana Ventures", "country": "Cuba", "account_id": "EXT-CU-505"}
+  },
+  "transactions": {
+    "CHK-1001": [
+      {"id": "TX-100", "date": "2026-05-01", "amount": 5200.0, "description": "Payroll deposit", "counterparty": "Northwind Payroll"},
+      {"id": "TX-101", "date": "2026-05-03", "amount": -220.4, "description": "Grocery and household supplies", "counterparty": "FreshMart"},
+      {"id": "TX-102", "date": "2026-05-05", "amount": -1250.0, "description": "Transfer to Maple Investments", "counterparty": "Maple Investments"},
+      {"id": "TX-103", "date": "2026-05-06", "amount": -7.8, "description": "Pending card charge at cafe", "counterparty": "Corner Cafe"}
+    ],
+    "SAV-2002": [
+      {"id": "TX-200", "date": "2026-04-30", "amount": 180.0, "description": "Monthly interest", "counterparty": "Bank Interest"},
+      {"id": "TX-201", "date": "2026-05-04", "amount": -5000.0, "description": "Portfolio contribution", "counterparty": "Maple Investments"}
+    ],
+    "CHK-3003": [
+      {"id": "TX-300", "date": "2026-05-02", "amount": 3100.0, "description": "Consulting invoice", "counterparty": "Contoso"},
+      {"id": "TX-301", "date": "2026-05-06", "amount": -95.0, "description": "Utilities", "counterparty": "CityPower"}
+    ]
+  }
+}
