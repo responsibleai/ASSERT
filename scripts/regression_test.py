@@ -142,6 +142,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "/ structured-output handling, dropping payloads silently."
         ),
     )
+    p.add_argument(
+        "--alpha-canonical-only", action="store_true", default=True,
+        help="Apply Holm-Bonferroni only over the 6 canonical metrics (default)",
+    )
     return p.parse_args(argv)
 
 
