@@ -202,5 +202,60 @@ class CompareApiTest(unittest.TestCase):
         self.assertEqual(cmp_.test, "mcnemar")
 
 
+class CompareDatasetLevelTest(unittest.TestCase):
+    """Tests for the MDE-threshold dataset-level comparison."""
+
+    def _compare(
+        self,
+        baseline_value: float,
+        treatment_value: float,
+        *,
+        direction: str | None = "higher_is_better",
+        alpha: float = 0.05,
+        mde: float = 0.1,
+        n_pairs: int = 50,
+    ) -> rd.MetricComparison:
+        return rd.compare_dataset_level(
+            "metric",
+            _suite("metric", baseline_value),
+            _suite("metric", treatment_value),
+            direction=direction,
+            alpha=alpha,
+            mde=mde,
+            n_pairs=n_pairs,
+        )
+
+    def test_no_regression_within_mde(self) -> None:
+        cmp_ = self._compare(0.80, 0.75, mde=0.1)
+        self.assertEqual(cmp_.test, "mde_threshold")
+        self.assertEqual(cmp_.p_value, 0.5)
+        self.assertEqual(cmp_.effect, "Inconclusive")
+
+    def test_regression_exceeds_mde(self) -> None:
+        # p_value=0.05 needs alpha>0.05 for strict '<' in _classify_effect.
+        cmp_ = self._compare(0.80, 0.60, mde=0.1, alpha=0.10)
+        self.assertEqual(cmp_.p_value, 0.05)
+        self.assertEqual(cmp_.effect, "Degraded")
+
+    def test_improvement_exceeds_mde(self) -> None:
+        cmp_ = self._compare(0.60, 0.80, mde=0.1, alpha=0.10)
+        self.assertEqual(cmp_.p_value, 0.05)
+        self.assertEqual(cmp_.effect, "Improved")
+
+    def test_no_direction_returns_info(self) -> None:
+        cmp_ = self._compare(0.80, 0.60, direction=None, mde=0.1)
+        self.assertEqual(cmp_.effect, "Info")
+
+    def test_too_few_samples(self) -> None:
+        cmp_ = self._compare(0.80, 0.60, mde=0.1, n_pairs=5)
+        self.assertEqual(cmp_.effect, "TooFewSamples")
+
+    def test_granularity_and_detail(self) -> None:
+        cmp_ = self._compare(0.80, 0.75)
+        self.assertEqual(cmp_.granularity, "dataset")
+        self.assertIn("baseline_detail", cmp_.detail)
+        self.assertIn("treatment_detail", cmp_.detail)
+
+
 if __name__ == "__main__":
     unittest.main()
