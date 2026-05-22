@@ -148,6 +148,66 @@ def mcnemar_one_sided(b: int, c: int, *, treatment_higher: bool) -> float:
     return _binom_sf(k, n, 0.5)
 
 
+def paired_bootstrap_ci(
+    deltas: list[float],
+    *,
+    n_resamples: int = DEFAULT_BOOTSTRAP,
+    confidence: float = 0.95,
+    rng_seed: int = 1234,
+) -> tuple[float, float, float]:
+    """Paired bootstrap on per-pair deltas.
+
+    Returns (mean_delta, ci_low, ci_high) using the percentile method on
+    means of resampled (with replacement) deltas. Deltas are assumed to be
+    paired-by-test-case-id and supplied in matched order.
+    """
+    n = len(deltas)
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    mean = sum(deltas) / n
+    if n == 1:
+        return mean, mean, mean
+    rng = random.Random(rng_seed)
+    means: list[float] = []
+    for _ in range(n_resamples):
+        sample = [deltas[rng.randrange(n)] for _ in range(n)]
+        means.append(sum(sample) / n)
+    means.sort()
+    lo_idx = max(0, int(((1 - confidence) / 2) * n_resamples))
+    hi_idx = min(n_resamples - 1, int((1 - (1 - confidence) / 2) * n_resamples))
+    return mean, means[lo_idx], means[hi_idx]
+
+
+def bootstrap_delta_pvalue(
+    deltas: list[float],
+    *,
+    treatment_higher: bool,
+    n_resamples: int = DEFAULT_BOOTSTRAP,
+    rng_seed: int = 1234,
+) -> float:
+    """One-sided bootstrap p-value for mean delta.
+
+    Tests H0: mean(deltas) == 0 vs H1 in the indicated direction by
+    centering deltas at zero and resampling. Returns the proportion of
+    resamples with mean at least as extreme as the observed mean.
+    """
+    n = len(deltas)
+    if n == 0:
+        return 1.0
+    obs = sum(deltas) / n
+    centered = [d - obs for d in deltas]
+    rng = random.Random(rng_seed)
+    extreme = 0
+    for _ in range(n_resamples):
+        sample_mean = sum(centered[rng.randrange(n)] for _ in range(n)) / n
+        if treatment_higher:
+            if sample_mean >= obs:
+                extreme += 1
+        else:
+            if sample_mean <= obs:
+                extreme += 1
+    return (extreme + 1) / (n_resamples + 1)
+
 
 # ── Per-metric comparison ──────────────────────────────────────────────────
 
@@ -445,4 +505,5 @@ __all__ = [
     "decide",
     "holm_bonferroni",
     "mcnemar_one_sided",
+    "paired_bootstrap_ci",
 ]
