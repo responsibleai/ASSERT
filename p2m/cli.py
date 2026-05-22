@@ -1308,5 +1308,79 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
+@cli.group(cls=SuggestingGroup, short_help="Browse built-in behavior and judge presets")
+def library():
+    """Discover and inspect the built-in preset library."""
+
+
+@library.command("list", short_help="List available presets")
+@click.option(
+    "--kind", "-k",
+    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    default=None,
+    help="Filter by preset kind.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+@click.option("--no-color", is_flag=True, help="Disable colored output.")
+def library_list(kind: str | None, as_json: bool, no_color: bool):
+    """List all available presets in the library."""
+    from library.loader import discover
+
+    results = discover(kind)
+    if as_json:
+        _echo_json(results)
+        return
+
+    if not results:
+        click.echo("No presets found.")
+        return
+
+    console = _console(no_color=no_color)
+    table = Table(title="Library Presets", box=None, show_header=True, show_edge=False, pad_edge=False)
+    table.add_column("Kind", style="dim", no_wrap=True)
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Version", style="white", no_wrap=True)
+    table.add_column("Tags", style="white")
+    for entry in results:
+        tags = ", ".join(entry.get("tags", []))
+        table.add_row(entry["kind"], entry["name"], entry.get("version", ""), tags)
+    console.print(table)
+
+
+@library.command("show", short_help="Show details of a preset")
+@click.argument("name")
+@click.option(
+    "--kind", "-k",
+    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    default=None,
+    help="Preset kind (auto-detected if omitted).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit raw YAML content as JSON.")
+def library_show(name: str, kind: str | None, as_json: bool):
+    """Show the full content of a preset by name."""
+    from library.loader import VALID_KINDS, load_preset
+
+    # Auto-detect kind if not specified
+    if kind is None:
+        for k in sorted(VALID_KINDS):
+            try:
+                data = load_preset(k, name)
+                kind = k
+                break
+            except ValueError:
+                continue
+        else:
+            _error(f"Preset {name!r} not found in any kind. Use --kind to be explicit.")
+            return  # unreachable but satisfies type checker
+    else:
+        data = load_preset(kind, name)
+
+    if as_json:
+        _echo_json(data)
+        return
+
+    click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+
+
 if __name__ == "__main__":
     cli()
