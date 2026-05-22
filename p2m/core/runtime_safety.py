@@ -448,6 +448,21 @@ def _bounded_loop_teardown(
                     loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception as exc:  # noqa: BLE001
                 err_holder[0] = exc
+            # Cancel all pending tasks (e.g. litellm's LoggingWorker)
+            # before closing the loop. Without this, pending coroutines
+            # get garbage-collected against a closed loop and produce
+            # noisy "Task was destroyed but it is pending!" errors.
+            try:
+                if not loop.is_closed():
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+            except Exception as exc:  # noqa: BLE001
+                err_holder[0] = err_holder[0] or exc
             try:
                 executor.shutdown(wait=True, cancel_futures=True)
             except Exception as exc:  # noqa: BLE001
