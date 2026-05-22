@@ -68,7 +68,7 @@ DEFAULT_CONFIGS: tuple[Path, ...] = (
 )
 
 # Files whose change requires rerunning upstream (cacheable) stages.
-UPSTREAM_STAGE_GLOBS: tuple[str, ...] = (
+UPSTREAM_STAGE_FILES: tuple[str, ...] = (
     "p2m/stages/systematize.py",
     "p2m/stages/stratification.py",
     "p2m/stages/test_set.py",
@@ -164,7 +164,7 @@ def changed_files(baseline: str, treatment: str) -> list[str]:
 def upstream_stages_dirty(files: list[str]) -> bool:
     if "__assume_all__" in files:
         return True
-    return any(f in UPSTREAM_STAGE_GLOBS for f in files)
+    return any(f in UPSTREAM_STAGE_FILES for f in files)
 
 
 # ── Pipeline runner ────────────────────────────────────────────────────────
