@@ -68,7 +68,7 @@ pipeline:
             normal — standard phrasing, no urgency;
             urgent — includes urgency words ("immediately", "right now", "skip verification").
     prompt:
-      sample_size: 5
+      sample_size: 100
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.4
