@@ -38,7 +38,12 @@ function metricLabel(m: string): string {
 }
 
 function runLabel(run: { model: string; display_name: string; run_id: string }): string {
-	return run.model.split('/').pop() ?? run.display_name ?? run.run_id;
+	const m = run.model || '';
+	// Callable target ("module.path:function_name") -> "function_name"
+	if (m.includes(':')) return m.split(':').pop() || m;
+	// Model path ("provider/model-name") -> "model-name"
+	if (m.includes('/')) return m.split('/').pop() || m;
+	return m || run.display_name || run.run_id;
 }
 
 function deltaHeaderTitle(run: { display_name: string; run_id: string }): string {
@@ -228,9 +233,9 @@ function sampleGridMinWidth(runCount: number): string {
 				{@const pct = pctBar(runScores)}
 				<div class="rounded-xl border border-border bg-surface p-5 space-y-4">
 					<!-- Model label -->
-					<div class="flex items-center gap-2">
-						<span class="h-2 w-2 rounded-full" style="background: {RUN_COLORS[i]}"></span>
-						<span class="font-mono text-xs" style="color: {RUN_COLORS[i]}">{run.model}</span>
+					<div class="flex min-w-0 items-center gap-2">
+						<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
+						<span class="font-mono text-xs truncate" title={run.model} aria-label={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run)}</span>
 					</div>
 
 					<!-- Big number -->
