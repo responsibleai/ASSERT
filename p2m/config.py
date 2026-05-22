@@ -251,8 +251,16 @@ def load_runtime_context(
         reject_unknown_keys(
             behavior_raw,
             field_name="behavior",
-            allowed={"name", "description"},
+            allowed={"name", "description", "preset"},
         )
+        preset_name = _optional_str(behavior_raw.get("preset"), field_name="behavior.preset")
+        if preset_name:
+            from library.loader import load_preset
+            preset = load_preset("behavior", preset_name)
+            if not behavior_raw.get("name"):
+                behavior_raw = {**behavior_raw, "name": preset["name"]}
+            if not behavior_raw.get("description"):
+                behavior_raw = {**behavior_raw, "description": preset.get("description", "")}
         behavior_name = _optional_str(behavior_raw.get("name"), field_name="behavior.name")
         if not behavior_name:
             raise ValueError("behavior.name is required")
@@ -713,15 +721,26 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             scorer_stage,
             field_name="pipeline.judge",
             allowed={"model", "n", "dimensions", "inference_set_path", "taxonomy_path", "save_dir",
-                       "enabled", "file_path"},
+                       "enabled", "file_path", "preset"},
         )
         if judge_enabled:
             model_raw = scorer_stage.get("model", default_model_raw)
             require(model_raw is not None, "pipeline.judge.model or default_model is required when judge is configured")
-            dimensions = parse_judge_dimensions(
+            judge_preset_name = _optional_str(scorer_stage.get("preset"), field_name="pipeline.judge.preset")
+            preset_dims: list[dict[str, Any]] = []
+            if judge_preset_name:
+                from library.loader import load_preset
+                preset = load_preset("judge_preset", judge_preset_name)
+                preset_dims = parse_judge_dimensions(
+                    preset.get("dimensions"),
+                    field_name=f"pipeline.judge.preset({judge_preset_name}).dimensions",
+                )
+            inline_dims = parse_judge_dimensions(
                 scorer_stage.get("dimensions"),
                 field_name="pipeline.judge.dimensions",
             )
+            inline_names = {d["name"] for d in inline_dims}
+            dimensions = [d for d in preset_dims if d["name"] not in inline_names] + inline_dims
             judge = JudgeConfig(
                 model=parse_model_config(
                     model_raw,
