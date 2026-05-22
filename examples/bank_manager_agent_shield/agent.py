@@ -1,18 +1,23 @@
-"""Bank Manager Agent Shield — ASSERT callable targets.
+"""Bank Manager ACS — ASSERT callable targets.
+
+This demo wraps a LangGraph banking agent with ACS (Agent Control Specification),
+Microsoft's deterministic policy framework for agent action gates. The reference
+implementation lives at github.com/microsoft/AgentShield as the `agent_shield`
+Python package; ACS is the spec, `agent_shield` is the runtime.
 
 Provides two callable entry points for ASSERT's target.callable:
-  - chat_unguarded(message: str) -> str   raw LangGraph agent, no shield
-  - chat_guarded(message: str) -> str     same agent wrapped with Agent Shield
+  - chat_unguarded(message: str) -> str   raw LangGraph agent, no ACS gates
+  - chat_guarded(message: str) -> str     same agent wrapped with ACS policy
 
 Source provenance:
   SYSTEM_PROMPT copied verbatim from microsoft/AgentShield@1cfc6ee
     examples/agents/bank-manager/demo.py lines 71-95.
-  Shield wiring mirrors demo.py lines 95-117 (langchain branch).
+  ACS runtime wiring mirrors demo.py lines 95-117 (langchain branch).
 
-Azure LLM override for Agent Shield:
+Azure LLM override for ACS LLM-based stages:
   bank-base.guardrails.yaml declares provider: "anthropic.claude" for its
   LLM stages. Calling Shield.from_yaml(...).with_langchain().with_client(llm)
-  registers a single LLM caller that routes ALL shield LLM stages through
+  registers a single LLM caller that routes ALL ACS LLM stages through
   the supplied AzureChatOpenAI instance, bypassing the YAML-declared provider.
   No ANTHROPIC_API_KEY is required.
 
@@ -166,12 +171,12 @@ async def _run_agent_async(message: str, *, guarded: bool) -> str:
 # ── ASSERT callable entry points ───────────────────────────────────────────
 
 def chat_unguarded(message: str) -> str:
-    """ASSERT callable: raw agent with no Agent Shield guardrails."""
+    """ASSERT callable: raw agent with no ACS gates."""
     return asyncio.run(_run_agent_async(message, guarded=False))
 
 
 def chat_guarded(message: str) -> str:
-    """ASSERT callable: agent wrapped with the 5-stage Agent Shield policy."""
+    """ASSERT callable: agent wrapped with the 5-stage ACS policy."""
     return asyncio.run(_run_agent_async(message, guarded=True))
 
 
