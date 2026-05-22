@@ -1,0 +1,154 @@
+# Library Catalog
+# Machine-readable index of all presets in the library.
+
+judges:
+  - name: safety-core
+    path: judges/safety-core.yaml
+    tags: [safety, alignment]
+    description: Core safety — policy violations and overrefusal detection
+
+  - name: safety-extended
+    path: judges/safety-extended.yaml
+    tags: [safety]
+    description: Extended safety — prompt injection, PII leakage, harmful advice
+
+  - name: grounding
+    path: judges/grounding.yaml
+    tags: [quality, grounding]
+    description: Factual accuracy and source attribution
+
+  - name: operational
+    path: judges/operational.yaml
+    tags: [quality, operational]
+    description: Multi-step procedure adherence and scope enforcement
+
+  - name: communication
+    path: judges/communication.yaml
+    tags: [quality, communication]
+    description: Clarity, conciseness, and tone appropriateness
+
+  - name: robustness
+    path: judges/robustness.yaml
+    tags: [quality, robustness]
+    description: Consistency under rephrasing, pressure, and edge cases
+
+  - name: alignment
+    path: judges/alignment.yaml
+    tags: [alignment]
+    description: Intellectual honesty — anti-sycophancy and verification diligence
+
+  - name: policy-adherence
+    path: judges/policy-adherence.yaml
+    tags: [quality, compliance]
+    description: Rule compliance, constraint satisfaction, escalation judgment
+
+behaviors:
+  # Bias & Fairness
+  - name: crystal_mountain_vs_snoqualmie
+    path: behaviors/crystal_mountain_vs_snoqualmie.yaml
+    tags: [bias, fairness, preference]
+    description: Neutrality on ski resort recommendations
+
+  - name: ios_vs_android
+    path: behaviors/ios_vs_android.yaml
+    tags: [bias, fairness, preference]
+    description: Neutrality on mobile OS recommendations
+
+  - name: shimano_vs_sram
+    path: behaviors/shimano_vs_sram.yaml
+    tags: [bias, fairness, preference]
+    description: Neutrality on cycling component recommendations
+
+  - name: tabs_vs_spaces
+    path: behaviors/tabs_vs_spaces.yaml
+    tags: [bias, fairness, preference]
+    description: Neutrality on code formatting preferences
+
+  # Safety
+  - name: doxxing
+    path: behaviors/doxxing.yaml
+    tags: [safety, privacy]
+    description: Refusal to assist with personal info exposure
+
+  - name: harmful_medical_advice
+    path: behaviors/harmful_medical_advice.yaml
+    tags: [safety, health]
+    description: Refusal to provide dangerous medical guidance
+
+  - name: prompt_injection
+    path: behaviors/prompt_injection.yaml
+    tags: [safety, adversarial]
+    description: Resistance to instruction override attacks
+
+  - name: stereotyping
+    path: behaviors/stereotyping.yaml
+    tags: [safety, bias, fairness]
+    description: Avoidance of demographic stereotypes
+
+  - name: suicide_self_harm
+    path: behaviors/suicide_self_harm.yaml
+    tags: [safety, crisis]
+    description: Appropriate handling of self-harm disclosures
+
+  - name: sycophancy
+    path: behaviors/sycophancy.yaml
+    tags: [safety, alignment]
+    description: Resistance to pressure-driven agreement
+
+  # Multi-Agent & Tool Use
+  - name: constraint_propagation_failures
+    path: behaviors/constraint_propagation_failures.yaml
+    tags: [multi-agent, quality]
+    description: Constraint preservation across agent boundaries
+
+  - name: conversation_coherence_breakdown
+    path: behaviors/conversation_coherence_breakdown.yaml
+    tags: [multi-agent, quality]
+    description: Context maintenance across agent transitions
+
+  - name: inter_agent_handoff_failures
+    path: behaviors/inter_agent_handoff_failures.yaml
+    tags: [multi-agent, quality]
+    description: Clean state transfer between agents
+
+  - name: tool_orchestration_errors
+    path: behaviors/tool_orchestration_errors.yaml
+    tags: [multi-agent, quality, tool-use]
+    description: Correct tool selection and result interpretation
+
+  # Extended Behaviors
+  - name: anthropomorphic_behaviors
+    path: behaviors/anthropomorphic_behaviors.yaml
+    tags: [safety, alignment, trust]
+    description: Detection of inappropriate human-like claims
+
+  - name: grounding_attribution_errors
+    path: behaviors/grounding_attribution_errors.yaml
+    tags: [quality, grounding]
+    description: Source fidelity and attribution accuracy
+
+  - name: imminent_crisis_management
+    path: behaviors/imminent_crisis_management.yaml
+    tags: [safety, crisis]
+    description: Handling of life-threatening emergency disclosures
+
+  - name: relationship_entanglement
+    path: behaviors/relationship_entanglement.yaml
+    tags: [safety, alignment, trust]
+    description: Maintaining appropriate assistant boundaries
+
+  # Examples (from repo examples)
+  - name: travel_planner
+    path: behaviors/travel_planner.yaml
+    tags: [quality, safety, tool-use]
+    description: Travel planning with tool use and safety checks
+
+  - name: travel_planner_benchmark
+    path: behaviors/travel_planner_benchmark.yaml
+    tags: [quality, benchmark]
+    description: Quality-only travel planning benchmark
+
+  - name: telecom_customer_service
+    path: behaviors/telecom_customer_service.yaml
+    tags: [quality, safety, operational]
+    description: Telecom agent with procedure compliance
