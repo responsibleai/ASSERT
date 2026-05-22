@@ -170,10 +170,31 @@ def _kind_and_test_case_id(row: dict[str, Any], *, path: Path) -> tuple[str, str
     kind = row.get("type")
     test_case_id = row.get("test_case_id")
     if not isinstance(kind, str) or kind not in {"prompt", "scenario"}:
-        raise ViewerReadModelBuildError(f"Missing or invalid kind in {path}")
+        _raise_schema_hint(row, path, field="type", expected='"prompt" or "scenario"')
     if not isinstance(test_case_id, str) or not test_case_id:
-        raise ViewerReadModelBuildError(f"Missing or invalid test_case_id in {path}")
+        _raise_schema_hint(row, path, field="test_case_id", expected="a non-empty string")
     return kind, test_case_id
+
+
+def _raise_schema_hint(
+    row: dict[str, Any], path: Path, *, field: str, expected: str
+) -> None:
+    """Raise a *ViewerReadModelBuildError* with actionable guidance.
+
+    When cached artifacts are left over from a previous run that used a
+    different schema, the error message tells the user to delete the stale
+    run directory and re-run the pipeline — without exposing internal
+    migration details.
+    """
+    actual_keys = ", ".join(sorted(row.keys())[:10])
+    raise ViewerReadModelBuildError(
+        f'{path.name}: expected field "{field}" ({expected}) but the row '
+        f"contains [{actual_keys}]. The file appears to use an outdated "
+        f"format that is incompatible with the current version of p2m.\n"
+        f"  To fix: delete the run directory\n"
+        f"    rm -rf {path.parent}\n"
+        f"  and re-run the pipeline so all artifacts are regenerated."
+    )
 
 
 def _viewer_index_key(kind: str, test_case_id: str) -> str:
