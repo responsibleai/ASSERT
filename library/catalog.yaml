@@ -42,6 +42,21 @@ judges:
     tags: [quality, compliance]
     description: Rule compliance, constraint satisfaction, escalation judgment
 
+  - name: tool-use
+    path: judges/tool-use.yaml
+    tags: [quality, tool-use]
+    description: Tool selection, argument correctness, and call necessity
+
+  - name: multi-turn
+    path: judges/multi-turn.yaml
+    tags: [quality, multi-turn]
+    description: Context retention and goal coherence across conversation turns
+
+  - name: instruction-following
+    path: judges/instruction-following.yaml
+    tags: [quality, instruction-following]
+    description: Respect for explicit user constraints and complete request coverage
+
 behaviors:
   # Bias & Fairness
   - name: crystal_mountain_vs_snoqualmie

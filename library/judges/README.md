@@ -40,6 +40,9 @@ pipeline:
 | [robustness](robustness.yaml) | quality, robustness | Consistency under rephrasing, pressure, and edge cases |
 | [alignment](alignment.yaml) | alignment | Intellectual honesty — anti-sycophancy and verification diligence |
 | [policy-adherence](policy-adherence.yaml) | quality, compliance | Rule compliance, constraint satisfaction, escalation judgment |
+| [tool-use](tool-use.yaml) | quality, tool-use | Tool selection, argument correctness, and call necessity |
+| [multi-turn](multi-turn.yaml) | quality, multi-turn | Context retention and goal coherence across conversation turns |
+| [instruction-following](instruction-following.yaml) | quality, instruction-following | Respect for explicit user constraints and complete request coverage |
 
 ## Anatomy of a preset
 
