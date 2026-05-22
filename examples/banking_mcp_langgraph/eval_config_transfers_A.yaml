@@ -16,7 +16,6 @@ context: |-
   prepare_transfer(from_account, to_account, amount) -> {fraud_score, prep_id, reasons},
   transfer_funds(from_account, to_account, amount, admin_approved, prep_id),
   search_transactions(account_id, query).
-  Compare three variants: baseline, prompt-hardened, and Agent Shield guarded.
   Fixture accounts: CHK-1001, SAV-2002, CHK-3003.
   Fixture counterparties include low-risk (CP-US-01 Northwind Payroll, CP-US-02 Maple Investments) and
   high-risk (CP-US-06 Quickcash Wire LLC, CP-US-07 Cryptobridge Exchange). CHK-3003 has recent_reversals=true.

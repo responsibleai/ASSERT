@@ -4,13 +4,17 @@
 
 ## Three-step eval-fix story
 
-| Variant | Target callable | Runtime protection | large_transfer_no_hitl_viol | high_fraud_score_transfer_viol | legal_tax_advice_viol | overrefusal |
-|---|---|---|---:|---:|---:|---:|
-| A baseline | `agent:chat_baseline` | none | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) |
-| B prompt-hardened | `agent:chat_prompt_hardened` | 3 DO-NOT lines | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) | TBD (local n=400) |
-| C shielded | `agent:chat_shielded` | Agent Shield deterministic gates + warn-only classifier | **TBD (local n=400)** | **TBD (local n=400)** | TBD (local n=400) | TBD (local n=400) |
+| Variant | Target callable | Runtime protection | policy_violation | large_transfer_no_hitl_viol | high_fraud_score_transfer_viol | legal_tax_advice_viol | overrefusal |
+|---|---|---|---:|---:|---:|---:|---:|
+| A baseline | `agent:chat_baseline` | none | 70% | 11% | 43% | 32% | 3% |
+| B prompt-hardened | `agent:chat_prompt_hardened` | 3 DO-NOT lines | 46% | 1% | 1% | 11% | 15% |
+| C shielded | `agent:chat_shielded` | Agent Shield deterministic gates + warn-only classifier | **41%** | **1%** | **0%** | **5%** | **24%** |
 
-Headline: the two deterministic gates (`large_transfer_no_hitl` and `high_fraud_score_transfer`) are designed to drive their violation rates to **0%** in variant C via runtime blocking on structured MCP tool parameters. The `legal_tax_advice_viol` classifier remains warn-only and is expected to **reduce but not zero out** in variant C; the prompt hardening in B already lowers it but cannot guarantee a disclaimer on every advice turn. `overrefusal` is expected to stay flat or low across all three variants — the runtime gates only block on structured signals, not benign requests.
+*Local n=100 per variant (azure/gpt-5.4-mini tester+judge, 5 request-type categories × 20 cases each: `large_transfer_no_admin`, `transfer_with_high_fraud_signals`, `benign_transfer`, `account_lookup`, `legal_or_tax_or_financial_advice_request`). Each variant is a separate p2m suite run; judge_errors=0.*
+
+Headline: the deterministic `high_fraud_score_transfer` gate goes 43% → 0% in variant C — exactly the runtime-blocking-on-structured-tool-args story Agent Shield is designed for. The `large_transfer_no_hitl` gate also lands at near-zero in C (1%, with one judge edge case). The `legal_tax_advice` LLM classifier is warn-only and reduces but does not zero out (32% → 5%), which is the expected behavior for a classifier-driven rule. The `policy_violation` master roll-up drops from 70% → 41%.
+
+Trade-off to flag: `overrefusal` climbs from 3% → 15% → 24% as each protection layer is added. Most of the overrefusal lift comes from the prompt hardening (DO-NOT lines make the model conservative on benign small transfers and benign account lookups); the additional jump in C is the shielded variant being even more cautious about prepare-then-transfer flows. This is the textbook precision/recall trade-off when stacking protections, and it is intentionally surfaced rather than hidden — production deployments should size the gate strictness against this overrefusal budget.
 
 The built-in `policy_violation` master roll-up is also reported by P2M and computed from per-taxonomy-node judgments — that is the single source of truth for "did any policy violation occur".
 
