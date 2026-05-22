@@ -30,12 +30,14 @@ p2m results status travel-planner-langgraph-v1 demo-1
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
+| Measure Agent Shield guardrails on a banking agent | `bank_manager_agent_shield\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Port of the microsoft/AgentShield bank-manager demo. Two variants (unguarded vs. 5-stage shield); n=100 adversarial test cases across 7 banking scenarios. |
 
 ## Layout
 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
+├── bank_manager_agent_shield/  Agent Shield guardrails eval — unguarded vs. guarded comparison
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior spec references
