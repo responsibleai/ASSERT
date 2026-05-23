@@ -370,6 +370,92 @@ def _print_stage_done(
         log.info(f"{tag} \u2713 Done ({elapsed:.1f}s){suffix}")
 
 
+# ---------------------------------------------------------------------------
+# Async-cleanup noise suppression
+# ---------------------------------------------------------------------------
+# When LangGraph (or similar async frameworks) create httpx AsyncClient
+# objects on short-lived event loops (e.g. via asyncio.run()), garbage
+# collection of those clients after the loop closes produces noisy but
+# harmless tracebacks. The noise reaches users through three channels;
+# we install one filter per channel.
+
+
+class _AsyncCleanupLoggingFilter(logging.Filter):
+    """Drop log records from asyncio's task-cleanup noise.
+
+    Targets:
+      - "Task exception was never retrieved" with "Event loop is closed"
+      - "Task was destroyed but it is pending!" from httpx/litellm cleanup
+    """
+
+    _NOISE_FRAGMENTS = (
+        "Event loop is closed",
+        "Task was destroyed but it is pending",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        for fragment in self._NOISE_FRAGMENTS:
+            if fragment in msg:
+                return False
+        return True
+
+
+def _install_async_cleanup_filters() -> None:
+    """Install suppression filters for all three async-cleanup noise channels."""
+
+    # Channel 1: Logging filter — the asyncio logger emits ERROR-level
+    # records for unretrieved task exceptions. These go through the root
+    # logger's handlers (which write to sys.__stderr__, not sys.stderr).
+    noise_filter = _AsyncCleanupLoggingFilter()
+    for handler in logging.root.handlers:
+        handler.addFilter(noise_filter)
+    # Also filter the asyncio logger directly in case it has its own handlers.
+    logging.getLogger("asyncio").addFilter(noise_filter)
+
+    # Channel 2: sys.unraisablehook — fires when __del__ methods raise.
+    # httpx AsyncClient.__del__ → aclose() → RuntimeError("Event loop is
+    # closed"). Python 3.8+ routes these through sys.unraisablehook.
+    _orig_hook = sys.unraisablehook
+
+    def _quiet_unraisablehook(unraisable: sys.UnraisableHookArgs) -> None:
+        exc = unraisable.exc_value
+        if isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
+            return
+        _orig_hook(unraisable)
+
+    sys.unraisablehook = _quiet_unraisablehook
+
+    # Channel 3: stderr write filter — last resort for anything that
+    # bypasses both logging and unraisablehook (e.g. C-level writes).
+    real_stderr = sys.stderr
+
+    class _FilteredStderr:
+        __slots__ = ("_wrapped", "_suppressing")
+
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+            self._suppressing = False
+
+        def write(self, text: str) -> int:
+            if "Event loop is closed" in text or "AsyncClient.aclose" in text:
+                self._suppressing = True
+                return len(text)
+            if self._suppressing:
+                if text.startswith(("  ", "Traceback", "future:", "Task exception", "Task was")):
+                    return len(text)
+                self._suppressing = False
+            return self._wrapped.write(text)
+
+        def flush(self) -> None:
+            self._wrapped.flush()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._wrapped, name)
+
+    sys.stderr = _FilteredStderr(real_stderr)
+
+
 def run_pipeline(
     *,
     config: str,
@@ -384,34 +470,21 @@ def run_pipeline(
 
     # Suppress httpx AsyncClient.aclose() "Event loop is closed" tracebacks.
     # These fire when LangGraph's async HTTP clients are garbage-collected
-    # after asyncio.run() closes the event loop. We can't intercept them via
-    # the event loop exception handler (it's already torn down), so we filter
-    # stderr writes that match the pattern.
-    _real_stderr = sys.stderr
-
-    class _FilteredStderr:
-        def __init__(self, wrapped):
-            self._wrapped = wrapped
-            self._suppressing = False
-
-        def write(self, text):
-            if "Event loop is closed" in text or "AsyncClient.aclose" in text:
-                self._suppressing = True
-                return len(text)
-            if self._suppressing:
-                # Suppress continuation lines of the traceback
-                if text.startswith("  ") or text.startswith("Traceback") or text.startswith("future:") or text.startswith("Task exception"):
-                    return len(text)
-                self._suppressing = False
-            return self._wrapped.write(text)
-
-        def flush(self):
-            self._wrapped.flush()
-
-        def __getattr__(self, name):
-            return getattr(self._wrapped, name)
-
-    sys.stderr = _FilteredStderr(sys.stderr)
+    # after asyncio.run() closes the event loop. The noise reaches users
+    # through three separate channels — each needs its own suppression:
+    #
+    # Channel 1: Python logging (asyncio logger)
+    #   "Task exception was never retrieved" and "Task was destroyed but it
+    #   is pending!" are logged via logging.getLogger("asyncio").error().
+    #   The console handler writes to sys.__stderr__ (see logging_config.py),
+    #   so a stderr wrapper can't intercept them.
+    #
+    # Channel 2: sys.unraisablehook
+    #   "Exception ignored in: ..." messages from __del__ methods that raise.
+    #   These bypass both logging and sys.stderr.
+    #
+    # Channel 3: Direct stderr writes (fallback for anything else).
+    _install_async_cleanup_filters()
 
     try:
         ctx = _load_context(config=config)
