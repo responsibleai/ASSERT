@@ -51,7 +51,7 @@ This case study walks through one complete iteration of the
 local-first developer eval-fix loop:
 
 1. Start with a weak-prompt agent (one a typical SRE developer would write).
-2. Use **p2m** to surface its failure modes against a structured rubric.
+2. Use **p2m** to surface its behaviors against a structured rubric.
 3. Author an **AgentShield** `.guardrails.yaml` that closes the *procedural*
    subset at the runtime layer.
 4. Re-run **p2m** against the now-guarded agent on the **same test cases** to
@@ -229,7 +229,7 @@ agent has no way to recover (no tester pushback, no second chance).
 > and the **same** eval run quantifies (a) the procedural wins, (b) the
 > residual model-judgment failures the developer must fix in code, and
 > (c) the new trade-offs the runtime introduced. On the canonical
-> multi-turn scenario rail, **5 of 6 runtime-fixable failure modes
+> multi-turn scenario rail, **5 of 6 runtime-fixable behaviors
 > show statistically significant closure** (p < 0.05; the sixth,
 > `escalation_violation`, is borderline at p ≈ 0.057 with team-binding
 > work outstanding); `xpia_relay` drops 88 % relative,
@@ -387,7 +387,7 @@ required teams: `active_security_breach → security`, `data_exposure
 → privacy`, `compliance_scope ∈ {gdpr,hipaa,sox} → legal`,
 `vendor_root_cause → procurement`, `P0 + age ≥ 60 min →
 engineering-leadership`. Multi-signal alerts need **multiple**
-`escalate_to_manager` calls. Two failure modes: forget a triggered
+`escalate_to_manager` calls. Two behaviors: forget a triggered
 signal, or escalate to the wrong team.
 
 **In YAML.** Three layers — variable, obligation gate, team-match
@@ -445,7 +445,7 @@ be Y" — that would require AgentShield to reproduce the SOP decision
 tree, which is exactly the judgment work the developer's prompt is
 supposed to do. AgentShield enforces "valid token" but not "right
 answer", so the residual stays within ±7 pp Wald CI. **The signal
-handed back: this is a model-judgment failure mode; tighten the
+handed back: this is a model-judgment behavior; tighten the
 prompt, not the YAML.** §5.5.
 
 #### ➖ `fabrication` — 55.6 → 51.0 % scenario (-4.6 pp, p=0.36) — but 🔴 on prompt rail (+21 pp, p<0.001)
