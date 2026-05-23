@@ -28,6 +28,12 @@ langgraph = [
   "langchain-openai>=1.1.14",
   "langgraph>=1.1.8",
 ]
+dspy = [
+  # Pinned for the bank-manager 4-axis demo's optimize_with_gepa.ipynb,
+  # which uses dspy.GEPA (Agrawal et al., arXiv:2507.19457). GEPA landed
+  # in DSPy ~2.7; cap at <3 until the API stabilizes.
+  "dspy-ai>=2.7,<3",
+]
 analysis = [
   "markdown-it-py>=3.0.0",
   "numpy>=2.0.0",
