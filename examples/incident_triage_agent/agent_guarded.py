@@ -39,6 +39,7 @@ from examples.incident_triage_agent.agent import (
     AGENT_MODEL,
     MAX_TOOL_LOOP_ITERATIONS,
     SYSTEM_PROMPT,
+    SYSTEM_PROMPT_OPTIMIZED,
     TOOL_SCHEMAS,
     _build_tools,
     _json_dumps,
@@ -74,10 +75,27 @@ def chat(message: str) -> str:
     Identical signature and observable behavior to :func:`agent.chat` so the
     p2m callable runner can swap targets via ``target.callable``.
     """
+    return _chat_guarded_with_system_prompt(message, SYSTEM_PROMPT)
+
+
+def chat_guarded_gepa(message: str) -> str:
+    """Act-3b variant: AgentShield runtime + GEPA-optimized system prompt.
+
+    Same signature as :func:`chat`. Used as ``target.callable`` from
+    ``eval_config_guarded_gepa.yaml``. The optimized prompt is loaded
+    once at import time from ``prompts/system_prompt.optimized.txt``;
+    the ACS runtime, tools, and orchestration sequence are unchanged
+    from :func:`chat`.
+    """
+    return _chat_guarded_with_system_prompt(message, SYSTEM_PROMPT_OPTIMIZED)
+
+
+def _chat_guarded_with_system_prompt(message: str, system_prompt: str) -> str:
+    """Shared guarded tool-loop body for chat() and chat_guarded_gepa()."""
     state: dict[str, Any] = {}
     tool_registry = _build_tools(state)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
     ]
 
