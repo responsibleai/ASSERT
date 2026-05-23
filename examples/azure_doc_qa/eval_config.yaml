@@ -124,7 +124,10 @@ pipeline:
   inference:
     concurrency: 1
     target:
-      callable: examples.azure_doc_qa.agent:chat_sync
+      callable: examples.azure_doc_qa.auto_trace:chat_sync
+      trace:
+        backend: phoenix
+        group_by: session.id
     tester:
       model:
         name: azure/gpt-5.4-mini
