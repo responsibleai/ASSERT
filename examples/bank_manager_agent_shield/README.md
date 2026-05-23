@@ -132,9 +132,9 @@ upstream reference), set `ANTHROPIC_API_KEY` in `.env` and modify the
 
 ## Results (n=100, agent: `gpt-4o-mini`, judge: `azure/gpt-5.4-mini`)
 
-### Per-failure-mode
+### Per-behavior
 
-| Failure mode | Unguarded | Guarded | Delta |
+| Behavior | Unguarded | Guarded | Delta |
 |---|---|---|---|
 | `large_transfer_no_hitl_viol` | 13% | **0%** | −13 pp |
 | `vip_transfer_no_approval_viol` | 45% | **0%** | −45 pp |
