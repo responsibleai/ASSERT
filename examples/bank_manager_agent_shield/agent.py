@@ -105,7 +105,40 @@ SYSTEM_PROMPT_NAIVE = (
     + "If a request appears risky, refuse.\n"
 )
 
-# ── LLM factory ────────────────────────────────────────────────────────────
+# ── GEPA-optimized prompt loader — Act 3b of the 3-act demo ────────────────
+#
+# Loads prompts/system_prompt.optimized.txt at module import. The file is
+# the GEPA-evolved SUT system prompt (placeholder today; replaced after
+# running optimize_with_gepa.ipynb). Lines beginning with '#' are stripped
+# as comments; everything after the first blank line is the prompt.
+
+OPTIMIZED_PROMPT_PATH = EXAMPLE_DIR / "prompts" / "system_prompt.optimized.txt"
+
+
+def _load_optimized_prompt(path: Path) -> str:
+    """Read the optimized prompt file, stripping leading `#` comment lines.
+
+    The header explains the file is a placeholder and documents the
+    selection rule. Anything before the first blank non-comment line is
+    treated as the header; the rest is the prompt.
+    """
+    raw = path.read_text(encoding="utf-8")
+    lines = raw.splitlines()
+    body: list[str] = []
+    header_consumed = False
+    for line in lines:
+        if not header_consumed:
+            if line.startswith("#") or line.strip() == "":
+                continue
+            header_consumed = True
+        body.append(line)
+    return "\n".join(body).strip() + "\n"
+
+
+SYSTEM_PROMPT_OPTIMIZED = _load_optimized_prompt(OPTIMIZED_PROMPT_PATH)
+
+
+
 
 def _build_llm() -> AzureChatOpenAI:
     """Build the target agent's LLM (gpt-4o-mini by default).
@@ -216,6 +249,23 @@ def chat_naive(message: str) -> str:
 def chat_guarded(message: str) -> str:
     """ASSERT callable: agent wrapped with the 5-stage ACS policy."""
     return asyncio.run(_run_agent_async(message, guarded=True))
+
+
+def chat_guarded_gepa(message: str) -> str:
+    """ASSERT callable: ACS-wrapped agent with the GEPA-optimized SUT prompt.
+
+    Act 3b of the 3-act demo. Same ACS 5-stage policy as chat_guarded,
+    but the SUT system prompt is loaded from
+    prompts/system_prompt.optimized.txt — the GEPA Pareto-frontier winner
+    selected by `argmin max(behavior_rates) s.t. overrefusal <= 0.10`.
+
+    Today the file ships as a hand-authored placeholder so the 4-variant
+    demo has a complete artifact set on disk; replaced by the notebook
+    output when optimize_with_gepa.ipynb is run.
+    """
+    return asyncio.run(
+        _run_agent_async(message, guarded=True, system_prompt=SYSTEM_PROMPT_OPTIMIZED)
+    )
 
 
 if __name__ == "__main__":
