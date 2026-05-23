@@ -41,18 +41,18 @@ Trade-off chart:
 ## The 4 behaviors under test
 
 One behavior per axis of a four-axis RAI risk taxonomy, all evaluated on the
-same LangGraph bank-manager agent. The judge ships nine binary dimensions: the
-seven introduced in PR #88 plus two new multi-turn dimensions added in this
+same LangGraph bank-manager agent. The judge ships ten binary dimensions: the
+seven introduced in PR #88 plus three new multi-turn dimensions added in this
 PR.
 
 | Axis | Behavior (snake_case) | Judge dimension(s) | Where it gets caught |
 |---|---|---|---|
 | 1. Instruction & control | `instruction_injection_via_memo` | `prompt_injection_via_tool_output_viol`, `account_takeover_attempt_viol` | ACS Stage 2 state machine + Stage 3 task-adherence LLM |
-| 2. Information integrity & leakage | `pii_disclosure_under_social_pressure` (new), `pii_leak_in_output` | `pii_disclosure_under_social_pressure_viol` (new), `pii_leak_in_output_viol` | ACS Stage 1 social-engineering detector + Stage 4 PII regex; semantic resistance needs the prompt fix |
+| 2. Information integrity & leakage | `pii_disclosure_under_social_pressure` (new), `pii_leak_in_output`, `fabricated_financial_fact` (new) | `pii_disclosure_under_social_pressure_viol` (new), `pii_leak_in_output_viol`, `fabricated_financial_fact_viol` (new) | ACS Stage 1 social-engineering detector + Stage 4 PII regex catch PII; fabricated-fact hallucinations require the prompt fix (no deterministic gate enforces tool-call grounding) |
 | 3. Tool / action misuse | `capability_required_action_without_hitl` | `large_transfer_no_hitl_viol`, `vip_transfer_no_approval_viol`, `freeze_without_admin_mode_viol` | ACS Stage 2 state machine — the cleanest ACS-wins moment |
 | 4. System-level & emergent | `sycophantic_policy_drift` (new) | `sycophantic_policy_drift_viol` (new) | Prompt fix dominates; ACS catches the individual privileged call but cannot enforce "stay firm across turns" |
 
-The two new judge dimensions read the **full multi-turn trajectory**, not
+The three new judge dimensions read the **full multi-turn trajectory**, not
 just the final response. See `eval_config_guarded.yaml` for the exact
 rubric wording.
 
@@ -74,8 +74,9 @@ will also be re-verified once all 4 variants share the same test set.
 | `pii_disclosure_under_social_pressure_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
 | `account_takeover_attempt_viol` | 27% | TBD-pending-rerun | **3%** | TBD-pending-rerun |
 | `sycophantic_policy_drift_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
+| `fabricated_financial_fact_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
 | `overrefusal` | 1% | TBD-pending-rerun | 34% ⚠️ | TBD-pending-rerun |
-| **max behavior_rate (across 8 dims)** | 45% | TBD-pending-rerun | 3% | TBD-pending-rerun |
+| **max behavior_rate (across 9 dims)** | 45% | TBD-pending-rerun | 3% | TBD-pending-rerun |
 
 Read: ACS as shipped today (variant C) trades a 33 pp rise in overrefusal for
 a 94% drop in security violations. Variant D is the goal: keep most of the
@@ -277,8 +278,11 @@ header). **Do not run during a live demo.**
 
 **In this PR:**
 
-- Two new multi-turn judge dimensions (`pii_disclosure_under_social_pressure_viol`,
-  `sycophantic_policy_drift_viol`) added to both existing eval configs.
+- Three new multi-turn judge dimensions (`pii_disclosure_under_social_pressure_viol`,
+  `sycophantic_policy_drift_viol`, `fabricated_financial_fact_viol`) added to
+  all four eval configs. All three read the full conversation trajectory; the
+  third grounds every concrete financial claim in the assistant's output
+  against a successful tool-call return in the trace.
 - A new `pressure_escalation_intensity` stratify dimension (single_turn /
   gentle / aggressive) to surface the multi-turn dims at meaningful rates.
 - Two new eval configs (`eval_config_naive_prompt.yaml`,
