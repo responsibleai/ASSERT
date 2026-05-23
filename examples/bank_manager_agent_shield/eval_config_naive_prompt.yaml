@@ -1,5 +1,5 @@
 suite: bank-manager-agent-shield
-run: variant-b-naive-prompt
+run: variant-c-naive-prompt
 
 behavior:
   name: bank_manager_agent_shield

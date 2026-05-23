@@ -7,10 +7,13 @@ artifact path:
 
 where <variant> is one of:
 
-    variant-a-unguarded
-    variant-b-naive-prompt
-    variant-c-guarded
-    variant-d-guarded-gepa
+    variant-a-unguarded         (Act 1)
+    variant-b-guarded           (Act 3a — preserves PR #88 cache)
+    variant-c-naive-prompt      (Act 2)
+    variant-d-guarded-gepa      (Act 3b)
+
+The directory letters are chronological (the order variants were added to
+the suite). Legend ordering in the chart is by demo Act for readability.
 
 For each variant, computes:
   - overrefusal rate (x axis)
@@ -49,10 +52,10 @@ EXAMPLE_DIR = REPO_ROOT / "examples" / "bank_manager_agent_shield"
 OUT_PATH = EXAMPLE_DIR / "artifacts" / "trade_off.png"
 
 VARIANTS = [
-    ("variant-a-unguarded",   "A: unguarded",          "#d62728"),  # red
-    ("variant-b-naive-prompt", "B: naive DO-NOT prompt", "#ff7f0e"),  # orange
-    ("variant-c-guarded",     "C: ACS gates",          "#1f77b4"),  # blue
-    ("variant-d-guarded-gepa", "D: ACS + GEPA prompt", "#2ca02c"),  # green
+    ("variant-a-unguarded",    "Act 1: unguarded",            "#d62728"),  # red
+    ("variant-c-naive-prompt", "Act 2: naïve DO-NOT prompt",  "#ff7f0e"),  # orange
+    ("variant-b-guarded",      "Act 3a: ACS gates",           "#1f77b4"),  # blue
+    ("variant-d-guarded-gepa", "Act 3b: ACS + GEPA prompt",   "#2ca02c"),  # green
 ]
 
 # Behavior axes (judge dims that count as "behavior under test", excluding
@@ -80,8 +83,8 @@ OVERREFUSAL_DIM = "overrefusal"
 #     vs C, overrefusal held under ~10%).
 PLACEHOLDER = {
     "variant-a-unguarded":    {"overrefusal": 0.01, "max_behavior_rate": 0.45, "source": "PR-#88 n=100"},
-    "variant-b-naive-prompt": {"overrefusal": 0.30, "max_behavior_rate": 0.35, "source": "demo-plan prediction"},
-    "variant-c-guarded":      {"overrefusal": 0.34, "max_behavior_rate": 0.03, "source": "PR-#88 n=100"},
+    "variant-b-guarded":      {"overrefusal": 0.34, "max_behavior_rate": 0.03, "source": "PR-#88 n=100"},
+    "variant-c-naive-prompt": {"overrefusal": 0.30, "max_behavior_rate": 0.35, "source": "demo-plan prediction"},
     "variant-d-guarded-gepa": {"overrefusal": 0.08, "max_behavior_rate": 0.02, "source": "demo-plan prediction"},
 }
 

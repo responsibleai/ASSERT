@@ -1,5 +1,5 @@
 suite: bank-manager-agent-shield
-run: variant-c-guarded
+run: variant-b-guarded
 
 behavior:
   name: bank_manager_agent_shield

@@ -148,12 +148,11 @@ ACS security gains, bring overrefusal back below 10%.
 | `prompts/cross/*.md` | Vendored cross-example detector prompts (jailbreak, social-engineering, PII) |
 | `prompts/system_prompt.optimized.txt` | GEPA-optimized SUT system prompt (placeholder today; replaced by `optimize_with_gepa.ipynb`) |
 | `agent.py` | ASSERT callable targets: `chat_unguarded` / `chat_naive` / `chat_guarded` / `chat_guarded_gepa` |
-| `eval_config_unguarded.yaml` | ASSERT eval — variant A (no ACS, original prompt) |
-| `eval_config_naive_prompt.yaml` | ASSERT eval — variant B (no ACS, naïve DO-NOT prompt) |
-| `eval_config_guarded.yaml` | ASSERT eval — variant C (5-stage ACS, original prompt) |
-| `eval_config_guarded_gepa.yaml` | ASSERT eval — variant D (5-stage ACS, GEPA-optimized prompt) |
+| `eval_config_unguarded.yaml` | ASSERT eval — Act 1 (no ACS, original prompt) |
+| `eval_config_naive_prompt.yaml` | ASSERT eval — Act 2 (no ACS, naïve DO-NOT prompt) |
+| `eval_config_guarded.yaml` | ASSERT eval — Act 3a (5-stage ACS, original prompt) |
+| `eval_config_guarded_gepa.yaml` | ASSERT eval — Act 3b (5-stage ACS, GEPA-optimized prompt) |
 | `optimize_with_gepa.ipynb` | DSPy GEPA recipe (authored, NOT executed — runs offline; hours) |
-| `test_set.frozen.jsonl` | Placeholder for a pinned test set; see "Reproduction notes" below |
 | `artifacts/trade_off.png` | Trade-off chart (regenerate with `python scripts/render_trade_off.py`) |
 
 ---
@@ -218,11 +217,13 @@ p2m run --config examples\bank_manager_agent_shield\eval_config_guarded.yaml
 p2m run --config examples\bank_manager_agent_shield\eval_config_guarded_gepa.yaml
 ```
 
-Artifacts land in:
-- `artifacts/results/bank-manager-agent-shield/variant-a-unguarded/`
-- `artifacts/results/bank-manager-agent-shield/variant-b-naive-prompt/`
-- `artifacts/results/bank-manager-agent-shield/variant-c-guarded/`
-- `artifacts/results/bank-manager-agent-shield/variant-d-guarded-gepa/`
+Artifacts land in (directory letters are chronological, the order variants
+were added to the suite; the four Acts are mapped explicitly):
+
+- `artifacts/results/bank-manager-agent-shield/variant-a-unguarded/`    — Act 1
+- `artifacts/results/bank-manager-agent-shield/variant-b-guarded/`      — Act 3a (preserves the cached `scores.jsonl` from PR #88)
+- `artifacts/results/bank-manager-agent-shield/variant-c-naive-prompt/` — Act 2
+- `artifacts/results/bank-manager-agent-shield/variant-d-guarded-gepa/` — Act 3b
 
 ### Re-render the trade-off chart
 
@@ -251,14 +252,20 @@ header). **Do not run during a live demo.**
 
 ### Reproduction notes
 
-- **Frozen test set**: `test_set.frozen.jsonl` is committed as a
-  documentation stub today because the current `pipeline.test_set` schema
-  has no `path` field for loading test cases from a file, and `p2m run`
-  exposes no `--seed` flag. The four configs share `suite:
-  bank-manager-agent-shield`, so the suite-level test_set artifact cache
-  (per `CONFIG_REFERENCE.md`) makes all four variants score against the
-  same generated test set when test_set is generated once and inference +
-  judge are re-run per variant with `--force-stage`.
+- **Shared test set across variants**: all four configs share
+  `suite: bank-manager-agent-shield`, which means the `test_set` and
+  `systematize` stages write versioned artifacts to a single
+  suite-level directory (`artifacts/results/bank-manager-agent-shield/`)
+  and reuse them across variants (per `CONFIG_REFERENCE.md`, "Suite-level
+  stages write versioned artifacts under the suite directory and are
+  shared across runs"). In practice: the first `p2m run` (any variant)
+  generates `test_set.jsonl` once; the next three runs detect the cached
+  test set and only re-run `inference` and `judge` against the same 100
+  test cases. Cross-variant comparison is therefore apples-to-apples by
+  construction. The current schema has no `pipeline.test_set.path` field
+  to load test cases from a committed file, and `p2m run` exposes no
+  `--seed` flag — the suite-cache mechanism is the supported
+  reproducibility path today.
 - **Agent model pin**: set `AGENT_MODEL=gpt-4o-mini` in `.env` to pin the
   SUT model. The ACS LLM stages share that LLM via
   `Shield.from_yaml(...).with_langchain().with_client(llm)`, which
