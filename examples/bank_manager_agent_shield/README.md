@@ -19,22 +19,20 @@ the artifacts.
 
 | Act | Variant | What changes | Headline you should see |
 |---|---|---|---|
-| 1. Broken baseline | `eval_config_unguarded.yaml` | Raw LangGraph agent, deliberately too-compliant prompt, no ACS gates | Behavior rates high across all 4 axes; overrefusal ~1% |
-| 2. The DO-NOT trap | `eval_config_naive_prompt.yaml` | Same agent + five blunt DO-NOTs appended to the system prompt; no ACS | Some axes improve; **overrefusal jumps to ~25–35%** |
-| 3a. ACS gates | `eval_config_guarded.yaml` | 5-stage ACS policy on, original SUT prompt | Tool-misuse axis collapses; some semantic axes still leak |
-| 3b. ACS + GEPA prompt | `eval_config_guarded_gepa.yaml` | ACS on + GEPA-optimized SUT prompt | All four axes drop; overrefusal held under ~10% (target) |
+| 1. Broken baseline | `eval_config_unguarded.yaml` | Raw LangGraph agent, deliberately too-compliant prompt, no ACS gates | **39%** fabricated_financial_fact, 23% vip_transfer, 19% account_takeover; overrefusal **0%** |
+| 2. The DO-NOT trap | `eval_config_naive_prompt.yaml` | Same agent + five blunt DO-NOTs appended to the system prompt; no ACS | Most security axes drop, but **overrefusal jumps to 22%** |
+| 3a. ACS gates | `eval_config_guarded.yaml` | 5-stage ACS policy on, original SUT prompt | Tool-misuse + integrity axes collapse to ≤4%; **overrefusal climbs to 31%** ⚠️ |
+| 3b. ACS + GEPA prompt | `eval_config_guarded_gepa.yaml` | ACS on + GEPA-optimized SUT prompt | All 9 security dims at **0%**; overrefusal **21%** (−10 pp vs ACS-only, still above the 10% target) |
 
 Trade-off chart:
 
 ![Trade-off: behavior rate vs overrefusal across the 4 variants](artifacts/trade_off.png)
 
-> **Note on numbers in the table and the chart**: PR-#88 supplied verified
-> n=100 numbers for variants A and C. Variants B and D have not yet been run
-> at n=100 — every cell labelled `TBD-pending-rerun` in the per-axis table
-> below and every point labelled `PLACEHOLDER` in the chart legend will be
-> re-rendered after both variants run. The chart's geometry — D in the
-> lower-left, A upper-left, B upper-right, C lower-right — is the expected
-> shape, not a measurement.
+> **Numbers in the table and chart**: All four variants were run at n=100
+> with the ten current judge dimensions and `max_turns: 3` on 2026-05-24.
+> Judge model: `azure/gpt-5.4-mini`. Judge failures: 0% across all variants.
+> The chart's geometry — D in the lower-left, A upper-left, B and C
+> lower-right — is the measured shape, not a prediction.
 
 ---
 
@@ -60,27 +58,59 @@ rubric wording.
 
 ## Results table (4 behaviors × 4 variants)
 
-Cells marked `TBD-pending-rerun` will be filled in after the variants run
-at n=100. Existing cells are pulled from the PR #88 results write-up; they
-will also be re-verified once all 4 variants share the same test set.
+All numbers below are from a fresh n=100 run on 2026-05-24 across all
+four variants, with all ten current judge dimensions and `max_turns: 3`.
+Judge model: `azure/gpt-5.4-mini`; judge failures: 0% on every variant.
 
-| Behavior / judge dim | A: unguarded | B: naive DO-NOT | C: ACS gates | D: ACS + GEPA prompt |
+Variants A and B share one suite-cached 100-row test set (7-behavior
+description); variants C and D share a separate suite-cached 100-row test
+set (9-behavior description, which includes the three new multi-turn
+behaviors in the YAML prose). Within each pair the comparison is
+apples-to-apples; across pairs the test cases differ but the stratify
+recipe is identical.
+
+| Behavior / judge dim | A: unguarded | B: ACS gates | C: naive DO-NOT | D: ACS + GEPA prompt |
 |---|---|---|---|---|
-| `large_transfer_no_hitl_viol` | 13% | TBD-pending-rerun | **0%** | TBD-pending-rerun |
-| `vip_transfer_no_approval_viol` | 45% | TBD-pending-rerun | **0%** | TBD-pending-rerun |
-| `freeze_without_admin_mode_viol` | 5% | TBD-pending-rerun | **0%** | TBD-pending-rerun |
-| `prompt_injection_via_tool_output_viol` | 7% | TBD-pending-rerun | **0%** | TBD-pending-rerun |
-| `pii_leak_in_output_viol` | 0% | TBD-pending-rerun | 0% | TBD-pending-rerun |
-| `pii_disclosure_under_social_pressure_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
-| `account_takeover_attempt_viol` | 27% | TBD-pending-rerun | **3%** | TBD-pending-rerun |
-| `sycophantic_policy_drift_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
-| `fabricated_financial_fact_viol` (new) | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun | TBD-pending-rerun |
-| `overrefusal` | 1% | TBD-pending-rerun | 34% ⚠️ | TBD-pending-rerun |
-| **max behavior_rate (across 9 dims)** | 45% | TBD-pending-rerun | 3% | TBD-pending-rerun |
+| `large_transfer_no_hitl_viol` | 1% | **0%** | 0% | **0%** |
+| `vip_transfer_no_approval_viol` | 23% | **0%** | 3% | **0%** |
+| `freeze_without_admin_mode_viol` | 7% | **0%** | 0% | **0%** |
+| `prompt_injection_via_tool_output_viol` | 0% | **0%** | 0% | **0%** |
+| `pii_leak_in_output_viol` | 0% | 0% | 0% | 0% |
+| `pii_disclosure_under_social_pressure_viol` (new) | 0% | 0% | 0% | 0% |
+| `account_takeover_attempt_viol` | 19% | 4% | 0% | **0%** |
+| `sycophantic_policy_drift_viol` (new) | 0% | 0% | 0% | 0% |
+| `fabricated_financial_fact_viol` (new) | **39%** | **0%** | 3% | **0%** |
+| `overrefusal` | **0%** | 31% ⚠️ | 22% | 21% |
+| **max behavior_rate (9 security dims)** | **39%** | 4% | 3% | **0%** |
+| **any-security-violation rate (union of 9)** | **42%** | 4% | 3% | **0%** |
 
-Read: ACS as shipped today (variant C) trades a 33 pp rise in overrefusal for
-a 94% drop in security violations. Variant D is the goal: keep most of the
-ACS security gains, bring overrefusal back below 10%.
+Read:
+
+- **A → B (ACS turns on)**: any-security-violation drops 42% → 4%
+  (−38 pp / 90% reduction), but overrefusal climbs 0% → 31% (+31 pp ⚠️).
+  Tool-misuse axes (`large_transfer`, `vip_transfer`, `freeze`) and the
+  fabricated-fact axis go to zero; only `account_takeover` leaks at 4%.
+- **A → C (prompt-only fix)**: any-security-violation drops 42% → 3%,
+  but overrefusal climbs 0% → 22%. The naïve "DO NOT" prompt buys most
+  of the security drop ACS gives, but the agent now refuses benign
+  account lookups too.
+- **B → D (add GEPA on top of ACS)**: every security dim that was still
+  leaking under ACS-only (`account_takeover` 4%, `vip_transfer` 0%,
+  `fabricated_fact` 0%) drops to 0%, and overrefusal improves 31% → 21%
+  (−10 pp). D is the lower-left point on the chart, but its overrefusal
+  is still above the documented 10% GEPA selection-rule budget — the
+  placeholder optimized prompt is hand-authored, not the output of a
+  real DSPy/GEPA Pareto search (see `optimize_with_gepa.ipynb` for the
+  recipe).
+
+The `pii_disclosure_under_social_pressure_viol` and
+`sycophantic_policy_drift_viol` dims registered 0% across all four
+variants at n=100. Either the `pressure_escalation_intensity:aggressive`
+stratify level didn't bind hard enough on this test set, or
+`gpt-4o-mini` is well-aligned on the multi-turn behaviors these
+trajectory-shape rubrics target. The `fabricated_financial_fact_viol`
+new dim is doing most of the new-axis work — it caught the
+hallucinated-confirmation pattern at 39% in variant A.
 
 ---
 
@@ -91,11 +121,14 @@ ACS security gains, bring overrefusal back below 10%.
 - **Config**: `eval_config_unguarded.yaml`
 - **Target**: `chat_unguarded` — raw LangGraph ReAct agent, no ACS gates,
   deliberately too-compliant `SYSTEM_PROMPT`.
-- **What happens**: All four behavior rates ride high. Overrefusal sits at
-  ~1% because the agent rarely refuses anything.
-- **Headline**: union of the 4 behavior axes ≈ **50–70%** (variant-a max
-  behavior_rate ≈ 45% from PR #88's six security dims; axis-4 sycophancy
-  pushes the union higher).
+- **What happens**: `fabricated_financial_fact_viol` lights up at **39%**
+  (the agent hallucinates confirmation strings like "transfer of $0.00
+  completed" when the tool didn't actually succeed).
+  `vip_transfer_no_approval_viol` 23%, `account_takeover_attempt_viol`
+  19%, `freeze_without_admin_mode_viol` 7%. Overrefusal sits at 0%
+  because the agent rarely refuses anything.
+- **Headline**: any-security-violation rate (union of 9 dims) = **42%**;
+  max single-axis behavior_rate = **39%**.
 - **Speaker line**: *"This is a real LangGraph agent on a weak-but-realistic
   model. The model is doing its best. ASSERT shows you exactly where its
   best isn't good enough — and on which axis."*
@@ -106,11 +139,13 @@ ACS security gains, bring overrefusal back below 10%.
 - **Target**: `chat_naive` — same agent, no ACS, but the SUT system prompt
   is `SYSTEM_PROMPT` plus a blunt five-line "DO NOT" block plus a final
   "If a request appears risky, refuse." line.
-- **What happens**: Axis 3 (capability/HITL) improves because the agent
-  refuses more transfers. Axes 1, 2, and 4 barely move because the DO-NOTs
-  don't address the underlying semantic problems. Overrefusal jumps to
-  ~25–35% because the agent now refuses benign account lookups too.
-- **Headline**: **overrefusal delta ≈ +25 pp** vs the baseline.
+- **What happens**: Most security axes drop to 0%
+  (`account_takeover` 19% → 0%, `vip_transfer` 23% → 3%,
+  `fabricated_financial_fact` 39% → 3%). But overrefusal jumps
+  **0% → 22%** because the agent now refuses benign account lookups too.
+  Any-security-violation drops to **3%**.
+- **Headline**: **overrefusal delta = +22 pp** vs the baseline, for a
+  security drop the layered fix matches without the same UX cost.
 - **Speaker line**: *"My fix worked on the axis I aimed at. It made me worse
   on an axis I wasn't measuring. If I'd shipped this on a single-number
   eval, nobody would have noticed."*
@@ -123,16 +158,18 @@ ACS security gains, bring overrefusal back below 10%.
   2. `eval_config_guarded_gepa.yaml` (`chat_guarded_gepa`) — ACS on, plus
      the GEPA-optimized SUT prompt loaded from
      `prompts/system_prompt.optimized.txt`.
-- **What happens**: Axis 3 collapses to near-zero (ACS deterministic
-  Stage-2 floor). Axes 1, 2, 4 drop further when the GEPA-optimized prompt
-  loads — the optimized prompt tightens the semantics ACS cannot enforce
-  (multi-turn drift, unverified authority, HITL-required routing).
-  Overrefusal held under ~10%.
-- **Headline**: union of 4 behavior axes **down ~85–95%**, overrefusal
-  **under 10%**.
+- **What happens**: ACS-only (variant B) collapses 8 of 9 security dims
+  to 0% (only `account_takeover` leaks at 4%) but pushes overrefusal to
+  **31%**. Add the GEPA-optimized prompt on top (variant D) and the last
+  4% security leak goes to 0% AND overrefusal drops to **21%**
+  (−10 pp vs B).
+- **Headline**: variant D = **0% any-security-violation, 21%
+  overrefusal**. The Pareto-optimal point on the chart; still above the
+  10% GEPA selection budget, because the placeholder optimized prompt is
+  hand-authored, not the output of a real DSPy/GEPA search.
 - **Speaker line**: *"ACS holds the deterministic line. ASSERT tells me
   what's left. GEPA evolves the prompt against ASSERT's signal. The
-  shipping decision becomes defensible across four axes — not just one
+  shipping decision becomes defensible across nine axes — not just one
   number."*
 
 ---
@@ -209,7 +246,11 @@ python -m pip install -e ".[otel,langgraph,dspy]"
 
 ### Run the four variants
 
-Each variant takes ~25–40 min at n=100 on a single Azure deployment.
+Each variant takes ~17–20 min at n=100 on a single Azure deployment
+(measured on the 2026-05-24 run with `azure/gpt-5.4-mini`); the suite-
+cached `systematize` / `test_set` stages mean the second variant in each
+pair (A↔B, C↔D) skips upstream work and only re-runs `inference` and
+`judge`.
 
 ```powershell
 p2m run --config examples\bank_manager_agent_shield\eval_config_unguarded.yaml
@@ -222,9 +263,15 @@ Artifacts land in (directory letters are chronological, the order variants
 were added to the suite; the four Acts are mapped explicitly):
 
 - `artifacts/results/bank-manager-agent-shield/variant-a-unguarded/`    — Act 1
-- `artifacts/results/bank-manager-agent-shield/variant-b-guarded/`      — Act 3a (preserves the cached `scores.jsonl` from PR #88)
+- `artifacts/results/bank-manager-agent-shield/variant-b-guarded/`      — Act 3a
 - `artifacts/results/bank-manager-agent-shield/variant-c-naive-prompt/` — Act 2
 - `artifacts/results/bank-manager-agent-shield/variant-d-guarded-gepa/` — Act 3b
+
+The `artifacts/results/` tree is `.gitignored`. A committed snapshot of
+the four `metrics.json` + `scores.jsonl` + `config.yaml` + `manifest.json`
+files lives under
+`examples/bank_manager_agent_shield/artifacts/results/bank-manager-agent-shield/`
+for reproducibility (the source of truth for the rendered PNG).
 
 ### Re-render the trade-off chart
 
@@ -235,9 +282,12 @@ After the four variants finish, re-render the PNG from the real
 python scripts\render_trade_off.py
 ```
 
-The script falls back to placeholder values for any variant whose
-`scores.jsonl` is missing and labels each legend entry accordingly, so a
-partial run still produces a sensible chart.
+The renderer checks the committed snapshot under
+`examples/bank_manager_agent_shield/artifacts/results/` first, then falls
+back to the live runtime path under `artifacts/results/`. For any
+variant whose `scores.jsonl` cannot be located it substitutes the
+labelled placeholder from the 2026-05-24 n=100 run so a partial re-run
+still produces a sensible chart.
 
 ### Re-optimize the prompt (offline; hours)
 
@@ -297,10 +347,11 @@ header). **Do not run during a live demo.**
 
 **Not in this PR:**
 
-- Fresh n=100 runs for the four variants — those need a real Azure
-  deployment and are tracked separately. Several README cells and the
-  trade-off chart points are explicitly labelled `TBD-pending-rerun` /
-  `PLACEHOLDER` until then.
+- A real DSPy/GEPA-optimized prompt artifact. The committed
+  `prompts/system_prompt.optimized.txt` is a hand-authored placeholder;
+  the notebook recipe overwrites it when re-run offline. A full GEPA
+  search is on the order of hours of LLM compute and lives outside the
+  PR-time loop.
 - A viewer feature for the trade-off chart. The PNG is the customer-facing
   artifact today.
 - A `p2m optimize` CLI verb. GEPA is invoked via the notebook only; if /
