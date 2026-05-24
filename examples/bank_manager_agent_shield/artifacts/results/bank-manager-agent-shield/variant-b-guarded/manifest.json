@@ -1,0 +1,41 @@
+{
+  "started_at": "2026-05-24T15:51:14.319156+00:00",
+  "status": "completed",
+  "ended_at": "2026-05-24T16:09:43.873192+00:00",
+  "stages": {
+    "inference": "completed",
+    "judge": "completed"
+  },
+  "pid": 55748,
+  "host": "laptop2",
+  "heartbeat_at": "2026-05-24T16:09:43.859988+00:00",
+  "artifact_versions": {
+    "systematize": {
+      "artifact_type": "systematize",
+      "version": "v0004",
+      "input_hash": "c502962412cc550dc9b585b800bc2d25af97bce4ea400d9381661b4f999c96b8",
+      "config_hash": "e8822b6134d7ef17884b3c25628b159578fa4de9a5f0c7a5713efabea65ed15f",
+      "path": "artifacts/systematize/v0004/taxonomy.json",
+      "artifact_dir": "artifacts/systematize/v0004",
+      "metadata_path": "artifacts/systematize/v0004/artifact.json",
+      "file_hashes": {
+        "taxonomy": "954341d7caf0005aa3e15d9558d0c90b83115d4d5a7f4bfb7d0a18abea4e4a48",
+        "systematization": "8427f9abeda329b3759e0876e875b4353cbd2fb19d31a80e23d14df3574307d0"
+      },
+      "behavior_hash": "8da592f71d236061e49c2945316cdc7bc3bd7038509a163cd70b8db2a041046f"
+    },
+    "test_set": {
+      "artifact_type": "test_set",
+      "version": "v0006",
+      "input_hash": "8799fd13914242dd173dbe49480185ebae08a91ce25a5e1e8e89df45e47f0d7b",
+      "config_hash": "3756e941a060277d4a5d5914eee9eb1f8a48e1e77fdf45c7f2ca6fd50333cbee",
+      "path": "artifacts/test_set/v0006/test_set.jsonl",
+      "artifact_dir": "artifacts/test_set/v0006",
+      "metadata_path": "artifacts/test_set/v0006/artifact.json",
+      "file_hashes": {
+        "test_set": "c0810cf2b557bbc351656c42c49c22cbb4abbd995d3b52642d6d19986506f511",
+        "stratification": "91e5ecb768269e1c2a2d26df5f5ab17624f3f89511ccf893f356e74be9e2cf10"
+      }
+    }
+  }
+}
