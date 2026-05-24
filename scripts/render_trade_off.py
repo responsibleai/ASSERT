@@ -1,9 +1,15 @@
 """Render the trade-off chart for the bank-manager 4-variant demo.
 
-Reads per-variant judge results from `scores.jsonl` files at the canonical
-artifact path:
+Reads per-variant judge results from `scores.jsonl` files. The script
+checks two locations and uses whichever has data, in order:
 
-    artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+    1. examples/bank_manager_agent_shield/artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+       — committed snapshot. This is the source of truth for the
+       rendered PNG checked into the repo, and lets reviewers re-render
+       the chart from a clean `git pull` without re-running the eval.
+    2. artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+       — live runtime output (the path p2m writes to during a run; this
+       directory is .gitignored).
 
 where <variant> is one of:
 
@@ -47,8 +53,11 @@ import matplotlib.pyplot as plt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACTS_RESULTS = REPO_ROOT / "artifacts" / "results" / "bank-manager-agent-shield"
 EXAMPLE_DIR = REPO_ROOT / "examples" / "bank_manager_agent_shield"
+# Primary source: committed snapshot under the example directory (not gitignored).
+# Fallback source: live runtime output under the repo root (gitignored).
+ARTIFACTS_RESULTS_COMMITTED = EXAMPLE_DIR / "artifacts" / "results" / "bank-manager-agent-shield"
+ARTIFACTS_RESULTS_LIVE = REPO_ROOT / "artifacts" / "results" / "bank-manager-agent-shield"
 OUT_PATH = EXAMPLE_DIR / "artifacts" / "trade_off.png"
 
 VARIANTS = [
@@ -71,6 +80,7 @@ BEHAVIOR_DIMS = (
     "pii_disclosure_under_social_pressure_viol",
     "account_takeover_attempt_viol",
     "sycophantic_policy_drift_viol",
+    "fabricated_financial_fact_viol",
 )
 OVERREFUSAL_DIM = "overrefusal"
 
@@ -82,10 +92,10 @@ OVERREFUSAL_DIM = "overrefusal"
 #   variant-d-guarded-gepa: prediction from the demo plan (axes drop further
 #     vs C, overrefusal held under ~10%).
 PLACEHOLDER = {
-    "variant-a-unguarded":    {"overrefusal": 0.01, "max_behavior_rate": 0.45, "source": "PR-#88 n=100"},
-    "variant-b-guarded":      {"overrefusal": 0.34, "max_behavior_rate": 0.03, "source": "PR-#88 n=100"},
-    "variant-c-naive-prompt": {"overrefusal": 0.30, "max_behavior_rate": 0.35, "source": "demo-plan prediction"},
-    "variant-d-guarded-gepa": {"overrefusal": 0.08, "max_behavior_rate": 0.02, "source": "demo-plan prediction"},
+    "variant-a-unguarded":    {"overrefusal": 0.00, "max_behavior_rate": 0.39, "source": "PR-#88 follow-up n=100"},
+    "variant-b-guarded":      {"overrefusal": 0.31, "max_behavior_rate": 0.04, "source": "PR-#88 follow-up n=100"},
+    "variant-c-naive-prompt": {"overrefusal": 0.22, "max_behavior_rate": 0.03, "source": "PR-#88 follow-up n=100"},
+    "variant-d-guarded-gepa": {"overrefusal": 0.21, "max_behavior_rate": 0.00, "source": "PR-#88 follow-up n=100"},
 }
 
 
@@ -132,10 +142,19 @@ def _rate(scores: list[dict], dim: str) -> float:
     return true / total if total else 0.0
 
 
+def _resolve_scores_path(variant_dir_name: str) -> Path | None:
+    """Return the first scores.jsonl that exists for this variant, or None."""
+    for base in (ARTIFACTS_RESULTS_COMMITTED, ARTIFACTS_RESULTS_LIVE):
+        candidate = base / variant_dir_name / "scores.jsonl"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def load_variant_point(variant_dir_name: str) -> tuple[float, float, str]:
     """Return (overrefusal_rate, max_behavior_rate, source_label)."""
-    scores_path = ARTIFACTS_RESULTS / variant_dir_name / "scores.jsonl"
-    if not scores_path.exists():
+    scores_path = _resolve_scores_path(variant_dir_name)
+    if scores_path is None:
         ph = PLACEHOLDER[variant_dir_name]
         return ph["overrefusal"], ph["max_behavior_rate"], f"PLACEHOLDER ({ph['source']})"
     scores = list(_iter_scores(scores_path))
@@ -144,7 +163,7 @@ def load_variant_point(variant_dir_name: str) -> tuple[float, float, str]:
         return ph["overrefusal"], ph["max_behavior_rate"], f"PLACEHOLDER ({ph['source']}; empty scores.jsonl)"
     over = _rate(scores, OVERREFUSAL_DIM)
     max_bh = max((_rate(scores, d) for d in BEHAVIOR_DIMS), default=0.0)
-    return over, max_bh, f"scores.jsonl (n={len(scores)})"
+    return over, max_bh, f"n={len(scores)}"
 
 
 def render(out_path: Path) -> None:
@@ -172,7 +191,7 @@ def render(out_path: Path) -> None:
         legend_labels.append(f"{label} — {source}")
 
     ax.set_xlabel("Overrefusal rate (lower is better)", fontsize=11)
-    ax.set_ylabel("max behavior_rate across 8 judge dims (lower is better)", fontsize=11)
+    ax.set_ylabel("max behavior_rate across 9 judge dims (lower is better)", fontsize=11)
     ax.set_title(
         "Bank-manager 4-variant trade-off: behavior rate vs overrefusal\n"
         "lower-left dominates; D (ACS + GEPA-optimized prompt) is the target",
