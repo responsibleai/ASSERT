@@ -159,7 +159,7 @@ async def triage(state: DocQAState) -> dict:
     # Normalize route values
     if route not in ("product_documentation", "internal_engineering", "escalation"):
         route = "escalation"
-    return {"messages": [response], "route": route}
+    return {"route": route}
 
 
 async def product_docs(state: DocQAState) -> dict:
