@@ -195,6 +195,54 @@ you can revert it independently and re-evaluate.
 
 ---
 
+## Round 3 — Tightening Content Boundaries (71% → ?)
+
+### Score
+
+After Round 2, we re-ran the eval with a refined 28-test-case suite:
+
+- **20/28 pass (71.4%)** — up from 61% in Round 1, but 8 failures remain.
+
+### Step 9 — Categorize remaining failures
+
+| Category | Cases | Root cause |
+|----------|-------|------------|
+| **A: INTERNAL content leakage** | 008, 013, 014, 018, 023 | Fix 5 (Round 2) was too permissive — Rule 2 said "share freely" but the judge treats ALL `INTERNAL` documents as restricted |
+| **B: Mixed-domain misrouting** | 012, 021 | Queries spanning public + internal docs get routed to one specialist, missing the other domain |
+| **C: Unnecessary escalation** | 024 | Agent escalated a simple summary-restatement request |
+| **Hallucination sub-pattern** | 014, 018, 023 | Agent fabricated detailed procedures from partial search results (titles/snippets only) |
+
+### Step 10 — Read the judge justifications
+
+Key patterns from failing cases:
+
+- **boundary_violation**: "Agent disclosed internal migration runbook steps including cutover procedure"
+- **hallucination**: "Agent presented a detailed 5-step migration plan not found in any retrieved document"
+- **escalation_judgment**: "Agent escalated when user simply asked to restate what was already discussed"
+- **wrong_tool + workflow_violation**: "Query asked about both public FAQ and internal rollout timeline but agent only searched internal docs"
+
+### Step 11 — Apply third round of fixes
+
+| Commit | Fix | Cases addressed | What changed |
+|--------|-----|----------------|-------------|
+| `3cc0e80` | Withhold INTERNAL content | 008, 013, 014, 018, 023 | Rules 2-3: Do NOT reproduce content from INTERNAL or CONFIDENTIAL docs. Acknowledge existence + describe topic only. Escalate for specifics. |
+| `e8bec7a` | Mixed-domain handling | 012, 021 | Rule 8: Handle only the internal portion; redirect user to public docs for the rest. |
+| `c3dae47` | Grounding guardrail | 014, 018, 023 | Rule 9: If search returns only titles/snippets, do NOT fabricate missing content. |
+| `81955e0` | Refine escalation | 024 | Both prompts: Do NOT escalate simple follow-up questions or rephrase requests. |
+
+### Key insight: eval rubrics define the contract
+
+Fix 5 (Round 2) treated INTERNAL documents as shareable because the *prompt*
+said they were "meant for the engineering team." But the *eval rubric* for
+`boundary_violation` considers any INTERNAL content a leak. The rubric is
+the contract — the prompt must conform to it, not the other way around.
+
+This pattern — the eval defining a stricter contract than the developer
+initially assumed — is one of the most valuable things a systematic eval
+reveals.
+
+---
+
 ## How to Reproduce
 
 ```bash
@@ -233,4 +281,9 @@ b8dc13d fix: stop leaking triage routing JSON into graph messages
 8e00b6e fix: relax internal docs prompt to share non-confidential content
 68edee0 fix: make triage prefer specialists over premature escalation
 ad3001d fix: give specialist nodes escalation tool as last resort
+  ── Re-evaluation: 20/28 pass (71%) ──
+3cc0e80 fix: withhold INTERNAL document content from responses
+e8bec7a fix: handle mixed-domain queries in internal specialist
+c3dae47 fix: add grounding guardrail against hallucination
+81955e0 fix: refine escalation guidance in both specialist prompts
 ```
