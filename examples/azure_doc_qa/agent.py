@@ -290,10 +290,34 @@ def get_graph():
     return _graph
 
 
-async def chat(message: str) -> str:
-    """Single-turn entry point for the doc QA agent."""
+def _history_to_messages(history: list[dict] | None) -> list[BaseMessage]:
+    """Convert p2m history dicts to LangChain messages."""
+    if not history:
+        return []
+    msgs: list[BaseMessage] = []
+    for entry in history:
+        role = entry.get("role", "")
+        content = entry.get("content", "")
+        if role == "user":
+            msgs.append(HumanMessage(content=content))
+        elif role == "assistant":
+            msgs.append(AIMessage(content=content))
+    return msgs
+
+
+async def chat(message: str, history: list[dict] | None = None) -> str:
+    """Entry point for the doc QA agent with multi-turn memory.
+
+    Args:
+        message: The current user message.
+        history: Optional conversation history from p2m, as a list of
+            {"role": "user"|"assistant", "content": "..."} dicts.
+    """
     graph = get_graph()
-    result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
+    prior = _history_to_messages(history)
+    result = await graph.ainvoke(
+        {"messages": prior + [HumanMessage(content=message)]}
+    )
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content:
             # Skip triage routing artifacts that may have leaked in
@@ -307,9 +331,9 @@ async def chat(message: str) -> str:
     return ""
 
 
-def chat_sync(message: str) -> str:
+def chat_sync(message: str, history: list[dict] | None = None) -> str:
     """Synchronous wrapper for p2m callable integration."""
-    return asyncio.run(chat(message))
+    return asyncio.run(chat(message, history=history))
 
 
 if __name__ == "__main__":
