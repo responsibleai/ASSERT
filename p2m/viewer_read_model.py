@@ -543,9 +543,16 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         kind, test_case_id = _kind_and_test_case_id(row, path=scores_path)
         inference_row = inference_by_test_case.get((kind, test_case_id))
         if inference_row is None:
-            raise ViewerReadModelBuildError(
-                f"Missing inference row for {kind}:{test_case_id} while building {run_dir}"
+            log.warning(
+                "Stale scores.jsonl: %s:%s has no matching inference row in %s — "
+                "skipping score rows and falling back to transcript-only mode",
+                kind, test_case_id, run_dir,
             )
+            return {
+                "mode": "transcript_only",
+                "run_dir": str(run_dir),
+                "built_files": [_viewer_relative_name(VIEWER_TRANSCRIPT_INDEX_FILE)],
+            }
         test_case_row = test_cases_by_id.get((kind, test_case_id))
         dimensions = (
             _read_factors(test_case_row.get("dimensions") if test_case_row is not None else None)
