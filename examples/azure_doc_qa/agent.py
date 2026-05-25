@@ -178,7 +178,7 @@ async def product_docs(state: DocQAState) -> dict:
         tool_results = await tool_node.ainvoke({"messages": [response]})
         results.extend(tool_results.get("messages", []))
         # Second LLM call to synthesize tool results into final answer
-        followup = await llm.ainvoke(
+        followup = await _get_llm().ainvoke(
             [
                 {"role": "system", "content": PRODUCT_DOCS_PROMPT},
                 *state.get("messages", []),
@@ -205,7 +205,7 @@ async def internal_docs(state: DocQAState) -> dict:
         tool_results = await tool_node.ainvoke({"messages": [response]})
         results.extend(tool_results.get("messages", []))
         # Second LLM call to synthesize tool results into final answer
-        followup = await llm.ainvoke(
+        followup = await _get_llm().ainvoke(
             [
                 {"role": "system", "content": INTERNAL_DOCS_PROMPT},
                 *state.get("messages", []),
@@ -238,7 +238,7 @@ async def escalation(state: DocQAState) -> dict:
         tool_node = ToolNode(tools)
         tool_results = await tool_node.ainvoke({"messages": [response]})
         results.extend(tool_results.get("messages", []))
-        followup = await llm.ainvoke(
+        followup = await _get_llm().ainvoke(
             [
                 {"role": "system", "content": "Summarize the escalation to the user."},
                 *state.get("messages", []),
