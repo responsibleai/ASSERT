@@ -296,6 +296,13 @@ async def chat(message: str) -> str:
     result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content:
+            # Skip triage routing artifacts that may have leaked in
+            try:
+                parsed = json.loads(msg.content)
+                if isinstance(parsed, dict) and "route" in parsed:
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
             return msg.content
     return ""
 
