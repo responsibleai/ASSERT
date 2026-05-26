@@ -8,7 +8,7 @@
 	 *   - reserves artifacts/results/<suite>/<run>/ atomically
 	 *   - writes eval_config.yaml (single-YAML authoring; behavior description
 	 *     lives inline in behavior.description)
-	 *   - spawns `p2m run --config <generated.yaml>` detached
+	 *   - spawns `assert-eval run --config <generated.yaml>` detached
 	 * On success the wizard navigates to /suite/<suite>/<run>/monitor.
 	 */
 	import { onMount } from 'svelte';

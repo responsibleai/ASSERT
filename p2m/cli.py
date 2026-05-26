@@ -473,14 +473,14 @@ def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -
     epilog=(
         "\b\n"
         "Examples:\n"
-        "  p2m run --config examples/pipes/health_assistant.yaml\n"
-        "  p2m run --config examples/pipes/health_assistant_external.yaml\n"
-        "  p2m results list\n"
-        "  p2m results compare health-assistant-v1 gpt54-eval gpt54-eval\n"
-        "  p2m results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"
+        "  assert-eval run --config examples/pipes/health_assistant.yaml\n"
+        "  assert-eval run --config examples/pipes/health_assistant_external.yaml\n"
+        "  assert-eval results list\n"
+        "  assert-eval results compare health-assistant-v1 gpt54-eval gpt54-eval\n"
+        "  assert-eval results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"
     ),
 )
-@click.version_option(version="0.1.0", prog_name="p2m")
+@click.version_option(version="0.1.0", prog_name="assert-eval")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -561,7 +561,7 @@ def run(
 ):
     """Run the evaluation pipeline."""
     # Re-configure logging if flags were passed on the subcommand
-    # (e.g. `p2m run --verbose` instead of `p2m --verbose run`).
+    # (e.g. `assert-eval run --verbose` instead of `assert-eval --verbose run`).
     if verbose or quiet or log_file or output_format != "text":
         configure_logging(
             verbose=verbose,
@@ -860,14 +860,14 @@ def results_compare(
     """Compare runs. Accepts two forms:
 
     \b
-    Within one suite:  p2m results compare SUITE RUN1 RUN2
-    Cross-suite:       p2m results compare SUITE/RUN1 SUITE/RUN2
+    Within one suite:  assert-eval results compare SUITE RUN1 RUN2
+    Cross-suite:       assert-eval results compare SUITE/RUN1 SUITE/RUN2
     """
     if len(args) < 2:
         _error(
             "Provide at least two arguments.\n"
-            "  Within suite:  p2m results compare SUITE RUN1 RUN2\n"
-            "  Cross-suite:   p2m results compare SUITE/RUN1 SUITE/RUN2"
+            "  Within suite:  assert-eval results compare SUITE RUN1 RUN2\n"
+            "  Cross-suite:   assert-eval results compare SUITE/RUN1 SUITE/RUN2"
         )
 
     # Detect cross-suite mode: any arg contains "/"
@@ -892,7 +892,7 @@ def results_compare(
             _error(
                 f"'{runs[0]}' looks like a suite name, not a run ID.\n"
                 f"Use slash format for cross-suite:\n"
-                f"  p2m results compare {suite}/run-1 {runs[0]}/run-1"
+                f"  assert-eval results compare {suite}/run-1 {runs[0]}/run-1"
             )
         _error("Provide at least two run IDs to compare.")
 
@@ -1075,7 +1075,7 @@ def results_compare_suites(
 
     \b
     Examples:
-      p2m results compare-suites \\
+      assert-eval results compare-suites \\
         travel-planner-phoenix-otel-demo/run-1 \\
         travel-planner-litellm-callable/run-1 \\
         travel-planner-external-connector/run-1

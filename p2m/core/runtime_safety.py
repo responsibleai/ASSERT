@@ -13,7 +13,7 @@ The three layers exposed here:
 
 * :class:`ManifestHeartbeat` — daemon thread that rewrites
   ``manifest.heartbeat_at`` (and an optional progress payload) every
-  ``interval_s`` seconds so external observers (``p2m results status``,
+  ``interval_s`` seconds so external observers (``assert-eval results status``,
   benchmark dashboards) get an honest liveness signal during long stages.
 * :class:`PipelineWatchdog` — daemon thread that dumps every Python thread's
   current stack to the log if the pipeline goes silent (no

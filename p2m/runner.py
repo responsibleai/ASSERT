@@ -866,7 +866,7 @@ def _run_stages_inner(
             run_id = ctx.get('run_id', '')
             if suite_id and run_id:
                 log.info("Inspect results:")
-                log.info(f"  uv run p2m results status {suite_id} {run_id}")
+                log.info(f"  uv run assert-eval results status {suite_id} {run_id}")
     else:
         log.error(f"Pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 

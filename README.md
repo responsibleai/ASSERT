@@ -40,17 +40,17 @@ cp .env.example .env
 phoenix serve
 
 # Run the full pipeline: spec -> taxonomy -> test cases -> execution -> verdicts.
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 
 # Inspect the run.
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 Codespaces / VS Code Dev Containers:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `assert-eval run` command above.
 
 Windows PowerShell equivalent:
 
@@ -62,8 +62,8 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 What the quickstart does:
