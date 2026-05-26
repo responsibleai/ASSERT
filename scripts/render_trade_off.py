@@ -54,6 +54,11 @@ class Variant:
     placeholder_overrefusal: float
     placeholder_max_behavior: float
     placeholder_source: str
+    # Demo-path emphasis. Variants on the demo path render with solid
+    # markers; variants flagged as experiments render faded with a
+    # "(experiment)" suffix in the legend. Default True preserves
+    # existing behavior for suites that don't distinguish.
+    is_demo_path: bool = True
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,9 @@ class Suite:
     overrefusal_dim: str
     variants: tuple[Variant, ...]
     title: str
+    # Optional (from_index, to_index) into variants to draw an arrow
+    # marking the demo path. None disables the arrow.
+    demo_path_arrow: tuple[int, int] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -123,26 +131,22 @@ INCIDENT_TRIAGE_SUITE = Suite(
     ),
     overrefusal_dim="overrefusal",
     variants=(
-        # Act 1: PR #43 scenario rail (canonical). Overrefusal 80.8%,
-        # max behavior driven by `fabrication` (55.6%) at n=200.
-        Variant("baseline-weak-prompt",       "Act 1: baseline weak prompt",   "#d62728", 0.808, 0.556, "PR-#43 n=200 scenario"),
-        # Act 2: anti-safety naive prompt. Prediction: overrefusal drops
-        # (the DO-NOT block trains the agent to comply), behavior rates
-        # spike across PII, severity-drift, XPIA, fabrication.
-        Variant("naive-prompt",               "Act 2: naïve DO-NOT prompt",    "#ff7f0e", 0.05, 0.85, "demo-plan prediction"),
-        # Act 3a: PR #43 scenario rail (canonical). Overrefusal 83.5%
-        # (within CI of Act 1), max behavior 51.0% (fabrication residual).
-        Variant("guarded-with-shield",        "Act 3a: ACS gates",             "#1f77b4", 0.835, 0.51, "PR-#43 n=200 scenario"),
-        # Act 3b: ACS + GEPA-optimized prompt. Prediction: overrefusal
-        # drops well under the 10% budget because the GEPA prompt encodes
-        # the discipline rules without relying on refusal as the only
-        # safety lever; max behavior holds at or below Act 3a.
-        Variant("guarded-with-shield-gepa",   "Act 3b: ACS + GEPA prompt",     "#2ca02c", 0.08, 0.45, "demo-plan prediction"),
+        # Demo path: variant A (baseline) -> variant C (ACS gates).
+        # Variants B (naive-prompt) and D (guarded-with-shield-gepa) are
+        # documented experiments whose predictions did not land at n=200;
+        # they remain on the chart for transparency but render faded.
+        # See examples/incident_triage_agent/README.md Appendix B.
+        Variant("baseline-weak-prompt",       "A: baseline (demo)",            "#d62728", 0.808, 0.556, "PR-#43 n=200 scenario", is_demo_path=True),
+        Variant("naive-prompt",               "B: naive DO-NOT prompt",        "#ff7f0e", 0.05, 0.85, "demo-plan prediction", is_demo_path=False),
+        Variant("guarded-with-shield",        "C: ACS gates (demo)",           "#1f77b4", 0.835, 0.51, "PR-#43 n=200 scenario", is_demo_path=True),
+        Variant("guarded-with-shield-gepa",   "D: ACS + GEPA placeholder",     "#2ca02c", 0.08, 0.45, "demo-plan prediction", is_demo_path=False),
     ),
     title=(
-        "Incident-triage 4-variant trade-off: behavior rate vs overrefusal\n"
-        "lower-left dominates; Act 3b (ACS + GEPA-optimized prompt) is the target"
+        "Incident-triage trade-off: behavior rate vs overrefusal (n=200+200)\n"
+        "demo path: A (baseline) → C (ACS gates); B & D shown faded as experiments"
     ),
+    # Draw an arrow from A (index 0) to C (index 2) to mark the demo path.
+    demo_path_arrow=(0, 2),
 )
 
 
@@ -247,20 +251,59 @@ def render(suite: Suite, out_path: Path) -> None:
     for variant in suite.variants:
         over, max_bh, source = load_variant_point(suite, variant)
         rendered_points.append((over, max_bh))
-        ax.scatter(
-            [over], [max_bh],
-            s=180, c=variant.color, edgecolors="black", linewidths=1.2, zorder=3,
-            label=f"{variant.label} — {source}",
-        )
-        ax.annotate(
-            variant.label,
-            (over, max_bh),
-            xytext=(8, 6),
-            textcoords="offset points",
-            fontsize=10,
-            fontweight="bold",
-            color="#222222",
-        )
+        if variant.is_demo_path:
+            ax.scatter(
+                [over], [max_bh],
+                s=200, c=variant.color, edgecolors="black", linewidths=1.5,
+                alpha=1.0, zorder=4,
+                label=f"{variant.label} — {source}",
+            )
+            ax.annotate(
+                variant.label,
+                (over, max_bh),
+                xytext=(8, 6),
+                textcoords="offset points",
+                fontsize=10,
+                fontweight="bold",
+                color="#222222",
+            )
+        else:
+            # Experiment: faded marker, smaller size, gray edge, parenthetical label.
+            ax.scatter(
+                [over], [max_bh],
+                s=110, c=variant.color, edgecolors="#888888", linewidths=0.8,
+                alpha=0.45, zorder=2,
+                label=f"{variant.label} (experiment) — {source}",
+            )
+            ax.annotate(
+                f"{variant.label} (experiment)",
+                (over, max_bh),
+                xytext=(8, 6),
+                textcoords="offset points",
+                fontsize=9,
+                fontweight="normal",
+                color="#666666",
+                alpha=0.85,
+            )
+
+    # Optional demo-path arrow.
+    if suite.demo_path_arrow is not None and rendered_points:
+        i_from, i_to = suite.demo_path_arrow
+        if 0 <= i_from < len(rendered_points) and 0 <= i_to < len(rendered_points):
+            x0, y0 = rendered_points[i_from]
+            x1, y1 = rendered_points[i_to]
+            ax.annotate(
+                "",
+                xy=(x1, y1), xytext=(x0, y0),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color="#444444",
+                    lw=1.6,
+                    alpha=0.7,
+                    shrinkA=12, shrinkB=12,
+                ),
+                zorder=3,
+            )
 
     ax.set_xlabel("Overrefusal rate (lower is better)", fontsize=11)
     ax.set_ylabel(
