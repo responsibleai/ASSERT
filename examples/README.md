@@ -17,8 +17,8 @@ Copy-Item .env.example .env
 # Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
 # any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
-p2m run --config examples\travel_planner_langgraph\eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples\travel_planner_langgraph\eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 ## Which example to start with
@@ -30,7 +30,7 @@ p2m results status travel-planner-langgraph-v1 demo-1
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Measure ACS policy on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_baseline_prompt.yaml` / `eval_config_guarded.yaml` / `eval_config_guarded_gepa.yaml` | Port of the microsoft/AgentShield bank-manager demo. Four variants (no ACS, naïve DO-NOT prompt, full ACS, full ACS + GEPA-optimized prompt) measured across 4 RAI axes with a 9-dim judge; n=100. |
+| Measure ACS policy on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_baseline_prompt.yaml` / `eval_config_guarded.yaml` / `eval_config_guarded_gepa.yaml` | Bank-manager example with four variants: baseline (unguarded), baseline prompt-hardened, ACS-gated, and ACS + GEPA prompt; measured across four behavior axes with a 9-dimension judge at n=100. |
 
 ## Layout
 

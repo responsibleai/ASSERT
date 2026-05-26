@@ -1,4 +1,4 @@
-"""Render the trade-off chart for the bank-manager 4-variant demo.
+"""Render the trade-off chart for the bank-manager four-variant example.
 
 Reads per-variant judge results from `scores.jsonl` files. The script
 checks two locations and uses whichever has data, in order:
@@ -8,18 +8,18 @@ checks two locations and uses whichever has data, in order:
        rendered PNG checked into the repo, and lets reviewers re-render
        the chart from a clean `git pull` without re-running the eval.
     2. artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
-       — live runtime output (the path p2m writes to during a run; this
+       — live runtime output (the path assert-eval writes to during a run; this
        directory is .gitignored).
 
 where <variant> is one of:
 
-    variant-a-unguarded         (Act 1)
-    variant-b-guarded           (Act 3a — preserves PR #88 cache)
-    variant-c-baseline-prompt      (Act 2)
-    variant-d-guarded-gepa      (Act 3b)
+    variant-a-unguarded         (A · baseline unguarded)
+    variant-b-guarded           (B · ACS-gated)
+    variant-c-baseline-prompt   (C · baseline prompt-hardened)
+    variant-d-guarded-gepa      (D · ACS + GEPA prompt)
 
 The directory letters are chronological (the order variants were added to
-the suite). Legend ordering in the chart is by demo Act for readability.
+the suite). Legend ordering follows the variant labels used in the README.
 
 For each variant, computes:
   - overrefusal rate (x axis)
@@ -61,10 +61,10 @@ ARTIFACTS_RESULTS_LIVE = REPO_ROOT / "artifacts" / "results" / "bank-manager-age
 OUT_PATH = EXAMPLE_DIR / "artifacts" / "trade_off.png"
 
 VARIANTS = [
-    ("variant-a-unguarded",    "Act 1: unguarded",            "#d62728"),  # red
-    ("variant-c-baseline-prompt", "Act 2: naïve DO-NOT prompt",  "#ff7f0e"),  # orange
-    ("variant-b-guarded",      "Act 3a: ACS gates",           "#1f77b4"),  # blue
-    ("variant-d-guarded-gepa", "Act 3b: ACS + GEPA prompt",   "#2ca02c"),  # green
+    ("variant-a-unguarded",       "A: baseline (unguarded)",       "#d62728"),  # red
+    ("variant-b-guarded",         "B: ACS-gated",                  "#1f77b4"),  # blue
+    ("variant-c-baseline-prompt", "C: baseline prompt-hardened",   "#ff7f0e"),  # orange
+    ("variant-d-guarded-gepa",    "D: ACS + GEPA prompt",          "#2ca02c"),  # green
 ]
 
 # Behavior axes (judge dims that count as "behavior under test", excluding
@@ -85,12 +85,12 @@ BEHAVIOR_DIMS = (
 OVERREFUSAL_DIM = "overrefusal"
 
 # Placeholder values when scores.jsonl is missing for a variant. Sources:
-#   variant-a-unguarded / variant-c-guarded: PR #88 n=100 README numbers
+#   all variants: committed PR #88 n=100 README numbers
 #     (max behavior rate ~= union security rate; overrefusal as reported).
-#   variant-b-naive-prompt: prediction from the demo plan (some axes
-#     improve over A, overrefusal jumps to ~30%).
-#   variant-d-guarded-gepa: prediction from the demo plan (axes drop further
-#     vs C, overrefusal held under ~10%).
+#   variant-c-baseline-prompt: prompt-only hardening improves several axes,
+#     while overrefusal rises to 22%.
+#   variant-d-guarded-gepa: ACS plus the placeholder GEPA prompt drives the
+#     measured security dimensions to 0% with 21% overrefusal.
 PLACEHOLDER = {
     "variant-a-unguarded":    {"overrefusal": 0.00, "max_behavior_rate": 0.39, "source": "PR-#88 follow-up n=100"},
     "variant-b-guarded":      {"overrefusal": 0.31, "max_behavior_rate": 0.04, "source": "PR-#88 follow-up n=100"},
@@ -193,8 +193,8 @@ def render(out_path: Path) -> None:
     ax.set_xlabel("Overrefusal rate (lower is better)", fontsize=11)
     ax.set_ylabel("max behavior_rate across 9 judge dims (lower is better)", fontsize=11)
     ax.set_title(
-        "Bank-manager 4-variant trade-off: behavior rate vs overrefusal\n"
-        "lower-left dominates; D (ACS + GEPA-optimized prompt) is the target",
+        "Bank-manager four-variant trade-off: behavior rate vs overrefusal\n"
+        "lower-left dominates; D (ACS + GEPA prompt) is the current best point",
         fontsize=12,
     )
 

@@ -5,11 +5,11 @@
 # examples.bank_manager.agent:chat_guarded_gepa.
 #
 # Current content is a HAND-AUTHORED PLACEHOLDER: the existing SYSTEM_PROMPT
-# from agent.py with three tightening sentences appended. The placeholder is
-# what the demo speaker would point at on stage today; the GEPA notebook
-# (optimize_with_gepa.ipynb) produces the real winner from a Pareto frontier
-# search using ASSERT as the fitness oracle. Until the notebook is run, this
-# placeholder gives the 4-variant demo a complete artifact set on disk.
+# from agent.py with three tightening sentences appended. It remains in place
+# until the GEPA notebook (optimize_with_gepa.ipynb) produces the selected
+# Pareto-frontier candidate using ASSERT as the fitness oracle. Until the
+# notebook is run, this placeholder gives the four-variant example a complete
+# artifact set on disk.
 #
 # Selection rule documented in the notebook:
 #   argmin max(behavior_rates) subject to overrefusal <= 0.10

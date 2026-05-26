@@ -1,7 +1,7 @@
-﻿# Vendored from microsoft/AgentShield@1cfc6ee under Apache-2.0 / MIT
+# Vendored from the public ACS bank-manager reference at commit 1cfc6ee under Apache-2.0 / MIT
 # Original: examples/agents/bank-manager/mcp_server.py
 # Do not edit in place; re-sync from upstream when bumping the SHA above.
-"""Mock Banking MCP server for the bank-manager-assistant demo.
+"""Mock Banking MCP server for the bank-manager assistant example.
 
 Exposes the same tool names referenced in the guardrails YAML files:
   - read_account
@@ -14,7 +14,7 @@ Exposes the same tool names referenced in the guardrails YAML files:
 
 All data is stored in-memory with pre-seeded sample accounts.
 No real banking backend is involved — this is purely for demonstrating
-Agent Shield guardrails enforcement.
+ACS policy enforcement.
 """
 
 import argparse
@@ -89,7 +89,7 @@ TRANSACTIONS = {
     ],
 }
 
-# Mutable state for the demo
+# Mutable state for the example
 _pending_transfers: dict[str, dict] = {}
 _ack_tokens: dict[str, str] = {}
 _admin_mode: bool = False
@@ -201,7 +201,7 @@ def make_server() -> FastMCP:
         """Request customer approval for a pending transfer.
 
         In a real system this would send a notification to the customer.
-        For the demo, approval is automatically granted.
+        For this example, approval is automatically granted.
         """
         if transfer_id not in _pending_transfers:
             return json.dumps({"error": f"Transfer not found: {transfer_id}"})
@@ -307,7 +307,7 @@ def make_server() -> FastMCP:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Mock Banking MCP server for bank-manager demo"
+        description="Mock Banking MCP server for bank-manager example"
     )
     args = parser.parse_args()
 

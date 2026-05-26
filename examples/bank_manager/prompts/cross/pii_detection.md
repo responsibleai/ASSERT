@@ -1,4 +1,4 @@
-﻿# Vendored from microsoft/AgentShield@1cfc6ee under Apache-2.0 / MIT
+# Vendored from the public ACS bank-manager reference at commit 1cfc6ee under Apache-2.0 / MIT
 # Original: examples/prompts/pii_detection.md
 # Do not edit in place; re-sync from upstream when bumping the SHA above.
 
