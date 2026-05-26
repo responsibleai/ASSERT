@@ -13,7 +13,7 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
             captured.update(kwargs)
             return {
                 "id": "resp-chat-1",
-                "model": "openai/gpt-5-mini",
+                "model": "openai/gpt-4o-mini",
                 "choices": [
                     {
                         "finish_reason": "stop",
@@ -36,7 +36,7 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
             response = await model_client.generate(
-                "openai/gpt-5-mini",
+                "openai/gpt-4o-mini",
                 "say hi",
                 options,
             )
@@ -51,8 +51,86 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.finish_reason, "stop")
         self.assertEqual(response.usage.total_tokens, 18)
         self.assertEqual(response.api_mode, "chat_completion")
-        self.assertEqual(response.request_payload["model"], "openai/gpt-5-mini")
+        self.assertEqual(response.request_payload["model"], "openai/gpt-4o-mini")
         self.assertEqual(response.request_payload["messages"], [{"role": "user", "content": "say hi"}])
+
+    async def test_generate_omits_unsupported_gpt5_temperature(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        options = model_client.GenerateOptions(temperature=0.0)
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            await model_client.generate(
+                "azure/gpt-5.4-1",
+                "say hi",
+                options,
+            )
+
+        self.assertNotIn("temperature", captured)
+
+    async def test_generate_keeps_default_gpt5_temperature(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        options = model_client.GenerateOptions(temperature=1.0)
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            await model_client.generate(
+                "azure/gpt-5.4-1",
+                "say hi",
+                options,
+            )
+
+        self.assertEqual(captured["temperature"], 1.0)
+
+    async def test_generate_keeps_non_gpt5_temperature(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        options = model_client.GenerateOptions(temperature=0.0)
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            await model_client.generate(
+                "azure/gpt-4o-mini",
+                "say hi",
+                options,
+            )
+
+        self.assertEqual(captured["temperature"], 0.0)
 
     async def test_generate_structured_adds_json_schema_response_format(self) -> None:
         captured: dict[str, object] = {}
