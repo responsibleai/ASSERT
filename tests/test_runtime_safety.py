@@ -83,10 +83,12 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
     that leaks a worker and asserting the subprocess still exits.
     """
     release = threading.Event()
+    started = threading.Event()
 
     def _hang_forever() -> str:
         # Mimic an unclosed httpx client whose finalizer is wedged on a
         # closed event loop: a blocking wait that won't naturally complete.
+        started.set()
         release.wait(timeout=120.0)
         return "released-by-test-cleanup"
 
@@ -97,7 +99,12 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
         # active when the coroutine returns -- exactly the leak shape
         # we're defending against.
         asyncio.get_running_loop().run_in_executor(None, _hang_forever)
-        await asyncio.sleep(0.01)
+        # Wait until the worker thread is actually running so that
+        # executor.shutdown(cancel_futures=True) cannot cancel a
+        # not-yet-started future — which would let cleanup finish
+        # instantly and skip the timeout warning we assert below.
+        while not started.is_set():
+            await asyncio.sleep(0.01)
         return "main-coro-done"
 
     caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
