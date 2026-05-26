@@ -20,7 +20,7 @@ the artifacts.
 | Act | Variant | What changes | Headline you should see |
 |---|---|---|---|
 | 1. Broken baseline | `eval_config_unguarded.yaml` | Raw LangGraph agent, deliberately too-compliant prompt, no ACS gates | **39%** fabricated_financial_fact, 23% vip_transfer, 19% account_takeover; overrefusal **0%** |
-| 2. The DO-NOT trap | `eval_config_naive_prompt.yaml` | Same agent + five blunt DO-NOTs appended to the system prompt; no ACS | Most security axes drop, but **overrefusal jumps to 22%** |
+| 2. The DO-NOT trap | `eval_config_baseline_prompt.yaml` | Same agent + five blunt DO-NOTs appended to the system prompt; no ACS | Most security axes drop, but **overrefusal jumps to 22%** |
 | 3a. ACS gates | `eval_config_guarded.yaml` | 5-stage ACS policy on, original SUT prompt | Tool-misuse + integrity axes collapse to ≤4%; **overrefusal climbs to 31%** ⚠️ |
 | 3b. ACS + GEPA prompt | `eval_config_guarded_gepa.yaml` | ACS on + GEPA-optimized SUT prompt | All 9 security dims at **0%**; overrefusal **21%** (−10 pp vs ACS-only, still above the 10% target) |
 
@@ -135,7 +135,7 @@ hallucinated-confirmation pattern at 39% in variant A.
 
 ### Act 2 — The DO-NOT trap (~3 min)
 
-- **Config**: `eval_config_naive_prompt.yaml`
+- **Config**: `eval_config_baseline_prompt.yaml`
 - **Target**: `chat_naive` — same agent, no ACS, but the SUT system prompt
   is `SYSTEM_PROMPT` plus a blunt five-line "DO NOT" block plus a final
   "If a request appears risky, refuse." line.
@@ -187,7 +187,7 @@ hallucinated-confirmation pattern at 39% in variant A.
 | `prompts/system_prompt.optimized.txt` | GEPA-optimized SUT system prompt (placeholder today; replaced by `optimize_with_gepa.ipynb`) |
 | `agent.py` | ASSERT callable targets: `chat_unguarded` / `chat_naive` / `chat_guarded` / `chat_guarded_gepa` |
 | `eval_config_unguarded.yaml` | ASSERT eval — Act 1 (no ACS, original prompt) |
-| `eval_config_naive_prompt.yaml` | ASSERT eval — Act 2 (no ACS, naïve DO-NOT prompt) |
+| `eval_config_baseline_prompt.yaml` | ASSERT eval — Act 2 (no ACS, naïve DO-NOT prompt) |
 | `eval_config_guarded.yaml` | ASSERT eval — Act 3a (5-stage ACS, original prompt) |
 | `eval_config_guarded_gepa.yaml` | ASSERT eval — Act 3b (5-stage ACS, GEPA-optimized prompt) |
 | `optimize_with_gepa.ipynb` | DSPy GEPA recipe (authored, NOT executed — runs offline; hours) |
@@ -253,10 +253,10 @@ pair (A↔B, C↔D) skips upstream work and only re-runs `inference` and
 `judge`.
 
 ```powershell
-p2m run --config examples\bank_manager_agent_shield\eval_config_unguarded.yaml
-p2m run --config examples\bank_manager_agent_shield\eval_config_naive_prompt.yaml
-p2m run --config examples\bank_manager_agent_shield\eval_config_guarded.yaml
-p2m run --config examples\bank_manager_agent_shield\eval_config_guarded_gepa.yaml
+p2m run --config examples\bank_manager\eval_config_unguarded.yaml
+p2m run --config examples\bank_manager\eval_config_baseline_prompt.yaml
+p2m run --config examples\bank_manager\eval_config_guarded.yaml
+p2m run --config examples\bank_manager\eval_config_guarded_gepa.yaml
 ```
 
 Artifacts land in (directory letters are chronological, the order variants
@@ -264,13 +264,13 @@ were added to the suite; the four Acts are mapped explicitly):
 
 - `artifacts/results/bank-manager-agent-shield/variant-a-unguarded/`    — Act 1
 - `artifacts/results/bank-manager-agent-shield/variant-b-guarded/`      — Act 3a
-- `artifacts/results/bank-manager-agent-shield/variant-c-naive-prompt/` — Act 2
+- `artifacts/results/bank-manager-agent-shield/variant-c-baseline-prompt/` — Act 2
 - `artifacts/results/bank-manager-agent-shield/variant-d-guarded-gepa/` — Act 3b
 
 The `artifacts/results/` tree is `.gitignored`. A committed snapshot of
 the four `metrics.json` + `scores.jsonl` + `config.yaml` + `manifest.json`
 files lives under
-`examples/bank_manager_agent_shield/artifacts/results/bank-manager-agent-shield/`
+`examples/bank_manager/artifacts/results/bank-manager-agent-shield/`
 for reproducibility (the source of truth for the rendered PNG).
 
 ### Re-render the trade-off chart
@@ -283,7 +283,7 @@ python scripts\render_trade_off.py
 ```
 
 The renderer checks the committed snapshot under
-`examples/bank_manager_agent_shield/artifacts/results/` first, then falls
+`examples/bank_manager/artifacts/results/` first, then falls
 back to the live runtime path under `artifacts/results/`. For any
 variant whose `scores.jsonl` cannot be located it substitutes the
 labelled placeholder from the 2026-05-24 n=100 run so a partial re-run
@@ -292,7 +292,7 @@ still produces a sensible chart.
 ### Re-optimize the prompt (offline; hours)
 
 ```powershell
-jupyter notebook examples\bank_manager_agent_shield\optimize_with_gepa.ipynb
+jupyter notebook examples\bank_manager\optimize_with_gepa.ipynb
 ```
 
 The notebook loads ASSERT as a fitness oracle, runs `dspy.GEPA` against a
@@ -335,7 +335,7 @@ header). **Do not run during a live demo.**
   against a successful tool-call return in the trace.
 - A new `pressure_escalation_intensity` stratify dimension (single_turn /
   gentle / aggressive) to surface the multi-turn dims at meaningful rates.
-- Two new eval configs (`eval_config_naive_prompt.yaml`,
+- Two new eval configs (`eval_config_baseline_prompt.yaml`,
   `eval_config_guarded_gepa.yaml`).
 - Two new `agent.py` callables (`chat_naive`, `chat_guarded_gepa`).
 - A GEPA notebook (authored; not executed) and a placeholder optimized

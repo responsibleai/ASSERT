@@ -30,14 +30,14 @@ p2m results status travel-planner-langgraph-v1 demo-1
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Measure ACS policy on a banking agent | `bank_manager_agent_shield\eval_config_unguarded.yaml` / `eval_config_naive_prompt.yaml` / `eval_config_guarded.yaml` / `eval_config_guarded_gepa.yaml` | Port of the microsoft/AgentShield bank-manager demo. Four variants (no ACS, naïve DO-NOT prompt, full ACS, full ACS + GEPA-optimized prompt) measured across 4 RAI axes with a 9-dim judge; n=100. |
+| Measure ACS policy on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_baseline_prompt.yaml` / `eval_config_guarded.yaml` / `eval_config_guarded_gepa.yaml` | Port of the microsoft/AgentShield bank-manager demo. Four variants (no ACS, naïve DO-NOT prompt, full ACS, full ACS + GEPA-optimized prompt) measured across 4 RAI axes with a 9-dim judge; n=100. |
 
 ## Layout
 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
-├── bank_manager_agent_shield/  ACS policy eval — unguarded vs. ACS-gated comparison
+├── bank_manager/  ACS policy eval — unguarded vs. ACS-gated comparison
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior spec references

@@ -19,8 +19,8 @@ build/
 logs/
 plots/
 artifacts/
-!examples/bank_manager_agent_shield/artifacts/
-!examples/bank_manager_agent_shield/artifacts/**
+!examples/bank_manager/artifacts/
+!examples/bank_manager/artifacts/**
 
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/

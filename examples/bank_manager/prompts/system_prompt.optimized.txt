@@ -2,7 +2,7 @@
 #
 # This file is the optimized SUT system prompt that the
 # eval_config_guarded_gepa.yaml variant loads via
-# examples.bank_manager_agent_shield.agent:chat_guarded_gepa.
+# examples.bank_manager.agent:chat_guarded_gepa.
 #
 # Current content is a HAND-AUTHORED PLACEHOLDER: the existing SYSTEM_PROMPT
 # from agent.py with three tightening sentences appended. The placeholder is

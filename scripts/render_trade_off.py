@@ -3,7 +3,7 @@
 Reads per-variant judge results from `scores.jsonl` files. The script
 checks two locations and uses whichever has data, in order:
 
-    1. examples/bank_manager_agent_shield/artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+    1. examples/bank_manager/artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
        — committed snapshot. This is the source of truth for the
        rendered PNG checked into the repo, and lets reviewers re-render
        the chart from a clean `git pull` without re-running the eval.
@@ -15,7 +15,7 @@ where <variant> is one of:
 
     variant-a-unguarded         (Act 1)
     variant-b-guarded           (Act 3a — preserves PR #88 cache)
-    variant-c-naive-prompt      (Act 2)
+    variant-c-baseline-prompt      (Act 2)
     variant-d-guarded-gepa      (Act 3b)
 
 The directory letters are chronological (the order variants were added to
@@ -29,7 +29,7 @@ Falls back to PLACEHOLDER values keyed off the PR #88 n=100 numbers for any
 variant whose scores.jsonl is missing — the README explicitly flags any
 PLACEHOLDER point so reviewers know to re-render after fresh runs.
 
-Output: examples/bank_manager_agent_shield/artifacts/trade_off.png
+Output: examples/bank_manager/artifacts/trade_off.png
 
 Run from the repo root:
     python scripts/render_trade_off.py
@@ -53,7 +53,7 @@ import matplotlib.pyplot as plt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_DIR = REPO_ROOT / "examples" / "bank_manager_agent_shield"
+EXAMPLE_DIR = REPO_ROOT / "examples" / "bank_manager"
 # Primary source: committed snapshot under the example directory (not gitignored).
 # Fallback source: live runtime output under the repo root (gitignored).
 ARTIFACTS_RESULTS_COMMITTED = EXAMPLE_DIR / "artifacts" / "results" / "bank-manager-agent-shield"
@@ -62,7 +62,7 @@ OUT_PATH = EXAMPLE_DIR / "artifacts" / "trade_off.png"
 
 VARIANTS = [
     ("variant-a-unguarded",    "Act 1: unguarded",            "#d62728"),  # red
-    ("variant-c-naive-prompt", "Act 2: naïve DO-NOT prompt",  "#ff7f0e"),  # orange
+    ("variant-c-baseline-prompt", "Act 2: naïve DO-NOT prompt",  "#ff7f0e"),  # orange
     ("variant-b-guarded",      "Act 3a: ACS gates",           "#1f77b4"),  # blue
     ("variant-d-guarded-gepa", "Act 3b: ACS + GEPA prompt",   "#2ca02c"),  # green
 ]
@@ -94,7 +94,7 @@ OVERREFUSAL_DIM = "overrefusal"
 PLACEHOLDER = {
     "variant-a-unguarded":    {"overrefusal": 0.00, "max_behavior_rate": 0.39, "source": "PR-#88 follow-up n=100"},
     "variant-b-guarded":      {"overrefusal": 0.31, "max_behavior_rate": 0.04, "source": "PR-#88 follow-up n=100"},
-    "variant-c-naive-prompt": {"overrefusal": 0.22, "max_behavior_rate": 0.03, "source": "PR-#88 follow-up n=100"},
+    "variant-c-baseline-prompt": {"overrefusal": 0.22, "max_behavior_rate": 0.03, "source": "PR-#88 follow-up n=100"},
     "variant-d-guarded-gepa": {"overrefusal": 0.21, "max_behavior_rate": 0.00, "source": "PR-#88 follow-up n=100"},
 }
 
