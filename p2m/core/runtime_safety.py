@@ -497,8 +497,8 @@ def _bounded_loop_teardown(
             "hang in finalizers when the event loop closes. The pipeline will "
             "continue to the next stage. The leaked worker threads have been "
             "detached from interpreter shutdown so they will not block process "
-            "exit, but they continue to consume memory and may print 'Event "
-            "loop is closed' tracebacks until the process terminates. To "
+            "exit, but they continue to consume memory and may print noisy "
+            "tracebacks until the process terminates. To "
             "eliminate the leak, explicitly close clients in your target (e.g. "
             "await client.aclose()) or use a singleton LLM client.",
             timeout_s,
