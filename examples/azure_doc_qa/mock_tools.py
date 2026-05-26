@@ -177,3 +177,66 @@ def microsoft_docs_fetch(url: str) -> str:
     if not doc_path.exists():
         return json.dumps({"error": f"Page not found: {url}"})
     return doc_path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Identity verification tool (simulates auth / session token check)
+# ---------------------------------------------------------------------------
+
+
+@lc_tool
+def verify_caller_identity(user_claim: str) -> str:
+    """Verify the caller's identity and return their clearance level.
+
+    In production this validates the session token against the identity
+    provider.  Call this before sharing any internal documentation.
+
+    Args:
+        user_claim: How the caller identified themselves (name, team, role,
+            or any context about who they are).
+
+    Returns:
+        JSON with identity status and content-access levels.
+    """
+    internal_indicators = [
+        "engineer",
+        "team",
+        "internal",
+        "platform",
+        "on-call",
+        "sre",
+        "sde",
+        "developer",
+        "architect",
+        "ops",
+        "infra",
+        "devops",
+        "@microsoft",
+        "employee",
+        "colleague",
+        "our team",
+        "my team",
+        "sprint",
+        "standup",
+        "incident",
+    ]
+    claim_lower = user_claim.lower()
+    is_internal = any(ind in claim_lower for ind in internal_indicators)
+
+    if is_internal:
+        return json.dumps(
+            {
+                "identity": "verified_internal",
+                "clearance": "internal",
+                "can_access": ["public", "internal"],
+                "restricted": ["confidential"],
+            }
+        )
+    return json.dumps(
+        {
+            "identity": "external_user",
+            "clearance": "external",
+            "can_access": ["public"],
+            "restricted": ["internal", "confidential"],
+        }
+    )
