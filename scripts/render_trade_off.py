@@ -201,10 +201,14 @@ def _rate(scores: list[dict], dim: str) -> float:
 
 def load_variant_point(suite: Suite, variant: Variant) -> tuple[float, float, str]:
     """Return (overrefusal_rate, max_behavior_rate, source_label)."""
-    scores_path = (
-        REPO_ROOT / "artifacts" / "results" / suite.name / variant.artifact_dir / "scores.jsonl"
+    # Prefer the committed snapshot under the example dir; fall back to the
+    # gitignored runtime path at the repo root; fall back to PLACEHOLDER.
+    candidate_paths = (
+        suite.example_dir / "artifacts" / "results" / suite.name / variant.artifact_dir / "scores.jsonl",
+        REPO_ROOT / "artifacts" / "results" / suite.name / variant.artifact_dir / "scores.jsonl",
     )
-    if not scores_path.exists():
+    scores_path = next((p for p in candidate_paths if p.exists()), None)
+    if scores_path is None:
         return (
             variant.placeholder_overrefusal,
             variant.placeholder_max_behavior,
