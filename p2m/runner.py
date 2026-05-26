@@ -517,6 +517,9 @@ def run_pipeline(
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "running"
+            manifest.stage_timings[stage_name] = {
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
             _record_run_artifacts(manifest, ctx, run_root)
             _write_manifest(manifest, run_root)
         _print_stage_start(stage_name, ctx, raw_cfg)
@@ -599,6 +602,10 @@ def run_pipeline(
         if manifest is not None and module.SCOPE == "run":
             manifest.stages[stage_name] = "completed" if ok else "failed"
             manifest.status = "running" if ok else "failed"
+            existing_timing = manifest.stage_timings.get(stage_name) or {}
+            existing_timing["ended_at"] = datetime.now(timezone.utc).isoformat()
+            existing_timing["duration_secs"] = round(elapsed, 3)
+            manifest.stage_timings[stage_name] = existing_timing
             _record_run_artifacts(manifest, ctx, run_root)
             _write_manifest(manifest, run_root)
 

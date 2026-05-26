@@ -731,7 +731,7 @@
 	<div class="mt-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
 		<div class="min-w-0 flex-1">
 			<div class="text-[12px] font-medium text-text-muted">Run name</div>
-			<h1 class="text-2xl font-semibold leading-tight text-text" style="margin-top:2px;">{data.run_id}</h1>
+			<h1 class="break-words text-2xl font-semibold leading-tight text-text" style="margin-top:2px;" title={data.run_id}>{data.run_id}</h1>
 			<div class="mt-1.5 flex flex-wrap items-center gap-2">
 				{#if data.manifest?.status === 'completed'}
 					<span class="inline-flex items-center gap-1.5 rounded-full bg-score-pass/10 px-2.5 py-1 text-xs text-score-pass">

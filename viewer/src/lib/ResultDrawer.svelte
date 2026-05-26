@@ -442,7 +442,7 @@
 
 	function llmSourceLabel(source: string): string {
 		if (source === 'target') return 'Target model';
-		if (source === 'auditor') return 'Auditor model';
+		if (source === 'auditor') return 'Tester model';
 		if (source === 'tool_simulator') return 'Tool simulator';
 		return source || 'LLM';
 	}
@@ -1277,7 +1277,7 @@
 							</div>
 							<div class="{isUser ? 'max-w-[85%]' : 'w-[85%]'} rounded-lg {isUser ? 'bg-interactive/8' : 'bg-surface-2'} {isHighlighted ? 'ring-2 ring-interactive bg-interactive/12' : ''} overflow-hidden">
 								<div class="flex items-center gap-2 px-4 pt-3 pb-1.5">
-									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Auditor') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									<span class="text-xs font-semibold text-text-muted">{isUser ? (item.kind === 'prompt' ? 'User' : 'Tester') : 'Target'}{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if regularAgentBadge}
 										<span
 											class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text-muted"

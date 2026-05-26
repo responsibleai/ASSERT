@@ -12,9 +12,19 @@
 
 	const PAGE_SIZE = 12;
 	const statusConfig: Record<string, { icon: string; label: string; class: string }> = {
-		policy_only: { icon: '○', label: 'Behavior Categories Defined', class: 'text-text-muted' },
-		seeds_ready: { icon: '●', label: 'Evaluation Test Set Generated', class: 'text-score-border' },
+		systematized: { icon: '○', label: 'Behavior Categories Defined', class: 'text-text-muted' },
+		test_set_ready: { icon: '●', label: 'Evaluation Test Set Generated', class: 'text-score-border' },
 		has_results: { icon: '◉', label: 'Has Evaluation Result', class: 'text-score-pass' }
+	};
+
+	// Each pipeline stage is inclusive of the prior stages, so filtering by
+	// "Behavior Categories Defined" should also surface suites that have
+	// progressed further (test_set_ready, has_results) — they completed that
+	// step too. Status rank gives us a single "≥" comparison.
+	const statusRank: Record<string, number> = {
+		systematized: 1,
+		test_set_ready: 2,
+		has_results: 3
 	};
 
 	let filtered = $derived.by(() => {
@@ -25,7 +35,10 @@
 				(s) => s.suite_id.toLowerCase().includes(q) || s.behavior_name.toLowerCase().includes(q)
 			);
 		}
-		if (statusFilter !== 'all') items = items.filter((s) => s.status === statusFilter);
+		if (statusFilter !== 'all') {
+			const minRank = statusRank[statusFilter] ?? 0;
+			items = items.filter((s) => (statusRank[s.status] ?? 0) >= minRank);
+		}
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
 			if (sortBy === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
@@ -122,8 +135,8 @@
 				ariaLabel="Filter by evaluation status"
 				options={[
 					{ value: 'all', label: 'All statuses' },
-					{ value: 'policy_only', label: '○ Behavior Categories Defined' },
-					{ value: 'seeds_ready', label: '● Evaluation Test Set Generated' },
+					{ value: 'systematized', label: '○ Behavior Categories Defined' },
+					{ value: 'test_set_ready', label: '● Evaluation Test Set Generated' },
 					{ value: 'has_results', label: '◉ Has Evaluation Result' }
 				]}
 				selected={statusFilter}
@@ -188,8 +201,8 @@
 {:else if viewMode === 'card'}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#each filtered as suite (suite.suite_id)}
-			{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
-			<div class="card-hover group rounded-lg border border-border bg-surface p-4 no-underline">
+			{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
+			<div class="card-hover group relative isolate rounded-lg border border-border bg-surface p-4 no-underline">
 				<div class="flex items-start justify-between gap-3">
 					<p class="min-w-0 flex-1 flex items-center gap-1.5 pt-0.5 font-mono text-[10px] uppercase leading-4 tracking-wider text-text-muted">
 						<svg class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
@@ -199,10 +212,14 @@
 						<span>{sc.icon}</span> {sc.label}
 					</span>
 				</div>
-				<a href="/suite/{suite.suite_id}" class="card-heading mt-1 block text-base font-semibold text-text no-underline">
+				<a
+					href="/suite/{suite.suite_id}"
+					title={suite.behavior_name}
+					class="card-heading mt-1 block break-words text-base font-semibold leading-tight text-text no-underline line-clamp-2 after:absolute after:inset-0 after:content-['']"
+				>
 					{suite.behavior_name}
 				</a>
-				<div class="mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
+				<div class="relative z-10 mt-4 grid grid-cols-3 gap-2 rounded-md bg-surface py-2">
 					<a href="/suite/{suite.suite_id}?section=policy" class="no-underline hover:text-interactive">
 						<div class="text-[10px] text-text-muted">Behavior categories</div>
 						<div class="mt-1 text-sm text-text-secondary">{suite.behavior_category_count}</div>
@@ -240,10 +257,14 @@
 			</thead>
 			<tbody>
 				{#each paginatedList as suite}
-					{@const sc = statusConfig[suite.status] ?? statusConfig.policy_only}
+					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
-						<td class="px-4 py-2.5 align-middle">
-							<a href="/suite/{suite.suite_id}" class="card-heading mt-1.5 block text-base font-semibold text-text no-underline hover:text-interactive hover:underline">{suite.behavior_name}</a>
+						<td class="max-w-xs px-4 py-2.5 align-middle">
+							<a
+								href="/suite/{suite.suite_id}"
+								title={suite.behavior_name}
+								class="card-heading mt-1.5 block break-words text-base font-semibold leading-tight text-text no-underline line-clamp-2 hover:text-interactive hover:underline"
+							>{suite.behavior_name}</a>
 							<p class="truncate font-mono text-[10px] text-text-muted" style="margin:0 0 6px;">{suite.suite_id}</p>
 						</td>
 						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.created_at ? new Date(suite.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</td>

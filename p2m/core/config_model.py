@@ -230,10 +230,12 @@ class RunManifest:
     host: str | None = None
     heartbeat_at: str | None = None
     artifact_versions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    stage_timings: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        empty_collection_keys = {"artifact_versions", "stage_timings"}
         return {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and not (k == "artifact_versions" and not v)
+            if v is not None and not (k in empty_collection_keys and not v)
         }

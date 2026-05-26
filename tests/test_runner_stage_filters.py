@@ -130,6 +130,7 @@ class RunnerStageFilterTest(unittest.TestCase):
                 status="running",
                 ended_at=None,
                 stages={},
+                stage_timings={},
                 to_dict=lambda: {},
             )
 
@@ -170,6 +171,7 @@ class RunnerStageFilterTest(unittest.TestCase):
                 status="running",
                 ended_at=None,
                 stages={},
+                stage_timings={},
                 to_dict=lambda: {},
             )
 
