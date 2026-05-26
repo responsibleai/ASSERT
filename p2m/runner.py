@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
 from dotenv import load_dotenv
 
 from p2m.config import (
@@ -56,13 +57,50 @@ load_dotenv()
 log = logging.getLogger(__name__)
 
 
+def _set_nested(raw: dict[str, Any], path: list[str], value: Any) -> None:
+    cursor = raw
+    for part in path[:-1]:
+        next_value = cursor.setdefault(part, {})
+        if not isinstance(next_value, dict):
+            raise ValueError(f"override path {'.'.join(path)} crosses non-mapping key '{part}'")
+        cursor = next_value
+    cursor[path[-1]] = value
+
+
+def _apply_config_overrides(raw: dict[str, Any], overrides: list[str] | None) -> dict[str, Any]:
+    if not overrides:
+        return raw
+    raw = dict(raw)
+    for override in overrides:
+        if "=" not in override:
+            raise ValueError(f"invalid override '{override}': expected key=value")
+        key, raw_value = override.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"invalid override '{override}': key is empty")
+        value = yaml.safe_load(raw_value)
+        if key == "test_set.sample_size":
+            total = int(value)
+            prompt_size = (total + 1) // 2
+            scenario_size = total // 2
+            _set_nested(raw, ["pipeline", "test_set", "prompt", "sample_size"], prompt_size)
+            _set_nested(raw, ["pipeline", "test_set", "scenario", "sample_size"], scenario_size)
+            continue
+        path = key.split(".")
+        if path[0] in {"systematize", "test_set", "inference", "judge"}:
+            path = ["pipeline", *path]
+        _set_nested(raw, path, value)
+    return raw
+
+
 def _load_context(
     *,
     config: str,
+    overrides: list[str] | None = None,
 ) -> dict[str, Any]:
     """Load one config file into runtime context."""
     cfg_path = Path(config).resolve()
-    raw = load_config(cfg_path)
+    raw = _apply_config_overrides(load_config(cfg_path), overrides)
     return load_runtime_context(raw, cfg_path, stage_modules=STAGES)
 
 
@@ -375,6 +413,7 @@ def run_pipeline(
     config: str,
     force_stages: list[str] | None = None,
     strict: bool = False,
+    overrides: list[str] | None = None,
 ) -> int:
     """Execute the configured stages sequentially and persist suite/run metadata."""
     # Suppress litellm's internal async logging warnings — they fire because
@@ -414,7 +453,7 @@ def run_pipeline(
     sys.stderr = _FilteredStderr(sys.stderr)
 
     try:
-        ctx = _load_context(config=config)
+        ctx = _load_context(config=config, overrides=overrides)
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
