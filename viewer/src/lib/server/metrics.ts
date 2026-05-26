@@ -4,7 +4,16 @@ import {
 	isBooleanFlag,
 	isSuccessfulJudgment
 } from '$lib/judgment.js';
-import type { AuditScore, AuditRunMetrics, BinaryCounts, DimensionMetrics, JudgedSample, RunMetrics } from '$lib/types.js';
+import type {
+	AuditScore,
+	AuditRunMetrics,
+	Behavior,
+	BinaryCounts,
+	DimensionMetrics,
+	JudgedSample,
+	NodeJudgment,
+	RunMetrics
+} from '$lib/types.js';
 import { loadDimensions } from './dimensions.js';
 
 type EventScoredRecord = {
@@ -20,6 +29,67 @@ type EventDimensionAggregate = {
 
 export function emptyScoreCounts(): BinaryCounts {
 	return { 0: 0, 1: 0 };
+}
+
+function emptyDimensionAggregate(): EventDimensionAggregate {
+	return { count: 0, flagged_count: 0, clear_count: 0, counts: emptyScoreCounts() };
+}
+
+function finalizeDimensionAggregate(aggregate: EventDimensionAggregate): DimensionMetrics {
+	return {
+		rate: aggregate.count > 0 ? aggregate.flagged_count / aggregate.count : 0,
+		count: aggregate.count,
+		flagged_count: aggregate.flagged_count,
+		clear_count: aggregate.clear_count,
+		counts: aggregate.counts
+	};
+}
+
+function readNodeJudgments(verdict: Record<string, unknown> | null | undefined): NodeJudgment[] {
+	if (!verdict || typeof verdict !== 'object') return [];
+	const nodes = (verdict as Record<string, unknown>).node_judgments;
+	return Array.isArray(nodes) ? (nodes as NodeJudgment[]) : [];
+}
+
+function buildPermissibilityIndex(behaviors: Behavior[]): Map<string, boolean> {
+	const index = new Map<string, boolean>();
+	for (const behavior of behaviors) {
+		if (!behavior || typeof behavior.name !== 'string') continue;
+		index.set(behavior.name, behavior.permissible === true);
+	}
+	return index;
+}
+
+export function computePolicyViolationByPermissibility(
+	records: EventScoredRecord[],
+	behaviors: Behavior[]
+): { permissible: DimensionMetrics | null; not_permissible: DimensionMetrics | null } {
+	if (!behaviors || behaviors.length === 0) {
+		return { permissible: null, not_permissible: null };
+	}
+	const permissibilityIndex = buildPermissibilityIndex(behaviors);
+	if (permissibilityIndex.size === 0) {
+		return { permissible: null, not_permissible: null };
+	}
+
+	const permissible = emptyDimensionAggregate();
+	const notPermissible = emptyDimensionAggregate();
+
+	for (const record of records) {
+		for (const node of readNodeJudgments(record.verdict)) {
+			if (node.relevant !== true) continue;
+			if (!isBooleanFlag(node.violated)) continue;
+			const name = typeof node.node_name === 'string' ? node.node_name.trim() : '';
+			if (!name || !permissibilityIndex.has(name)) continue;
+			const bucket = permissibilityIndex.get(name) ? permissible : notPermissible;
+			addFlag(bucket, node.violated);
+		}
+	}
+
+	return {
+		permissible: finalizeDimensionAggregate(permissible),
+		not_permissible: finalizeDimensionAggregate(notPermissible)
+	};
 }
 
 function collectDimensionNames(records: EventScoredRecord[]): string[] {
@@ -77,7 +147,10 @@ function dimensionRate(dimensions: Record<string, DimensionMetrics>, name: strin
 	return dimensions[name]?.rate ?? 0;
 }
 
-export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | null {
+export function computeAuditRunMetrics(
+	scores: AuditScore[],
+	behaviors: Behavior[] = []
+): AuditRunMetrics | null {
 	if (scores.length === 0) return null;
 
 	const requiredBaseMetrics = getRequiredBaseMetricNames(loadDimensions());
@@ -100,6 +173,7 @@ export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | 
 	const dimensions = finalizeDimensions(dimensionAggregates);
 	const total = scores.length;
 	const scoredTotal = scoredScores.length;
+	const permissibilitySplit = computePolicyViolationByPermissibility(scoredScores, behaviors);
 
 	return {
 		total,
@@ -109,6 +183,8 @@ export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | 
 		counts,
 		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
 		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
+		policy_violation_on_permissible: permissibilitySplit.permissible,
+		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		dimensions,
 		target: scores[0]?.target ?? '',
 		tester_model: scores[0]?.tester_model ?? '',
@@ -116,7 +192,10 @@ export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | 
 	};
 }
 
-export function computeRunMetrics(samples: JudgedSample[]): RunMetrics | null {
+export function computeRunMetrics(
+	samples: JudgedSample[],
+	behaviors: Behavior[] = []
+): RunMetrics | null {
 	if (samples.length === 0) return null;
 
 	const requiredBaseMetrics = getRequiredBaseMetricNames(loadDimensions());
@@ -137,6 +216,7 @@ export function computeRunMetrics(samples: JudgedSample[]): RunMetrics | null {
 	}
 
 	const dimensions = finalizeDimensions(dimensionAggregates);
+	const permissibilitySplit = computePolicyViolationByPermissibility(scoredSamples, behaviors);
 
 	return {
 		total: samples.length,
@@ -147,6 +227,8 @@ export function computeRunMetrics(samples: JudgedSample[]): RunMetrics | null {
 		counts,
 		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
 		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
+		policy_violation_on_permissible: permissibilitySplit.permissible,
+		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		target: samples[0]?.target ?? '—',
 		judge_model: samples[0]?.judge_model ?? '—',
 		dimensions
