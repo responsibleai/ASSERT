@@ -273,6 +273,8 @@ export interface RunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	target: string;
 	judge_model: string;
 	dimensions: Record<string, DimensionMetrics>;
@@ -301,6 +303,8 @@ export interface AuditRunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
 	tester_model: string;
