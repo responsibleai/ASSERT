@@ -578,6 +578,18 @@ class LLMAuthError(Exception):
 class LLMInputError(Exception):
     """Invalid request (prompt too long, bad params) — not retryable."""
 
+class LLMContentFilterError(LLMInputError):
+    """Provider-side content filter rejected the prompt — not retryable.
+
+    This is a *subclass* of LLMInputError so existing handlers that catch
+    LLMInputError still see content-filter rejections. Adversarial-eval
+    workloads (judge.py, rollout.py) catch this subclass specifically and
+    treat it as a soft per-row failure rather than aborting the run, since
+    sending content the provider will reject is the *whole point* of those
+    workloads. Routine eval workloads still see the parent LLMInputError
+    and fail loudly as before.
+    """
+
 class LLMRateLimitError(Exception):
     """Rate limited — retryable after backoff."""
 
@@ -634,7 +646,42 @@ def _classify_llm_error(exc: Exception) -> Exception:
         return err
     # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
     if isinstance(exc, litellm.BadRequestError):
-        err = LLMInputError(f"Bad request: {exc}")
+        # ContentPolicyViolationError is a BadRequestError subclass on most
+        # providers; some providers (notably Azure OpenAI) instead surface
+        # the content filter via a generic BadRequestError whose message
+        # contains a stable marker. We classify both paths as a
+        # LLMContentFilterError subclass so adversarial-eval workloads can
+        # tolerate them per-row.
+        #
+        # Observed Azure / OpenAI variants (each can appear independently):
+        #   - "content_filter" / "content filter"
+        #   - "ResponsibleAIPolicyViolation"
+        #   - "high-risk cyber activity" / "potentially high-risk"
+        #   - "your prompt was flagged" + "usage policy"
+        #   - "Invalid prompt: ..."  (OpenAI reasoning-models guard text)
+        cf_cls = getattr(litellm, "ContentPolicyViolationError", None)
+        msg_text = str(exc)
+        msg_lower = msg_text.lower()
+        is_content_filter = (
+            cf_cls is not None and isinstance(exc, cf_cls)
+        ) or any(
+            marker in msg_lower
+            for marker in (
+                "content_filter",
+                "content filter",
+                "responsibleaipolicyviolation",
+                "high-risk cyber activity",
+                "potentially high-risk",
+                "flagged as potentially violating",
+                "violating our usage policy",
+                "prompt was flagged",
+                "invalid prompt:",
+            )
+        )
+        if is_content_filter:
+            err = LLMContentFilterError(f"Content filtered: {exc}")
+        else:
+            err = LLMInputError(f"Bad request: {exc}")
         err.__cause__ = exc
         return err
     # 404 — model/deployment not found

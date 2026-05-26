@@ -40,7 +40,7 @@ from p2m.core.io import (
     row_factors,
 )
 from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
-from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
+from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.session import (
     CallableSession,
     ExternalSession,
@@ -1125,6 +1125,22 @@ async def run_inference(
             else:
                 raise ValueError(f"unsupported test case type: {kind}")
             return {"output_index": output_index, "inference_row": transcript.to_dict()}
+        except LLMContentFilterError as exc:
+            # Adversarial-eval test cases (XPIA, PII, security attacks) can
+            # legitimately trip the tester or target model's content
+            # filter. Treat these as soft per-case failures so the
+            # tolerance logic below can decide whether the run is still
+            # publishable, instead of aborting the entire run. Caught
+            # explicitly here (LLMContentFilterError subclasses
+            # LLMInputError) so we emit a quieter debug log instead of
+            # the warning the generic input-error handler below would
+            # emit for every adversarial case.
+            test_case_id = seed_row.get("seed_id", "?")
+            log.debug(
+                "Inference worker hit provider content filter for test case %s: %s",
+                test_case_id, exc,
+            )
+            return {"output_index": output_index, "error": exc}
         except LLMAuthError:
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
@@ -1285,6 +1301,13 @@ async def run_inference(
             )
             raise errors[0]
     if errors:
+        # By the time we reach here, the configurable
+        # P2M_ROLLOUT_ERROR_FAIL_RATIO gate above has already raised on
+        # any run whose untyped-error ratio exceeds the threshold
+        # (default 10%). A small residual count of seed-level failures
+        # (e.g. an auditor turn tripping the model provider's content
+        # filter on an adversarial prompt) is unavoidable at scale —
+        # log it and let the remaining transcripts proceed to judge.
         log.warning(
             "Inference stage completed with %d test case failure(s) out of %d new test_set; see inference_set.jsonl for details",
             len(errors), len(pending_test_cases),

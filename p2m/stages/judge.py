@@ -20,7 +20,7 @@ from p2m.core.judge import (
     infer_judge_status,
     run_transcript_judge as run_llm_judge,
 )
-from p2m.core.model_client import LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError
+from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from p2m.viewer_read_model import build_run_viewer_artifacts
 
@@ -179,6 +179,25 @@ async def run_judge(
             return {
                 "output_index": output_index,
                 "score_row": await score_row(row),
+            }
+        except LLMContentFilterError as exc:
+            # Adversarial-eval workloads routinely send transcripts the
+            # judge's content filter will reject (XPIA payloads, PII
+            # leakage examples, security-attack scenarios). Treat these
+            # as soft per-row failures so the tolerance logic below can
+            # decide whether the run is still publishable. Caught
+            # explicitly (LLMContentFilterError subclasses LLMInputError)
+            # so adversarial seeds emit a quieter debug log instead of
+            # the warning + filter_skipped score the generic input-error
+            # handler below would emit for every one of them.
+            seed_id = row.get("seed_id", "?")
+            log.debug(
+                "Judge worker hit provider content filter for seed %s: %s",
+                seed_id, exc,
+            )
+            return {
+                "output_index": output_index,
+                "error": exc,
             }
         except LLMAuthError:
             raise
@@ -342,14 +361,20 @@ async def run_judge(
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
     build_run_viewer_artifacts(out_dir)
-
     # Per-row failures should not kill the stage as long as *some* rows
     # succeeded. The errors are surfaced via judge_failures in the
     # returned summary and as judge_status != "ok" in scores.jsonl, so
     # downstream consumers (metrics, viewer, CSV) can present them
-    # without losing the rows that did succeed. The stage only fails
-    # outright when no rows succeeded at all, which means the failure
-    # is systemic (auth, config) rather than per-row.
+    # without losing the rows that did succeed. The stage hard-fails
+    # outright when (a) no rows succeeded AND no prior scores were
+    # cached (failure is systemic — auth, config), or (b) the per-row
+    # failure rate exceeds 10% on runs of >=20 transcripts (mirrors
+    # rollout.py's P2M_ROLLOUT_ERROR_FAIL_RATIO ceiling, so a near-
+    # broken run doesn't silently publish thin scores). Below the
+    # tolerance, log and continue — adversarial-eval workloads will
+    # routinely trip the judge model's provider-side content filter
+    # (e.g. Azure's "potentially high-risk cyber activity" check on
+    # XPIA/PII transcripts) and a small residual count is expected.
     if errors and written_rows == 0 and not completed_keys:
         log.error(
             "Judge stage failed: all %d row(s) errored and no prior scores were cached",
@@ -357,10 +382,23 @@ async def run_judge(
         )
         raise errors[0]
     if errors:
-        log.warning(
-            "Judge stage completed with %d row failure(s) out of %d new rows; see scores.jsonl for details",
-            len(errors), len(pending),
-        )
+        total_pending = len(pending)
+        tolerance = total_pending // 10 if total_pending >= 20 else 0
+        if 0 < len(errors) <= tolerance:
+            log.warning(
+                "[judge] tolerating %d/%d row-level failures (<= %d): "
+                "first error was %s. The remaining %d scores will proceed "
+                "to metrics.",
+                len(errors), total_pending, tolerance, type(errors[0]).__name__,
+                written_rows,
+            )
+        else:
+            log.error(
+                "Judge stage failed: %d/%d new rows errored, exceeding the "
+                "10%% tolerance (first error was %s)",
+                len(errors), total_pending, type(errors[0]).__name__,
+            )
+            raise errors[0]
 
     judge_failures = sum(
         1 for row in load_jsonl(scores_path) if infer_judge_status(row) != "ok"

@@ -1166,6 +1166,111 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                         run_id="run-inference",
                     )
 
+    async def test_run_inference_tolerates_one_pct_failures_when_total_is_large(self) -> None:
+        """Total >= 20 and <=10% failures: log warning, continue to judge.
+
+        Mirrors the real production scenario where one tester turn out
+        of ~100 trips Azure's content filter on an adversarial test case.
+        """
+        test_case_rows = [
+            {"type": "prompt", "seed": {"description": f"prompt-{i:03d}"}}
+            for i in range(20)
+        ]
+
+        async def fake_run_prompt_test_case(**kwargs):
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
+            # Fail exactly one of 20 (5% — under 10% threshold).
+            if test_case_id == "test_case_000010":
+                raise RuntimeError("content_filter_blocked")
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"type": "prompt", "test_case_id": test_case_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            test_set_path = tmp_path / "test_set.jsonl"
+            out_dir = tmp_path / "run"
+            test_set_path.write_text(
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
+            ):
+                # Should NOT raise — the single failure is tolerated.
+                result = await run_inference(
+                    test_set_path=str(test_set_path),
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(concurrency=4),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-inference-tolerated",
+                )
+
+            self.assertEqual(result["count"], 20)
+            inference_rows = [
+                json.loads(line)
+                for line in (out_dir / "inference_set.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(len(inference_rows), 19)
+            self.assertNotIn(
+                "test_case_000010",
+                {row["test_case_id"] for row in inference_rows},
+            )
+
+    async def test_run_inference_raises_when_failures_exceed_tolerance(self) -> None:
+        """Total >= 20 with > 10% failures still raises: real outage."""
+        test_case_rows = [
+            {"type": "prompt", "seed": {"description": f"prompt-{i:03d}"}}
+            for i in range(20)
+        ]
+
+        async def fake_run_prompt_test_case(**kwargs):
+            # Fail 5/20 = 25% — over 10% threshold (tolerance is 2).
+            test_case_id = str(kwargs["test_case"]["test_case_id"])
+            if test_case_id in {f"test_case_{i:06d}" for i in range(1, 6)}:
+                raise RuntimeError("deployment_not_found")
+
+            class FakeTranscript:
+                def to_dict(self_inner) -> dict[str, str]:
+                    return {"type": "prompt", "test_case_id": test_case_id}
+
+            return FakeTranscript()
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            test_set_path = tmp_path / "test_set.jsonl"
+            out_dir = tmp_path / "run"
+            test_set_path.write_text(
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "deployment_not_found"
+                ):
+                    await run_inference(
+                        test_set_path=str(test_set_path),
+                        target=TargetConfig(model="azure/gpt-5.4"),
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="azure/gpt-5.4"),
+                            inference=InferenceConfig(concurrency=4),
+                        ),
+                        save_dir=str(out_dir),
+                        run_id="run-inference-fatal",
+                    )
+
     async def test_run_inference_resumes_from_existing_transcripts(self) -> None:
         """Pre-populated inference_set.jsonl causes completed test_set to be skipped."""
         test_case_rows = [
