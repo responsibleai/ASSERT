@@ -49,6 +49,14 @@ p2m analysis test-set-metrics --taxonomy artifacts\results\<suite>\taxonomy.json
 p2m analysis test-set-metrics --taxonomy artifacts\results\<suite>\taxonomy.json --test_set artifacts\results\<suite>\test_set.jsonl --embed-backend hf --embed-model all-MiniLM-L6-v2
 ```
 
+## Generate a config from Agent Shield guardrails
+
+```powershell
+p2m adapters agent-shield --guardrails path\to\generated.guardrails.yaml --target-callable examples.my_agent:chat --output examples\my_agent\eval_config.yaml
+```
+
+This turns Agent Shield YAML into a starting Adaptive Eval config. The generated config keeps YAML quality visible as an evaluation variable, so failures can point to the generated guardrails, the runtime guardrail behavior, the target agent, or the eval itself.
+
 ## Where outputs go
 
 All outputs are written under:

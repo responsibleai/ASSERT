@@ -15,6 +15,7 @@ from click.shell_completion import CompletionItem
 from rich.console import Console
 from rich.table import Table
 
+from p2m.adapters.agent_shield import build_eval_config, dump_eval_config, load_guardrails
 from p2m.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from p2m.logging_config import configure_logging
@@ -1260,6 +1261,60 @@ def analysis_test_set_metrics(
     click.echo(f"Wrote {out_json}")
     if out_md:
         click.echo(f"Wrote {out_md}")
+
+
+@cli.group(cls=SuggestingGroup, short_help="Generate configs from external safety artifacts")
+def adapters():
+    """Convert external safety artifacts into p2m eval configs."""
+
+
+@adapters.command("agent-shield", short_help="Generate an eval config from Agent Shield guardrails YAML")
+@click.option(
+    "--guardrails",
+    "guardrails_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to an Agent Shield guardrails YAML file.",
+)
+@click.option(
+    "--target-callable",
+    required=True,
+    help="Python callable target to evaluate, e.g. examples.my_agent:chat.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Where to write the generated p2m eval config YAML.",
+)
+@click.option("--suite", default=None, help="Optional suite id for the generated config.")
+@click.option("--run", "run_id", default="generated-yaml-smoke", show_default=True, help="Run id for the generated config.")
+@click.option("--model", default="azure/gpt-5.4-mini", show_default=True, help="Default generation/tester model.")
+@click.option("--judge-model", default=None, help="Judge model. Defaults to --model.")
+def adapters_agent_shield(
+    guardrails_path: Path,
+    target_callable: str,
+    output_path: Path,
+    suite: str | None,
+    run_id: str,
+    model: str,
+    judge_model: str | None,
+):
+    """Generate a p2m config from an Agent Shield guardrails YAML."""
+
+    guardrails = load_guardrails(guardrails_path)
+    config = build_eval_config(
+        guardrails,
+        source_path=guardrails_path,
+        suite=suite,
+        run=run_id,
+        target_callable=target_callable,
+        model=model,
+        judge_model=judge_model,
+    )
+    dump_eval_config(config, output_path)
+    click.echo(f"Wrote Agent Shield eval config to {output_path}")
 
 
 @cli.command("judge-traces", short_help="Judge pre-collected OTel traces without running inference")
