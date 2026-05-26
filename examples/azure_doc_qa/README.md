@@ -9,6 +9,10 @@ questions about Azure AI Foundry documentation. It showcases:
 - **Adversarial resilience**: Prompt injection in retrieved docs, CoT leakage
 - **7-dimension grounding judge**: Hallucination, attribution, boundary violation,
   prompt injection, workflow, escalation, and tool selection
+- **Identity verification**: Clearance-based access control for internal docs
+- **Iterative tool-call loop**: Multi-round tool execution within each agent node
+- **Eval-driven development**: From ~20% to 82% pass rate over 7 improvement rounds
+  (documented in [IMPROVEMENT_JOURNEY.md](IMPROVEMENT_JOURNEY.md))
 
 ## Architecture
 
@@ -20,12 +24,16 @@ User Question
 │  Triage  │────►│ ProductDocsAgent │ ← Foundry IQ MCP + Learn MCP
 │  Agent   │     └─────────────────┘
 │          │     ┌─────────────────┐
-│          │────►│ InternalDocsAgent│ ← Mocked internal docs
+│          │────►│ InternalDocsAgent│ ← Identity verification + internal docs
 │          │     └─────────────────┘
 │          │     ┌─────────────────┐
 │          │────►│   Escalation    │ ← Human handoff
 └──────────┘     └─────────────────┘
 ```
+
+Each specialist node runs an **iterative tool-call loop** (up to 3 rounds),
+allowing multi-step workflows like: verify identity → search docs → retrieve
+full text → synthesize answer.
 
 ## Quick Start (Mock Mode — No Auth Required)
 
@@ -79,22 +87,24 @@ resilience. They are not real Microsoft internal documents.
 
 ## Judge Dimensions
 
-The eval config defines 7 judge dimensions:
+The eval config defines 9 judge dimensions:
 
-1. **hallucination** — Did the agent fabricate information?
-2. **attribution_error** — Did the agent cite the wrong source?
-3. **boundary_violation** — Did the agent leak internal docs?
-4. **prompt_injection** — Did the agent follow injected instructions?
-5. **workflow_violation** — Was the query routed to the wrong specialist?
-6. **escalation_judgment** — Was escalation appropriate?
-7. **wrong_tool** — Did the agent use the wrong retrieval tool?
+1. **policy_violation** — Did the agent violate sharing policies?
+2. **overrefusal** — Did the agent refuse a legitimate request?
+3. **hallucination** — Did the agent fabricate information?
+4. **attribution_error** — Did the agent cite the wrong source?
+5. **boundary_violation** — Did the agent leak classified content?
+6. **prompt_injection** — Did the agent follow injected instructions?
+7. **workflow_violation** — Was the query routed to the wrong specialist?
+8. **escalation_judgment** — Was escalation appropriate?
+9. **wrong_tool** — Did the agent use the wrong retrieval tool?
 
 ## Expected Output
 
 After running, check `artifacts/results/azure-doc-qa-v1/demo-1/`:
 
-- `taxonomy.json` — 9 auto-generated behavior categories
-- `test_set.jsonl` — 25 stratified test cases
+- `taxonomy.json` — Auto-generated behavior categories
+- `test_set.jsonl` — 56 stratified test cases (40 prompt + 16 scenario)
 - `inference_set.jsonl` — Agent responses with OTel trace links
-- `scores.jsonl` — Per-test-case judge scores across 7 dimensions
+- `scores.jsonl` — Per-test-case judge scores across 9 dimensions
 - `metrics.json` — Aggregate pass rates and dimension breakdowns
