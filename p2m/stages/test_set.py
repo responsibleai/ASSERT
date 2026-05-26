@@ -21,6 +21,7 @@ from p2m.core.config_model import (
     TargetConfig,
 )
 from p2m.core.io import (
+    row_behavior,
     stratification_dimensions,
     fill_template,
     load_policy,
@@ -899,6 +900,34 @@ async def run_test_set(
     errored_count = sum(int(r.get("errored_count", 0)) for r in results)
     all_records = normalize_test_case_rows(all_records)
     write_jsonl(out_path, all_records)
+
+    # --- Coverage check -------------------------------------------------------
+    # Warn when generated test cases don't cover all taxonomy categories.
+    all_categories = {
+        cat["name"]
+        for cat in taxonomy.get("behavior_categories", [])
+    }
+    covered_categories = {row_behavior(r) for r in all_records} - {""}
+    missing_categories = all_categories - covered_categories
+    if missing_categories:
+        # With stratification dimensions the covering array has more tuples
+        # than categories.  The minimum sample_size per kind that guarantees
+        # every category appears at least once equals the number of
+        # categories (no extra dimensions) or more (with extra dimensions).
+        min_per_kind = len(all_categories)
+        log.warning(
+            "Test cases cover only %d of %d behavior categories. "
+            "Missing categories: %s. "
+            "To cover all categories, set sample_size >= %d per kind "
+            "(prompt / scenario). With additional stratification dimensions "
+            "the required minimum may be higher.",
+            len(covered_categories),
+            len(all_categories),
+            ", ".join(sorted(missing_categories)),
+            min_per_kind,
+        )
+    # -------------------------------------------------------------------------
+
     prompt_count = sum(
         1 for record in all_records if record.get("type") == "prompt"
     )

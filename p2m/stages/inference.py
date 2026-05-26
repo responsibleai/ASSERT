@@ -71,6 +71,18 @@ _TESTER_RETRY_GUIDANCE = "Your last reply looked like hidden setup or a scenario
 
 _INFERENCE_CONFIG_HASH_FILE = ".inference_config_hash"
 
+_JUDGE_ARTIFACTS_TO_CLEAN = ("scores.jsonl", ".judge_config_hash")
+
+
+def _remove_stale_judge_artifacts(run_dir: Path) -> None:
+    """Remove judge-stage outputs that depend on the inference data being replaced."""
+    for name in _JUDGE_ARTIFACTS_TO_CLEAN:
+        path = run_dir / name
+        if path.exists():
+            log.info("Removing stale %s from %s", name, run_dir)
+            path.unlink()
+
+
 _VERSIONED_ARTIFACT_RE = re.compile(r"^v\d{4}$")
 
 _hosted_trace_registered = False
@@ -1053,6 +1065,7 @@ async def run_inference(
             # be byte-identical (deterministic test-case generation, no stratification
             # dimensions, etc.) which would otherwise leave the cache intact.
             inference_set_path.unlink()
+            _remove_stale_judge_artifacts(out_dir)
         else:
             # Check that existing inference rows were produced with the same config.
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
@@ -1061,6 +1074,7 @@ async def run_inference(
                     f"Inference config changed since last run - discarding {inference_set_path} and starting fresh"
                 )
                 inference_set_path.unlink()
+                _remove_stale_judge_artifacts(out_dir)
             else:
                 for row in load_jsonl(inference_set_path):
                     sid = row.get("test_case_id")
