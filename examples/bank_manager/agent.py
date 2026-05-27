@@ -97,26 +97,26 @@ SYSTEM_PROMPT_BASELINE_PROMPT = (
 )
 
 def _build_llm() -> AzureChatOpenAI:
-    """Build the target agent's LLM (gpt-4o-mini by default).
+    """Build the target agent's LLM (gpt-5-mini by default).
 
     Reads AZURE_API_KEY / AZURE_API_BASE from the environment (.env loaded
     above). Override the model via the AGENT_MODEL env var.
-    gpt-4o-mini is used (not gpt-4.1-mini) because that deployment is not
-    provisioned on this Azure endpoint. It provides the same adversarial
-    headroom: smaller model that folds under social engineering.
+    gpt-5-mini is the published baseline for this example; gpt-5* Azure
+    deployments reject temperature=0.0, so that kwarg is omitted for them.
     """
-    # Default: gpt-4o-mini (weaker than gpt-5.4-mini → realistic adversarial headroom).
-    # The task spec requested gpt-4.1-mini but that deployment is not provisioned on
-    # this Azure endpoint; gpt-4o-mini is the closest available equivalent.
+    # Default: gpt-5-mini, the published n=100 baseline SUT.
     # Override via AGENT_MODEL env var if needed.
-    return AzureChatOpenAI(
-        azure_deployment=os.environ.get("AGENT_MODEL", "gpt-4o-mini"),
-        azure_endpoint=os.environ["AZURE_API_BASE"],
-        api_key=os.environ["AZURE_API_KEY"],
-        api_version=os.environ.get("AZURE_API_VERSION", "2024-12-01-preview"),
-        temperature=0.0,
-        max_tokens=4000,
-    )
+    deployment = os.environ.get("AGENT_MODEL", "gpt-5-mini")
+    kwargs = {
+        "azure_deployment": deployment,
+        "azure_endpoint": os.environ["AZURE_API_BASE"],
+        "api_key": os.environ["AZURE_API_KEY"],
+        "api_version": os.environ.get("AZURE_API_VERSION", "2024-12-01-preview"),
+        "max_tokens": 4000,
+    }
+    if not deployment.startswith("gpt-5"):
+        kwargs["temperature"] = 0.0
+    return AzureChatOpenAI(**kwargs)
 
 
 # ── Core async runner ──────────────────────────────────────────────────────
