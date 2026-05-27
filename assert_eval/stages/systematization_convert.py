@@ -20,6 +20,7 @@ from assert_eval.core.config_model import (
     ModelConfig,
 )
 from assert_eval.core.model_client import GenerateOptions, generate_structured
+from assert_eval.stages.systematization import SystematizationResponse, validate_systematization_response
 from assert_eval.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -126,31 +127,35 @@ async def run_systematization_to_taxonomy(
         raise ValueError(
             f"Invalid JSON in systematization file {data_path}: {exc}"
         ) from exc
-    behavior = str(data.get("behavior") or "").strip()
-    if not behavior:
-        raise ValueError("systematization_convert requires systematization.json to include behavior")
-    systematization_text = str(data.get("systematization") or "").strip()
-    if not systematization_text:
-        raise ValueError("systematization_convert requires a non-empty systematization")
-    summary_items = data.get("summary_items")
-    if summary_items is not None and not isinstance(summary_items, list):
-        raise ValueError("systematization_convert requires summary_items to be a list when present")
+    missing_fields = sorted(set(SystematizationResponse.model_fields).difference(data))
+    if missing_fields:
+        raise ValueError(
+            "systematization_convert requires structured systematization field(s): "
+            + ", ".join(missing_fields)
+        )
+    systematization = SystematizationResponse.model_validate(
+        {
+            field: data[field]
+            for field in SystematizationResponse.model_fields
+        }
+    )
+    validate_systematization_response(systematization, expected_behavior=systematization.behavior)
+    behavior = systematization.behavior
+    systematization_json = json.dumps(systematization.model_dump(), ensure_ascii=False, indent=2)
 
     prompt = (
         GUIDELINE_PROMPT.replace("{{behavior_category_count}}", str(behavior_category_count_hint))
         + "\n\n# SYSTEMATIZATION\n"
-        + systematization_text
+        + systematization_json
     )
-    if summary_items:
-        prompt += "\n\n# SUMMARY ITEMS\n" + json.dumps(summary_items, ensure_ascii=False, indent=2)
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
     if model_cfg.reasoning_effort is not None:
         temperature = None
 
     # Retry structured generation up to 2 times if the model returns
-    # a response that doesn't parse into a valid taxonomy dict.  This is
-    # a transient LLM output quality issue — the model occasionally
+    # a response that doesn't parse into a valid taxonomy dict. This is
+    # a transient LLM output quality issue; the model occasionally
     # produces malformed JSON even with response_format set.
     _MAX_PARSE_ATTEMPTS = 2
     taxonomy_payload: dict[str, Any] | None = None
@@ -182,7 +187,7 @@ async def run_systematization_to_taxonomy(
         raise ValueError(
             f"systematization_convert returned no structured taxonomy after "
             f"{_MAX_PARSE_ATTEMPTS} attempts (last response: {last_text[:200]}). "
-            f"This is usually a transient model issue — rerun the command to retry. "
+            f"This is usually a transient model issue; rerun the command to retry. "
             f"If it persists, check your endpoint's token rate limit and quota."
         )
 

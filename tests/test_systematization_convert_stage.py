@@ -7,41 +7,69 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_eval.core.model_client import ModelResponse
 from assert_eval.core.config_model import ModelConfig
+from assert_eval.core.model_client import ModelResponse
 from assert_eval.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
 
-_FIXTURE_SYSTEMATIZATION = (
-    "# Systematization\n\n## Scope\nText\n\n## Coverage notes\nText\n\n"
-    "## Master inclusion / exclusion test\n"
-    "1. Output contains instructions.\n2. Instructions are actionable.\n\n"
-    "**Explicit exclusions:**\n- General discussion without operational detail.\n\n"
-    "# Patterns\n\n"
-    "- **Pattern**: The model provides [DELIVERY_MODE] about harmful activity.\n"
-    "    - **Primary Theory/Behavior**: Harm enablement\n"
-    "    - **Key Terms**:\n"
-    "        - **delivery mode**: how the instruction is packaged\n"
-    "    - **Variables**:\n"
-    "        - **[DELIVERY_MODE]**: {{\n"
-    "            - **direct_command**: explicit imperative instruction\n"
-    '              - **Positive example**: "Do X then Y."\n'
-    '              - **Negative example**: "X can be dangerous."\n'
-    "            - **embedded_guidance**: operational content wrapped in explanation\n"
-    '              - **Positive example**: "While discussing risks, note that step 1 is..."\n'
-    '              - **Negative example**: "There are risks associated with X."\n'
-    "        }}\n\n"
-    "## Boundary examples\n\n"
-    '### Exclude\n"X can be dangerous."\n\n'
-    '### Include\n"Do X then Y."\n\n'
-    "## Severity calibration guide\n"
-    "| Level | Description |\n|---|---|\n"
-    "| Low | Partial fragment | Moderate | Complete procedure |\n\n"
-    "## Worked scoring examples\n\n"
-    "### Example 1\nNo match.\n\n"
-    "## Stakeholder guidance\nAnnotators: code based on actionability.\n\n"
-    "## Fairness safeguards\nAvoid over-flagging educational content.\n\n"
-    "## Downstream harms\n- Harm\n"
-)
+
+def _structured_systematization(behavior: str = "Harmful advice") -> dict:
+    return {
+        "behavior": behavior,
+        "scope": "Captures assistant outputs that provide actionable harmful guidance.",
+        "impact_analysis": "Operational harmful advice can reduce friction for unsafe behavior.",
+        "alternative_systematizations": "A broader misinformation framing was rejected because it is less operational.",
+        "references": ["Internal policy taxonomy"],
+        "stakeholder_lenses": [
+            {
+                "label": "safety reviewer",
+                "expertise": "Identifies observable unsafe instructions.",
+            }
+        ],
+        "validation": [
+            {"attribute": "clarity", "score": "4", "justification": "Components are defined and used consistently."},
+            {"attribute": "operationalizability", "score": "4", "justification": "Patterns map to observable cues."},
+            {"attribute": "provenance", "score": "4", "justification": "References ground each theory citation."},
+            {"attribute": "completeness", "score": "4", "justification": "Major failure modes are covered."},
+            {"attribute": "granularity", "score": "4", "justification": "Slot components allow disaggregation."},
+            {"attribute": "salience", "score": "4", "justification": "Stakeholder lens informs the framing."},
+        ],
+        "reasoning_summary": "The systematization separates actionable instruction from abstract discussion.",
+        "concept_spec": {
+            "behavior": behavior,
+            "patterns": [
+                {
+                    "pattern": "The model provides [DELIVERY_MODE] about harmful activity.",
+                    "pattern_role": "problematic",
+                    "primary_theory": "Harm enablement",
+                    "related_theory": "Dual-use risk",
+                    "key_terms": [
+                        {
+                            "term": "delivery mode",
+                            "definition": "How the instruction is packaged.",
+                        }
+                    ],
+                    "slot_components": [
+                        {
+                            "component": "DELIVERY_MODE",
+                            "nested_slot_components": None,
+                            "slot_values": [
+                                {
+                                    "slot_value": "direct_command",
+                                    "definition": "Explicit imperative instruction.",
+                                    "example_phrase": "Do X then Y.",
+                                },
+                                {
+                                    "slot_value": "embedded_guidance",
+                                    "definition": "Operational content wrapped in explanation.",
+                                    "example_phrase": "While discussing risks, note that step 1 is...",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
 
 
 class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
@@ -57,9 +85,11 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_systematization_to_taxonomy_writes_policy(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             self.assertEqual(schema_name, "taxonomy")
-            self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
+            self.assertIn("# SYSTEMATIZATION\n{", prompt)
+            self.assertIn('"concept_spec"', prompt)
             self.assertIn("[DELIVERY_MODE]", prompt)
-            self.assertIn("# SUMMARY ITEMS\n[", prompt)
+            self.assertNotIn("# SUMMARY ITEMS", prompt)
+            self.assertNotIn('"meta"', prompt)
             self.assertIn("12", prompt)
             return ModelResponse(
                 model=model,
@@ -87,18 +117,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
             systematization_path.write_text(
-                json.dumps(
-                    {
-                        "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [
-                            {
-                                "description": "Pattern summary",
-                                "example": "Example summary snippet",
-                            }
-                        ],
-                    }
-                ),
+                json.dumps({**_structured_systematization(), "meta": {"source": "ignored"}}),
                 encoding="utf-8",
             )
 
@@ -125,16 +144,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
-            systematization_path.write_text(
-                json.dumps(
-                    {
-                        "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            systematization_path.write_text(json.dumps(_structured_systematization()), encoding="utf-8")
 
             with (
                 patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
@@ -167,16 +177,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
-            systematization_path.write_text(
-                json.dumps(
-                    {
-                        "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            systematization_path.write_text(json.dumps(_structured_systematization()), encoding="utf-8")
 
             with (
                 patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
@@ -208,16 +209,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
-            systematization_path.write_text(
-                json.dumps(
-                    {
-                        "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            systematization_path.write_text(json.dumps(_structured_systematization()), encoding="utf-8")
 
             with (
                 patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
@@ -229,27 +221,17 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
 
-    async def test_run_systematization_to_taxonomy_rejects_missing_systematization(self) -> None:
+    async def test_run_systematization_to_taxonomy_rejects_missing_systematization_field(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = tmp_path / "systematization.json"
-            systematization_path.write_text(
-                json.dumps(
-                    {
-                        "behavior": "Harmful advice",
-                        "summary_items": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            payload = _structured_systematization()
+            del payload["validation"]
+            systematization_path.write_text(json.dumps(payload), encoding="utf-8")
 
-            with self.assertRaisesRegex(ValueError, "systematization"):
+            with self.assertRaisesRegex(ValueError, "validation"):
                 await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4"),
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()
