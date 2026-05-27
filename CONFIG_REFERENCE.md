@@ -210,7 +210,7 @@ pipeline:
         name: azure/gpt-5.4-mini
         max_tokens: 10000
     max_turns: 10
-    concurrency: 25
+    concurrency: 10
     max_tool_calls: 10
 ```
 
