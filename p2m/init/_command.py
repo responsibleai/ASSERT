@@ -53,7 +53,7 @@ log = logging.getLogger(__name__)
 @click.option(
     "--model",
     type=str,
-    default="gpt-4.1-mini",
+    default="azure/gpt-5.4-mini",
     show_default=True,
     help="Model for the design agent (LiteLLM model string).",
 )

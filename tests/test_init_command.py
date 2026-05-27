@@ -46,7 +46,7 @@ class InitCommandTest(unittest.TestCase):
                 "init",
                 "--describe", "A chatbot",
                 "--non-interactive",
-                "--model", "gpt-4.1-mini",
+                "--model", "azure/gpt-5.4-mini",
             ])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertTrue(Path("eval.yaml").exists())

@@ -31,6 +31,8 @@ _CHARS_PER_TOKEN = 4
 
 # Default context window sizes (tokens) for well-known model families.
 _DEFAULT_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-5.4-mini": 1_000_000,
+    "gpt-5.4": 1_000_000,
     "gpt-4.1-mini": 1_000_000,
     "gpt-4.1": 1_000_000,
     "gpt-4o": 128_000,
@@ -48,8 +50,10 @@ def _estimate_tokens(text: str) -> int:
 
 def _context_window_for(model: str) -> int:
     """Best-effort context window lookup."""
+    # Strip provider prefixes like "azure/" so "azure/gpt-5.4-mini" matches "gpt-5.4-mini".
+    bare = model.split("/", 1)[-1] if "/" in model else model
     for prefix, size in _DEFAULT_CONTEXT_WINDOWS.items():
-        if model.startswith(prefix):
+        if bare.startswith(prefix):
             return size
     return _FALLBACK_CONTEXT_WINDOW
 
@@ -158,7 +162,7 @@ def build_system_message(
     judge_preset: str | None = None,
     dimensions: list[str] | None = None,
     describe: str | None = None,
-    model: str = "gpt-4.1-mini",
+    model: str = "azure/gpt-5.4-mini",
 ) -> str:
     """Assemble the full system message for the design agent.
 

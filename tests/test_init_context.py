@@ -27,6 +27,10 @@ class ContextWindowForTest(unittest.TestCase):
         window = _context_window_for("gpt-4.1-mini")
         self.assertGreaterEqual(window, 100_000)
 
+    def test_azure_prefix_stripped(self) -> None:
+        window = _context_window_for("azure/gpt-5.4-mini")
+        self.assertGreaterEqual(window, 100_000)
+
     def test_unknown_model_gets_default(self) -> None:
         window = _context_window_for("some-unknown-model")
         self.assertGreater(window, 0)
@@ -34,24 +38,24 @@ class ContextWindowForTest(unittest.TestCase):
 
 class BuildSystemMessageTest(unittest.TestCase):
     def test_basic_output_is_string(self) -> None:
-        msg = build_system_message(model="gpt-4.1-mini")
+        msg = build_system_message(model="azure/gpt-5.4-mini")
         self.assertIsInstance(msg, str)
         self.assertTrue(len(msg) > 100)
 
     def test_includes_schema_reference(self) -> None:
-        msg = build_system_message(model="gpt-4.1-mini")
+        msg = build_system_message(model="azure/gpt-5.4-mini")
         # Should mention config structure somewhere
         self.assertTrue(
             "suite" in msg.lower() or "config" in msg.lower() or "yaml" in msg.lower()
         )
 
     def test_describe_injected(self) -> None:
-        msg = build_system_message(model="gpt-4.1-mini", describe="A chatbot for pizza orders")
+        msg = build_system_message(model="azure/gpt-5.4-mini", describe="A chatbot for pizza orders")
         self.assertIn("pizza", msg.lower())
 
     def test_dimension_hints_injected(self) -> None:
         msg = build_system_message(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             dimensions=["tone", "language"],
         )
         self.assertIn("tone", msg)

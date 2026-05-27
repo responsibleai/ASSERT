@@ -46,7 +46,7 @@ class DesignAgentDoneTest(unittest.TestCase):
             "done", "Here is your config", yaml_str=_MINIMAL_VALID_YAML
         )
         result = run_design_loop(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             describe="A chatbot",
             seed_yaml=None,
             behavior_preset=None,
@@ -73,7 +73,7 @@ class DesignAgentSelfCorrectionTest(unittest.TestCase):
             _make_response("done", "Fixed", yaml_str=_MINIMAL_VALID_YAML),
         ]
         result = run_design_loop(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             describe="A chatbot",
             seed_yaml=None,
             behavior_preset=None,
@@ -100,7 +100,7 @@ class DesignAgentValidationRetryTest(unittest.TestCase):
             _make_response("done", "Second try", yaml_str=_MINIMAL_VALID_YAML),
         ]
         result = run_design_loop(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             describe="A chatbot",
             seed_yaml=None,
             behavior_preset=None,
@@ -123,7 +123,7 @@ class DesignAgentBudgetExhaustionTest(unittest.TestCase):
     def test_returns_none_on_budget_exhaustion(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = "Not JSON"  # always fails parse
         result = run_design_loop(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             describe="A chatbot",
             seed_yaml=None,
             behavior_preset=None,
@@ -148,7 +148,7 @@ class DesignAgentLLMErrorTest(unittest.TestCase):
 
         mock_llm.side_effect = LLMAuthError("bad key")
         result = run_design_loop(
-            model="gpt-4.1-mini",
+            model="azure/gpt-5.4-mini",
             describe="A chatbot",
             seed_yaml=None,
             behavior_preset=None,
