@@ -510,6 +510,12 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     )
 
 
+# -- init (design an eval config with an LLM assistant) ---------------------
+from p2m.init._command import init  # noqa: E402
+
+cli.add_command(init)
+
+
 @cli.command(short_help="Run a pipeline from a YAML config")
 @click.option(
     "--config",
