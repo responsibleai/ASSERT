@@ -71,23 +71,24 @@ def validate_raw_config(data: dict[str, Any]) -> tuple[bool, list[str]]:
 
     # -- behavior ------------------------------------------------------------
     behavior = data.get("behavior")
-    if behavior is not None:
-        if not isinstance(behavior, dict):
-            errors.append("behavior must be a mapping")
-        else:
-            beh_allowed = {"name", "description", "preset"}
-            beh_unknown = sorted(set(behavior) - beh_allowed)
-            if beh_unknown:
-                errors.append(f"behavior has unsupported field(s): {', '.join(beh_unknown)}")
-            name = behavior.get("name")
-            if name is not None:
-                name = str(name)
-                if not _SAFE_ID_RE.match(name):
-                    errors.append(
-                        f"behavior.name must be a valid identifier; got: {name!r}"
-                    )
-            if not name and not behavior.get("preset"):
-                errors.append("behavior.name is required (or use behavior.preset)")
+    if behavior is None:
+        errors.append("'behavior' is required")
+    elif not isinstance(behavior, dict):
+        errors.append("behavior must be a mapping")
+    else:
+        beh_allowed = {"name", "description", "preset"}
+        beh_unknown = sorted(set(behavior) - beh_allowed)
+        if beh_unknown:
+            errors.append(f"behavior has unsupported field(s): {', '.join(beh_unknown)}")
+        name = behavior.get("name")
+        if name is not None:
+            name = str(name)
+            if not _SAFE_ID_RE.match(name):
+                errors.append(
+                    f"behavior.name must be a valid identifier; got: {name!r}"
+                )
+        if not name and not behavior.get("preset"):
+            errors.append("behavior.name is required (or use behavior.preset)")
 
     # -- context -------------------------------------------------------------
     context = data.get("context")
