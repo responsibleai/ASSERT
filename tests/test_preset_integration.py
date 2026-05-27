@@ -64,6 +64,10 @@ class JudgePresetTest(unittest.TestCase):
         dims = self._judge_dims(ctx)
         self.assertTrue(len(dims) > 0, "should load dimensions from preset")
 
+    def test_empty_inline_dimensions_are_allowed(self):
+        ctx = self._load({"dimensions": {}})
+        self.assertEqual(self._judge_dims(ctx), [])
+
     def test_inline_dims_override_preset_dims(self):
         ctx = self._load({
             "preset": "safety-core",

@@ -3,7 +3,7 @@
 This example builds on the [microsoft/AgentShield](https://github.com/microsoft/AgentShield)
 incident-triage reference shape and turns it into a **4-variant ASSERT eval**
 that measures ACS efficacy on a second vertical (the canonical bank-manager
-demo lives in [PR #88](https://github.com/microsoft/ASSERT/pull/88)).
+local-authoring storyline lives in [PR #88](https://github.com/microsoft/ASSERT/pull/88)).
 
 > **Demo path: A → C.** The live demo is a **two-step pair**: variant **A**
 > (`baseline-weak-prompt`, the broken baseline) → variant **C**
