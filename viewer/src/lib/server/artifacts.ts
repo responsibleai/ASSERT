@@ -238,7 +238,7 @@ function runSeedRows(
 
 function rebuildViewerInstruction(runDir: string): string {
 	const configPath = path.resolve(runDir, RUN_CONFIG_FILE);
-	return `Rebuild it by re-running judge for this run: uv run p2m run --config ${configPath} --resume --force-stage judge`;
+	return `Rebuild it by re-running judge for this run: uv run assert-eval run --config ${configPath} --resume --force-stage judge`;
 }
 
 function validateViewerFileMetadata(

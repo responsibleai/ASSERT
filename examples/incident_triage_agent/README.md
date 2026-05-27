@@ -190,15 +190,15 @@ import DSPy at runtime.
 ### Run the demo path (A → C)
 
 ```powershell
-p2m run --config examples\incident_triage_agent\eval_config_baseline.yaml
-p2m run --config examples\incident_triage_agent\eval_config_guarded.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_baseline.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_guarded.yaml
 ```
 
 ### Run the appendix experiments (B and D)
 
 ```powershell
-p2m run --config examples\incident_triage_agent\eval_config_naive_prompt.yaml
-p2m run --config examples\incident_triage_agent\eval_config_guarded_gepa.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_naive_prompt.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_guarded_gepa.yaml
 ```
 
 Artifacts land in (`run:` value used directly as the directory name):
@@ -232,7 +232,7 @@ still produces a sensible chart.
   directory (`artifacts/results/incident-triage-agent-v1/`) and reuse
   them across variants (per `CONFIG_REFERENCE.md`, "Suite-level stages
   write versioned artifacts under the suite directory and are shared
-  across runs"). In practice: the first `p2m run` (any variant)
+  across runs"). In practice: the first `assert-eval run` (any variant)
   generates `test_set.jsonl` once (n=200 prompt + n=200 scenario); the
   remaining runs detect the cached test set and only re-run `inference`
   and `judge` against the same 400 test cases. Cross-variant comparison
@@ -1157,15 +1157,15 @@ From this folder:
 uv pip install agent-shield
 
 # 1. BEFORE — minimal-prompt baseline.
-uv run p2m run --config ./eval_config_baseline.yaml
+uv run assert-eval run --config ./eval_config_baseline.yaml
 
 # 2. AFTER — same test cases, runtime guardrails engaged.
 #    (cached systematization/stratification/test_set; only inference + judge re-run)
-uv run p2m run --config ./eval_config_guarded.yaml
+uv run assert-eval run --config ./eval_config_guarded.yaml
 
 # 3. Compare.
-uv run p2m results status incident-triage-agent-v1 baseline-weak-prompt
-uv run p2m results status incident-triage-agent-v1 guarded-with-shield
+uv run assert-eval results status incident-triage-agent-v1 baseline-weak-prompt
+uv run assert-eval results status incident-triage-agent-v1 guarded-with-shield
 
 # 4. Browse inference outputs.
 cd ../../viewer && npm install && npm run dev
@@ -1282,12 +1282,12 @@ uv run python ./agent.py
 uv run python ./agent_guarded.py
 
 # 4. BEFORE — generate systematization, stratification, test_set, inference, and judge outputs.
-uv run p2m run --config ./eval_config_baseline.yaml
-uv run p2m results status incident-triage-agent-v1 baseline-weak-prompt
+uv run assert-eval run --config ./eval_config_baseline.yaml
+uv run assert-eval results status incident-triage-agent-v1 baseline-weak-prompt
 
 # 5. AFTER — reuse the same test_set; rerun inference and judge against AgentShield.
-uv run p2m run --config ./eval_config_guarded.yaml
-uv run p2m results status incident-triage-agent-v1 guarded-with-shield
+uv run assert-eval run --config ./eval_config_guarded.yaml
+uv run assert-eval results status incident-triage-agent-v1 guarded-with-shield
 ```
 
 Artifacts land under `artifacts/results/incident-triage-agent-v1/`. The suite-level files are `systematization.json`, `stratification.json`, and `test_set.jsonl`; each run writes `inference_set.jsonl`, `scores.jsonl`, and `metrics.json`.

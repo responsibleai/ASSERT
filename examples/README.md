@@ -17,8 +17,8 @@ Copy-Item .env.example .env
 # Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
 # any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
-p2m run --config examples\travel_planner_langgraph\eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples\travel_planner_langgraph\eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 ## Which example to start with

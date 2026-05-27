@@ -40,7 +40,7 @@ Each "agent" is a plain Python function. OTel spans are created manually with
 ## Running
 
 ```bash
-uv run p2m run --config examples/travel_planner_neurosan/eval_config.yaml
+uv run assert-eval run --config examples/travel_planner_neurosan/eval_config.yaml
 ```
 
 ## What the judge sees

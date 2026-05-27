@@ -53,7 +53,7 @@ LATEST_FILE = "latest.json"
 
 # Bound on the version-allocation retry loop. Each retry rescans the stage
 # directory, so the only legitimate reason to exhaust this budget is a
-# pathologically high concurrent allocation rate (hundreds of `p2m run`
+# pathologically high concurrent allocation rate (hundreds of `assert-eval run`
 # invocations against the same suite hitting the same window). At that point
 # we'd rather raise loudly than silently misnumber.
 _MAX_VERSION_ALLOCATION_RETRIES = 100
@@ -412,7 +412,7 @@ def discard_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> None:
     for a non-reused plan is always uniquely owned by this process: the slot
     was reserved by ``mkdir(exist_ok=False)`` in ``prepare_artifact_plan``.
     ``rmtree`` here therefore only removes content this process produced,
-    even when other ``p2m run`` invocations are racing on the same suite.
+    even when other ``assert-eval run`` invocations are racing on the same suite.
     """
 
     if plan.reused:
@@ -862,7 +862,7 @@ def _allocate_version_dir(stage_root: Path) -> tuple[str, Path]:
 
     Computes the next version number from the existing directory listing,
     then attempts ``mkdir(exist_ok=False)`` for the candidate path. If a
-    concurrent ``p2m run`` allocated the same number first (FileExistsError),
+    concurrent ``assert-eval run`` allocated the same number first (FileExistsError),
     we re-scan and retry with the new max. This closes the
     time-of-check/time-of-use window between the directory scan and the
     eventual on-disk write that previously allowed two concurrent pipelines

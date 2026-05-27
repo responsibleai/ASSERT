@@ -3,7 +3,7 @@
 Run any config with:
 
 ```powershell
-p2m run --config examples/pipes/<name>.yaml
+assert-eval run --config examples/pipes/<name>.yaml
 ```
 
 (Assumes your virtualenv is activated. See the [README](../../README.md#quickstart-langgraph-travel-planner-any-agent-works-the-same-way) for setup.)

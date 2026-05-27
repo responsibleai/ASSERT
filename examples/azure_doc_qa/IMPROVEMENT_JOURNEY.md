@@ -31,7 +31,7 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 The initial run showed a **~80% policy_violation rate** — nearly every test case
@@ -83,7 +83,7 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 Result: **34/56 passing (61%)**, up from ~20%. The routing JSON leak was
@@ -422,7 +422,7 @@ pip install -e ".[otel,langgraph]"
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
 # Run eval
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 
 # Check results
 cat artifacts/results/azure-doc-qa-v1/demo-1/metrics.json
