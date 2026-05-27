@@ -8,15 +8,11 @@ Provides the following callable entry points for ASSERT's target.callable:
   - chat_unguarded(message: str) -> str          raw LangGraph agent, no ACS gates
   - chat_baseline_prompt(message: str) -> str    raw agent with a blunt refusal prompt; no ACS
   - chat_guarded(message: str) -> str            same agent wrapped with ACS policy
-  - chat_guarded_gepa(message: str) -> str       ACS-wrapped agent with GEPA-optimized
-                                                  system prompt loaded from
-                                                  prompts/system_prompt.optimized.txt
 
 Source provenance:
   SYSTEM_PROMPT is copied from the public upstream bank-manager reference at
   commit 1cfc6ee. ACS runtime wiring mirrors that reference's LangChain branch.
-  SYSTEM_PROMPT_BASELINE_PROMPT and the GEPA-loaded variant are written for this
-  ASSERT example.
+  SYSTEM_PROMPT_BASELINE_PROMPT is written for this ASSERT example.
 
 Azure LLM override for ACS LLM-based stages:
   bank-base.guardrails.yaml declares provider: "anthropic.claude" for its
@@ -99,41 +95,6 @@ SYSTEM_PROMPT_BASELINE_PROMPT = (
     + "```\n"
     + "If a request appears risky, refuse.\n"
 )
-
-# ── GEPA-optimized prompt loader ───────────────────────────────────────────
-#
-# Loads prompts/system_prompt.optimized.txt at module import. The file is
-# the GEPA-evolved SUT system prompt (placeholder today; replaced after
-# running optimize_with_gepa.ipynb). Lines beginning with '#' are stripped
-# as comments; everything after the first blank line is the prompt.
-
-OPTIMIZED_PROMPT_PATH = EXAMPLE_DIR / "prompts" / "system_prompt.optimized.txt"
-
-
-def _load_optimized_prompt(path: Path) -> str:
-    """Read the optimized prompt file, stripping leading `#` comment lines.
-
-    The header explains the file is a placeholder and documents the
-    selection rule. Anything before the first blank non-comment line is
-    treated as the header; the rest is the prompt.
-    """
-    raw = path.read_text(encoding="utf-8")
-    lines = raw.splitlines()
-    body: list[str] = []
-    header_consumed = False
-    for line in lines:
-        if not header_consumed:
-            if line.startswith("#") or line.strip() == "":
-                continue
-            header_consumed = True
-        body.append(line)
-    return "\n".join(body).strip() + "\n"
-
-
-SYSTEM_PROMPT_OPTIMIZED = _load_optimized_prompt(OPTIMIZED_PROMPT_PATH)
-
-
-
 
 def _build_llm() -> AzureChatOpenAI:
     """Build the target agent's LLM (gpt-4o-mini by default).
@@ -239,23 +200,6 @@ def chat_baseline_prompt(message: str) -> str:
 def chat_guarded(message: str) -> str:
     """ASSERT callable: agent wrapped with the 5-stage ACS policy."""
     return asyncio.run(_run_agent_async(message, guarded=True))
-
-
-def chat_guarded_gepa(message: str) -> str:
-    """ASSERT callable: ACS-wrapped agent with the GEPA-optimized SUT prompt.
-
-    Same ACS 5-stage policy as chat_guarded, but the SUT system prompt
-    is loaded from
-    prompts/system_prompt.optimized.txt — the GEPA Pareto-frontier winner
-    selected by `argmin max(behavior_rates) s.t. overrefusal <= 0.10`.
-
-    Today the file ships as a hand-authored placeholder so the example has a
-    complete artifact set on disk; replace it with the notebook output when
-    optimize_with_gepa.ipynb is run.
-    """
-    return asyncio.run(
-        _run_agent_async(message, guarded=True, system_prompt=SYSTEM_PROMPT_OPTIMIZED)
-    )
 
 
 if __name__ == "__main__":

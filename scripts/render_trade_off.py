@@ -1,4 +1,4 @@
-"""Render the trade-off chart for the bank-manager four-variant example.
+"""Render the trade-off chart for the bank-manager three-variant example.
 
 Reads per-variant judge results from `scores.jsonl` files. The script
 checks two locations and uses whichever has data, in order:
@@ -16,7 +16,6 @@ where <variant> is one of:
     variant-a-unguarded         (A · baseline unguarded)
     variant-b-guarded           (B · ACS-gated)
     variant-c-baseline-prompt   (C · baseline prompt-hardened)
-    variant-d-guarded-gepa      (D · ACS + GEPA prompt)
 
 The directory letters are chronological (the order variants were added to
 the suite). Legend ordering follows the variant labels used in the README.
@@ -64,7 +63,6 @@ VARIANTS = [
     ("variant-a-unguarded",       "A: baseline (unguarded)",       "#d62728"),  # red
     ("variant-b-guarded",         "B: ACS-gated",                  "#1f77b4"),  # blue
     ("variant-c-baseline-prompt", "C: baseline prompt-hardened",   "#ff7f0e"),  # orange
-    ("variant-d-guarded-gepa",    "D: ACS + GEPA prompt",          "#2ca02c"),  # green
 ]
 
 # Behavior axes (judge dims that count as "behavior under test", excluding
@@ -89,13 +87,10 @@ OVERREFUSAL_DIM = "overrefusal"
 #     (max behavior rate ~= union security rate; overrefusal as reported).
 #   variant-c-baseline-prompt: prompt-only hardening improves several axes,
 #     while overrefusal rises to 22%.
-#   variant-d-guarded-gepa: ACS plus the placeholder GEPA prompt drives the
-#     measured security dimensions to 0% with 21% overrefusal.
 PLACEHOLDER = {
     "variant-a-unguarded":    {"overrefusal": 0.00, "max_behavior_rate": 0.39, "source": "PR-#88 follow-up n=100"},
     "variant-b-guarded":      {"overrefusal": 0.31, "max_behavior_rate": 0.04, "source": "PR-#88 follow-up n=100"},
     "variant-c-baseline-prompt": {"overrefusal": 0.22, "max_behavior_rate": 0.03, "source": "PR-#88 follow-up n=100"},
-    "variant-d-guarded-gepa": {"overrefusal": 0.21, "max_behavior_rate": 0.00, "source": "PR-#88 follow-up n=100"},
 }
 
 
@@ -142,24 +137,24 @@ def _rate(scores: list[dict], dim: str) -> float:
     return true / total if total else 0.0
 
 
-def _resolve_scores_path(variant_dir_name: str) -> Path | None:
+def _resolve_scores_path(run_dir_name: str) -> Path | None:
     """Return the first scores.jsonl that exists for this variant, or None."""
     for base in (ARTIFACTS_RESULTS_COMMITTED, ARTIFACTS_RESULTS_LIVE):
-        candidate = base / variant_dir_name / "scores.jsonl"
+        candidate = base / run_dir_name / "scores.jsonl"
         if candidate.exists():
             return candidate
     return None
 
 
-def load_variant_point(variant_dir_name: str) -> tuple[float, float, str]:
+def load_variant_point(run_dir_name: str) -> tuple[float, float, str]:
     """Return (overrefusal_rate, max_behavior_rate, source_label)."""
-    scores_path = _resolve_scores_path(variant_dir_name)
+    scores_path = _resolve_scores_path(run_dir_name)
     if scores_path is None:
-        ph = PLACEHOLDER[variant_dir_name]
+        ph = PLACEHOLDER[run_dir_name]
         return ph["overrefusal"], ph["max_behavior_rate"], f"PLACEHOLDER ({ph['source']})"
     scores = list(_iter_scores(scores_path))
     if not scores:
-        ph = PLACEHOLDER[variant_dir_name]
+        ph = PLACEHOLDER[run_dir_name]
         return ph["overrefusal"], ph["max_behavior_rate"], f"PLACEHOLDER ({ph['source']}; empty scores.jsonl)"
     over = _rate(scores, OVERREFUSAL_DIM)
     max_bh = max((_rate(scores, d) for d in BEHAVIOR_DIMS), default=0.0)
@@ -170,8 +165,8 @@ def render(out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(7.5, 6.0))
 
     legend_labels: list[str] = []
-    for variant_dir_name, label, color in VARIANTS:
-        over, max_bh, source = load_variant_point(variant_dir_name)
+    for run_dir_name, label, color in VARIANTS:
+        over, max_bh, source = load_variant_point(run_dir_name)
         marker_face = color
         marker_edge = "black"
         ax.scatter(
@@ -193,21 +188,15 @@ def render(out_path: Path) -> None:
     ax.set_xlabel("Overrefusal rate (lower is better)", fontsize=11)
     ax.set_ylabel("max behavior_rate across 9 judge dims (lower is better)", fontsize=11)
     ax.set_title(
-        "Bank-manager four-variant trade-off: behavior rate vs overrefusal\n"
-        "lower-left dominates; D (ACS + GEPA prompt) is the current best point",
+        "Bank-manager three-variant trade-off: behavior rate vs overrefusal\n"
+        "lower-left dominates; compare prompt-only hardening with ACS gates",
         fontsize=12,
     )
 
-    # Force a 0..1 frame with 5% padding so the four points are always visible.
+    # Force a 0..1 frame with 5% padding so the three points are always visible.
     ax.set_xlim(-0.02, 0.50)
     ax.set_ylim(-0.02, 0.55)
     ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)
-
-    # Shade the "selectable" zone: overrefusal <= 10% (the documented GEPA
-    # selection rule budget). This is the half-plane we'd accept a winner from.
-    ax.axvspan(-0.02, 0.10, color="#2ca02c", alpha=0.05, zorder=0)
-    ax.text(0.005, 0.52, "overrefusal ≤ 10%\n(GEPA selection budget)",
-            fontsize=8, color="#2ca02c", fontweight="bold")
 
     ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
     fig.tight_layout()
