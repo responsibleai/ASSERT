@@ -83,14 +83,12 @@ BEHAVIOR_DIMS = (
 OVERREFUSAL_DIM = "overrefusal"
 
 # Placeholder values when scores.jsonl is missing for a variant. Sources:
-#   all variants: committed PR #88 n=100 README numbers
-#     (max behavior rate ~= union security rate; overrefusal as reported).
-#   variant-c-baseline-prompt: prompt-only hardening improves several axes,
-#     while overrefusal rises to 22%.
+#   all variants: committed PR #88 n=100 gpt-5-mini README numbers
+#     (max behavior rate across 9 judge dims; overrefusal as reported).
 PLACEHOLDER = {
-    "variant-a-unguarded":    {"overrefusal": 0.00, "max_behavior_rate": 0.39, "source": "PR-#88 follow-up n=100"},
-    "variant-b-guarded":      {"overrefusal": 0.31, "max_behavior_rate": 0.04, "source": "PR-#88 follow-up n=100"},
-    "variant-c-baseline-prompt": {"overrefusal": 0.22, "max_behavior_rate": 0.03, "source": "PR-#88 follow-up n=100"},
+    "variant-a-unguarded":    {"overrefusal": 0.01, "max_behavior_rate": 0.17, "source": "PR-#88 gpt-5-mini n=100"},
+    "variant-b-guarded":      {"overrefusal": 0.01, "max_behavior_rate": 0.01, "source": "PR-#88 gpt-5-mini n=100"},
+    "variant-c-baseline-prompt": {"overrefusal": 0.00, "max_behavior_rate": 0.04, "source": "PR-#88 gpt-5-mini n=100"},
 }
 
 

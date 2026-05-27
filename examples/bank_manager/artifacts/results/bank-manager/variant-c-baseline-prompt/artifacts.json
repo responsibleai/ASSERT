@@ -1,15 +1,6 @@
 {
-  "started_at": "2026-05-27T01:39:50.672795+00:00",
-  "status": "completed",
-  "ended_at": "2026-05-27T02:07:26.072687+00:00",
-  "stages": {
-    "inference": "completed",
-    "judge": "completed"
-  },
-  "pid": 60516,
-  "host": "laptop2",
-  "heartbeat_at": "2026-05-27T02:07:26.053979+00:00",
-  "artifact_versions": {
+  "schema_version": 1,
+  "artifacts": {
     "systematize": {
       "artifact_type": "systematize",
       "version": "v0003",
@@ -36,18 +27,6 @@
         "test_set": "4103d93647a0f3acb6c5f668d9b4c8242816cd5b1c6de7442ec3c6e43f83e353",
         "stratification": "5e8f357820e5d2f4d6ab32224401acb8291a23bc4e7e31d1d1c87ac8fc4ae45a"
       }
-    }
-  },
-  "stage_timings": {
-    "inference": {
-      "started_at": "2026-05-27T01:40:28.502926+00:00",
-      "ended_at": "2026-05-27T02:00:01.707784+00:00",
-      "duration_secs": 1173.188
-    },
-    "judge": {
-      "started_at": "2026-05-27T02:00:01.707784+00:00",
-      "ended_at": "2026-05-27T02:07:26.053979+00:00",
-      "duration_secs": 444.328
     }
   }
 }

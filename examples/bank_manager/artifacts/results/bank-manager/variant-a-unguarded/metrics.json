@@ -1,77 +1,41 @@
 {
   "schema_version": 1,
-  "elapsed_s": 1204.016,
+  "elapsed_s": 2163.0,
   "stages": {
-    "systematize": {
-      "calls": 2,
-      "input_tokens": 9052,
-      "output_tokens": 1472,
-      "cached_input_tokens": 0,
-      "cache_creation_input_tokens": 0,
-      "cache_hit_rate": 0.0,
-      "per_model": {
-        "azure/gpt-5.4-mini": {
-          "calls": 2,
-          "input_tokens": 9052,
-          "output_tokens": 1472,
-          "cached_input_tokens": 0,
-          "cache_creation_input_tokens": 0
-        }
-      },
-      "elapsed_s": 18.219
-    },
-    "test_set": {
-      "calls": 29,
-      "input_tokens": 120465,
-      "output_tokens": 6838,
-      "cached_input_tokens": 24192,
-      "cache_creation_input_tokens": 0,
-      "cache_hit_rate": 0.20082181546507286,
-      "per_model": {
-        "azure/gpt-5.4-mini": {
-          "calls": 29,
-          "input_tokens": 120465,
-          "output_tokens": 6838,
-          "cached_input_tokens": 24192,
-          "cache_creation_input_tokens": 0
-        }
-      },
-      "elapsed_s": 10.344
-    },
     "judge": {
       "calls": 100,
-      "input_tokens": 558368,
-      "output_tokens": 87631,
-      "cached_input_tokens": 526848,
+      "input_tokens": 608824,
+      "output_tokens": 90804,
+      "cached_input_tokens": 456960,
       "cache_creation_input_tokens": 0,
-      "cache_hit_rate": 0.9435497736259958,
+      "cache_hit_rate": 0.7505617386962407,
       "per_model": {
         "azure/gpt-5.4-mini": {
           "calls": 100,
-          "input_tokens": 558368,
-          "output_tokens": 87631,
-          "cached_input_tokens": 526848,
+          "input_tokens": 608824,
+          "output_tokens": 90804,
+          "cached_input_tokens": 456960,
           "cache_creation_input_tokens": 0
         }
       },
-      "elapsed_s": 492.219
+      "elapsed_s": 465.656
     }
   },
   "per_model": {
     "azure/gpt-5.4-mini": {
-      "calls": 131,
-      "input_tokens": 687885,
-      "output_tokens": 95941,
-      "cached_input_tokens": 551040,
+      "calls": 100,
+      "input_tokens": 608824,
+      "output_tokens": 90804,
+      "cached_input_tokens": 456960,
       "cache_creation_input_tokens": 0
     }
   },
   "totals": {
-    "calls": 131,
-    "input_tokens": 687885,
-    "output_tokens": 95941,
-    "cached_input_tokens": 551040,
+    "calls": 100,
+    "input_tokens": 608824,
+    "output_tokens": 90804,
+    "cached_input_tokens": 456960,
     "cache_creation_input_tokens": 0,
-    "cache_hit_rate": 0.8010641313591661
+    "cache_hit_rate": 0.7505617386962407
   }
 }

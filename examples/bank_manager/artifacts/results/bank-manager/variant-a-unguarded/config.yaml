@@ -1,4 +1,4 @@
-﻿suite: bank-manager
+suite: bank-manager
 run: variant-a-unguarded
 
 behavior:
