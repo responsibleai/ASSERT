@@ -2,6 +2,56 @@
 
 Adaptive Eval is CLI-first. All commands assume your virtualenv is activated (see the [README](../../README.md#quickstart-langgraph-travel-planner-any-agent-works-the-same-way) for setup).
 
+## Design a config interactively
+
+```bash
+p2m init
+```
+
+Starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete `eval_config.yaml`. Use this when you are setting up a new eval from scratch instead of editing YAML by hand.
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--output, -o` | `eval.yaml` | Output file path. |
+| `--describe` | — | One-line description of the system to evaluate (skips the initial question). |
+| `--from` | — | Seed from an existing config (edit/extend mode). |
+| `--behavior` | — | Use a built-in behavior preset name. |
+| `--judge-preset` | — | Use a built-in judge preset name. |
+| `--dimensions` | — | Hint dimension axes for the LLM to elaborate (e.g. `"user_role, language"`). |
+| `--model` | `azure/gpt-5.4-mini` | Model for the design agent (any [LiteLLM model string](https://docs.litellm.ai/docs/providers)). |
+| `--env-file` | `.env` | Dotenv file for credentials. |
+| `--non-interactive` | off | Single-shot mode (no conversation). |
+| `--max-turns` | `20` | Maximum conversation turns. |
+| `--force` | off | Overwrite existing output file. |
+| `--dry-run` | off | Print YAML to stdout without writing a file. |
+| `--no-color` | off | Disable colored terminal output. |
+
+### Examples
+
+```bash
+# Interactive session — the assistant will ask what you are evaluating
+p2m init --model azure/gpt-5.4
+
+# Skip the first question with a one-liner
+p2m init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+
+# Edit / extend an existing config
+p2m init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+
+# Non-interactive: generate a config in one shot
+p2m init --model azure/gpt-5.4 --describe "RAG pipeline over internal docs" --non-interactive -o rag_eval.yaml
+
+# Preview the generated YAML without writing a file
+p2m init --model azure/gpt-5.4 --dry-run
+
+# Use an OpenAI model instead (requires OPENAI_API_KEY)
+p2m init --model gpt-4.1-mini
+```
+
+After `p2m init` writes the config, run the pipeline with `p2m run --config <path>`.
+
 ## Run a config
 
 ```powershell
