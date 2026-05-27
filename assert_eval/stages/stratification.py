@@ -8,8 +8,8 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-from p2m.config import parse_model_config, resolve_stage_paths
-from p2m.core.io import (
+from assert_eval.config import parse_model_config, resolve_stage_paths
+from assert_eval.core.io import (
     STRATIFICATION_FILE,
     stratification_dimensions,
     fill_template,
@@ -20,7 +20,7 @@ from p2m.core.io import (
     resolve_path,
     write_json,
 )
-from p2m.core.model_client import GenerateOptions, generate_structured
+from assert_eval.core.model_client import GenerateOptions, generate_structured
 
 DEFAULT_LEVEL_COUNT = 3
 

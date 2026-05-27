@@ -41,7 +41,7 @@ from examples.azure_doc_qa.mock_tools import (
     verify_caller_identity,
 )
 
-_DEPLOYMENT = os.environ.get("P2M_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
 _USE_MOCK = os.environ.get("USE_MOCK_TOOLS", "").strip() == "1"
 
 
@@ -322,7 +322,7 @@ def get_graph():
 
 
 def _history_to_messages(history: list[dict] | None) -> list[BaseMessage]:
-    """Convert p2m history dicts to LangChain messages."""
+    """Convert ASSERT history dicts to LangChain messages."""
     if not history:
         return []
     msgs: list[BaseMessage] = []
@@ -341,7 +341,7 @@ async def chat(message: str, history: list[dict] | None = None) -> str:
 
     Args:
         message: The current user message.
-        history: Optional conversation history from p2m, as a list of
+        history: Optional conversation history from ASSERT, as a list of
             {"role": "user"|"assistant", "content": "..."} dicts.
     """
     graph = get_graph()
@@ -363,7 +363,7 @@ async def chat(message: str, history: list[dict] | None = None) -> str:
 
 
 def chat_sync(message: str, history: list[dict] | None = None) -> str:
-    """Synchronous wrapper for p2m callable integration."""
+    """Synchronous wrapper for ASSERT callable integration."""
     return asyncio.run(chat(message, history=history))
 
 

@@ -1,6 +1,6 @@
 import unittest
 
-from p2m.analysis.test_set_metrics import _prompt_test_case_text
+from assert_eval.analysis.test_set_metrics import _prompt_test_case_text
 
 
 class TestSetMetricsAnalysisTest(unittest.TestCase):

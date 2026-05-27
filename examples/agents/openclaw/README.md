@@ -1,6 +1,6 @@
 # OpenClaw Connector
 
-This example runs OpenClaw inside Docker and lets `p2m` talk to it through `connector: examples.agents.openclaw`. You do not start Docker Compose yourself during a normal evaluation. The connector starts one Compose project per conversation, sends messages with `docker exec`, then removes the project when the conversation closes.
+This example runs OpenClaw inside Docker and lets `ASSERT` talk to it through `connector: examples.agents.openclaw`. You do not start Docker Compose yourself during a normal evaluation. The connector starts one Compose project per conversation, sends messages with `docker exec`, then removes the project when the conversation closes.
 
 The example requires local Docker with Compose support, plus `AZURE_API_KEY` and `AZURE_API_BASE` in the host environment. The Compose file forwards those variables into the container, and the entrypoint writes OpenClaw's runtime config from them at startup.
 

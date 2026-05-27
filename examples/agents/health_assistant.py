@@ -2,7 +2,7 @@
 
 Config key: tools.module: examples.agents.health_assistant
 
-p2m calls methods on the Tools class and returns real results to the
+ASSERT calls methods on the Tools class and returns real results to the
 target model. The tool surface stays health-assistant-shaped, but each
 conversation gets its own temporary workspace and Docker container.
 """

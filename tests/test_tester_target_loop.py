@@ -9,10 +9,10 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from p2m.core.model_client import Message, ModelResponse
-from p2m.core.session import TurnResult
-from p2m.core.transcript import Transcript, TranscriptMetadata
-from p2m.stages.inference import _record_system_message, _run_tester_target_loop
+from assert_eval.core.model_client import Message, ModelResponse
+from assert_eval.core.session import TurnResult
+from assert_eval.core.transcript import Transcript, TranscriptMetadata
+from assert_eval.stages.inference import _record_system_message, _run_tester_target_loop
 
 
 def _make_transcript() -> Transcript:
@@ -101,7 +101,7 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             }
             return response
 
-        with patch("p2m.stages.inference.generate", new=fake_generate):
+        with patch("assert_eval.stages.inference.generate", new=fake_generate):
             stop_reason, final_tester, final_target = await _run_tester_target_loop(
                 transcript=transcript,
                 tester_messages=tester_messages,
@@ -303,7 +303,7 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         async def fake_gen(model, messages, options):
             return _tester_response("Hi")
 
-        with patch("p2m.stages.inference.generate", new=fake_gen):
+        with patch("assert_eval.stages.inference.generate", new=fake_gen):
             stop_reason, _, _ = await _run_tester_target_loop(
                 transcript=transcript,
                 tester_messages=tester_messages,

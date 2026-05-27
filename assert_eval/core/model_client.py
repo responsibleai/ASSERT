@@ -181,7 +181,7 @@ class UsageAccumulator:
 
 
 _USAGE_ACCUMULATOR: contextvars.ContextVar[UsageAccumulator | None] = contextvars.ContextVar(
-    "_p2m_usage_accumulator",
+    "_assert_eval_usage_accumulator",
     default=None,
 )
 
@@ -458,7 +458,7 @@ def build_llm_call_trace(response: ModelResponse, *, source: str) -> dict[str, A
 
     Sanitizes request payloads to prevent credential leakage in artifact files.
     """
-    from p2m.core.security import sanitize_payload
+    from assert_eval.core.security import sanitize_payload
 
     return {
         "source": source,
@@ -547,7 +547,7 @@ def _get_litellm_module() -> Any:
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "litellm is not installed. Run `uv sync` in omni/measurements "
-                "before using p2m.core.model_client."
+                "before using assert_eval.core.model_client."
             ) from exc
         # Silence noisy litellm warnings that pollute stderr
         _LITELLM_MODULE.suppress_debug_info = True
@@ -605,7 +605,7 @@ def _classify_llm_error(exc: Exception) -> Exception:
     ``_with_retries``.  The mapping below is based on the LiteLLM exception
     table (https://docs.litellm.ai/docs/exception_mapping).
 
-    HTTP   LiteLLM exception                       → p2m class (retried?)
+    HTTP   LiteLLM exception                       → ASSERT class (retried?)
     ─────  ──────────────────────────────────────── ─────────────────────────
     400    BadRequestError                          → LLMInputError  (no)
            ├─ ContextWindowExceededError            → LLMInputError  (no)

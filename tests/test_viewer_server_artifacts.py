@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.viewer_read_model import ViewerReadModelBuildError, build_run_viewer_artifacts
+from assert_eval.viewer_read_model import ViewerReadModelBuildError, build_run_viewer_artifacts
 from tests.node_runner import node_supports_ts, node_ts_args
 
 
@@ -1727,7 +1727,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
     """Tests for path-traversal defenses that don't depend on Node TS support."""
 
     def test_manifest_relative_path_rejects_parent_directory_segments(self) -> None:
-        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
+        from assert_eval.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1768,7 +1768,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
         relative ``..`` defense and reads from anywhere on disk.
         """
 
-        from p2m.viewer_read_model import _test_set_artifact_path
+        from assert_eval.viewer_read_model import _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1799,7 +1799,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
         IsADirectoryError / EISDIR).
         """
 
-        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
+        from assert_eval.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"

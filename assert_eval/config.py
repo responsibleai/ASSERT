@@ -1,4 +1,4 @@
-"""Load YAML configs and build the minimal runtime context for p2m."""
+"""Load YAML configs and build the minimal runtime context for ASSERT."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import yaml
 
 log = logging.getLogger(__name__)
 
-from p2m.core.config_model import (
+from assert_eval.core.config_model import (
     DEFAULT_TESTER_MAX_TURNS,
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
@@ -255,7 +255,7 @@ def load_runtime_context(
         )
         preset_name = _optional_str(behavior_raw.get("preset"), field_name="behavior.preset")
         if preset_name:
-            from p2m.library.loader import load_preset
+            from assert_eval.library.loader import load_preset
             preset = load_preset("behavior", preset_name)
             if not behavior_raw.get("name"):
                 behavior_raw = {**behavior_raw, "name": preset["name"]}
@@ -729,7 +729,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             judge_preset_name = _optional_str(scorer_stage.get("preset"), field_name="pipeline.judge.preset")
             preset_dims: list[dict[str, Any]] = []
             if judge_preset_name:
-                from p2m.library.loader import load_preset
+                from assert_eval.library.loader import load_preset
                 preset = load_preset("judge_preset", judge_preset_name)
                 preset_dims = parse_judge_dimensions(
                     preset.get("dimensions"),

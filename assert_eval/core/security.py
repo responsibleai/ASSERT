@@ -1,4 +1,4 @@
-"""Security utilities for the p2m pipeline.
+"""Security utilities for the ASSERT pipeline.
 
 Provides validation helpers for dynamic module loading, URL validation,
 credential sanitization, and path safety checks.
@@ -162,7 +162,7 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
         return
 
     # Environment variable override for development/testing
-    if os.environ.get("P2M_ALLOW_PRIVATE_ENDPOINTS", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("ASSERT_ALLOW_PRIVATE_ENDPOINTS", "").lower() in ("1", "true", "yes"):
         return
 
     try:

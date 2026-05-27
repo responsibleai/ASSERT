@@ -12,8 +12,8 @@ from typing import Any
 
 import yaml
 
-from p2m.core.async_utils import gather_limited
-from p2m.core.io import (
+from assert_eval.core.async_utils import gather_limited
+from assert_eval.core.io import (
     load_jsonl,
     permissible_by_behavior,
     policy_permissible,
@@ -24,9 +24,9 @@ from p2m.core.io import (
     row_behavior,
     row_factors,
 )
-from p2m.core.judge import get_verdict_dimension, is_valid_event_flag
-from p2m.core.model_client import GenerateOptions, ModelResponse, generate, generate_structured
-from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_eval.core.judge import get_verdict_dimension, is_valid_event_flag
+from assert_eval.core.model_client import GenerateOptions, ModelResponse, generate, generate_structured
+from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
 PAIRWISE_SCORES_FILE = "pairwise_scores.jsonl"
 PAIRWISE_METRICS_FILE = "pairwise_metrics.json"

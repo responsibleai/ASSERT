@@ -139,7 +139,7 @@ class ManifestHeartbeat:
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop,
-            name="p2m-heartbeat",
+            name="assert-eval-heartbeat",
             daemon=True,
         )
         self._thread.start()
@@ -221,7 +221,7 @@ class PipelineWatchdog:
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop,
-            name="p2m-watchdog",
+            name="assert-eval-watchdog",
             daemon=True,
         )
         self._thread.start()
@@ -413,7 +413,7 @@ def run_stage_coro(
 
     executor = _AbandonableThreadPoolExecutor(
         max_workers=max_workers,
-        thread_name_prefix="p2m-stage-worker",
+        thread_name_prefix="assert-eval-stage-worker",
     )
     loop.set_default_executor(executor)
     asyncio.set_event_loop(loop)
@@ -477,7 +477,7 @@ def _bounded_loop_teardown(
 
     teardown_thread = threading.Thread(
         target=_teardown,
-        name="p2m-stage-teardown",
+        name="assert-eval-stage-teardown",
         daemon=True,
     )
     teardown_thread.start()

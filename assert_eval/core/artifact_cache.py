@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from p2m.core.io import PROMPTS_DIR, write_json
+from assert_eval.core.io import PROMPTS_DIR, write_json
 
 
 log = logging.getLogger(__name__)

@@ -12,16 +12,16 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from p2m.core.io import load_jsonl, row_behavior
+from assert_eval.core.io import load_jsonl, row_behavior
 
-from p2m.analysis.stability import (
+from assert_eval.analysis.stability import (
     compute_tester_variation,
     compute_repeatability,
     format_tester_variation,
     format_repeatability,
 )
-from p2m.analysis.inference_metrics import compute_inference_metrics
-from p2m.analysis.stats import binary_rate_ci, macro_rate
+from assert_eval.analysis.inference_metrics import compute_inference_metrics
+from assert_eval.analysis.stats import binary_rate_ci, macro_rate
 
 
 MIN_BEHAVIOR_SUPPORT = 5  # suppress per-behavior rates below this

@@ -18,8 +18,8 @@ log = logging.getLogger(__name__)
 
 import click
 
-from p2m.config import resolve_stage_paths
-from p2m.core.config_model import (
+from assert_eval.config import resolve_stage_paths
+from assert_eval.core.config_model import (
     DEFAULT_MODEL_TIMEOUT_S,
     DEFAULT_INFERENCE_MAX_TOKENS,
     EvaluationConfig,
@@ -27,7 +27,7 @@ from p2m.core.config_model import (
     InferenceConfig,
     TargetConfig,
 )
-from p2m.core.io import (
+from assert_eval.core.io import (
     INFERENCE_SET_FILE,
     append_jsonl_row,
     get_permissible_flag,
@@ -39,9 +39,9 @@ from p2m.core.io import (
     write_jsonl,
     row_factors,
 )
-from p2m.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
-from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
-from p2m.core.session import (
+from assert_eval.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
+from assert_eval.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
+from assert_eval.core.session import (
     CallableSession,
     ExternalSession,
     HTTPEndpointSession,
@@ -50,9 +50,9 @@ from p2m.core.session import (
     TurnResult,
     serialize_response,
 )
-from p2m.core.tool_backend import ToolBackendResolver, inspect_tool_module
-from p2m.core.tools import load_toolset_file, normalize_tool_defs
-from p2m.core.transcript import (
+from assert_eval.core.tool_backend import ToolBackendResolver, inspect_tool_module
+from assert_eval.core.tools import load_toolset_file, normalize_tool_defs
+from assert_eval.core.transcript import (
     AddMessageEdit,
     Message as TranscriptMessage,
     SetSystemMessageEdit,
@@ -61,8 +61,8 @@ from p2m.core.transcript import (
     TranscriptEvent,
     TranscriptMetadata,
 )
-from p2m.stages.test_set import TOOL_SOURCE_PER_TEST_CASE, TOOL_SOURCE_RUNTIME
-from p2m.viewer_read_model import build_run_viewer_artifacts
+from assert_eval.stages.test_set import TOOL_SOURCE_PER_TEST_CASE, TOOL_SOURCE_RUNTIME
+from assert_eval.viewer_read_model import build_run_viewer_artifacts
 
 SCOPE = "run"
 SUITE_OUTPUT = None
@@ -537,7 +537,7 @@ def _build_target_session(
         if not target.callable:
             raise ValueError("callable target requires a callable reference")
         if target.trace:
-            from p2m.core.otel_session import OTelTracedSession
+            from assert_eval.core.otel_session import OTelTracedSession
 
             return OTelTracedSession(
                 callable_ref=target.callable,
@@ -1275,18 +1275,18 @@ async def run_inference(
     # (deployment misconfigured, target broken, validation bug) than
     # per-test-case bad luck — failing loudly here surfaces it instead of
     # quietly producing a thin artifact. The default threshold of 10% is
-    # tunable via the P2M_INFERENCE_ERROR_FAIL_RATIO env var for ops
+    # tunable via the ASSERT_INFERENCE_ERROR_FAIL_RATIO env var for ops
     # scenarios. Typed refusals are NOT counted toward the ratio.
     # (Inspired by PR #44 commit 15332c8 — adopted scoped to untyped
     # errors only, instead of #44's blanket runtime_error catch-all.)
     try:
         error_fail_ratio = float(
-            os.environ.get("P2M_INFERENCE_ERROR_FAIL_RATIO", "0.10")
+            os.environ.get("ASSERT_INFERENCE_ERROR_FAIL_RATIO", "0.10")
         )
     except ValueError:
         log.warning(
-            "Invalid P2M_INFERENCE_ERROR_FAIL_RATIO=%r; falling back to 0.10",
-            os.environ.get("P2M_INFERENCE_ERROR_FAIL_RATIO"),
+            "Invalid ASSERT_INFERENCE_ERROR_FAIL_RATIO=%r; falling back to 0.10",
+            os.environ.get("ASSERT_INFERENCE_ERROR_FAIL_RATIO"),
         )
         error_fail_ratio = 0.10
     if errors and pending_test_cases:
@@ -1295,14 +1295,14 @@ async def run_inference(
             log.error(
                 "Inference stage failed: %d/%d (%.1f%%) new test_set errored, "
                 "exceeding the failure threshold of %.1f%% "
-                "(set P2M_INFERENCE_ERROR_FAIL_RATIO to override)",
+                "(set ASSERT_INFERENCE_ERROR_FAIL_RATIO to override)",
                 len(errors), len(pending_test_cases),
                 actual_ratio * 100, error_fail_ratio * 100,
             )
             raise errors[0]
     if errors:
         # By the time we reach here, the configurable
-        # P2M_ROLLOUT_ERROR_FAIL_RATIO gate above has already raised on
+        # ASSERT_ROLLOUT_ERROR_FAIL_RATIO gate above has already raised on
         # any run whose untyped-error ratio exceeds the threshold
         # (default 10%). A small residual count of seed-level failures
         # (e.g. an auditor turn tripping the model provider's content

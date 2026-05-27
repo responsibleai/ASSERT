@@ -1,4 +1,4 @@
-"""Path, JSON, and JSONL helpers used across p2m workflows."""
+"""Path, JSON, and JSONL helpers used across ASSERT workflows."""
 
 from __future__ import annotations
 

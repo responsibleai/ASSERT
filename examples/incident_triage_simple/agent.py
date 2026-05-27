@@ -136,7 +136,7 @@ def _call_parts(tc: Any) -> tuple[str, str, dict[str, Any]]:
 
 
 def chat(message: str) -> str:
-    """One triage turn. Callable target for p2m."""
+    """One triage turn. Callable target for ASSERT."""
     state: dict[str, Any] = {}
     registry = _tools(state)
     messages: list[dict[str, Any]] = [

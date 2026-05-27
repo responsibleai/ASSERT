@@ -1,4 +1,4 @@
-"""Minimal sequential runner for the p2m stage pipeline."""
+"""Minimal sequential runner for the ASSERT stage pipeline."""
 
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from p2m.config import (
+from assert_eval.config import (
     ConfigError,
     PIPELINE_STAGE_ORDER,
     load_config,
     load_runtime_context,
 )
-from p2m.core.artifact_cache import (
+from assert_eval.core.artifact_cache import (
     activate_latest_artifacts,
     activate_artifact_plan,
     discard_artifact_plan,
@@ -35,9 +35,9 @@ from p2m.core.artifact_cache import (
     supports_artifact_cache,
     update_latest,
 )
-from p2m.core.config_model import RunManifest, SuiteMetadata
-from p2m.core.io import write_json
-from p2m.core.model_client import (
+from assert_eval.core.config_model import RunManifest, SuiteMetadata
+from assert_eval.core.io import write_json
+from assert_eval.core.model_client import (
     LLMAuthError,
     LLMInputError,
     LLMProviderError,
@@ -45,12 +45,12 @@ from p2m.core.model_client import (
     UsageAccumulator,
     track_usage,
 )
-from p2m.core.runtime_safety import (
+from assert_eval.core.runtime_safety import (
     ManifestHeartbeat,
     PipelineWatchdog,
     run_stage_coro,
 )
-from p2m.stages import STAGES
+from assert_eval.stages import STAGES
 
 load_dotenv()
 
@@ -774,10 +774,10 @@ def _run_stages_inner(
             # traceback unless the user opts into verbose output.
             ok = False
             log.error(f"[{stage_name}] {exc}")
-            if os.environ.get("P2M_VERBOSE_ERRORS") == "1":
+            if os.environ.get("ASSERT_VERBOSE_ERRORS") == "1":
                 log.debug("Full traceback:", exc_info=True)
             else:
-                log.info("(set P2M_VERBOSE_ERRORS=1 to see the full traceback)")
+                log.info("(set ASSERT_VERBOSE_ERRORS=1 to see the full traceback)")
         except Exception:  # noqa: BLE001
             ok = False
             log.error(f"[{stage_name}] Unexpected error", exc_info=True)

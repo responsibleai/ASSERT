@@ -1,9 +1,9 @@
-"""SpanCollector Protocol — decouples P2M from any specific trace backend.
+"""SpanCollector Protocol — decouples ASSERT from any specific trace backend.
 
-P2M's OTel integration depends on this Protocol, not on Phoenix.
+ASSERT's OTel integration depends on this Protocol, not on Phoenix.
 Phoenix is one implementation. Developers can inject any backend.
 
-The canonical span type is OTelSpan (from p2m.core.otel) — JSON-native,
+The canonical span type is OTelSpan (from assert_eval.core.otel) — JSON-native,
 no pandas dependency in the critical path.
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from p2m.core.otel import OTelSpan
+    from assert_eval.core.otel import OTelSpan
 
 # OpenInference attribute keys for validation
 REQUIRED_ATTRIBUTES = frozenset({
@@ -29,7 +29,7 @@ RECOMMENDED_LLM_ATTRIBUTES = frozenset({
 
 @runtime_checkable
 class SpanCollector(Protocol):
-    """Minimal interface P2M depends on for trace collection.
+    """Minimal interface ASSERT depends on for trace collection.
 
     Returns list[OTelSpan] — JSON-native, no pandas dependency.
     Any object implementing get_spans() satisfies this — no inheritance needed.
@@ -115,7 +115,7 @@ class PhoenixCollector:
     """SpanCollector backed by a local Phoenix instance.
 
     Phoenix is an OPTIONAL dependency — only imported when instantiated.
-    Install: pip install 'p2m-taxonomy[otel]'
+    Install: pip install 'ASSERT-taxonomy[otel]'
 
     Queries Phoenix for DataFrame, then converts to list[OTelSpan] internally.
     """
@@ -132,7 +132,7 @@ class PhoenixCollector:
         except ImportError as e:
             raise ImportError(
                 "PhoenixCollector requires arize-phoenix. "
-                "Install with: pip install 'p2m-taxonomy[otel]'"
+                "Install with: pip install 'ASSERT-taxonomy[otel]'"
             ) from e
         self._default_project = project_name
 
@@ -184,7 +184,7 @@ def _dataframe_to_otel_spans(df: Any) -> list[Any]:
 
     Imports OTelSpan lazily to avoid circular imports at module load.
     """
-    from p2m.core.otel import OTelSpan
+    from assert_eval.core.otel import OTelSpan
 
     spans = []
     for _, row in df.iterrows():

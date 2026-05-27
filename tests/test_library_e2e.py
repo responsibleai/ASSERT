@@ -16,9 +16,9 @@ from pathlib import Path
 import yaml
 from click.testing import CliRunner
 
-from p2m.cli import cli
-from p2m.config import load_runtime_context
-from p2m.library.loader import (
+from assert_eval.cli import cli
+from assert_eval.config import load_runtime_context
+from assert_eval.library.loader import (
     KIND_TO_SUBDIR,
     LIBRARY_ROOT,
     VALID_KINDS,
@@ -26,7 +26,7 @@ from p2m.library.loader import (
     load_preset,
     resolve_preset,
 )
-from p2m.stages import STAGES
+from assert_eval.stages import STAGES
 
 # ---------------------------------------------------------------------------
 # Helpers

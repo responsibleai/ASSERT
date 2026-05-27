@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Literal
 
 from rapidfuzz import fuzz
 
-from p2m.core.transcript import SearchableMessageEntry, Transcript
+from assert_eval.core.transcript import SearchableMessageEntry, Transcript
 
 ANCHOR_CONTEXT_CHARS = 24
 NORMALIZED_QUOTE_CHARS = {

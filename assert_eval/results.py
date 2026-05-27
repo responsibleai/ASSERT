@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-from p2m.core.io import load_json, load_jsonl, row_behavior
-from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_eval.core.io import load_json, load_jsonl, row_behavior
+from assert_eval.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 
 
 def current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:

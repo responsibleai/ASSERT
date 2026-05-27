@@ -4,9 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.model_client import ModelResponse
-from p2m.core.config_model import ModelConfig
-from p2m.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
+from assert_eval.core.model_client import ModelResponse
+from assert_eval.core.config_model import ModelConfig
+from assert_eval.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
 
 _FIXTURE_SYSTEMATIZATION = (
     "# Systematization\n\n## Scope\nText\n\n## Coverage notes\nText\n\n"
@@ -99,7 +99,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
 
-            with patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured):
+            with patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured):
                 result_path = await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
@@ -134,7 +134,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
+                patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(RuntimeError, "boom"),
             ):
                 await run_systematization_to_taxonomy(
@@ -176,7 +176,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
+                patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "behavior_categories.permissible"),
             ):
                 await run_systematization_to_taxonomy(
@@ -217,7 +217,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.systematization_convert.generate_structured", new=fake_generate_structured),
+                patch("assert_eval.stages.systematization_convert.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "behavior_categories.name"),
             ):
                 await run_systematization_to_taxonomy(

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.core.io import load_json, load_jsonl
+from assert_eval.core.io import load_json, load_jsonl
 
 
 class LoadJsonlTest(unittest.TestCase):
@@ -14,7 +14,7 @@ class LoadJsonlTest(unittest.TestCase):
                 '{"a": 1}\nnot json\n{"b": 2}\n',
                 encoding="utf-8",
             )
-            with self.assertLogs("p2m.core.io", level="WARNING"):
+            with self.assertLogs("assert_eval.core.io", level="WARNING"):
                 rows = load_jsonl(path)
             self.assertEqual(len(rows), 2)
 

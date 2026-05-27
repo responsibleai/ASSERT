@@ -10,14 +10,14 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-from p2m.core.config_model import (
+from assert_eval.core.config_model import (
     DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS,
     DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE,
     DEFAULT_SYSTEMATIZATION_MODEL,
     ModelConfig,
 )
-from p2m.core.model_client import GenerateOptions, generate_structured
-from p2m.stages.systematize import taxonomy_schema
+from assert_eval.core.model_client import GenerateOptions, generate_structured
+from assert_eval.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 GUIDELINE_PROMPT = (BASE_DIR / "prompts" / "systematization_convert_single.md").read_text(encoding="utf-8")

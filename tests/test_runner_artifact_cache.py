@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from p2m.runner import run_pipeline
+from assert_eval.runner import run_pipeline
 
 
 class RunnerArtifactCacheTest(unittest.TestCase):
@@ -111,8 +111,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
     ) -> list[int]:
         modules = self._modules(seen)
         with (
-            patch("p2m.runner._load_context", side_effect=contexts),
-            patch("p2m.runner.STAGES", modules),
+            patch("assert_eval.runner._load_context", side_effect=contexts),
+            patch("assert_eval.runner.STAGES", modules),
             patch("sys.__stderr__", new_callable=io.StringIO),
         ):
             return [
@@ -354,8 +354,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             ]
 
             with (
-                patch("p2m.runner._load_context", side_effect=[ctx]),
-                patch("p2m.runner.STAGES", modules),
+                patch("assert_eval.runner._load_context", side_effect=[ctx]),
+                patch("assert_eval.runner.STAGES", modules),
                 patch("sys.__stderr__", new_callable=io.StringIO),
             ):
                 code = run_pipeline(config=str(ctx["config_path"]))
@@ -402,8 +402,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             root = Path(tmp_dir)
             ctx = self._ctx(root)
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner.STAGES", modules),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner.STAGES", modules),
                 patch("sys.__stderr__", new_callable=io.StringIO),
             ):
                 code = run_pipeline(config=str(ctx["config_path"]))
@@ -418,8 +418,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             seen: list[str] = []
             modules2 = self._modules(seen)
             with (
-                patch("p2m.runner._load_context", return_value=self._ctx(root)),
-                patch("p2m.runner.STAGES", modules2),
+                patch("assert_eval.runner._load_context", return_value=self._ctx(root)),
+                patch("assert_eval.runner.STAGES", modules2),
                 patch("sys.__stderr__", new_callable=io.StringIO),
             ):
                 code = run_pipeline(config=str(ctx["config_path"]))
@@ -469,8 +469,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
                 SCOPE="suite", SUITE_OUTPUT="test_set.jsonl", run=partial_test_set
             )
             with (
-                patch("p2m.runner._load_context", return_value=self._ctx(root)),
-                patch("p2m.runner.STAGES", modules_run1),
+                patch("assert_eval.runner._load_context", return_value=self._ctx(root)),
+                patch("assert_eval.runner.STAGES", modules_run1),
                 patch("sys.__stderr__", new_callable=io.StringIO),
             ):
                 code = run_pipeline(config=str(self._ctx(root)["config_path"]))
@@ -503,8 +503,8 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             seen.clear()
             modules_run2 = self._modules(seen)
             with (
-                patch("p2m.runner._load_context", return_value=self._ctx(root)),
-                patch("p2m.runner.STAGES", modules_run2),
+                patch("assert_eval.runner._load_context", return_value=self._ctx(root)),
+                patch("assert_eval.runner.STAGES", modules_run2),
                 patch("sys.__stderr__", new_callable=io.StringIO),
             ):
                 code = run_pipeline(config=str(self._ctx(root)["config_path"]))

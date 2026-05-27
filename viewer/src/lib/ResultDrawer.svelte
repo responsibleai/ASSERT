@@ -276,7 +276,7 @@
 		for (let index = 0; index < references.length; index += 1) {
 			const ref = references[index];
 			withTokens += text.slice(cursor, ref.startPos);
-			const token = `@@P2M_CIT_REF_${index}@@`;
+			const token = `@@ASSERT_CIT_REF_${index}@@`;
 			replacementEntries.push([token, getCitationButtonHtml(ref.indices, ref.originalText)]);
 			withTokens += token;
 			cursor = ref.endPos;
