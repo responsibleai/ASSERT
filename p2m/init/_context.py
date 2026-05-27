@@ -48,6 +48,10 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
+# Public alias for use by other init modules.
+estimate_tokens = _estimate_tokens
+
+
 def _context_window_for(model: str) -> int:
     """Best-effort context window lookup."""
     # Strip provider prefixes like "azure/" so "azure/gpt-5.4-mini" matches "gpt-5.4-mini".
@@ -56,6 +60,10 @@ def _context_window_for(model: str) -> int:
         if bare.startswith(prefix):
             return size
     return _FALLBACK_CONTEXT_WINDOW
+
+
+# Public alias for use by other init modules.
+context_window_for = _context_window_for
 
 
 # ── Section builders ───────────────────────────────────────────

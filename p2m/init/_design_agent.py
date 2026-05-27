@@ -26,7 +26,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from p2m.init._context import build_system_message
+from p2m.init._context import build_system_message, estimate_tokens, context_window_for
 from p2m.init._llm import chat_completion
 from p2m.init._validate import validate_proposed_yaml
 from p2m.core.model_client import (
@@ -209,6 +209,7 @@ def run_design_loop(
     model: str,
     describe: str | None,
     seed_yaml: str | None,
+    seed_path: Path | None = None,
     behavior_preset: str | None,
     judge_preset: str | None,
     dimension_hints: str | None,
@@ -225,6 +226,7 @@ def run_design_loop(
     dim_list = [d.strip() for d in dimension_hints.split(",")] if dimension_hints else None
 
     system_msg = build_system_message(
+        seed_path=seed_path,
         behavior=behavior_preset,
         judge_preset=judge_preset,
         dimensions=dim_list,
@@ -239,6 +241,18 @@ def run_design_loop(
     if describe:
         initial_parts.append(f"System description: {describe}")
     if seed_yaml:
+        # The seed is *also* included in the system prompt (via seed_path)
+        # where it participates in token-budget trimming.  We duplicate it
+        # here so the LLM treats it as user-submitted input it can question,
+        # extend, or restructure — rather than as immutable instructions.
+        seed_tokens = estimate_tokens(seed_yaml)
+        ctx_window = context_window_for(model)
+        if seed_tokens > ctx_window * 0.10:
+            log.warning(
+                "Seed config is large (~%d tokens, %.0f%% of %s context "
+                "window). Consider trimming it to avoid prompt-too-long errors.",
+                seed_tokens, seed_tokens / ctx_window * 100, model,
+            )
         initial_parts.append(f"Existing config to extend:\n```yaml\n{seed_yaml}\n```")
     if behavior_preset:
         initial_parts.append(f"Use behavior preset: {behavior_preset}")
@@ -276,6 +290,9 @@ def run_design_loop(
                     )
             except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
                 log.error("LLM error: %s", exc)
+                if best_draft and best_errors:
+                    _save_draft(best_draft, best_errors, console)
+                    return None
                 return best_draft
 
             result = _parse_action(raw)

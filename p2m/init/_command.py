@@ -143,6 +143,7 @@ def init(
         model=model,
         describe=describe,
         seed_yaml=seed_yaml,
+        seed_path=seed_path,
         behavior_preset=behavior_preset,
         judge_preset=judge_preset,
         dimension_hints=dimensions,
