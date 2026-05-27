@@ -70,7 +70,14 @@
 	let allRuns = $derived(mergeRunLists(heavyData?.runs ?? [], heavyData?.auditRuns ?? []));
 	let conceptName = $derived(data.taxonomy?.behavior?.name ?? data.taxonomy?.risk?.name ?? data.suite_id);
 	let conceptDef = $derived(data.taxonomy?.behavior?.definition ?? data.taxonomy?.risk?.definition ?? '');
-	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
+	function systematizationPatternCount(systematization: Record<string, unknown> | null | undefined): number {
+		const conceptSpec = systematization?.concept_spec;
+		if (!conceptSpec || typeof conceptSpec !== 'object' || Array.isArray(conceptSpec)) return 0;
+		const patterns = (conceptSpec as Record<string, unknown>).patterns;
+		return Array.isArray(patterns) ? patterns.length : 0;
+	}
+
+	let summaryItemCount = $derived(systematizationPatternCount(data.systematization));
 	let systematizationMode = $derived(systematizationModeFor(data.systematization));
 	let hasSystematization = $derived(Boolean(data.systematization));
 	let canCompare = $derived(selectedCompareRuns.size >= 2);
@@ -385,7 +392,7 @@
 			<div class="flex flex-wrap gap-x-4 gap-y-1">
 				<span class="text-xs text-text-muted"><span class="text-text-secondary">systematization:</span> present</span>
 				{#if systematizationMode}<span class="text-xs text-text-muted"><span class="text-text-secondary">mode:</span> {systematizationMode}</span>{/if}
-				{#if summaryItemCount > 0}<span class="text-xs text-text-muted"><span class="text-text-secondary">pattern summaries:</span> {summaryItemCount}</span>{/if}
+				{#if summaryItemCount > 0}<span class="text-xs text-text-muted"><span class="text-text-secondary">source patterns:</span> {summaryItemCount}</span>{/if}
 				<span class="text-xs text-text-muted"><span class="text-text-secondary">behavior categories:</span> {sortedBehaviors.length}</span>
 			</div>
 		</div>
