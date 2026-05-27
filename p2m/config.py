@@ -334,6 +334,35 @@ def _optional_str(value: Any, *, field_name: str) -> str | None:
     return stripped or None
 
 
+def _parse_preset_names(value: Any, *, field_name: str) -> list[str]:
+    """Accept a single preset name (str) or a list of preset names.
+
+    Returns a list of stripped, non-empty names preserving order. Duplicates are
+    removed (first occurrence wins) so callers can rely on deterministic
+    merge order. Returns [] when value is None or empty.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        name = value.strip()
+        return [name] if name else []
+    if isinstance(value, list):
+        names: list[str] = []
+        seen: set[str] = set()
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(f"{field_name}[{index}] must be a string")
+            stripped = item.strip()
+            if not stripped:
+                raise ValueError(f"{field_name}[{index}] must not be empty")
+            if stripped in seen:
+                continue
+            seen.add(stripped)
+            names.append(stripped)
+        return names
+    raise ValueError(f"{field_name} must be a string or a list of strings")
+
+
 def _optional_float(value: Any, *, field_name: str) -> float | None:
     if value is None:
         return None
@@ -726,15 +755,23 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         if judge_enabled:
             model_raw = scorer_stage.get("model", default_model_raw)
             require(model_raw is not None, "pipeline.judge.model or default_model is required when judge is configured")
-            judge_preset_name = _optional_str(scorer_stage.get("preset"), field_name="pipeline.judge.preset")
+            judge_preset_names = _parse_preset_names(
+                scorer_stage.get("preset"),
+                field_name="pipeline.judge.preset",
+            )
             preset_dims: list[dict[str, Any]] = []
-            if judge_preset_name:
+            if judge_preset_names:
                 from p2m.library.loader import load_preset
-                preset = load_preset("judge_preset", judge_preset_name)
-                preset_dims = parse_judge_dimensions(
-                    preset.get("dimensions"),
-                    field_name=f"pipeline.judge.preset({judge_preset_name}).dimensions",
-                )
+                # Later presets override earlier ones on dimension-name conflict.
+                merged: dict[str, dict[str, Any]] = {}
+                for preset_name in judge_preset_names:
+                    preset = load_preset("judge_preset", preset_name)
+                    for dim in parse_judge_dimensions(
+                        preset.get("dimensions"),
+                        field_name=f"pipeline.judge.preset({preset_name}).dimensions",
+                    ):
+                        merged[dim["name"]] = dim
+                preset_dims = list(merged.values())
             inline_dims = parse_judge_dimensions(
                 scorer_stage.get("dimensions"),
                 field_name="pipeline.judge.dimensions",
