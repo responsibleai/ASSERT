@@ -1,0 +1,218 @@
+# Science Regression Gate — paired t-test on canonical efficacy metrics.
+#
+# Runs the pipeline at the PR's base + head SHAs against both golden failure-mode
+# configs (safety + quality), computes 6 canonical science-efficacy metrics
+# plus 4 auxiliary aggregates, runs paired statistical tests, and gates
+# the PR with Holm-Bonferroni-corrected significance over the canonical
+# metrics. Auxiliaries are reported but advisory.
+#
+# Phased rollout
+# --------------
+# Phase 1 (this PR): `continue-on-error: true` on the gate job so we can
+# observe noise + tune MDEs without blocking PRs. Flip to required after
+# 10 PRs / 2 weeks at <5% noisy WARN/BLOCK rate.
+# Phase 2 (engineer follow-up): drop `continue-on-error`.
+#
+# Sample sizes via PR labels:
+#   test_set:50    — quick iteration (~6 min per commit)
+#   test_set:100   — default
+#   test_set:200   — pre-release
+#   test_set:500   — nightly / calibration
+#
+# Triggers on any PR touching pipeline code, prompts, or the regression
+# harness itself.
+
+name: Science Regression Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'p2m/**'
+      - 'prompts/**'
+      - 'scripts/regression_*.py'
+      - 'tests/regression/**'
+      - '.github/workflows/science.yml'
+  schedule:
+    # Daily regression sentinel on main. 12:00 UTC ≈ 05:00 PT / 08:00 ET — finishes before US workday.
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      test_set:
+        description: "test_set size (50, 100, 200, 500)"
+        required: false
+        default: "100"
+
+concurrency:
+  group: science-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+  AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
+  AZURE_API_VERSION: "2024-12-01-preview"
+  # Long-context judge required — gpt-5.4-nano/mini fail mechanically on
+  # realistic agent transcripts (>10 turns) by not returning the required
+  # verdict schema. See user note 2026-05-09.
+  P2M_JUDGE_DEPLOYMENT: "gpt-5.4"
+
+jobs:
+  unit-regression-modules:
+    name: "Tier 1: regression metric/decision unit tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install deps
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+      - name: Run regression module unit tests
+        run: pytest tests/test_regression_metrics.py tests/test_regression_decision.py -x -q
+
+  science-gate:
+    name: "Science: paired t-test gate"
+    needs: unit-regression-modules
+    # Phase 1: advisory. Flip to false (or remove) once noise is calibrated.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for baseline/treatment diff
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install deps
+        run: |
+          pip install uv
+          uv pip install --system -e ".[all,dev]"
+
+      - name: Start Phoenix collector
+        # Run a real Phoenix server so localhost:4317 (OTLP gRPC) accepts the
+        # spans emitted by examples.travel_planner_langgraph.auto_trace —
+        # the same import path users run in production. Without this, every
+        # span emit retries gRPC export forever and BatchSpanExporter survives
+        # asyncio loop teardown ("Event loop is closed" RuntimeError noise).
+        # Crucially, this preserves judge fidelity: the OTel-traced session
+        # piggybacks on Phoenix's TracerProvider so the judge sees per-turn
+        # span / tool / LLM-call detail exactly as in production.
+        run: |
+          mkdir -p artifacts/phoenix
+          nohup phoenix serve > artifacts/phoenix/phoenix.log 2>&1 &
+          echo "Phoenix PID: $!"
+          for i in $(seq 1 60); do
+            if nc -z localhost 4317 && nc -z localhost 6006; then
+              echo "Phoenix ready after ${i}s (gRPC :4317, UI :6006)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Phoenix did not bind ports in 60s. Logs:"
+          cat artifacts/phoenix/phoenix.log || true
+          exit 1
+
+      - name: Resolve test-set size
+        id: test_set
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ' ') || '' }}
+          DISPATCH_TEST_SET: ${{ inputs.test_set || '100' }}
+        run: |
+          TEST_SET=100
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            for label in $PR_LABELS; do
+              case $label in
+                test_set:*) TEST_SET="${label#test_set:}" ;;
+              esac
+            done
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$DISPATCH_TEST_SET" ]; then
+            TEST_SET="$DISPATCH_TEST_SET"
+          fi
+          echo "count=$TEST_SET" >> "$GITHUB_OUTPUT"
+          echo "Using $TEST_SET test cases per config"
+
+      - name: Resolve baseline and treatment refs
+        id: refs
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASELINE="${{ github.event.pull_request.base.sha }}"
+            TREATMENT="${{ github.sha }}"
+          else
+            git fetch origin main
+            BASELINE="$(git rev-list -1 --before='7 days ago' origin/main)"
+            if [ -z "$BASELINE" ]; then
+              BASELINE="$(git rev-list --max-parents=0 origin/main | tail -1)"
+            fi
+            TREATMENT="$(git rev-parse origin/main)"
+          fi
+          echo "baseline=$BASELINE" >> "$GITHUB_OUTPUT"
+          echo "treatment=$TREATMENT" >> "$GITHUB_OUTPUT"
+          echo "Baseline: $BASELINE"
+          echo "Treatment: $TREATMENT"
+
+      - name: Compute cache key
+        id: cache_key
+        # Cache baseline runs by (base sha, judge model, test-set size, script
+        # hash, configs hash). Same-base PRs reuse the baseline; only
+        # treatment is re-run.
+        run: |
+          SCRIPT_HASH=$(sha256sum scripts/regression_test.py scripts/regression_metrics.py scripts/regression_decision.py | sha256sum | cut -c1-16)
+          CFG_HASH=$(sha256sum tests/regression/config_*.yaml | sha256sum | cut -c1-16)
+          KEY="science-baseline-${{ steps.refs.outputs.baseline }}-${{ env.P2M_JUDGE_DEPLOYMENT }}-${{ steps.test_set.outputs.count }}-${SCRIPT_HASH}-${CFG_HASH}"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached baseline runs
+        id: baseline_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: artifacts/regression-runs
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Run regression gate
+        id: gate
+        run: |
+          python scripts/regression_test.py \
+            --baseline "${{ steps.refs.outputs.baseline }}" \
+            --treatment "${{ steps.refs.outputs.treatment }}" \
+            --test_set "${{ steps.test_set.outputs.count }}" \
+            --judge-model "azure/${{ env.P2M_JUDGE_DEPLOYMENT }}" \
+            --artifacts-dir artifacts/regression
+
+      - name: Save baseline runs to cache
+        if: always() && steps.baseline_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/regression-runs
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Post results to PR summary
+        if: always()
+        run: |
+          REPORT_MD="artifacts/regression/regression_report.md"
+          if [ -f "$REPORT_MD" ]; then
+            cat "$REPORT_MD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 🧪 Regression Gate" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ No report generated — pipeline may have failed before reaching the gate." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-results
+          path: artifacts/regression/
+          retention-days: 14
+
+      - name: Upload Phoenix collector log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoenix-log
+          path: artifacts/phoenix/
+          retention-days: 7
