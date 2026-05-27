@@ -1,5 +1,5 @@
 # Environments and local config
-.venv/
+.venv*/
 .env
 .env.*
 !.env.example
@@ -27,6 +27,9 @@ artifacts/
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/
 !viewer/src/routes/**/logs/**
+
+# Chainlit local config
+.chainlit/
 
 # PyRIT data
 .pyrit_data/

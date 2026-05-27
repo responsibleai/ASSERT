@@ -8,12 +8,22 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import select
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    import readline  # noqa: F401 — enables arrow-key line editing for input()
+except ImportError:
+    pass
+
 import yaml
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.syntax import Syntax
 
 from p2m.init._context import build_system_message
@@ -27,6 +37,17 @@ from p2m.core.model_client import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _flush_stdin() -> None:
+    """Discard any buffered stdin so stale keypresses don't leak into input()."""
+    try:
+        import termios  # Unix only
+
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:  # noqa: BLE001 — Windows / non-TTY / already closed
+        pass
+
 
 # ── Constants ──────────────────────────────────────────────────
 
@@ -83,7 +104,15 @@ def _parse_action(raw_text: str) -> ParsedAction | ParseError:
     cleaned = _strip_fences(raw_text)
     try:
         data = json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError) as exc:
+    except json.JSONDecodeError:
+        # LLMs sometimes emit duplicate JSON lines (JSONL-style).
+        # Try parsing just the first non-empty line.
+        first_line = next((l for l in cleaned.splitlines() if l.strip()), "")
+        try:
+            data = json.loads(first_line)
+        except (json.JSONDecodeError, TypeError) as exc:
+            return ParseError(raw=raw_text, reason=f"JSON parse error: {exc}")
+    except TypeError as exc:
         return ParseError(raw=raw_text, reason=f"JSON parse error: {exc}")
 
     if not isinstance(data, dict):
@@ -113,27 +142,61 @@ def _parse_action(raw_text: str) -> ParsedAction | ParseError:
 # ── User interaction helpers ───────────────────────────────────
 
 def _prompt_user(question: str, console: Console) -> str:
-    """Display a question and collect the user's answer."""
-    console.print(f"\n[bold]? {question}[/bold]\n")
+    """Display a question and collect the user's answer.
+
+    For normal typing, a single Enter submits the answer.  If the user
+    pastes multi-line text, additional lines are captured automatically
+    via stdin buffer detection.
+    """
+    console.print()
+    console.print(Panel(
+        Markdown(question),
+        title="[bold]Question[/bold]",
+        title_align="left",
+        border_style="blue",
+        padding=(0, 1),
+    ))
+    _flush_stdin()
     try:
-        answer = input("> ")
+        first = input("› ")
     except EOFError:
-        answer = ""
-    return answer.strip()
+        return ""
+    if not first:
+        return ""
+
+    lines = [first]
+    # Drain any remaining pasted lines sitting in the stdin buffer.
+    try:
+        fd = sys.stdin.fileno()
+        while select.select([fd], [], [], 0.05)[0]:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            lines.extend(chunk.decode("utf-8", errors="replace").splitlines())
+    except (OSError, ValueError):
+        pass  # select unavailable on this platform — single-line fallback
+
+    # Echo additional pasted lines so the user can see everything they sent.
+    if len(lines) > 1:
+        for extra in lines[1:]:
+            console.print(f"  {extra}")
+
+    return "\n".join(lines).strip()
 
 
 def _prompt_accept(yaml_str: str, console: Console, no_color: bool) -> str:
     """Show proposed YAML and ask accept/refine/skip."""
-    console.print("\n--- proposed eval.yaml ---")
-    display = Console(
-        highlight=False,
-        color_system=None if no_color else "auto",
-        stderr=True,
-    )
-    display.print(Syntax(yaml_str, "yaml", theme="monokai"))
-    console.print("---\n")
+    console.print()
+    theme = "monokai" if not no_color else "default"
+    console.print(Panel(
+        Syntax(yaml_str, "yaml", theme=theme),
+        title="[bold green]Proposed eval.yaml[/bold green]",
+        border_style="green",
+        padding=(0, 1),
+    ))
+    _flush_stdin()
     try:
-        choice = input("[a]ccept / [r]efine / [s]kip > ").strip().lower()
+        choice = input("[a]ccept / [r]efine / [s]kip › ").strip().lower()
     except EOFError:
         choice = "s"
     return choice
@@ -202,22 +265,25 @@ def run_design_loop(
 
     try:
         for turn in range(max_turns):
-            log.debug("Design loop turn %d/%d", turn + 1, max_turns)
+            log.info("Turn %d/%d", turn + 1, max_turns)
 
             try:
-                raw = chat_completion(
-                    model=model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                )
+                with console.status("Thinking\u2026", spinner="dots"):
+                    raw = chat_completion(
+                        model=model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
             except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
-                console.print(f"[init] error: {exc}")
+                log.error("LLM error: %s", exc)
                 return best_draft
 
             result = _parse_action(raw)
 
             if isinstance(result, ParseError):
-                log.debug("Parse error: %s", result.reason)
+                log.info("  \u21b3 malformed response \u2014 retrying")
+                log.debug("  Parse error detail: %s", result.reason)
+                log.debug("  Raw response: %.300s", raw)
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": _CORRECTION_MSG})
                 continue
@@ -227,6 +293,7 @@ def run_design_loop(
             # ── ask ────────────────────────────────────────────
             if result.action == "ask":
                 if non_interactive:
+                    log.info("  \u21b3 skipping question (non-interactive mode)")
                     messages.append({
                         "role": "user",
                         "content": (
@@ -246,6 +313,9 @@ def run_design_loop(
                 assert result.yaml_str is not None
                 ok, errors = validate_proposed_yaml(result.yaml_str)
                 if not ok:
+                    log.info("  \u21b3 proposed config has %d validation error(s) \u2014 asking LLM to fix", len(errors))
+                    for err in errors:
+                        log.debug("    - %s", err)
                     best_draft = result.yaml_str
                     best_errors = errors
                     error_text = "\n".join(f"- {e}" for e in errors)
@@ -265,8 +335,9 @@ def run_design_loop(
                 if choice.startswith("a"):
                     return _normalize_yaml(result.yaml_str)
                 elif choice.startswith("r"):
+                    _flush_stdin()
                     try:
-                        refinement = input("What would you like to change? > ").strip()
+                        refinement = input("What would you like to change? › ").strip()
                     except EOFError:
                         refinement = ""
                     messages.append({
@@ -275,7 +346,7 @@ def run_design_loop(
                     })
                     continue
                 else:
-                    console.print("[init] Skipped.")
+                    log.info("Skipped.")
                     return None
 
             # ── done ───────────────────────────────────────────
@@ -283,7 +354,32 @@ def run_design_loop(
                 assert result.yaml_str is not None
                 ok, errors = validate_proposed_yaml(result.yaml_str)
                 if ok:
-                    return _normalize_yaml(result.yaml_str)
+                    best_draft = result.yaml_str
+                    best_errors = []
+
+                    if non_interactive:
+                        return _normalize_yaml(result.yaml_str)
+
+                    choice = _prompt_accept(result.yaml_str, console, no_color)
+                    if choice.startswith("a"):
+                        return _normalize_yaml(result.yaml_str)
+                    elif choice.startswith("r"):
+                        _flush_stdin()
+                        try:
+                            refinement = input("What would you like to change? › ").strip()
+                        except EOFError:
+                            refinement = ""
+                        messages.append({
+                            "role": "user",
+                            "content": refinement or "Please try again.",
+                        })
+                        continue
+                    else:
+                        log.info("Skipped.")
+                        return None
+                log.info("  \u21b3 final config has %d validation error(s) \u2014 asking LLM to fix", len(errors))
+                for err in errors:
+                    log.debug("    - %s", err)
                 best_draft = result.yaml_str
                 best_errors = errors
                 error_text = "\n".join(f"- {e}" for e in errors)
@@ -294,7 +390,7 @@ def run_design_loop(
                 continue
 
         # Exhausted turn budget.
-        console.print(f"[init] Reached maximum turns ({max_turns}).")
+        log.warning("Reached maximum turns (%d).", max_turns)
         if best_draft:
             _save_draft(best_draft, best_errors, console)
         return best_draft if best_draft and not best_errors else None
@@ -303,9 +399,9 @@ def run_design_loop(
         console.print("")
         if best_draft:
             _save_draft(best_draft, best_errors, console)
-            console.print("[init] Interrupted. Draft saved.")
+            log.info("Interrupted. Draft saved.")
         else:
-            console.print("[init] Interrupted. No draft to save.")
+            log.info("Interrupted. No draft to save.")
         raise SystemExit(130)
 
 
@@ -323,10 +419,10 @@ def _save_draft(yaml_str: str, errors: list[str], console: Console) -> None:
     try:
         normalized = _normalize_yaml(yaml_str)
         draft_path.write_text(normalized, encoding="utf-8")
-        console.print(f"[init] Draft saved to {draft_path}")
+        log.info("Draft saved to %s", draft_path)
         if errors:
-            console.print("[init] Remaining validation errors:")
+            log.warning("Remaining validation errors:")
             for e in errors:
-                console.print(f"  - {e}")
+                log.warning("  - %s", e)
     except Exception as exc:
         log.warning("Failed to save draft: %s", exc)

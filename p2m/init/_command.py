@@ -132,7 +132,7 @@ def init(
         _error(f"{output} already exists. Use --force to overwrite.")
 
     console = Console(highlight=False, color_system=None if no_color else "auto", stderr=True)
-    console.print("[init] Starting eval config designer\n")
+    log.info("Starting eval config designer")
 
     # Load seed config if provided
     seed_yaml: str | None = None
@@ -153,7 +153,7 @@ def init(
     )
 
     if yaml_result is None:
-        console.print("[init] No config generated.")
+        log.info("No config generated.")
         raise SystemExit(1)
 
     if dry_run:
@@ -162,8 +162,8 @@ def init(
         return
 
     emit_config(yaml_result, output, force=force)
-    console.print(f"[init] ✓ Written to {output}")
-    console.print(f"[init] Next: p2m run --config {output}")
+    log.info("Written to %s", output)
+    log.info("Next: p2m run --config %s", output)
 
 
 def _error(message: str) -> None:
