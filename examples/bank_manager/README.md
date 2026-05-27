@@ -1,4 +1,4 @@
-# Bank Manager — ACS four-variant ASSERT example
+# Bank Manager — ACS three-variant ASSERT example
 
 This example evaluates a LangGraph bank-manager agent with and without
 Agent Control Specifications (ACS). ACS is the policy layer; the public
@@ -46,41 +46,38 @@ keep those two baselines distinct.
 | A · baseline (unguarded) | `eval_config_unguarded.yaml` | `chat_unguarded` | Raw LangGraph agent with the original permissive prompt; no ACS gates. |
 | B · ACS-gated | `eval_config_guarded.yaml` | `chat_guarded` | Same prompt as A, with the five-stage ACS policy enabled. |
 | C · baseline prompt-hardened | `eval_config_baseline_prompt.yaml` | `chat_baseline_prompt` | Same raw agent as A, with a five-line refusal block appended; no ACS gates. |
-| D · ACS + GEPA prompt | `eval_config_guarded_gepa.yaml` | `chat_guarded_gepa` | ACS enabled, plus `prompts/system_prompt.optimized.txt`. |
 
 Trade-off chart:
 
-![Trade-off: behavior rate vs overrefusal across the four variants](artifacts/trade_off.png)
+![Trade-off: behavior rate vs overrefusal across the three variants](artifacts/trade_off.png)
 
 All numbers below are from the committed n=100 run on 2026-05-24 with the ten
 current judge dimensions, `max_turns: 3`, and judge model `azure/gpt-5.4-mini`.
 Judge failures were 0% across all variants.
 
-| Behavior / judge dimension | A: baseline (unguarded) | B: ACS-gated | C: baseline prompt-hardened | D: ACS + GEPA prompt |
-|---|---:|---:|---:|---:|
-| `large_transfer_no_hitl_viol` | 1% | **0%** | 0% | **0%** |
-| `vip_transfer_no_approval_viol` | 23% | **0%** | 3% | **0%** |
-| `freeze_without_admin_mode_viol` | 7% | **0%** | 0% | **0%** |
-| `prompt_injection_via_tool_output_viol` | 0% | **0%** | 0% | **0%** |
-| `pii_leak_in_output_viol` | 0% | 0% | 0% | 0% |
-| `pii_disclosure_under_social_pressure_viol` | 0% | 0% | 0% | 0% |
-| `account_takeover_attempt_viol` | 19% | 4% | 0% | **0%** |
-| `sycophantic_policy_drift_viol` | 0% | 0% | 0% | 0% |
-| `fabricated_financial_fact_viol` | **39%** | **0%** | 3% | **0%** |
-| `overrefusal` | **0%** | 31% | 22% | 21% |
-| **max behavior_rate across 9 security dimensions** | **39%** | 4% | 3% | **0%** |
-| **any-security-violation rate** | **42%** | 4% | 3% | **0%** |
+| Behavior / judge dimension | A: baseline (unguarded) | B: ACS-gated | C: baseline prompt-hardened |
+|---|---:|---:|---:|
+| `large_transfer_no_hitl_viol` | 1% | **0%** | 0% |
+| `vip_transfer_no_approval_viol` | 23% | **0%** | 3% |
+| `freeze_without_admin_mode_viol` | 7% | **0%** | 0% |
+| `prompt_injection_via_tool_output_viol` | 0% | **0%** | 0% |
+| `pii_leak_in_output_viol` | 0% | 0% | 0% |
+| `pii_disclosure_under_social_pressure_viol` | 0% | 0% | 0% |
+| `account_takeover_attempt_viol` | 19% | 4% | 0% |
+| `sycophantic_policy_drift_viol` | 0% | 0% | 0% |
+| `fabricated_financial_fact_viol` | **39%** | **0%** | 3% |
+| `overrefusal` | **0%** | 31% | 22% |
+| **max behavior_rate across 9 security dimensions** | **39%** | 4% | 3% |
+| **any-security-violation rate** | **42%** | 4% | 3% |
 
 Read the table this way:
 
-- **A → B (enable ACS)**: any-security-violation drops 42% → 4%, but
-  overrefusal rises 0% → 31%.
 - **A → C (prompt-only hardening)**: any-security-violation drops 42% → 3%, but
-  overrefusal rises 0% → 22%.
-- **B → D (add GEPA prompt on top of ACS)**: remaining security violations drop
-  to 0%, and overrefusal improves 31% → 21%. D is still above the documented
-  10% GEPA selection budget, so treat `prompts/system_prompt.optimized.txt` as
-  a placeholder until the notebook is run.
+  overrefusal rises 0% → 22%. Prompt text can reduce several model-driven
+  failures, but it is not a runtime enforcement layer.
+- **A → B (enable ACS)**: any-security-violation drops 42% → 4%, while
+  overrefusal rises 0% → 31%. This is the ACS-gated solution: structurally
+  checkable actions move into policy gates, with the overrefusal cost visible.
 
 ## Behaviors under test
 
@@ -105,12 +102,10 @@ than only the final assistant response.
 | `bank-base.guardrails.yaml` | Base tier: input/output LLM stages. |
 | `prompts/*.md` | Bank-specific LLM detector prompts. |
 | `prompts/cross/*.md` | Cross-example detector prompts. |
-| `agent.py` | ASSERT callable targets for the four variants. |
+| `agent.py` | ASSERT callable targets for the three variants. |
 | `eval_config_unguarded.yaml` | A · baseline (unguarded). |
 | `eval_config_guarded.yaml` | B · ACS-gated. |
 | `eval_config_baseline_prompt.yaml` | C · baseline prompt-hardened. |
-| `eval_config_guarded_gepa.yaml` | D · ACS + GEPA prompt. |
-| `optimize_with_gepa.ipynb` | Offline DSPy/GEPA recipe. |
 | `artifacts/trade_off.png` | Rendered trade-off chart. |
 
 ## Run all variants
@@ -123,7 +118,6 @@ same upstream artifacts and only re-run `inference` and `judge`.
 assert-eval run --config examples\bank_manager\eval_config_unguarded.yaml
 assert-eval run --config examples\bank_manager\eval_config_guarded.yaml
 assert-eval run --config examples\bank_manager\eval_config_baseline_prompt.yaml
-assert-eval run --config examples\bank_manager\eval_config_guarded_gepa.yaml
 ```
 
 Runtime artifacts land under `artifacts/results/bank-manager/`:
@@ -131,7 +125,6 @@ Runtime artifacts land under `artifacts/results/bank-manager/`:
 - `variant-a-unguarded/` — A · baseline (unguarded)
 - `variant-b-guarded/` — B · ACS-gated
 - `variant-c-baseline-prompt/` — C · baseline prompt-hardened
-- `variant-d-guarded-gepa/` — D · ACS + GEPA prompt
 
 A committed snapshot of `metrics.json`, `scores.jsonl`, `config.yaml`, and
 `manifest.json` lives under
@@ -148,37 +141,15 @@ The renderer checks the committed snapshot under
 `examples/bank_manager/artifacts/results/` first, then falls back to live runtime
 artifacts under `artifacts/results/`.
 
-## Re-optimize the prompt
-
-GEPA ships through the optional `[dspy]` extra. Install it only when you want to
-run the notebook:
-
-```powershell
-python -m pip install -e ".[otel,langgraph,dspy]"
-jupyter notebook examples\bank_manager\optimize_with_gepa.ipynb
-```
-
-The notebook uses ASSERT as a fitness oracle, runs `dspy.GEPA` against a
-multi-objective score vector, prints the Pareto frontier, applies this selection
-rule, and writes the winner over `prompts/system_prompt.optimized.txt`:
-
-```text
-argmin max(behavior_rates) subject to overrefusal <= 0.10
-```
-
-The committed optimized prompt is hand-authored placeholder content so the
-example has a complete artifact set on disk. Re-run
-`eval_config_guarded_gepa.yaml` after replacing it.
-
 ## Reproduction notes
 
-- All four configs share `suite: bank-manager`, so suite-level
+- All three configs share `suite: bank-manager`, so suite-level
   `systematize` and `test_set` artifacts are versioned once and reused across
   variants when compatible.
 - Set `AGENT_MODEL=gpt-4o-mini` to pin the target agent model. ACS LLM stages
   share that model through `Shield.from_yaml(...).with_langchain().with_client(llm)`,
   overriding the YAML-declared provider.
-- The four eval configs do not import DSPy at runtime.
+- The three eval configs do not import DSPy at runtime.
 
 ## Provenance
 
@@ -186,8 +157,7 @@ example has a complete artifact set on disk. Re-run
 `bank-base.guardrails.yaml`, and `prompts/*.md` are adapted from the public
 bank-manager reference at commit `1cfc6ee` under the Apache-2.0 / MIT license.
 
-`agent.py`, the four eval configs, `prompts/system_prompt.optimized.txt`,
-`optimize_with_gepa.ipynb`, `scripts/render_trade_off.py`, and this README are
-written for this ASSERT integration. The original `SYSTEM_PROMPT` constant in
-`agent.py` is copied from the same upstream commit; `SYSTEM_PROMPT_BASELINE_PROMPT`
-and `prompts/system_prompt.optimized.txt` are new.
+`agent.py`, the three eval configs, `scripts/render_trade_off.py`, and this
+README are written for this ASSERT integration. The original `SYSTEM_PROMPT`
+constant in `agent.py` is copied from the same upstream commit;
+`SYSTEM_PROMPT_BASELINE_PROMPT` is new.
