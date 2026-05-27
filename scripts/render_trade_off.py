@@ -3,11 +3,11 @@
 Reads per-variant judge results from `scores.jsonl` files. The script
 checks two locations and uses whichever has data, in order:
 
-    1. examples/bank_manager/artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+    1. examples/bank_manager/artifacts/results/bank-manager/<variant>/scores.jsonl
        — committed snapshot. This is the source of truth for the
        rendered PNG checked into the repo, and lets reviewers re-render
        the chart from a clean `git pull` without re-running the eval.
-    2. artifacts/results/bank-manager-agent-shield/<variant>/scores.jsonl
+    2. artifacts/results/bank-manager/<variant>/scores.jsonl
        — live runtime output (the path assert-eval writes to during a run; this
        directory is .gitignored).
 
@@ -56,8 +56,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_DIR = REPO_ROOT / "examples" / "bank_manager"
 # Primary source: committed snapshot under the example directory (not gitignored).
 # Fallback source: live runtime output under the repo root (gitignored).
-ARTIFACTS_RESULTS_COMMITTED = EXAMPLE_DIR / "artifacts" / "results" / "bank-manager-agent-shield"
-ARTIFACTS_RESULTS_LIVE = REPO_ROOT / "artifacts" / "results" / "bank-manager-agent-shield"
+ARTIFACTS_RESULTS_COMMITTED = EXAMPLE_DIR / "artifacts" / "results" / "bank-manager"
+ARTIFACTS_RESULTS_LIVE = REPO_ROOT / "artifacts" / "results" / "bank-manager"
 OUT_PATH = EXAMPLE_DIR / "artifacts" / "trade_off.png"
 
 VARIANTS = [

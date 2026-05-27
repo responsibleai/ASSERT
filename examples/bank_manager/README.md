@@ -23,7 +23,7 @@ assert-eval run --config examples\bank_manager\eval_config_unguarded.yaml
 Show the high-level results for that run:
 
 ```powershell
-assert-eval results status --results-dir "$PWD\artifacts\results" bank-manager-agent-shield variant-a-unguarded
+assert-eval results status --results-dir "$PWD\artifacts\results" bank-manager variant-a-unguarded
 ```
 
 The repository also includes a committed n=100 snapshot. To inspect that
@@ -31,7 +31,7 @@ snapshot without re-running the pipeline, point the results command at the
 example-local artifacts directory:
 
 ```powershell
-assert-eval results status --results-dir "$PWD\examples\bank_manager\artifacts\results" bank-manager-agent-shield variant-a-unguarded
+assert-eval results status --results-dir "$PWD\examples\bank_manager\artifacts\results" bank-manager variant-a-unguarded
 ```
 
 ## Variants
@@ -126,7 +126,7 @@ assert-eval run --config examples\bank_manager\eval_config_baseline_prompt.yaml
 assert-eval run --config examples\bank_manager\eval_config_guarded_gepa.yaml
 ```
 
-Runtime artifacts land under `artifacts/results/bank-manager-agent-shield/`:
+Runtime artifacts land under `artifacts/results/bank-manager/`:
 
 - `variant-a-unguarded/` — A · baseline (unguarded)
 - `variant-b-guarded/` — B · ACS-gated
@@ -135,7 +135,7 @@ Runtime artifacts land under `artifacts/results/bank-manager-agent-shield/`:
 
 A committed snapshot of `metrics.json`, `scores.jsonl`, `config.yaml`, and
 `manifest.json` lives under
-`examples/bank_manager/artifacts/results/bank-manager-agent-shield/` for chart
+`examples/bank_manager/artifacts/results/bank-manager/` for chart
 reproduction.
 
 ## Re-render the trade-off chart
@@ -172,7 +172,7 @@ example has a complete artifact set on disk. Re-run
 
 ## Reproduction notes
 
-- All four configs share `suite: bank-manager-agent-shield`, so suite-level
+- All four configs share `suite: bank-manager`, so suite-level
   `systematize` and `test_set` artifacts are versioned once and reused across
   variants when compatible.
 - Set `AGENT_MODEL=gpt-4o-mini` to pin the target agent model. ACS LLM stages

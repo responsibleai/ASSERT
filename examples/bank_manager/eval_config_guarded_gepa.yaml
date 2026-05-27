@@ -1,4 +1,4 @@
-suite: bank-manager-agent-shield
+suite: bank-manager
 run: variant-d-guarded-gepa
 
 behavior:
