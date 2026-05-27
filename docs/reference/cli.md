@@ -14,7 +14,7 @@ Starts a conversational LLM assistant that asks about your agent, eval goals, an
 
 | Option | Default | Description |
 |---|---|---|
-| `--output, -o` | `eval.yaml` | Output file path. |
+| `--output, -o` | `eval_config.yaml` | Output file path. |
 | `--describe` | — | One-line description of the system to evaluate (skips the initial question). |
 | `--from` | — | Seed from an existing config (edit/extend mode). |
 | `--behavior` | — | Use a built-in behavior preset name. |

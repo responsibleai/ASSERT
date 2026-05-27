@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 @click.option(
     "--output", "-o",
     type=click.Path(path_type=Path),
-    default=Path("eval.yaml"),
+    default=Path("eval_config.yaml"),
     show_default=True,
     help="Output file path.",
 )

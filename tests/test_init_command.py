@@ -49,7 +49,7 @@ class InitCommandTest(unittest.TestCase):
                 "--model", "azure/gpt-5.4-mini",
             ])
             self.assertEqual(result.exit_code, 0, result.output)
-            self.assertTrue(Path("eval.yaml").exists())
+            self.assertTrue(Path("eval_config.yaml").exists())
 
     def test_non_interactive_without_describe_fails(self) -> None:
         runner = CliRunner()
@@ -77,7 +77,7 @@ class InitCommandTest(unittest.TestCase):
         mock_llm.return_value = _done_response()
         runner = CliRunner()
         with runner.isolated_filesystem():
-            Path("eval.yaml").write_text("old", encoding="utf-8")
+            Path("eval_config.yaml").write_text("old", encoding="utf-8")
             result = runner.invoke(cli, [
                 "init",
                 "--describe", "A chatbot",
@@ -85,7 +85,7 @@ class InitCommandTest(unittest.TestCase):
                 "--force",
             ])
             self.assertEqual(result.exit_code, 0, result.output)
-            content = Path("eval.yaml").read_text(encoding="utf-8")
+            content = Path("eval_config.yaml").read_text(encoding="utf-8")
             self.assertIn("suite:", content)
 
 
