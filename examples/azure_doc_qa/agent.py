@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Multi-agent Azure Doc QA system built with LangGraph.
 
 Multi-agent graph with triage routing, specialist agents, and escalation.

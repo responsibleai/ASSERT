@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Click CLI for the measurements pipeline (p2m)."""
 
 from __future__ import annotations

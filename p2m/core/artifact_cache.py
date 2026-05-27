@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Artifact-level cache and version helpers for suite-scoped outputs.
 
 Cacheable upstream stages (``systematize``, ``test_set``) write their

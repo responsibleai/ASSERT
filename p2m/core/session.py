@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Hosted and external session execution paths for eval targets."""
 
 from __future__ import annotations

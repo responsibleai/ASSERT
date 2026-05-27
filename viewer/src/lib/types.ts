@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Suite-level types (from suite.json, taxonomy.json, test_set.jsonl)
 
 export interface Suite {

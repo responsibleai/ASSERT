@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LiteLLM (provider-agnostic).
 
 Instrumentation: 2 lines. Agent code: LiteLLM completion with tools.

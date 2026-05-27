@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Small asyncio helpers for bounded workflow fan-out."""
 
 from __future__ import annotations

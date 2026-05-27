@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Discover and load preset YAML files from the library directory."""
 
 from __future__ import annotations

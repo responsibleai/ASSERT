@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """PR regression test — placeholder stub.
 
 The full implementation (defined in ``.github/copilot-instructions.md``)

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Citation extraction and repair helpers for transcript judge outputs."""
 
 from __future__ import annotations

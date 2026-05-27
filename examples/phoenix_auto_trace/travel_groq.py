@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Groq (fast inference).
 
 Instrumentation: 2 lines. Agent code: standard Groq SDK (OpenAI-compatible).

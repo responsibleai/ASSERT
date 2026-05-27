@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Shared mock tool data for phoenix_auto_trace demos.
 
 All 14 demos use the same 5 tools with the same mock responses.

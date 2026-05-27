@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Concurrency / throughput benchmark harness.
 
 Drives the full p2m pipeline against a base benchmark config, with

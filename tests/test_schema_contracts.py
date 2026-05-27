@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for schema contracts across the prompt/code boundary.
 
 Phase 1b of the prompt revision plan: verify that independently defined

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """SpanCollector Protocol — decouples P2M from any specific trace backend.
 
 P2M's OTel integration depends on this Protocol, not on Phoenix.

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Render the trade-off chart for a 4-variant ASSERT demo.
 
 Supports multiple demo suites via the ``--suite`` flag (default:

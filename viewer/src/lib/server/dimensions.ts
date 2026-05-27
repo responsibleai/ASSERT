@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import path from 'node:path';
 import { readYamlFile } from './artifacts.js';
 import { MEASUREMENTS_ROOT } from './config.js';

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — OpenAI direct (function calling).
 
 Instrumentation: 2 lines. Agent code: standard OpenAI SDK.

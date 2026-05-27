@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Unit tests for `_materialize_target_messages` turn semantics.
 
 Only the tester (user) and the target (assistant) emit "turns".

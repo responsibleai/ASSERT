@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Judge schemas, scoring utilities, and verdict aggregation."""
 
 from __future__ import annotations

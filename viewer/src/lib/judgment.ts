@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import type { DimensionDef, JudgeStatus } from './types.js';
 
 type VerdictLike = Record<string, unknown> | null | undefined;

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — AWS Bedrock (Anthropic Claude on AWS).
 
 Instrumentation: 2 lines. Agent code: standard Bedrock via boto3.

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """LangGraph travel planner — OTel auto-instrumented agent.
 
 Multi-node graph with mock tools: agent calls tools, OTel captures every

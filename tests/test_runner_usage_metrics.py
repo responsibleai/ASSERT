@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for token-usage reporting in the runner.
 
 Covers the helpers that surface ``UsageAccumulator`` data on stage completion

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the runtime-safety layer: heartbeat, watchdog, bounded teardown.
 
 The motivating bug: a multi-agent LangGraph travel-planner target leaked

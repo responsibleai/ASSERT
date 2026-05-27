@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Security utilities for the p2m pipeline.
 
 Provides validation helpers for dynamic module loading, URL validation,

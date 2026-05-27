@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { loadPromptDrawerItem } from '$lib/server/data.js';
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
 import { json } from '@sveltejs/kit';

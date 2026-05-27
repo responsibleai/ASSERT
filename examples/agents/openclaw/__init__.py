@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """External connector for OpenClaw.
 
 Config key: connector: examples.agents.openclaw

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Load YAML configs and build the minimal runtime context for p2m."""
 
 from __future__ import annotations

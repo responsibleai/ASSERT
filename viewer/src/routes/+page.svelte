@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import { activeRuns } from '$lib/active-runs.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';

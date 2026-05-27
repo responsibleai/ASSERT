@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Generic grouping system for scored results.
  * New grouping axes can be added by pushing to GROUP_AXES.

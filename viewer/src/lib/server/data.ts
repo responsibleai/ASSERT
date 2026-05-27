@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { ARTIFACTS_ROOT } from './config.js';
 import { loadDimensions } from './dimensions.js';
 import {

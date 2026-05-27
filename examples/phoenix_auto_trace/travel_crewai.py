@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — CrewAI (multi-agent crew).
 
 Instrumentation: 2 lines. Agent code: standard CrewAI.

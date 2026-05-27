@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Path, JSON, and JSONL helpers used across p2m workflows."""
 
 from __future__ import annotations

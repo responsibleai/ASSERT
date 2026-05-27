@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Concrete stage modules for the p2m pipeline."""
 
 from __future__ import annotations

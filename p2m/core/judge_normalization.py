@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Transcript-specific normalization for judge verdicts."""
 
 from __future__ import annotations

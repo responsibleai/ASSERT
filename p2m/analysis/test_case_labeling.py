@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Post-generation labeling of test_set against stratification dimensions.
 
 LLM-driven classification: given generated test_set and a stratification catalog,
