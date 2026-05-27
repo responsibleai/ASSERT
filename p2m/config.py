@@ -322,7 +322,7 @@ def resolve_stage_paths(
     return resolved
 
 
-# ΓöÇΓöÇ Config parsing ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# ── Config parsing ─────────────────────────────────────────────
 
 
 def _optional_str(value: Any, *, field_name: str) -> str | None:
