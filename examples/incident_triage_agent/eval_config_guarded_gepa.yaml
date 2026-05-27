@@ -1,4 +1,4 @@
-# Joint AgentShield + p2m demo incident-triage eval — Act 3b
+# Joint AgentShield + ASSERT demo incident-triage eval — Act 3b
 # (AgentShield + GEPA-optimized system prompt).
 #
 # Identical to eval_config_guarded.yaml except target.callable points at

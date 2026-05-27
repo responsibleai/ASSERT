@@ -8,11 +8,11 @@ import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, cast
 
-from p2m.core.config_model import DEFAULT_JUDGE_MAX_TOKENS, DEFAULT_MODEL_TIMEOUT_S
-from p2m.core.judge_citations import CITE_XML_EXAMPLE, CITE_XML_PATTERN, extract_xml_citations
-from p2m.core.judge_normalization import _normalize_transcript_judge_verdict_impl
-from p2m.core.model_client import GenerateOptions, Message, generate, generate_structured
-from p2m.core.transcript import Transcript
+from assert_eval.core.config_model import DEFAULT_JUDGE_MAX_TOKENS, DEFAULT_MODEL_TIMEOUT_S
+from assert_eval.core.judge_citations import CITE_XML_EXAMPLE, CITE_XML_PATTERN, extract_xml_citations
+from assert_eval.core.judge_normalization import _normalize_transcript_judge_verdict_impl
+from assert_eval.core.model_client import GenerateOptions, Message, generate, generate_structured
+from assert_eval.core.transcript import Transcript
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ NODE_JUDGMENTS_KEY = "node_judgments"
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 _CITE_XML_EXAMPLE_JSON = CITE_XML_EXAMPLE.replace('"', '\\"')
 
-# Re-exported compatibility surface for callers and tests that patch through p2m.core.judge.
+# Re-exported compatibility surface for callers and tests that patch through assert_eval.core.judge.
 __all__ = [
     "CITE_XML_EXAMPLE",
     "CITE_XML_PATTERN",

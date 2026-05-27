@@ -10,7 +10,7 @@ from __future__ import annotations
 import statistics
 from collections import Counter, defaultdict
 from typing import Any
-from p2m.core.io import row_behavior
+from assert_eval.core.io import row_behavior
 
 
 def count_inference_turns(inference_row: dict[str, Any]) -> int:

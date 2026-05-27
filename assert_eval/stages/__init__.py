@@ -1,4 +1,4 @@
-"""Concrete stage modules for the p2m pipeline."""
+"""Concrete stage modules for the ASSERT pipeline."""
 
 from __future__ import annotations
 

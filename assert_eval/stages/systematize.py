@@ -8,13 +8,13 @@ from typing import Any, Dict
 
 log = logging.getLogger(__name__)
 
-from p2m.config import parse_model_config, resolve_stage_paths
-from p2m.core.config_model import (
+from assert_eval.config import parse_model_config, resolve_stage_paths
+from assert_eval.core.config_model import (
     DEFAULT_SYSTEMATIZE_MAX_TOKENS,
     DEFAULT_SYSTEMATIZE_TEMPERATURE,
 )
-from p2m.core.io import write_json
-from p2m.core.model_client import GenerateOptions, Message, generate_structured
+from assert_eval.core.io import write_json
+from assert_eval.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 GEN_PROMPT = (BASE_DIR / "prompts" / "systematize_system.md").read_text()
@@ -170,10 +170,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
     behavior_description = ctx.get("behavior") or ""
     context = ctx.get("context")
 
-    from p2m.core.async_utils import log_heartbeat
-    from p2m.core.config_model import ModelConfig as SysModelConfig
-    from p2m.stages.systematization import run_systematization
-    from p2m.stages.systematization_convert import run_systematization_to_taxonomy
+    from assert_eval.core.async_utils import log_heartbeat
+    from assert_eval.core.config_model import ModelConfig as SysModelConfig
+    from assert_eval.stages.systematization import run_systematization
+    from assert_eval.stages.systematization_convert import run_systematization_to_taxonomy
 
     sys_model_cfg = SysModelConfig(
         name=model_cfg.name,

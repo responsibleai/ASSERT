@@ -3,7 +3,7 @@ metadata:
   version: "1.1.0"
   description: >-
     Runtime guardrails for the incident-triage agent. Closes the 6
-    procedural failure modes surfaced by p2m's BEFORE eval
+    procedural failure modes surfaced by ASSERT's BEFORE eval
     (eval_config_baseline.yaml) deterministically, including the
     cross-prompt-injection (XPIA) variant where the alert's
     inbound_payload_text carries attacker instructions. Leaves the

@@ -392,7 +392,7 @@ class Transcript(BaseModel):
             List of messages for the view.
         """
         # Use serialized edit types instead of class identity so helpers imported
-        # through the current `p2m.*` package path remain interoperable.
+        # through the current `ASSERT.*` package path remain interoperable.
         return _collect_messages_for_view(self.events, view)
 
     def collect_messages_with_ids(

@@ -5,13 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
-from p2m.core.judge_citations import (
+from assert_eval.core.judge_citations import (
     CITATION_SOURCE_KINDS,
     MAX_CANONICAL_CITATION_PART_CHARS,
     MAX_FULL_MESSAGE_CITATION_CHARS,
     RESOLVED_CITATION_METHODS,
 )
-from p2m.core.transcript import Transcript
+from assert_eval.core.transcript import Transcript
 
 DIMENSIONS_KEY = "dimensions"
 NODE_JUDGMENTS_KEY = "node_judgments"

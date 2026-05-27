@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from p2m.core.io import write_json, row_behavior
+from assert_eval.core.io import write_json, row_behavior
 
 log = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ def _raise_schema_hint(
     raise ViewerReadModelBuildError(
         f'{path.name}: expected field "{field}" ({expected}) but the row '
         f"contains [{actual_keys}]. The file appears to use an outdated "
-        f"format that is incompatible with the current version of p2m.\n"
+        f"format that is incompatible with the current version of ASSERT.\n"
         f"  To fix: delete the run directory\n"
         f"    rm -rf {path.parent}\n"
         f"  and re-run the pipeline so all artifacts are regenerated."

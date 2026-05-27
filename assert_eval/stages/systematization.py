@@ -11,9 +11,9 @@ log = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict
 
-from p2m.core.config_model import ModelConfig
-from p2m.core.io import load_prompt_text
-from p2m.core.model_client import GenerateOptions, generate_structured
+from assert_eval.core.config_model import ModelConfig
+from assert_eval.core.io import load_prompt_text
+from assert_eval.core.model_client import GenerateOptions, generate_structured
 
 SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
 ALLOWED_MODES = {"research", "direct"}

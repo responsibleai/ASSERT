@@ -28,7 +28,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_DEPLOYMENT = os.environ.get("P2M_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
 
 
 def _get_llm(temperature: float = 0) -> AzureChatOpenAI:
@@ -209,7 +209,7 @@ async def chat(message: str) -> str:
 
 
 def chat_sync(message: str) -> str:
-    """Synchronous wrapper for p2m callable integration."""
+    """Synchronous wrapper for ASSERT callable integration."""
     return asyncio.run(chat(message))
 
 

@@ -27,7 +27,7 @@ load_dotenv()
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-4.1-nano")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4.1-nano")
 
 
 def _get_crewai_llm():

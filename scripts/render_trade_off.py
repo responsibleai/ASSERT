@@ -24,7 +24,7 @@ Run from the repo root:
   python scripts/render_trade_off.py --suite incident-triage-agent-v1
 
 This script intentionally stays stdlib-friendly: only matplotlib (already
-a base dependency of p2m-policy) is required.
+a base dependency of assert-eval) is required.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-# matplotlib is a base dependency of p2m-policy (see pyproject.toml).
+# matplotlib is a base dependency of assert-eval (see pyproject.toml).
 import matplotlib
 
 matplotlib.use("Agg")

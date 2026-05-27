@@ -2,7 +2,7 @@
 
 Architecture:
     Turn 1: Tester generates probe → CallableSession invokes target →
-            OTel captures agent internals → P2M records turn + trace metadata
+            OTel captures agent internals → ASSERT records turn + trace metadata
     Turn 2: Tester escalates based on Turn 1 response → same flow
     ...
     Turn N: Max turns reached or stop condition met
@@ -10,7 +10,7 @@ Architecture:
     After all turns: Full trace tree available for judge with per-node,
     per-tool, per-LLM-call visibility.
 
-This differs from Phoenix's approach (collect-then-evaluate) because P2M
+This differs from Phoenix's approach (collect-then-evaluate) because ASSERT
 actively DRIVES the conversation with adversarial probing while simultaneously
 capturing the target's internal execution traces.
 """
@@ -23,10 +23,10 @@ import uuid
 from contextlib import nullcontext
 from typing import Any
 
-from p2m.core.async_utils import invoke_callable
-from p2m.core.collector import SpanCollector
-from p2m.core.model_client import Message
-from p2m.core.otel import (
+from assert_eval.core.async_utils import invoke_callable
+from assert_eval.core.collector import SpanCollector
+from assert_eval.core.model_client import Message
+from assert_eval.core.otel import (
     InMemoryTraceExporter,
     OTelSpan,
     TraceExporter,
@@ -34,7 +34,7 @@ from p2m.core.otel import (
     compress_trace_for_judge,
     validate_spans,
 )
-from p2m.core.session import TurnResult
+from assert_eval.core.session import TurnResult
 
 
 class OTelTracedSession:
@@ -46,7 +46,7 @@ class OTelTracedSession:
     2. In-memory: For testing. Spans are injected directly via add_span().
 
     Multi-turn flow:
-        P2M's inference stage drives the conversation. Each turn:
+        ASSERT's inference stage drives the conversation. Each turn:
         1. Tester generates the next adversarial message
         2. This session invokes the target callable
         3. Target executes (emitting OTel spans if instrumented)
@@ -87,7 +87,7 @@ class OTelTracedSession:
         self._live_otel = live_otel
 
         if live_otel:
-            from p2m.core.otel import LiveOTelExporter
+            from assert_eval.core.otel import LiveOTelExporter
             self._live_exporter = LiveOTelExporter()
             self._exporter = self._live_exporter
         else:
@@ -110,7 +110,7 @@ class OTelTracedSession:
         import io
         import sys
 
-        from p2m.core.security import validate_callable_ref
+        from assert_eval.core.security import validate_callable_ref
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
@@ -162,7 +162,7 @@ class OTelTracedSession:
         sync threading lock across the inner ``await`` would block the loop
         and deadlock when ``inference.concurrency > 1``.
         """
-        from p2m.core.otel import LiveOTelExporter
+        from assert_eval.core.otel import LiveOTelExporter
         lock_ctx = LiveOTelExporter.get_lock() if self._live_otel else nullcontext()
         async with lock_ctx:
             # Clear spans from previous turn so we only capture this turn's execution

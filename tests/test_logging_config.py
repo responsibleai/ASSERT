@@ -1,4 +1,4 @@
-"""Tests for p2m.logging_config."""
+"""Tests for assert_eval.logging_config."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.logging_config import configure_logging
+from assert_eval.logging_config import configure_logging
 
 
 class ConfigureLoggingTest(unittest.TestCase):

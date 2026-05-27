@@ -21,7 +21,7 @@ from openai import AsyncAzureOpenAI  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-5.4-mini")
 
 # Configure Azure when env vars are set; otherwise uses OPENAI_API_KEY
 if os.environ.get("AZURE_API_KEY") and os.environ.get("AZURE_API_BASE"):

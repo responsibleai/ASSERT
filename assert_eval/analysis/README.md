@@ -1,4 +1,4 @@
-# p2m/analysis
+# assert_eval/analysis
 
 Post-hoc analysis of pipeline results. Each module computes metrics from the JSONL artifacts that the pipeline stages produce. All functions accept plain dicts and return plain dicts.
 
@@ -15,7 +15,7 @@ Post-hoc analysis of pipeline results. Each module computes metrics from the JSO
 ## Usage
 
 ```python
-from p2m.analysis.suite_analysis import analyze_suite, format_suite_summary
+from assert_eval.analysis.suite_analysis import analyze_suite, format_suite_summary
 
 results = analyze_suite("artifacts/results/relationship-entanglement-v1")
 print(format_suite_summary(results))

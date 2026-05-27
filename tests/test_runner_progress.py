@@ -5,8 +5,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
-from p2m.core.io import write_json
-from p2m.runner import run_pipeline
+from assert_eval.core.io import write_json
+from assert_eval.runner import run_pipeline
 
 
 class RunnerProgressTest(unittest.TestCase):
@@ -45,7 +45,7 @@ class RunnerProgressTest(unittest.TestCase):
                     "scores_path": str(scores),
                 }
 
-            with patch("p2m.stages.judge.run_judge", new=fake_run_judge):
+            with patch("assert_eval.stages.judge.run_judge", new=fake_run_judge):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 0)
@@ -100,7 +100,7 @@ class RunnerProgressTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertLogs("p2m.runner", level="ERROR") as cm:
+            with self.assertLogs("assert_eval.runner", level="ERROR") as cm:
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 1)
@@ -119,7 +119,7 @@ class RunnerProgressTest(unittest.TestCase):
             shutil.copy2(cfg_path, run_root / "config.yaml")
 
             fake_judge = self._make_fake_run_judge(root)
-            with patch("p2m.stages.judge.run_judge", new=fake_judge):
+            with patch("assert_eval.stages.judge.run_judge", new=fake_judge):
                 rc = run_pipeline(config=str(cfg_path), resume=True)
             self.assertEqual(rc, 0)
 
@@ -187,8 +187,8 @@ class RunnerProgressTest(unittest.TestCase):
                 raise RuntimeError("boom")
 
             with (
-                patch("p2m.stages.judge.run_judge", new=boom),
-                self.assertLogs("p2m.runner", level="ERROR") as cm,
+                patch("assert_eval.stages.judge.run_judge", new=boom),
+                self.assertLogs("assert_eval.runner", level="ERROR") as cm,
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
@@ -203,8 +203,8 @@ class RunnerProgressTest(unittest.TestCase):
             cfg_path = self._make_judge_config(root)
 
             with (
-                patch("p2m.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
-                self.assertLogs("p2m.runner", level="INFO") as cm,
+                patch("assert_eval.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
+                self.assertLogs("assert_eval.runner", level="INFO") as cm,
             ):
                 rc = run_pipeline(config=str(cfg_path))
 
@@ -234,7 +234,7 @@ class RunnerProgressTest(unittest.TestCase):
                     "scores_path": str(scores),
                 }
 
-            with patch("p2m.stages.judge.run_judge", new=spy_run_judge):
+            with patch("assert_eval.stages.judge.run_judge", new=spy_run_judge):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 0)
@@ -249,8 +249,8 @@ class RunnerProgressTest(unittest.TestCase):
             cfg_path = self._make_judge_config(root)
 
             with (
-                patch("p2m.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
-                patch("p2m.runner.write_json", wraps=write_json) as write_json_spy,
+                patch("assert_eval.stages.judge.run_judge", new=self._make_fake_run_judge(root)),
+                patch("assert_eval.runner.write_json", wraps=write_json) as write_json_spy,
             ):
                 rc = run_pipeline(config=str(cfg_path))
 

@@ -1,4 +1,4 @@
-"""Centralized logging configuration for p2m."""
+"""Centralized logging configuration for ASSERT."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def configure_logging(
     log_file: Path | None = None,
     json_output: bool = False,
 ) -> None:
-    """Set up the root logger for the p2m process.
+    """Set up the root logger for the ASSERT process.
 
     Level mapping:
         default  → INFO   (shows progress messages, warnings, errors)
@@ -84,7 +84,7 @@ def configure_logging(
         root.addHandler(file_handler)
 
     # Keep LiteLLM debug noise suppressed regardless of verbosity.
-    # Errors from LiteLLM are caught and wrapped by p2m's own modules.
+    # Errors from LiteLLM are caught and wrapped by ASSERT's own modules.
     # The OpenAI SDK logs every retry at INFO; suppress to avoid flooding.
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)

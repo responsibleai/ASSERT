@@ -59,7 +59,7 @@ When helping a developer choose a target:
 3. If they have a hosted model with a system prompt and optional tools, use `target.model` and optional `target.tools`.
 4. Simulated tools are useful for Prompt Agent setups (declared in YAML, runtime owns the loop) before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
 
-**Terminology divergence to know about**: in customer-facing docs we call `target.model + target.tools` the **Prompt Agent target** (the agent is declared in YAML; the runtime owns the tool-call loop). In code, the corresponding session class is `HostedSession` (`p2m/core/session.py`). Use the customer-facing name in docs and the class name in code references — this divergence is intentional and not worth renaming.
+**Terminology divergence to know about**: in customer-facing docs we call `target.model + target.tools` the **Prompt Agent target** (the agent is declared in YAML; the runtime owns the tool-call loop). In code, the corresponding session class is `HostedSession` (`assert_eval/core/session.py`). Use the customer-facing name in docs and the class name in code references — this divergence is intentional and not worth renaming.
 
 Recommend a plain callable without `target.trace` only when the target is a black-box API that cannot be instrumented, or for quick pipeline smoke tests. Flag this as a customization fallback, not the recommended path.
 
@@ -138,7 +138,7 @@ Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. T
   eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
 
 Key facts:
-- The canonical CLI entrypoint is `assert-eval`; `assert` and `p2m` remain backward-compatible aliases. Configs live in `examples/`. Artifacts land in `artifacts/results/<suite>/<run>/`.
+- The canonical CLI entrypoint is `assert-eval`; legacy CLI aliases are intentionally not supported. Configs live in `examples/`. Artifacts land in `artifacts/results/<suite>/<run>/`.
 - For any agent or multi-agent system with a Python entry function, use `target.callable` with `target.trace`.
   OpenTelemetry trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) is the recommended integration path so the judge can score tool calls and routing, not just final text.
 - For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.

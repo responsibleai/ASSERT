@@ -12,7 +12,7 @@ from collections import Counter
 from itertools import combinations
 from typing import Any
 
-from p2m.core.io import stratification_dimensions, row_behavior
+from assert_eval.core.io import stratification_dimensions, row_behavior
 
 # ---------------------------------------------------------------------------
 # Stratification quality

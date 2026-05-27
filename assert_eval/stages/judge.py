@@ -12,17 +12,17 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-from p2m.config import resolve_stage_paths
-from p2m.core.io import SCORES_FILE, INFERENCE_SET_FILE, row_factors
-from p2m.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
-from p2m.core.judge import (
+from assert_eval.config import resolve_stage_paths
+from assert_eval.core.io import SCORES_FILE, INFERENCE_SET_FILE, row_factors
+from assert_eval.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
+from assert_eval.core.judge import (
     build_judge_contract,
     infer_judge_status,
     run_transcript_judge as run_llm_judge,
 )
-from p2m.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
-from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
-from p2m.viewer_read_model import build_run_viewer_artifacts
+from assert_eval.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
+from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_eval.viewer_read_model import build_run_viewer_artifacts
 
 SCOPE = "run"
 SUITE_OUTPUT = None
@@ -369,7 +369,7 @@ async def run_judge(
     # outright when (a) no rows succeeded AND no prior scores were
     # cached (failure is systemic — auth, config), or (b) the per-row
     # failure rate exceeds 10% on runs of >=20 transcripts (mirrors
-    # rollout.py's P2M_ROLLOUT_ERROR_FAIL_RATIO ceiling, so a near-
+    # rollout.py's ASSERT_ROLLOUT_ERROR_FAIL_RATIO ceiling, so a near-
     # broken run doesn't silently publish thin scores). Below the
     # tolerance, log and continue — adversarial-eval workloads will
     # routinely trip the judge model's provider-side content filter

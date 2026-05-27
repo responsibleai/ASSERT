@@ -1,4 +1,4 @@
-"""Click CLI for the measurements pipeline (p2m)."""
+"""Click CLI for the measurements pipeline (ASSERT)."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from click.shell_completion import CompletionItem
 from rich.console import Console
 from rich.table import Table
 
-from p2m.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
-from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
-from p2m.logging_config import configure_logging
-from p2m.stages import STAGE_NAMES
+from assert_eval.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
+from assert_eval.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_eval.logging_config import configure_logging
+from assert_eval.stages import STAGE_NAMES
 
 ROOT = Path(__file__).resolve().parent.parent
 JUDGE_DIMENSIONS_PATH = ROOT / "examples" / "eval-definitions" / "judge_dimensions.yaml"
@@ -27,7 +27,7 @@ DEFAULT_RESULTS_DIR = ROOT / "artifacts" / "results"
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
     "max_content_width": 100,
-    "auto_envvar_prefix": "P2M",
+    "auto_envvar_prefix": "ASSERT_EVAL",
 }
 
 DEFAULT_COMPARE_METRIC = "policy_violation"
@@ -53,7 +53,7 @@ class SuggestingGroup(click.Group):
 def _load_runner_module():
     global _RUNNER_MODULE
     if _RUNNER_MODULE is None:
-        from p2m import runner
+        from assert_eval import runner
 
         _RUNNER_MODULE = runner
     return _RUNNER_MODULE
@@ -62,7 +62,7 @@ def _load_runner_module():
 def _load_test_set_metrics():
     global _TEST_SET_METRICS_MODULE
     if _TEST_SET_METRICS_MODULE is None:
-        from p2m.analysis import test_set_metrics
+        from assert_eval.analysis import test_set_metrics
 
         _TEST_SET_METRICS_MODULE = test_set_metrics
     return _TEST_SET_METRICS_MODULE
@@ -1280,7 +1280,7 @@ def analysis_test_set_metrics(
 @click.option("--output", default=None, type=click.Path(path_type=Path), help="Output directory for scores")
 def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | None):
     """Judge pre-collected OTel traces without running inference."""
-    from p2m.core.otel import parse_otel_traces
+    from assert_eval.core.otel import parse_otel_traces
 
     click.echo(f"Parsing OTel traces from {traces}...")
     inference_rows = parse_otel_traces(traces, group_by=group_by)
@@ -1327,7 +1327,7 @@ def library():
 @click.option("--no-color", is_flag=True, help="Disable colored output.")
 def library_list(kind: str | None, as_json: bool, no_color: bool):
     """List all available presets in the library."""
-    from p2m.library.loader import discover
+    from assert_eval.library.loader import discover
 
     results = discover(kind)
     if as_json:
@@ -1361,7 +1361,7 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.option("--json", "as_json", is_flag=True, help="Emit raw YAML content as JSON.")
 def library_show(name: str, kind: str | None, as_json: bool):
     """Show the full content of a preset by name."""
-    from p2m.library.loader import VALID_KINDS, load_preset
+    from assert_eval.library.loader import VALID_KINDS, load_preset
 
     # Auto-detect kind if not specified
     if kind is None:

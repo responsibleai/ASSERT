@@ -17,7 +17,7 @@ load_dotenv()
 from openai import AzureOpenAI, OpenAI  # noqa: E402
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT, OPENAI_TOOLS  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "gpt-5.4-mini")
 
 
 def _get_client():

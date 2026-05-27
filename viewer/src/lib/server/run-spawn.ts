@@ -4,7 +4,7 @@
  * The wizard collects state under post-PR#23 names (`systematize`,
  * `testCasesPipeline`, `inferencePipeline`, `scenarioPipeline`, `dimensions`,
  * `tester`, …). This module is the boundary between that UI JSON payload and
- * the p2m YAML schema — it validates the payload, snake_cases keys for the
+ * the ASSERT YAML schema — it validates the payload, snake_cases keys for the
  * runner, and inlines the behavior description so the wizard can submit a
  * single self-contained config.
  *
@@ -18,7 +18,7 @@
  *     -> writes eval_config.yaml (single-YAML authoring; behavior description
  *        lives inline in behavior.description)
  *
- *   spawnP2mRun(...)
+ *   spawnAssertEvalRun(...)
  *     -> spawns `assert-eval run --config <eval_config.yaml>` detached
  *     -> waits for the OS spawn/error event before resolving so a missing
  *        binary surfaces as HTTP 500 (not 200 then a forever-pending monitor)
@@ -560,16 +560,16 @@ interface ResolvedCommand {
 	source: string;
 }
 
-function resolveP2mCommand(configPath: string): ResolvedCommand {
+function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 	const cliArgs = ['run', '--config', configPath];
 
-	const override = process.env.ASSERT_EVAL_COMMAND ?? process.env.P2M_COMMAND;
+	const override = process.env.ASSERT_EVAL_COMMAND;
 	if (override && override.trim()) {
 		const parts = override.trim().split(/\s+/);
 		return {
 			command: parts[0],
 			args: [...parts.slice(1), ...cliArgs],
-			source: process.env.ASSERT_EVAL_COMMAND ? 'ASSERT_EVAL_COMMAND override' : 'P2M_COMMAND override'
+			source: 'ASSERT_EVAL_COMMAND override'
 		};
 	}
 
@@ -599,8 +599,8 @@ function resolveP2mCommand(configPath: string): ResolvedCommand {
  * Only after we hear back do we resolve — that way a missing `assert-eval`
  * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
-export function spawnP2mRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveP2mCommand(written.configPath);
+export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
+	const resolved = resolveAssertEvalCommand(written.configPath);
 
 	let logFd: number;
 	try {

@@ -13,14 +13,14 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-from p2m.config import parse_model_config, reject_unknown_keys, resolve_stage_paths
-from p2m.core.async_utils import gather_limited
-from p2m.core.config_model import (
+from assert_eval.config import parse_model_config, reject_unknown_keys, resolve_stage_paths
+from assert_eval.core.async_utils import gather_limited
+from assert_eval.core.config_model import (
     DEFAULT_GENERATION_MAX_TOKENS,
     DEFAULT_GENERATION_TEMPERATURE,
     TargetConfig,
 )
-from p2m.core.io import (
+from assert_eval.core.io import (
     row_behavior,
     stratification_dimensions,
     fill_template,
@@ -32,7 +32,7 @@ from p2m.core.io import (
     slugify,
     write_jsonl,
 )
-from p2m.core.model_client import (
+from assert_eval.core.model_client import (
     GenerateOptions,
     LLMAuthError,
     LLMInputError,
@@ -40,8 +40,8 @@ from p2m.core.model_client import (
     LLMRateLimitError,
     generate_structured,
 )
-from p2m.core.tools import normalize_tool_defs
-from p2m.stages.stratification import DEFAULT_LEVEL_COUNT, normalize_stratification, run_stratification
+from assert_eval.core.tools import normalize_tool_defs
+from assert_eval.stages.stratification import DEFAULT_LEVEL_COUNT, normalize_stratification, run_stratification
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROMPT_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")

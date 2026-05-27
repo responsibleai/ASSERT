@@ -8,7 +8,7 @@ CSV silently went blank on every run. Jake's review caught it.
 
 Fix (verified by these tests): ``_load_metrics_summary`` now sources all
 four outcome columns from the run's ``scores.jsonl`` (via
-:func:`p2m.results.load_run_summary`). The runner's ``metrics.json``
+:func:`assert_eval.results.load_run_summary`). The runner's ``metrics.json``
 is no longer consulted for outcome data, and the suite-root
 compatibility ``test_set.jsonl`` is not consulted either -- it only
 refreshes on full-success runs and would produce stale or blank
@@ -32,7 +32,7 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 def _import_benchmark_module() -> object:
     """Import scripts/benchmark.py as a module without polluting sys.modules.
 
-    The script lives outside the ``p2m`` package and depends on
+    The script lives outside the ``assert_eval`` package and depends on
     ``REPO_ROOT`` for path resolution, so we load it via importlib with
     the scripts dir on ``sys.path`` only for the duration of import.
     """

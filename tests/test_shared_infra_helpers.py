@@ -4,21 +4,21 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from p2m.core.io import (
+from assert_eval.core.io import (
     load_test_cases,
     resolve_path,
     write_jsonl,
 )
-from p2m.core.judge import (
+from assert_eval.core.judge import (
     BUILT_IN_DIMENSIONS,
     build_judge_contract,
     multi_judge,
     run_judge,
     run_transcript_judge,
 )
-from p2m.core.model_client import ModelResponse
-from p2m.core.transcript import AddMessageEdit, Message, Transcript, TranscriptEvent, TranscriptMetadata
-from p2m.core.tools import build_target_tools
+from assert_eval.core.model_client import ModelResponse
+from assert_eval.core.transcript import AddMessageEdit, Message, Transcript, TranscriptEvent, TranscriptMetadata
+from assert_eval.core.tools import build_target_tools
 
 
 class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
@@ -148,7 +148,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 model=model,
             )
 
-        with patch("p2m.core.judge.generate_structured", new=fake_generate_structured):
+        with patch("assert_eval.core.judge.generate_structured", new=fake_generate_structured):
             result = await multi_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -203,7 +203,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 model=model,
             )
 
-        with patch("p2m.core.judge.generate_structured", new=fake_generate_structured):
+        with patch("assert_eval.core.judge.generate_structured", new=fake_generate_structured):
             result = await multi_judge(
                 judge_model="github_copilot/claude-opus-4.6",
                 system_prompt="system",
@@ -267,8 +267,8 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             )
 
         with (
-            patch("p2m.core.judge.generate_structured", new=fake_generate_structured),
-            patch("p2m.core.judge.generate", new=fake_generate),
+            patch("assert_eval.core.judge.generate_structured", new=fake_generate_structured),
+            patch("assert_eval.core.judge.generate", new=fake_generate),
         ):
             result = await multi_judge(
                 judge_model="github_copilot/claude-opus-4.6",
@@ -326,8 +326,8 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("non-copilot models should not retry without schema")
 
         with (
-            patch("p2m.core.judge.generate_structured", new=fake_generate_structured),
-            patch("p2m.core.judge.generate", new=fake_generate),
+            patch("assert_eval.core.judge.generate_structured", new=fake_generate_structured),
+            patch("assert_eval.core.judge.generate", new=fake_generate),
         ):
             result = await multi_judge(
                 judge_model="azure/gpt-5.4",
@@ -418,7 +418,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 "failures": 0,
             }
 
-        with patch("p2m.core.judge.multi_judge", new=fake_multi_judge):
+        with patch("assert_eval.core.judge.multi_judge", new=fake_multi_judge):
             result = await run_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -450,7 +450,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 "failures": 1,
             }
 
-        with patch("p2m.core.judge.multi_judge", new=fake_multi_judge):
+        with patch("assert_eval.core.judge.multi_judge", new=fake_multi_judge):
             result = await run_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -498,7 +498,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -541,7 +541,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -571,7 +571,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -623,7 +623,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -672,7 +672,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -718,7 +718,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -757,7 +757,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",
@@ -803,7 +803,7 @@ class SharedInfraHelpersTest(unittest.IsolatedAsyncioTestCase):
                 0,
             )
 
-        with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+        with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
             result = await run_transcript_judge(
                 judge_model="azure/gpt-5.4",
                 system_prompt="system",

@@ -1,16 +1,16 @@
-"""OTel trace parser — converts OTLP JSON to p2m transcript events.
+"""OTel trace parser — converts OTLP JSON to ASSERT transcript events.
 
 Supports traces exported from Phoenix, Jaeger, or any OpenTelemetry collector.
 Follows OpenInference semantic conventions for LLM/agent span attributes.
 
 Usage:
-    from p2m.core.otel import parse_otel_traces
+    from assert_eval.core.otel import parse_otel_traces
 
     inference_rows = parse_otel_traces(
         "traces.json",
         group_by="session.id",
     )
-    # Returns list[dict] in p2m inference-row format (same as inference_set.jsonl)
+    # Returns list[dict] in ASSERT inference-row format (same as inference_set.jsonl)
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def parse_otel_traces(
     *,
     group_by: str = "session.id",
 ) -> list[dict[str, Any]]:
-    """Parse OTLP JSON export into p2m inference rows.
+    """Parse OTLP JSON export into ASSERT inference rows.
 
     Args:
         path: Path to OTLP JSON file.
@@ -166,7 +166,7 @@ def _group_spans(
 def _spans_to_events(
     spans: list[OTelSpan],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Convert a group of spans into p2m transcript events + aggregate metadata.
+    """Convert a group of spans into ASSERT transcript events + aggregate metadata.
 
     Returns:
         (events, aggregate) where events is a list of transcript event dicts
@@ -548,7 +548,7 @@ class LiveOTelExporter:
             LiveOTelExporter._sdk_exporter.spans.clear()
 
     def export_session(self, session_id: str) -> list[OTelSpan]:
-        """Convert all captured OTel SDK spans to p2m OTelSpan format.
+        """Convert all captured OTel SDK spans to ASSERT OTelSpan format.
 
         Since clear() is called between turns, all spans belong to the
         current turn. The session_id parameter is kept for interface compat
