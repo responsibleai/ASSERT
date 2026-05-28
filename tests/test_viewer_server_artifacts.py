@@ -657,6 +657,172 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["previewTotal"], 1)
             self.assertEqual(payload["auditScores"], 0)
 
+    def test_load_run_page_data_exposes_refusal_stop_reason_display(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            harness_dir = tmp_root / "harness"
+            harness_dir.mkdir()
+            data_path = self._copy_data_harness(harness_dir)
+
+            artifacts_root = tmp_root / "artifacts" / "results"
+            suite_dir = artifacts_root / "suite-a"
+            preview_run_dir = suite_dir / "run-preview"
+            scored_run_dir = suite_dir / "run-scored"
+            preview_run_dir.mkdir(parents=True, exist_ok=True)
+            scored_run_dir.mkdir(parents=True, exist_ok=True)
+
+            (suite_dir / "suite.json").write_text(
+                json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
+                encoding="utf-8",
+            )
+            (suite_dir / "taxonomy.json").write_text(
+                json.dumps(
+                    {
+                        "behavior_categories": [
+                            {"name": "behavior", "definition": "def", "permissible": False},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (suite_dir / "test_set.jsonl").write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "type": "scenario",
+                            "test_case_id": seed_id,
+                            "behavior": "behavior",
+                            "dimensions": {"behavior": "behavior"},
+                            "seed": {
+                                "title": title,
+                                "description": "Scenario description",
+                            },
+                        }
+                    )
+                    for seed_id, title in [
+                        ("tester-refused", "Tester refused"),
+                        ("target-refused", "Target refused"),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def refusal_row(seed_id: str, stop_reason: str, actor: str, view: list[str]) -> dict[str, object]:
+                return {
+                    "type": "scenario",
+                    "test_case_id": seed_id,
+                    "behavior": "behavior",
+                    "dimensions": {"behavior": "behavior"},
+                    "stop_reason": stop_reason,
+                    "target": "target-model",
+                    "tester_model": "tester-model",
+                    "events": [
+                        {
+                            "view": view,
+                            "actor": actor,
+                            "edit": {
+                                "type": "add_message",
+                                "message": {
+                                    "role": "system",
+                                    "content": f"[{stop_reason}]",
+                                },
+                            },
+                        }
+                    ],
+                    "llm_calls": [],
+                }
+
+            transcript_rows = [
+                refusal_row("tester-refused", "tester_input_refused", "tester", ["system", "combined"]),
+                refusal_row("target-refused", "target_input_refused", "target", ["target", "combined"]),
+            ]
+            for run_dir in [preview_run_dir, scored_run_dir]:
+                (run_dir / "inference_set.jsonl").write_text(
+                    "".join(json.dumps(row) + "\n" for row in transcript_rows),
+                    encoding="utf-8",
+                )
+
+            (preview_run_dir / "manifest.json").write_text(
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
+                encoding="utf-8",
+            )
+            (scored_run_dir / "manifest.json").write_text(
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
+                encoding="utf-8",
+            )
+            (scored_run_dir / "scores.jsonl").write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "type": "scenario",
+                            "test_case_id": row["test_case_id"],
+                            "behavior": "behavior",
+                            "dimensions": {"behavior": "behavior"},
+                            "judge_model": "judge-model",
+                            "target": "target-model",
+                            "tester_model": "tester-model",
+                            "judge_status": "ok",
+                            "verdict": {
+                                "dimensions": {"overrefusal": False},
+                                "justification": "ok",
+                                "node_judgments": [],
+                            },
+                        }
+                    )
+                    + "\n"
+                    for row in transcript_rows
+                ),
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(tmp_root),
+                }
+            )
+            script = textwrap.dedent(
+                f"""\
+                const {{ loadRunPageData, loadScenarioDrawerItem }} = await import({json.dumps(data_path.as_uri())});
+                const previewPage = loadRunPageData('suite-a', 'run-preview');
+                const scoredPage = loadRunPageData('suite-a', 'run-scored', 'audit');
+                const previewRows = Object.fromEntries(previewPage.inferencePreviewRows.map((row) => [row.test_case_id, row]));
+                const scoredRows = Object.fromEntries(scoredPage.auditScores.map((row) => [row.test_case_id, row]));
+                const previewDrawer = await loadScenarioDrawerItem('suite-a', 'run-preview', 'tester-refused');
+                const scoredDrawer = await loadScenarioDrawerItem('suite-a', 'run-scored', 'target-refused');
+                console.log(JSON.stringify({{
+                  previewTesterTurns: previewRows['tester-refused']?.turns_count ?? null,
+                  previewTesterLabel: previewRows['tester-refused']?.stop_reason_display?.label ?? null,
+                  previewTesterDescription: previewRows['tester-refused']?.stop_reason_display?.description ?? null,
+                  previewTargetLabel: previewRows['target-refused']?.stop_reason_display?.label ?? null,
+                  previewDrawerMessages: previewDrawer?.messages.length ?? null,
+                  previewDrawerLabel: previewDrawer?.context.stop_reason_display?.label ?? null,
+                  scoredTesterTurns: scoredRows['tester-refused']?.metadata?.turns_count ?? null,
+                  scoredTesterLabel: scoredRows['tester-refused']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredTargetLabel: scoredRows['target-refused']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredDrawerMessages: scoredDrawer?.messages.length ?? null,
+                  scoredDrawerLabel: scoredDrawer?.context.stop_reason_display?.label ?? null
+                }}));
+                """
+            )
+            result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["previewTesterTurns"], 0)
+            self.assertEqual(payload["previewTesterLabel"], "tester input refused")
+            self.assertIn("Scenario generation was refused", payload["previewTesterDescription"])
+            self.assertEqual(payload["previewTargetLabel"], "target input refused")
+            self.assertEqual(payload["previewDrawerMessages"], 0)
+            self.assertEqual(payload["previewDrawerLabel"], "tester input refused")
+            self.assertEqual(payload["scoredTesterTurns"], 0)
+            self.assertEqual(payload["scoredTesterLabel"], "tester input refused")
+            self.assertEqual(payload["scoredTargetLabel"], "target input refused")
+            self.assertEqual(payload["scoredDrawerMessages"], 1)
+            self.assertEqual(payload["scoredDrawerLabel"], "target input refused")
+
     def test_load_run_page_data_rejects_malformed_interior_live_transcript_line(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             tmp_root = Path(tmp_dir)

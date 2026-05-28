@@ -9,6 +9,7 @@
 		DimensionDef,
 		GroupAxis,
 		MultiJudge,
+		StopReasonDisplay,
 		ViewerResultItem
 	} from '$lib/types.js';
 	import { AUDIT_GROUP_AXES, PROMPT_GROUP_AXES, buildFactorAxes, groupByAxis } from '$lib/grouping.js';
@@ -35,7 +36,8 @@
 		test_case_id: string;
 		behavior: string;
 		turns_count: number;
-		stop_reason: string;
+		stop_reason: string | null;
+		stop_reason_display: StopReasonDisplay | null;
 	};
 
 	function judgeStatus(record: {
@@ -109,6 +111,22 @@
 
 	function metricDotColor(flag: boolean): string {
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
+	}
+
+	function stopReasonLabel(stopReason: string, display?: StopReasonDisplay | null): string {
+		return display?.label ?? stopReason;
+	}
+
+	function stopReasonTitle(stopReason: string, display?: StopReasonDisplay | null): string {
+		if (!display) return stopReason;
+		return `${display.description} Stop reason: ${stopReason}`;
+	}
+
+	function stopReasonChipClass(display?: StopReasonDisplay | null): string {
+		if (display) {
+			return 'rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400';
+		}
+		return 'rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted';
 	}
 
 	function getBehaviorViolated(score: { verdict?: Record<string, unknown> | null }, behaviorName: string): boolean | null {
@@ -1300,7 +1318,11 @@
 										>
 											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.test_case_id}</span>
 											<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-											<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+											{#if auditScore.metadata.stop_reason}
+												<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+													{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+												</span>
+											{/if}
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(auditScore, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
@@ -1358,7 +1380,11 @@
 						>
 							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.test_case_id}</span>
 							<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+							{#if auditScore.metadata.stop_reason}
+								<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+									{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+								</span>
+							{/if}
 							<div class="flex items-center gap-1.5 flex-shrink-0">
 								{#each auditMetricNames as m}
 									{@const v = getRecordFlag(auditScore, m)}
@@ -1426,7 +1452,11 @@
 								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
 							</div>
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{preview.stop_reason}</span>
+							{#if preview.stop_reason}
+								<span class={stopReasonChipClass(preview.stop_reason_display)} title={stopReasonTitle(preview.stop_reason, preview.stop_reason_display)}>
+									{stopReasonLabel(preview.stop_reason, preview.stop_reason_display)}
+								</span>
+							{/if}
 							<span class="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
 								unjudged
 							</span>

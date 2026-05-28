@@ -8,8 +8,25 @@ import type {
 	JudgedSample,
 	LlmCallTrace,
 	ScenarioSeedInfo,
+	StopReasonDisplay,
 	ViewerResultItem
 } from '$lib/types.js';
+
+export function scenarioStopReasonDisplay(stopReason: string | null | undefined): StopReasonDisplay | null {
+	if (stopReason === 'tester_input_refused') {
+		return {
+			label: 'tester input refused',
+			description: 'Scenario generation was refused before target turns were produced.'
+		};
+	}
+	if (stopReason === 'target_input_refused') {
+		return {
+			label: 'target input refused',
+			description: 'The target model refused a generated tester input.'
+		};
+	}
+	return null;
+}
 
 function normalizeMessageRole(role: string): InteractionMessage['role'] {
 	if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
@@ -164,7 +181,9 @@ export function normalizeScenarioResult(
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,
 			turns_count: countConversationMessages(interactionMessages),
-			stop_reason: score.metadata.stop_reason
+			stop_reason: score.metadata.stop_reason,
+			stop_reason_display:
+				score.metadata.stop_reason_display ?? scenarioStopReasonDisplay(score.metadata.stop_reason)
 		}
 	};
 }

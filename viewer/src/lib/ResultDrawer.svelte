@@ -22,6 +22,7 @@
 		LlmCallTrace,
 		NodeJudgment,
 		SeedTool,
+		StopReasonDisplay,
 		Verdict,
 		ViewerResultItem
 	} from '$lib/types.js';
@@ -188,6 +189,23 @@
 
 	function getStructuredCitations(citations: unknown): AuditCitation[] {
 		return Array.isArray(citations) ? citations.filter(isStructuredCitation) : [];
+	}
+
+	function stopReasonLabel(stopReason: string | null | undefined, display?: StopReasonDisplay | null): string {
+		return display?.label ?? stopReason ?? '';
+	}
+
+	function stopReasonTitle(stopReason: string | null | undefined, display?: StopReasonDisplay | null): string {
+		if (!stopReason) return display?.description ?? '';
+		if (!display) return stopReason;
+		return `${display.description} Stop reason: ${stopReason}`;
+	}
+
+	function stopReasonChipClass(display?: StopReasonDisplay | null): string {
+		if (display) {
+			return 'rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400';
+		}
+		return 'rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted';
 	}
 
 	function getDimensionJustification(verdict: Verdict | null | undefined, metric: string): string | null {
@@ -780,7 +798,9 @@
 					<span class="text-xs text-text-muted">·</span>
 				{/if}
 				{#if item.kind === 'scenario' && item.context.stop_reason}
-					<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{item.context.stop_reason}</span>
+					<span class={stopReasonChipClass(item.context.stop_reason_display)} title={stopReasonTitle(item.context.stop_reason, item.context.stop_reason_display)}>
+						{stopReasonLabel(item.context.stop_reason, item.context.stop_reason_display)}
+					</span>
 					<span class="text-xs text-text-muted">·</span>
 				{/if}
 
@@ -1072,6 +1092,19 @@
 					{/each}
 				</div>
 			{/if}
+			{#if item.kind === 'scenario' && item.context.stop_reason_display}
+				<div class="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+					<div class="text-xs font-semibold uppercase tracking-wide text-amber-400">
+						{item.context.stop_reason_display.label}
+					</div>
+					<p class="mt-1 text-sm text-text-secondary">{item.context.stop_reason_display.description}</p>
+					{#if item.context.stop_reason}
+						<p class="mt-2 text-[11px] text-text-muted">
+							Stop reason: <code class="rounded bg-black/20 px-1 py-0.5">{item.context.stop_reason}</code>
+						</p>
+					{/if}
+				</div>
+			{/if}
 			<div class="space-y-3">
 				{#each item.messages as message, messageIndex}
 					{@const turnLabel = message.role === 'system' ? null : (message.judgeTurn ?? fallbackTurnLabel(item.messages, messageIndex))}
@@ -1347,7 +1380,9 @@
 					{/if}
 				{/each}
 				{#if item.messages.length === 0}
-					<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{#if !(item.kind === 'scenario' && item.context.stop_reason_display)}
+						<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{/if}
 				{/if}
 			</div>
 		</div>
