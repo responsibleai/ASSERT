@@ -113,7 +113,7 @@ export function computeAuditRunMetrics(scores: AuditScore[]): AuditRunMetrics | 
 		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
 		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		dimensions,
-		target: scores[0]?.target ?? '',
+		target: scores[0]?.target ?? scores[0]?.tester_model ?? '',
 		tester_model: scores[0]?.tester_model ?? '',
 		judge_model: scores[0]?.judge_model ?? ''
 	};
