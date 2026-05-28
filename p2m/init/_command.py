@@ -1,4 +1,4 @@
-"""Click command definition for ``p2m init``."""
+"""Click command definition for ``assert-eval init``."""
 
 from __future__ import annotations
 
@@ -164,7 +164,7 @@ def init(
 
     emit_config(yaml_result, output, force=force)
     log.info("Written to %s", output)
-    log.info("Next: p2m run --config %s", output)
+    log.info("Next: assert-eval run --config %s", output)
 
 
 def _error(message: str) -> None:

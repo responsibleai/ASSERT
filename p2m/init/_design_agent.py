@@ -1,4 +1,4 @@
-"""Interactive design-agent loop for ``p2m init``.
+"""Interactive design-agent loop for ``assert-eval init``.
 
 Drives a multi-turn conversation with an LLM that follows a three-action
 protocol (ask / propose / done) to collaboratively design an eval config.

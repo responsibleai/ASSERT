@@ -1,1 +1,1 @@
-"""p2m init — conversational eval config designer."""
+"""assert-eval init — conversational eval config designer."""
