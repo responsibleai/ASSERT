@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — smolagents (HuggingFace tool-calling agent).
 
 Instrumentation: 2 lines. Agent code: standard smolagents.

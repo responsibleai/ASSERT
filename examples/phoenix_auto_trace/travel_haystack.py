@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Haystack (pipeline with tool-calling loop).
 
 Instrumentation: 2 lines. Agent code: standard Haystack 2.x.

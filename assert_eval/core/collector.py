@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """SpanCollector Protocol — decouples ASSERT from any specific trace backend.
 
 ASSERT's OTel integration depends on this Protocol, not on Phoenix.

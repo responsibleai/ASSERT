@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Suite-level types (from suite.json, taxonomy.json, test_set.jsonl)
 
 export interface Suite {
@@ -229,7 +232,7 @@ export interface ViewerResultItem {
 
 // Aggregated types for views
 
-export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
+export type SuiteStatus = 'empty' | 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;

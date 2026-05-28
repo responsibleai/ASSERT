@@ -21,6 +21,19 @@ assert-eval run --config examples\travel_planner_langgraph\eval_config.yaml
 assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
+## Create your own config
+
+Use `assert-eval init` to design an eval config interactively instead of writing YAML by hand.
+Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
+
+```powershell
+assert-eval init --model azure/gpt-5.4-mini
+# or seed from an existing example:
+assert-eval init --model azure/gpt-5.4-mini --from examples\travel_planner_langgraph\eval_config.yaml
+```
+
+See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) for all options.
+
 ## Which example to start with
 
 | Goal | Example | Notes |

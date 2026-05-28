@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for assert_eval.analysis modules — stats, inference_metrics, stability, suite_analysis."""
 
 import json

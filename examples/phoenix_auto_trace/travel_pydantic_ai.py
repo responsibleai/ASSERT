@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — PydanticAI (agent framework with typed tools).
 
 Instrumentation: 2 lines. Agent code: standard PydanticAI.

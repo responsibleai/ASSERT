@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tool module loading, tool schema derivation, and tool dispatch."""
 
 from __future__ import annotations

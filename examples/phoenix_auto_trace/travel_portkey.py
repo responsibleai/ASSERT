@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Portkey AI Gateway.
 
 Instrumentation: 2 lines. Agent code: Portkey SDK (OpenAI-compatible).

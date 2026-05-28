@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Minimal sequential runner for the ASSERT stage pipeline."""
 
 from __future__ import annotations

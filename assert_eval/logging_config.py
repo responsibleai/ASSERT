@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Centralized logging configuration for ASSERT."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Multi-agent travel planner built with LangGraph.
 
 Multi-node graph with conditional routing, tool calling, and shared state.

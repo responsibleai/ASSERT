@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Inference-stage metrics computed from inference-set rows.
 
 Aggregates stop-reason distribution, turn counts, truncation rates,

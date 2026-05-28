@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Runtime safety: heartbeat + watchdog daemons + bounded stage teardown.
 
 These primitives defend the harness against well-meaning user targets that

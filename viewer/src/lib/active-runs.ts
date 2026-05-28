@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { browser } from '$app/environment';
 import { readable } from 'svelte/store';
 

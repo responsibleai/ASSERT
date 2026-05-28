@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for _ensure_hosted_trace_instrumentation in inference stage."""
 
 import unittest

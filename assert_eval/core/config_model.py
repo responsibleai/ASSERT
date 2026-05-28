@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Typed runtime config model derived from the canonical pipeline YAML."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Predict taxonomy violations from scenario metadata before running conversations.
 
 Runs four analysis stages:

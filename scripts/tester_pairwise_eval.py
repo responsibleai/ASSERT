@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Compare two tester runs seed-by-seed and aggregate pairwise judgments."""
 
 from __future__ import annotations

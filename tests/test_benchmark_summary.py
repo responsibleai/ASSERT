@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Regression tests for ``scripts/benchmark.py``'s outcome-CSV reader.
 
 Background: PR #45 added per-stage token-usage telemetry to

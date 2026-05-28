@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """LiteLLM-backed model helpers for the measurements pipeline."""
 
 from __future__ import annotations

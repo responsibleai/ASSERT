@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Judge transcript prefixes at fixed inference-turn checkpoints and plot flagged rate."""
 
 from __future__ import annotations

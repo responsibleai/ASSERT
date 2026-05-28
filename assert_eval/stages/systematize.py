@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Generate a taxonomy artifact from a behavior description."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """OTel trace parser — converts OTLP JSON to ASSERT transcript events.
 
 Supports traces exported from Phoenix, Jaeger, or any OpenTelemetry collector.

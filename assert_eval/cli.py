@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Click CLI for the measurements pipeline (ASSERT)."""
 
 from __future__ import annotations
@@ -508,6 +511,12 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
         log_file=log_file,
         json_output=(output_format == "json"),
     )
+
+
+# -- init (design an eval config with an LLM assistant) ---------------------
+from assert_eval.init._command import init  # noqa: E402
+
+cli.add_command(init)
 
 
 @cli.command(short_help="Run a pipeline from a YAML config")

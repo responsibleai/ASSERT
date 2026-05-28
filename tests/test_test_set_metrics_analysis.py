@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import unittest
 
 from assert_eval.analysis.test_set_metrics import _prompt_test_case_text

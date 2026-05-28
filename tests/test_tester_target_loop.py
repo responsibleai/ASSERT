@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the multi-turn tester–target loop in inference.py.
 
 Verifies the core plumbing: message routing between tester and target,

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Instructor (structured LLM output via Pydantic).
 
 Instrumentation: 2 lines. Agent code: Instructor-patched OpenAI client.

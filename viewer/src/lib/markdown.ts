@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { marked, type RendererThis, type Tokens } from 'marked';
 import type { CitationDisplayRange } from '$lib/citation-resolution.js';
 

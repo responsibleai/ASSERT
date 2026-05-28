@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Mock tool implementations for offline / CI use.
 
 Provides mock versions of all tools used by the azure_doc_qa agents:

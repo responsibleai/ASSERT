@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Smoke test for the joint AgentShield + ASSERT incident-triage demo.
 
 Validates the demo's static surface without making any LLM calls:

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import unittest
 
 from assert_eval.results import compute_prompt_metrics

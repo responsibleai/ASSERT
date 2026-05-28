@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — AutoGen AgentChat (multi-agent conversation).
 
 Instrumentation: 2 lines. Agent code: standard AutoGen AgentChat.

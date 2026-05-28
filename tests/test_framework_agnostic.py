@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for framework-agnostic agent support POC.
 
 Tests both Approach A (OTel trace parser) and Approach B (CallableSession).

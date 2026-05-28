@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for assert_eval.logging_config."""
 
 from __future__ import annotations

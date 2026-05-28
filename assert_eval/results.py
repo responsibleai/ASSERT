@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Helpers for loading results artifacts and computing summary metrics."""
 
 from __future__ import annotations

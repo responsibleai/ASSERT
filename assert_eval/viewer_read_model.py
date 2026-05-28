@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Build compact run-level viewer artifacts from canonical run outputs."""
 
 from __future__ import annotations

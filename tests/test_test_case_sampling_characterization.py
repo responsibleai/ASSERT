@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Characterization tests for the test-case domain modules."""
 
 from __future__ import annotations

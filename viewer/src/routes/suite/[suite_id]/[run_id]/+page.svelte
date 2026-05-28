@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import type {
 		JudgedSample,
@@ -872,10 +875,10 @@
 		{@const allMetrics = metricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activePromptDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
-				<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Evaluation summary</h2>
+				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
 				<span class="shrink-0 text-xs text-text-muted">{allMetrics.length} test set dimensions</span>
 			</div>
-			<p class="mt-1 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
+			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
 		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each allMetrics as m}
@@ -922,35 +925,11 @@
 		<!-- Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
-					<div class="min-w-0 flex-1">
-						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
-						<p class="mt-1 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
-					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
-						<span class="text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
-							<button
-								type="button"
-								role="tab"
-								aria-selected={promptGroupBy === 'none'}
-								class="SegmentedControl-item"
-								class:SegmentedControl-item--selected={promptGroupBy === 'none'}
-								onclick={() => setPromptGroupBy('none')}
-							><span class="SegmentedControl-content">Flat view</span></button>
-							{#each availablePromptAxes as axis}
-								<button
-									type="button"
-									role="tab"
-									aria-selected={promptGroupBy === axis.key}
-									class="SegmentedControl-item"
-									class:SegmentedControl-item--selected={promptGroupBy === axis.key}
-									onclick={() => setPromptGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
-							{/each}
-						</div>
-					</div>
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : `Results by ${activePromptAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
 				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
 			</div>
 
 			<!-- Controls row: search + filter -->
@@ -983,7 +962,15 @@
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					<span class="text-xs text-text-muted">Filter by</span>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availablePromptAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={promptGroupBy}
+						onSelect={(v) => setPromptGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
@@ -1156,10 +1143,10 @@
 		{@const auditAllMetrics = auditMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activeAuditDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
-				<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Evaluation summary</h2>
+				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
 				<span class="shrink-0 text-xs text-text-muted">{auditAllMetrics.length} test set dimensions</span>
 			</div>
-			<p class="mt-1 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
+			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
 		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each auditAllMetrics as m}
@@ -1202,35 +1189,11 @@
 		<!-- Audit Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
-					<div class="min-w-0 flex-1">
-						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
-						<p class="mt-1 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
-					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
-						<span class="text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
-							<button
-								type="button"
-								role="tab"
-								aria-selected={auditGroupBy === 'none'}
-								class="SegmentedControl-item"
-								class:SegmentedControl-item--selected={auditGroupBy === 'none'}
-								onclick={() => setAuditGroupBy('none')}
-							><span class="SegmentedControl-content">Flat view</span></button>
-							{#each availableAxes as axis}
-								<button
-									type="button"
-									role="tab"
-									aria-selected={auditGroupBy === axis.key}
-									class="SegmentedControl-item"
-									class:SegmentedControl-item--selected={auditGroupBy === axis.key}
-									onclick={() => setAuditGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
-							{/each}
-						</div>
-					</div>
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : `Results by ${activeAuditAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
 				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
 			</div>
 
 			<!-- Controls row: search + filter -->
@@ -1263,7 +1226,15 @@
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					<span class="text-xs text-text-muted">Filter by</span>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availableAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={auditGroupBy}
+						onSelect={(v) => setAuditGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"

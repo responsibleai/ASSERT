@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Custom-instrumented multi-agent travel planner — manual OTel spans.
 
 Unlike the phoenix_auto_trace demos (which use Phoenix's auto-instrumentors),

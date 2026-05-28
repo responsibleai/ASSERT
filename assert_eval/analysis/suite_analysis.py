@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Suite-level analysis that combines metrics across stages.
 
 Computes judge rates with confidence intervals, inference health,

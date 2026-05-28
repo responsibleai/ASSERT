@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for assert_eval.core.security — input validation, SSRF prevention, and credential sanitization."""
 
 from __future__ import annotations

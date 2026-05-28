@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Export one suite's results as csv tables, an Excel workbook, or html."""
 
 from __future__ import annotations

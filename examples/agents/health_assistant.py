@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Docker-backed tool module for health-assistant evals.
 
 Config key: tools.module: examples.agents.health_assistant
