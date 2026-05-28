@@ -75,6 +75,10 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env
+
+# Create a config interactively, or use an existing one
+assert-eval init --model azure/gpt-5.4
+# or run the flagship example directly
 assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
@@ -86,6 +90,10 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
+
+# Create a config interactively, or use an existing one
+assert-eval init --model azure/gpt-5.4
+# or run the flagship example directly
 assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
@@ -94,12 +102,13 @@ assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 ### Add an eval for a new agent
 
 1. Ask what target shape the developer has: framework agent, custom runtime, Python function, or hosted model.
-2. Create or adapt an eval spec markdown file.
-3. Add `context` describing the agent, tools, users, and constraints.
-4. Add `dimensions` only when systematic variation matters.
-5. Configure the target in `pipeline.inference.target`.
-6. Add judge dimensions with concrete descriptions and rubrics.
-7. Run `assert-eval run --config <path>`.
+2. **Fastest path:** run `assert-eval init --model <litellm-model>` (or `assert-eval init --model <litellm-model> --describe "..."`) to create a config interactively with an LLM assistant. Use `--from <existing_config>` to edit/extend an existing config.
+3. **Manual path:** Create or adapt an eval spec in `behavior.description` inside a YAML config.
+4. Add `context` describing the agent, tools, users, and constraints.
+5. Add `dimensions` only when systematic variation matters.
+6. Configure the target in `pipeline.inference.target`.
+7. Add judge dimensions with concrete descriptions and rubrics.
+8. Run `assert-eval run --config <path>`.
 
 ### Debug a failure
 
