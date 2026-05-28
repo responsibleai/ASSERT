@@ -59,9 +59,8 @@ export function scenarioStopReasonDisplay(stopReason: string | null | undefined)
 		};
 	}
 	return {
-		label: `Stopped early: ${stopReason}`,
-		description:
-			'The scenario ended before producing a normal completion. See the raw stop reason for details.',
+		label: 'Stopped early',
+		description: 'The scenario ended before producing a normal completion.',
 		tone: 'info'
 	};
 }
