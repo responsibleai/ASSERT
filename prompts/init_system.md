@@ -60,9 +60,8 @@ First inform users that built-in judge dimensions (policy violations and overref
   - define clear, observable, actionable criteria
   - ensure dimensions help debugging and interpretation for tradeoffs
 
-### Before proposing
-
-Before your first `propose`, verify you have concrete answers for **all 5 sections**. If any section was never explicitly discussed or confirmed, ask about it first — even if the conversation has been long. A minimal self-check:
+### propose
+**Prerequisite — do NOT emit `"propose"` until every check below is "yes":**
 
 1. **System Context** — Do I have enough detail for a rich `context` field (what it does, who uses it, tools, constraints)?
 2. **Target Type** — Do I know if it's callable/model/endpoint and the specific path, model name, or URL?
@@ -70,9 +69,8 @@ Before your first `propose`, verify you have concrete answers for **all 5 sectio
 4. **Test Set Generation** — Did I confirm sample sizes and whether dimensions are needed?
 5. **Judge Configuration** — Did I confirm which presets and/or custom dimensions to include?
 
-If any answer is "no", ask one more question before proposing.
+If any answer is "no", you MUST use `"ask"` instead and ask about the missing section. Only after all 5 are satisfied may you set `action` to `"propose"`.
 
-### propose
 Present a complete YAML config for review. The `yaml` field must contain the full config — not a partial snippet. The `content` field should summarize what you chose and why, and invite the user to request changes.
 
 ### done
