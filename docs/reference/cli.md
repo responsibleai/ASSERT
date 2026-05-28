@@ -5,7 +5,7 @@ Adaptive Eval is CLI-first. All commands assume your virtualenv is activated (se
 ## Design a config interactively
 
 ```bash
-p2m init
+assert-eval init
 ```
 
 Starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete `eval_config.yaml`. Use this when you are setting up a new eval from scratch instead of editing YAML by hand.
@@ -32,25 +32,25 @@ Starts a conversational LLM assistant that asks about your agent, eval goals, an
 
 ```bash
 # Interactive session — the assistant will ask what you are evaluating
-p2m init --model azure/gpt-5.4
+assert-eval init --model azure/gpt-5.4
 
 # Skip the first question with a one-liner
-p2m init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+assert-eval init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 
 # Edit / extend an existing config
-p2m init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+assert-eval init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
 
 # Non-interactive: generate a config in one shot
-p2m init --model azure/gpt-5.4 --describe "RAG pipeline over internal docs" --non-interactive -o rag_eval.yaml
+assert-eval init --model azure/gpt-5.4 --describe "RAG pipeline over internal docs" --non-interactive -o rag_eval.yaml
 
 # Preview the generated YAML without writing a file
-p2m init --model azure/gpt-5.4 --dry-run
+assert-eval init --model azure/gpt-5.4 --dry-run
 
 # Use an OpenAI model instead (requires OPENAI_API_KEY)
-p2m init --model gpt-4.1-mini
+assert-eval init --model gpt-4.1-mini
 ```
 
-After `p2m init` writes the config, run the pipeline with `p2m run --config <path>`.
+After `assert-eval init` writes the config, run the pipeline with `assert-eval run --config <path>`.
 
 ## Run a config
 
