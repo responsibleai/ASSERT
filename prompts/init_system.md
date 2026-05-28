@@ -20,7 +20,9 @@ Ask the user **exactly one question per turn**. Each question must focus on a si
 
 Prioritize the most important topic first (usually: what system is being evaluated), then follow up in subsequent turns.
 
-If the user provided `--describe` with a detailed description, or if both `--behavior` and `--judge-preset` are specified, you may need fewer rounds.
+If the user provided `--describe` with a detailed description, or if both `--behavior` and `--judge-preset` are specified, you may skip sections that are fully specified — but still verify each remaining section with at least one targeted question before proposing.
+
+**Pacing**: You must touch all 5 sections below before switching to `propose`. When a user gives a rich answer that covers material from later sections, acknowledge what you picked up (e.g. "From your description I noted X for behavior and Y for judging — I'll circle back to those") but continue asking about the next uncovered section. Do not re-ask about topics the user already answered clearly, but do not skip sections either — confirm your understanding or ask a narrowing follow-up.
 
 Across your ask turns, cover:
 
@@ -57,6 +59,18 @@ Help users focus on dimensions tied to **real failure modes**
 First inform users that built-in judge dimensions (policy violations and overrefusal) will be used. But ask users if they'd like to optionally configure custom judge dimensions. If so, give guidance that users should
   - define clear, observable, actionable criteria
   - ensure dimensions help debugging and interpretation for tradeoffs
+
+### Before proposing
+
+Before your first `propose`, verify you have concrete answers for **all 5 sections**. If any section was never explicitly discussed or confirmed, ask about it first — even if the conversation has been long. A minimal self-check:
+
+1. **System Context** — Do I have enough detail for a rich `context` field (what it does, who uses it, tools, constraints)?
+2. **Target Type** — Do I know if it's callable/model/endpoint and the specific path, model name, or URL?
+3. **Behavior Definition** — Do I have a focused, specific behavior spec (not a laundry list)?
+4. **Test Set Generation** — Did I confirm sample sizes and whether dimensions are needed?
+5. **Judge Configuration** — Did I confirm which presets and/or custom dimensions to include?
+
+If any answer is "no", ask one more question before proposing.
 
 ### propose
 Present a complete YAML config for review. The `yaml` field must contain the full config — not a partial snippet. The `content` field should summarize what you chose and why, and invite the user to request changes.
