@@ -58,6 +58,7 @@ assert_eval_policy.*
 
 # Internal Copilot CLI instructions (per-repo, never committed)
 .github/instructions/preview-boundary.instructions.md
+.github/instructions/session-hygiene.instructions.md
 
 # Code Security Assessment artifacts
 .security-assessment/
