@@ -922,14 +922,14 @@
 		<!-- Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
+				<div class="flex flex-col gap-3">
 					<div class="min-w-0 flex-1">
 						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
 						<p class="mt-1 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
 					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
+					<div class="flex min-w-0 max-w-full flex-col items-start gap-2 sm:items-end">
 						<span class="text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
+						<div class="SegmentedControl flex-wrap justify-start sm:justify-end" role="tablist" aria-label="Grouping">
 							<button
 								type="button"
 								role="tab"
@@ -946,7 +946,7 @@
 									class="SegmentedControl-item"
 									class:SegmentedControl-item--selected={promptGroupBy === axis.key}
 									onclick={() => setPromptGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
+								><span class="SegmentedControl-content">{axis.label}</span></button>
 							{/each}
 						</div>
 					</div>
@@ -1202,14 +1202,14 @@
 		<!-- Audit Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
+				<div class="flex flex-col gap-3">
 					<div class="min-w-0 flex-1">
 						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
 						<p class="mt-1 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
 					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
+					<div class="flex min-w-0 max-w-full flex-col items-start gap-2 sm:items-end">
 						<span class="text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
+						<div class="SegmentedControl flex-wrap justify-start sm:justify-end" role="tablist" aria-label="Grouping">
 							<button
 								type="button"
 								role="tab"
@@ -1226,7 +1226,7 @@
 									class="SegmentedControl-item"
 									class:SegmentedControl-item--selected={auditGroupBy === axis.key}
 									onclick={() => setAuditGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
+								><span class="SegmentedControl-content">{axis.label}</span></button>
 							{/each}
 						</div>
 					</div>
