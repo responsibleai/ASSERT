@@ -40,17 +40,17 @@ cp .env.example .env
 phoenix serve
 
 # Run the full pipeline: spec -> taxonomy -> test cases -> execution -> verdicts.
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 
 # Inspect the run.
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 Codespaces / VS Code Dev Containers:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `assert-eval run` command above.
 
 Windows PowerShell equivalent:
 
@@ -62,8 +62,8 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 What the quickstart does:
@@ -194,6 +194,16 @@ Preview feedback is welcome: confusing names, missing target examples, trace gap
 - **macOS, `litellm` AttributeError after install** — some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`, causing errors like `AttributeError: module 'litellm' has no attribute 'acompletion'`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
 - **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
+
+## Telemetry
+
+This project does not collect or send telemetry to Microsoft by default. Runs write local artifacts under `artifacts/results/`, and optional OpenTelemetry trace capture is controlled by your configuration and local collector setup, such as Phoenix.
+
+If you configure a target, judge, trace collector, or model provider to send data to an external service, the prompts, responses, traces, metadata, and other evaluation artifacts sent to that service are governed by that service's terms and your configuration.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is subject to those third party's policies.
 
 ## Important: Risks and limitations
 

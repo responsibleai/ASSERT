@@ -22,12 +22,12 @@ uv sync
 cp ./.env.example ./.env
 
 # BEFORE — bare agent
-uv run p2m run --config ./eval_config.yaml --run before
+uv run assert-eval run --config ./eval_config.yaml --run before
 
 # AFTER — switch target.callable in eval_config.yaml to
 # examples.incident_triage_simple.agent_guarded:chat, then rerun
 uv pip install agent-shield        # required for the AFTER run only
-uv run p2m run --config ./eval_config.yaml --run after
+uv run assert-eval run --config ./eval_config.yaml --run after
 ```
 
 To disable the aux classifier (e.g. offline/no-Azure): `INCIDENT_TRIAGE_AUX_DISABLED=1`.

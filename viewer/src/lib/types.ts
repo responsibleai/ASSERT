@@ -229,7 +229,7 @@ export interface ViewerResultItem {
 
 // Aggregated types for views
 
-export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
+export type SuiteStatus = 'empty' | 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;

@@ -8,7 +8,7 @@
 	 *   - reserves artifacts/results/<suite>/<run>/ atomically
 	 *   - writes eval_config.yaml (single-YAML authoring; behavior description
 	 *     lives inline in behavior.description)
-	 *   - spawns `p2m run --config <generated.yaml>` detached
+	 *   - spawns `assert-eval run --config <generated.yaml>` detached
 	 * On success the wizard navigates to /suite/<suite>/<run>/monitor.
 	 */
 	import { onMount } from 'svelte';
@@ -299,12 +299,18 @@
 			: newBehavior.name.trim().length > 0 && newBehavior.definition.trim().length > 0
 	);
 	let step1ContextValid = $derived(applicationContext.trim().length > 0);
-	let step1ToolsValid = $derived(
-		toolsMode === 'simulated'
+	let step1ToolsValid = $derived.by(() => {
+		if (evaluationTarget !== 'agent') return true;
+		return toolsMode === 'simulated'
 			? simulatedToolsDescription.trim().length > 0
-			: realToolsYaml.trim().length > 0 && realToolsAcknowledged
+			: realToolsYaml.trim().length > 0 && realToolsAcknowledged;
+	});
+	let step1SystemPromptValid = $derived(
+		evaluationTarget === 'model' ? systemPrompt.trim().length > 0 : true
 	);
-	let step1Valid = $derived(step1BehaviorValid && step1ContextValid && step1ToolsValid);
+	let step1Valid = $derived(
+		step1BehaviorValid && step1ContextValid && step1ToolsValid && step1SystemPromptValid
+	);
 	let step2Valid = $derived.by(() => {
 		if (!step2Source) return false;
 		if (!promptTestCasesEnabled || !promptEvalEnabled) return false;
@@ -408,7 +414,7 @@
 					: { mode: 'create', name: newBehavior.name, definition: newBehavior.definition },
 			...(applicationContext.trim() ? { applicationContext: applicationContext.trim() } : {}),
 			evaluationTarget,
-			...(evaluationTarget === 'model' && systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
+			...(systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
 			source: step2Source,
 			...(step2Source === 'existing'
 				? { existingSuiteId: selectedSuite?.suite_id }
@@ -743,22 +749,37 @@
 				</div>
 
 				<!-- System prompt -->
-				{#if evaluationTarget === 'model'}
-					<div class="mt-6">
-						<label for="system-prompt" class="mb-1 block text-[16px] font-semibold text-text">System prompt <span class="font-normal text-text-muted">(optional)</span></label>
-						<p class="mb-2 text-xs text-text-muted">Required when evaluating a model directly. Optional if the prompt is already defined inside the agent.</p>
-						<textarea
-							id="system-prompt"
-							class="form-control w-full text-sm"
-							rows="6"
-							placeholder="You are a helpful assistant that…"
-							value={systemPrompt}
-							oninput={(e) => { systemPrompt = e.currentTarget.value; markDirty(); }}
-						></textarea>
-					</div>
-				{/if}
+				<div class="mt-6">
+					<label for="system-prompt" class="mb-1 block text-[16px] font-semibold text-text">
+						System prompt
+						{#if evaluationTarget === 'model'}
+							<span class="text-score-fail">*</span>
+						{:else}
+							<span class="font-normal text-text-muted">(optional)</span>
+						{/if}
+					</label>
+					<p class="mb-2 text-xs text-text-muted">
+						{#if evaluationTarget === 'model'}
+							Required when evaluating a model directly.
+						{:else}
+							Optional. Provide a system prompt only if it isn't already defined inside the agent.
+						{/if}
+					</p>
+					<textarea
+						id="system-prompt"
+						class="form-control w-full text-sm {step1Touched && evaluationTarget === 'model' && !systemPrompt.trim() ? 'border-score-fail' : ''}"
+						rows="6"
+						placeholder="You are a helpful assistant that…"
+						value={systemPrompt}
+						oninput={(e) => { systemPrompt = e.currentTarget.value; step1Touched = true; markDirty(); }}
+					></textarea>
+					{#if step1Touched && evaluationTarget === 'model' && !systemPrompt.trim()}
+						<p class="mt-1 text-xs text-score-fail">System prompt is required when evaluating a model.</p>
+					{/if}
+				</div>
 
-				<!-- Tools -->
+				<!-- Tools (Prompt Agent only) -->
+				{#if evaluationTarget === 'agent'}
 				<div class="mt-6">
 					<p class="mb-1 text-[16px] font-semibold text-text">Tools</p>
 					<p class="mb-2 text-xs text-text-muted">Choose how the target's tools are made available during evaluation.</p>
@@ -853,6 +874,7 @@
 						{/if}
 					{/if}
 				</div>
+				{/if}
 			{/if}
 
 			<!-- ═════════ STEP 2 ═════════ -->
@@ -1405,7 +1427,7 @@
 						{#if applicationContext.trim()}
 							<div><span class="mb-0.5 block text-text-muted">Application context</span><span class="block whitespace-pre-wrap break-words text-text">{applicationContext.trim()}</span></div>
 						{/if}
-						{#if evaluationTarget === 'model' && systemPrompt.trim()}
+						{#if systemPrompt.trim()}
 							<div><span class="mb-0.5 block text-text-muted">System prompt</span><span class="block whitespace-pre-wrap break-words text-text">{systemPrompt.trim()}</span></div>
 						{/if}
 						<div class="flex items-baseline justify-between gap-3">

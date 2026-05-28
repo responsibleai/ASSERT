@@ -627,6 +627,33 @@ function buildScenarioDrawerItem(
 	);
 }
 
+function runRecencyTimestamp(item: { manifest: Manifest | null }): number {
+	// Sort key for newest-first run lists. Prefer the manifest start time so
+	// completed and in-flight runs are ordered the same way; fall back to
+	// ended_at, then heartbeat_at for runs that crashed before any timestamp
+	// was recorded. Runs with no parseable timestamp sort to the bottom and
+	// then break ties on run_id below.
+	const manifest = item.manifest;
+	if (!manifest) return Number.NEGATIVE_INFINITY;
+	const candidates = [manifest.started_at, manifest.ended_at, manifest.heartbeat_at];
+	for (const value of candidates) {
+		if (!value) continue;
+		const ts = Date.parse(value);
+		if (!Number.isNaN(ts)) return ts;
+	}
+	return Number.NEGATIVE_INFINITY;
+}
+
+function sortRunsNewestFirst<T extends { run_id: string; manifest: Manifest | null }>(
+	items: T[]
+): T[] {
+	return [...items].sort((a, b) => {
+		const diff = runRecencyTimestamp(b) - runRecencyTimestamp(a);
+		if (diff !== 0) return diff;
+		return b.run_id.localeCompare(a.run_id);
+	});
+}
+
 function buildRunListEntries(snapshot: SuiteSnapshot): {
 	runs: RunListItem[];
 	auditRuns: AuditRunListItem[];
@@ -670,7 +697,7 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 		}
 	}
 
-	return { runs, auditRuns };
+	return { runs: sortRunsNewestFirst(runs), auditRuns: sortRunsNewestFirst(auditRuns) };
 }
 
 function buildZeroPromptMetrics(): PromptMetricView {
@@ -948,14 +975,16 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		if (hasData) hasResults = true;
 	}
 
-	let status: SuiteStatus = 'systematized';
+	const categoryCount = snapshot.taxonomy?.behavior_categories?.length ?? 0;
+	let status: SuiteStatus = 'empty';
 	if (hasResults) status = 'has_results';
 	else if (itemCounts.prompt > 0 || itemCounts.scenario > 0) status = 'test_set_ready';
+	else if (categoryCount > 0) status = 'systematized';
 
 	return {
 		suite_id: suiteId,
 		behavior_name: normalizePolicy(snapshot.taxonomy)?.behavior?.name || suiteId,
-		behavior_category_count: snapshot.taxonomy?.behavior_categories?.length ?? 0,
+		behavior_category_count: categoryCount,
 		prompt_test_case_count: itemCounts.prompt,
 		scenario_test_case_count: itemCounts.scenario,
 		run_count: evalRunCount,
@@ -1059,8 +1088,7 @@ async function loadSuiteHeavyData(
 	const runs: RunListItem[] = [];
 	const auditRuns: AuditRunListItem[] = [];
 	const evalCountsByBehavior: Record<string, number> = {};
-	let primaryEvalRunId: string | null = null;
-	let primaryRunSnapshot: RunSnapshot | null = null;
+	const candidateSnapshots = new Map<string, RunSnapshot>();
 
 	for (const runId of snapshot.runIds) {
 		const runSnapshot = loadRunSnapshot(suiteId, runId, snapshot.seedRows, {
@@ -1114,11 +1142,19 @@ async function loadSuiteHeavyData(
 			}
 		}
 
-		if (primaryEvalRunId === null && (addedToRuns || addedToAuditRuns)) {
-			primaryEvalRunId = runId;
-			primaryRunSnapshot = runSnapshot;
+		if (addedToRuns || addedToAuditRuns) {
+			candidateSnapshots.set(runId, runSnapshot);
 		}
 	}
+
+	const sortedRuns = sortRunsNewestFirst(runs);
+	const sortedAuditRuns = sortRunsNewestFirst(auditRuns);
+
+	// Primary run drives the "samples from a recent evaluation" panels on the
+	// suite page; pick the newest run so users see their latest results, not
+	// whichever run-id happens to sort first alphabetically.
+	const primaryRunId = sortedRuns[0]?.run_id ?? sortedAuditRuns[0]?.run_id ?? null;
+	const primaryRunSnapshot = primaryRunId ? candidateSnapshots.get(primaryRunId) ?? null : null;
 
 	const primaryRunPromptsByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
 		? groupSamplesByBehavior(buildJudgedPromptsFromSnapshot(primaryRunSnapshot))
@@ -1128,10 +1164,10 @@ async function loadSuiteHeavyData(
 		: {};
 
 	return {
-		runs,
-		auditRuns,
+		runs: sortedRuns,
+		auditRuns: sortedAuditRuns,
 		evalCountsByBehavior,
-		primaryEvalRunId,
+		primaryEvalRunId: primaryRunId,
 		primaryRunPromptsByBehavior,
 		primaryRunScenariosByBehavior
 	};

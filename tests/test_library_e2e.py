@@ -174,7 +174,7 @@ class JudgeYamlSchemaTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryListTest(unittest.TestCase):
-    """Test the ``p2m library list`` CLI command end-to-end."""
+    """Test the ``assert-eval library list`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()
@@ -243,7 +243,7 @@ class CliLibraryListTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryShowTest(unittest.TestCase):
-    """Test the ``p2m library show`` CLI command end-to-end."""
+    """Test the ``assert-eval library show`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()

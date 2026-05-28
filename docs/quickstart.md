@@ -47,8 +47,8 @@ Copy-Item .env.example .env
 # any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
 # Run the pipeline
-p2m run --config examples\travel_planner_langgraph\eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples\travel_planner_langgraph\eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 > **Optional — browse traces in the Phoenix UI.** Span capture happens inside `auto_trace.py` regardless; running `phoenix serve` only adds an interactive UI for browsing them. In a separate terminal, before running the eval:

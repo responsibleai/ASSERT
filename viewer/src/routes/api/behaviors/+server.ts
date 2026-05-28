@@ -8,16 +8,14 @@ export const GET: RequestHandler = async () => {
 
 	for (const suite of suites) {
 		const taxonomy = loadPolicy(suite.suite_id);
-		if (!taxonomy?.behavior_categories) continue;
-		for (const b of taxonomy.behavior_categories) {
-			if (b.name && !seen.has(b.name)) {
-				seen.set(b.name, {
-					name: b.name,
-					definition: b.definition ?? '',
-					suiteId: suite.suite_id
-				});
-			}
-		}
+		const behavior = taxonomy?.behavior;
+		if (!behavior?.name) continue;
+		if (seen.has(behavior.name)) continue;
+		seen.set(behavior.name, {
+			name: behavior.name,
+			definition: behavior.definition ?? '',
+			suiteId: suite.suite_id
+		});
 	}
 
 	return json([...seen.values()]);

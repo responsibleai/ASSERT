@@ -636,7 +636,7 @@ class DiscardArtifactPlanTest(unittest.TestCase):
 class AllocateVersionDirTest(unittest.TestCase):
     """Atomic ``vNNNN`` reservation under simulated concurrency.
 
-    Regression for the race in ``_next_version``: two ``p2m run``
+    Regression for the race in ``_next_version``: two ``assert-eval run``
     invocations on the same suite both read ``max(numbers) + 1``, both
     pick the same slot, and silently corrupt each other's outputs.
     ``_allocate_version_dir`` closes the time-of-check/time-of-use window
