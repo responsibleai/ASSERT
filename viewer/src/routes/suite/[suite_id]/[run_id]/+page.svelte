@@ -1215,7 +1215,7 @@
 		</div>
 
 		{#if auditJudgeFailures > 0 || auditRefusedCount > 0}
-			<div class="mb-6 space-y-1 text-xs text-amber-400">
+			<div class="-mt-4 mb-3 space-y-1 text-xs text-amber-400">
 				{#if auditJudgeFailures > 0}
 					<p>
 						Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
