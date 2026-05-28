@@ -19,10 +19,6 @@ build/
 logs/
 plots/
 artifacts/
-# Allow the incident-triage trade-off chart artifact to be checked in
-# so the README can reference it before any live n=200 run.
-!examples/incident_triage_agent/artifacts/
-!examples/incident_triage_agent/artifacts/**
 
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/
@@ -61,3 +57,4 @@ p2m_policy.*
 
 # Code Security Assessment artifacts
 .security-assessment/
+
