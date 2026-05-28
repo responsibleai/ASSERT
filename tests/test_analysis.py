@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Tests for p2m.analysis modules — stats, inference_metrics, stability, suite_analysis."""
+"""Tests for assert_eval.analysis modules — stats, inference_metrics, stability, suite_analysis."""
 
 import json
 import tempfile
@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from p2m.analysis.stats import binary_rate_ci, macro_rate, _wilson_ci
-from p2m.analysis.inference_metrics import count_inference_turns, compute_inference_metrics
-from p2m.analysis.stability import (
+from assert_eval.analysis.stats import binary_rate_ci, macro_rate, _wilson_ci
+from assert_eval.analysis.inference_metrics import count_inference_turns, compute_inference_metrics
+from assert_eval.analysis.stability import (
     compute_tester_variation,
     compute_repeatability,
 )
@@ -232,7 +232,7 @@ def _make_suite_dir(tmp_path: Path):
 
 class TestAnalyzeSuite:
     def test_runs_on_minimal_suite(self, tmp_path):
-        from p2m.analysis.suite_analysis import analyze_suite, format_suite_summary
+        from assert_eval.analysis.suite_analysis import analyze_suite, format_suite_summary
         suite = _make_suite_dir(tmp_path)
         results = analyze_suite(str(suite), n_boot=100)
         assert "runs" in results
@@ -241,7 +241,7 @@ class TestAnalyzeSuite:
         assert "Taxonomy violations" in output
 
     def test_empty_suite_returns_error(self, tmp_path):
-        from p2m.analysis.suite_analysis import analyze_suite
+        from assert_eval.analysis.suite_analysis import analyze_suite
         empty = tmp_path / "empty"
         empty.mkdir()
         result = analyze_suite(str(empty))

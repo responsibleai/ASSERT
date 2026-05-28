@@ -5,8 +5,8 @@
 import unittest
 from pathlib import Path
 
-from p2m.config import load_runtime_context
-from p2m.stages import STAGES
+from assert_eval.config import load_runtime_context
+from assert_eval.stages import STAGES
 
 
 def _base_config(**overrides):

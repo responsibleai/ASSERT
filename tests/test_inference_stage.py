@@ -9,12 +9,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
-from p2m.core.io import load_test_cases
-from p2m.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
-from p2m.core.session import TurnResult
-from p2m.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
-from p2m.viewer_read_model import ViewerReadModelBuildError
+from assert_eval.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
+from assert_eval.core.io import load_test_cases
+from assert_eval.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
+from assert_eval.core.session import TurnResult
+from assert_eval.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
+from assert_eval.viewer_read_model import ViewerReadModelBuildError
 
 
 class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
@@ -179,7 +179,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", system_prompt="You are a coding agent."),
@@ -232,7 +232,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -280,7 +280,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             original_test_case_text = json.dumps(test_case_row) + "\n"
             test_set_path.write_text(original_test_case_text, encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -334,7 +334,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             original_test_case_text = json.dumps(test_case_row) + "\n"
             test_set_path.write_text(original_test_case_text, encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -382,9 +382,9 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()),
+                patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()),
                 patch(
-                    "p2m.stages.inference.build_run_viewer_artifacts",
+                    "assert_eval.stages.inference.build_run_viewer_artifacts",
                     side_effect=ViewerReadModelBuildError("viewer build failed"),
                 ),
             ):
@@ -446,7 +446,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -500,7 +500,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._build_hosted_session", return_value=FakeSession()):
+            with patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -551,7 +551,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()):
+            with patch("assert_eval.stages.inference.ExternalSession", return_value=FakeExternalSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(connector="examples.agents.demo"),
@@ -613,8 +613,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference.generate", new=fake_generate),
-                patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()),
+                patch("assert_eval.stages.inference.generate", new=fake_generate),
+                patch("assert_eval.stages.inference.ExternalSession", return_value=FakeExternalSession()),
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -697,8 +697,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference.generate", new=fake_generate),
-                patch("p2m.stages.inference.ExternalSession", return_value=FakeExternalSession()),
+                patch("assert_eval.stages.inference.generate", new=fake_generate),
+                patch("assert_eval.stages.inference.ExternalSession", return_value=FakeExternalSession()),
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -773,8 +773,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference.generate", new=fake_generate),
-                patch("p2m.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
+                patch("assert_eval.stages.inference.generate", new=fake_generate),
+                patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -841,8 +841,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
                 with (
-                    patch("p2m.stages.inference.generate", new=fake_generate),
-                    patch("p2m.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
+                    patch("assert_eval.stages.inference.generate", new=fake_generate),
+                    patch("assert_eval.stages.inference._build_hosted_session", return_value=FakeHostedSession()),
                 ):
                     await run_inference(
                         test_set_path=str(test_set_path),
@@ -931,7 +931,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text(json.dumps(test_case_row) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4", tools=ToolsConfig(simulator="azure/gpt-5.4-mini")),
@@ -968,7 +968,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -1015,7 +1015,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             inference_set_path = out_dir / "inference_set.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 inference_task = asyncio.create_task(
                     run_inference(
                         test_set_path=str(test_set_path),
@@ -1062,7 +1062,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         Re-running the same suite picks up the failed seed via the
         existing resume logic (it never made it into inference_set.jsonl).
 
-        The ``P2M_INFERENCE_ERROR_FAIL_RATIO`` override is needed because
+        The ``ASSERT_INFERENCE_ERROR_FAIL_RATIO`` override is needed because
         a 2-seed test where 1 seed fails has a 50% error rate, which
         exceeds the 10% production default. The override keeps the test
         focused on the soft-fail contract; the ratio threshold itself
@@ -1096,8 +1096,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             inference_set_path = out_dir / "inference_set.jsonl"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
-                 patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch.dict(os.environ, {"ASSERT_INFERENCE_ERROR_FAIL_RATIO": "0.6"}, clear=False), \
+                 patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 inference_task = asyncio.create_task(
                     run_inference(
                         test_set_path=str(test_set_path),
@@ -1156,7 +1156,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             out_dir = tmp_path / "run"
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
                     await run_inference(
                         test_set_path=str(test_set_path),
@@ -1202,7 +1202,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
+                "assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
             ):
                 # Should NOT raise — the single failure is tolerated.
                 result = await run_inference(
@@ -1258,7 +1258,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
+                "assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case
             ):
                 with self.assertRaisesRegex(
                     RuntimeError, "deployment_not_found"
@@ -1303,7 +1303,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             # First run: let both test_set complete.
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -1315,7 +1315,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
 
             # Second run: test_case_000001 and test_case_000002 already exist — nothing to do.
             call_log.clear()
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/gpt-5.4"),
@@ -1347,7 +1347,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text(json.dumps(test_case_rows[0]) + "\n", encoding="utf-8")
 
             # First run with model A.
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-a"),
@@ -1356,7 +1356,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             # Second run with model B — should discard and re-run.
-            with patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
+            with patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
                     target=TargetConfig(model="azure/model-b"),
@@ -1400,8 +1400,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path.write_text("\n".join(json.dumps(row) for row in test_case_rows) + "\n", encoding="utf-8")
 
             with (
-                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
-                patch("p2m.stages.inference._run_scenario_test_case", new=fake_run_scenario_test_case),
+                patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
+                patch("assert_eval.stages.inference._run_scenario_test_case", new=fake_run_scenario_test_case),
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
@@ -1434,7 +1434,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         batch even though hundreds of other adversarial prompts completed
         successfully. Absorbed from PR #44 commit 82cf339.
         """
-        from p2m.core.session import HostedSession
+        from assert_eval.core.session import HostedSession
 
         async def fake_run_turn(self_inner, messages):
             raise LLMInputError(
@@ -1486,7 +1486,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         a transcript per seed and that the batch returns successfully.
         Absorbed from PR #44 commit 82cf339.
         """
-        from p2m.core.session import HostedSession
+        from assert_eval.core.session import HostedSession
 
         test_case_rows = [
             {"type": "prompt", "seed": {"description": f"prompt {i}"}}
@@ -1646,8 +1646,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.inference.generate", new=fake_generate),
-                patch("p2m.stages.inference._build_target_session", return_value=FakeHostedSession()),
+                patch("assert_eval.stages.inference.generate", new=fake_generate),
+                patch("assert_eval.stages.inference._build_target_session", return_value=FakeHostedSession()),
             ):
                 result = await run_inference(
                     test_set_path=str(test_set_path),
@@ -1705,7 +1705,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
+                patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
                 self.assertRaises(LLMProviderError),
             ):
                 await run_inference(
@@ -1758,8 +1758,8 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch.dict(os.environ, {"P2M_INFERENCE_ERROR_FAIL_RATIO": "0.10"}, clear=False),
-                patch("p2m.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
+                patch.dict(os.environ, {"ASSERT_INFERENCE_ERROR_FAIL_RATIO": "0.10"}, clear=False),
+                patch("assert_eval.stages.inference._run_prompt_test_case", new=fake_run_prompt_test_case),
                 self.assertRaisesRegex(RuntimeError, "worker exploded"),
             ):
                 await run_inference(

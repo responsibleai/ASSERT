@@ -94,11 +94,11 @@ For the agent graph itself, see [`docs/travel-planner-agent-flow.md`](travel-pla
 
 ## Next: create a config for your own agent
 
-Ready to evaluate your own agent? Use `p2m init` to design a config interactively instead of writing YAML by hand.
+Ready to evaluate your own agent? Use `assert-eval init` to design a config interactively instead of writing YAML by hand.
 Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
 
 ```bash
-p2m init --model azure/gpt-5.4 --describe "My agent description"
+assert-eval init --model azure/gpt-5.4 --describe "My agent description"
 ```
 
 See [`docs/reference/cli.md`](reference/cli.md#design-a-config-interactively) for the full option reference, or [`docs/writing-eval-specs.md`](writing-eval-specs.md) for guidance on authoring specs manually.

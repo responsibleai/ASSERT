@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import yaml
 
-from p2m.core.transcript import (
+from assert_eval.core.transcript import (
     AddMessageEdit,
     Message,
     SetSystemMessageEdit,

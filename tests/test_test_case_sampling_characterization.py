@@ -9,7 +9,7 @@ import json
 import unittest
 from typing import Any
 
-from p2m.analysis.stratification_metrics import (
+from assert_eval.analysis.stratification_metrics import (
     build_supplementary_metrics,
     confusion_matrices,
     cross_axis_nmi,
@@ -17,18 +17,18 @@ from p2m.analysis.stratification_metrics import (
     intended_vs_observed_metrics,
     behavior_agreement,
 )
-from p2m.analysis.test_case_labeling import (
+from assert_eval.analysis.test_case_labeling import (
     _label_entry_schema,
     _labels_response_schema,
     _normalize_observed_label_entry,
     build_labeling_prompt,
 )
-from p2m.stages.stratification import (
+from assert_eval.stages.stratification import (
     _stratification_response_schema,
     render_stratification_catalog,
     render_behavior_categories,
 )
-from p2m.stages.test_set import (
+from assert_eval.stages.test_set import (
     PROMPT_FIELD_EXAMPLES,
     SCENARIO_FIELD_EXAMPLES,
     TEST_CASE_SCHEMA,

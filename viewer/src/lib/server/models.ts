@@ -26,8 +26,8 @@ export interface ModelCatalog {
 }
 
 const LIST_ENV_KEYS = [
-	'P2M_MODEL_OPTIONS',
-	'P2M_MODELS',
+	'ASSERT_MODEL_OPTIONS',
+	'ASSERT_MODELS',
 	'LITELLM_MODEL_OPTIONS',
 	'LITELLM_MODELS',
 	'MODEL_OPTIONS',
@@ -37,12 +37,12 @@ const LIST_ENV_KEYS = [
 const PROVIDER_LIST_ENV_KEYS: ReadonlyArray<{ key: string; provider: string }> = [
 	{ key: 'AZURE_OPENAI_DEPLOYMENTS', provider: 'azure' },
 	{ key: 'AZURE_DEPLOYMENTS', provider: 'azure' },
-	{ key: 'P2M_AZURE_DEPLOYMENTS', provider: 'azure' }
+	{ key: 'ASSERT_AZURE_DEPLOYMENTS', provider: 'azure' }
 ];
 
 const SINGLE_ENV_KEYS: ReadonlyArray<{ key: string; provider?: string }> = [
-	{ key: 'P2M_DEFAULT_MODEL' },
-	{ key: 'P2M_MODEL' },
+	{ key: 'ASSERT_DEFAULT_MODEL' },
+	{ key: 'ASSERT_MODEL' },
 	{ key: 'LITELLM_MODEL' },
 	{ key: 'MODEL_NAME' },
 	{ key: 'OPENAI_MODEL', provider: 'openai' },
@@ -53,7 +53,7 @@ const SINGLE_ENV_KEYS: ReadonlyArray<{ key: string; provider?: string }> = [
 	{ key: 'AZURE_OPENAI_MODEL_DEPLOYMENT', provider: 'azure' },
 	{ key: 'AZURE_DEPLOYMENT', provider: 'azure' },
 	{ key: 'AZURE_DEPLOYMENT_NAME', provider: 'azure' },
-	{ key: 'P2M_AZURE_DEPLOYMENT', provider: 'azure' },
+	{ key: 'ASSERT_AZURE_DEPLOYMENT', provider: 'azure' },
 	{ key: 'ANTHROPIC_MODEL', provider: 'anthropic' },
 	{ key: 'ANTHROPIC_MODEL_NAME', provider: 'anthropic' },
 	{ key: 'CLAUDE_MODEL', provider: 'anthropic' },
@@ -62,7 +62,7 @@ const SINGLE_ENV_KEYS: ReadonlyArray<{ key: string; provider?: string }> = [
 	{ key: 'VERTEXAI_MODEL', provider: 'vertex_ai' }
 ];
 
-const DEFAULT_ENV_KEYS = ['P2M_DEFAULT_MODEL', 'LITELLM_MODEL', 'MODEL_NAME'] as const;
+const DEFAULT_ENV_KEYS = ['ASSERT_DEFAULT_MODEL', 'LITELLM_MODEL', 'MODEL_NAME'] as const;
 
 export function getModelCatalog(env: EnvRecord): ModelCatalog {
 	const seen = new Map<string, ModelCatalogEntry>();
@@ -96,7 +96,7 @@ export function getModelCatalog(env: EnvRecord): ModelCatalog {
 
 	if (defaultModel && !seen.has(defaultModel)) {
 		const ordered = new Map<string, ModelCatalogEntry>();
-		ordered.set(defaultModel, { id: defaultModel, source: 'P2M_DEFAULT_MODEL' });
+		ordered.set(defaultModel, { id: defaultModel, source: 'ASSERT_DEFAULT_MODEL' });
 		for (const [id, entry] of seen) ordered.set(id, entry);
 		return { models: Array.from(ordered.values()), defaultModel };
 	}

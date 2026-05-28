@@ -1,4 +1,4 @@
-"""Tests for the ``p2m init`` CLI command."""
+"""Tests for the ``assert-eval init`` CLI command."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from p2m.cli import cli
+from assert_eval.cli import cli
 
 
 _MINIMAL_VALID_YAML = (
@@ -36,8 +36,8 @@ def _done_response(yaml_str: str = _MINIMAL_VALID_YAML) -> str:
 
 
 class InitCommandTest(unittest.TestCase):
-    @patch("p2m.init._design_agent.chat_completion")
-    @patch("p2m.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_eval.init._design_agent.chat_completion")
+    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
     def test_non_interactive_generates_file(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
@@ -56,8 +56,8 @@ class InitCommandTest(unittest.TestCase):
         result = runner.invoke(cli, ["init", "--non-interactive"])
         self.assertNotEqual(result.exit_code, 0)
 
-    @patch("p2m.init._design_agent.chat_completion")
-    @patch("p2m.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_eval.init._design_agent.chat_completion")
+    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
     def test_dry_run_does_not_write(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
@@ -71,8 +71,8 @@ class InitCommandTest(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertFalse(Path("eval_config.yaml").exists())
 
-    @patch("p2m.init._design_agent.chat_completion")
-    @patch("p2m.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_eval.init._design_agent.chat_completion")
+    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
     def test_force_overwrites(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()

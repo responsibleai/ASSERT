@@ -6,7 +6,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-import p2m.stages.inference as inference_mod
+import assert_eval.stages.inference as inference_mod
 
 
 class HostedTraceRegistrationTest(unittest.TestCase):
@@ -17,7 +17,7 @@ class HostedTraceRegistrationTest(unittest.TestCase):
     def tearDown(self) -> None:
         inference_mod._hosted_trace_registered = False
 
-    @patch("p2m.stages.inference.log")
+    @patch("assert_eval.stages.inference.log")
     def test_registers_once_on_success(self, mock_log: MagicMock) -> None:
         mock_register = MagicMock()
         mock_instrumentor = MagicMock()
@@ -42,7 +42,7 @@ class HostedTraceRegistrationTest(unittest.TestCase):
         mock_register.assert_not_called()
         mock_instrumentor.instrument.assert_not_called()
 
-    @patch("p2m.stages.inference.log")
+    @patch("assert_eval.stages.inference.log")
     def test_flag_stays_false_on_import_error(self, mock_log: MagicMock) -> None:
         with patch("builtins.__import__", side_effect=ImportError("missing")):
             inference_mod._ensure_hosted_trace_instrumentation()
@@ -50,7 +50,7 @@ class HostedTraceRegistrationTest(unittest.TestCase):
         self.assertFalse(inference_mod._hosted_trace_registered)
         mock_log.warning.assert_called_once()
 
-    @patch("p2m.stages.inference.log")
+    @patch("assert_eval.stages.inference.log")
     def test_flag_stays_false_on_runtime_error(self, mock_log: MagicMock) -> None:
         mock_register = MagicMock(side_effect=RuntimeError("config error"))
 

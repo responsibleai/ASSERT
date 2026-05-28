@@ -78,18 +78,18 @@ What the quickstart does:
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
 
-### Create your own config with `p2m init`
+### Create your own config with `assert-eval init`
 
-Don't want to write YAML by hand? `p2m init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config.
+Don't want to write YAML by hand? `assert-eval init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config.
 
-`p2m init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
+`assert-eval init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
 
 ```bash
-p2m init --model azure/gpt-5.4
+assert-eval init --model azure/gpt-5.4
 # or skip the first question:
-p2m init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+assert-eval init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
-p2m init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+assert-eval init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
 ```
 
 See [`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively) for the full option reference.
@@ -164,7 +164,7 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 - **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
 - **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
-- **Create a config:** `p2m init` — interactive config designer ([`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively))
+- **Create a config:** `assert-eval init` — interactive config designer ([`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively))
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **AI assistants:** [`AGENTS.md`](AGENTS.md)
 - **Preview status:** [`docs/status-and-roadmap.md`](docs/status-and-roadmap.md)
@@ -175,7 +175,7 @@ Adaptive Eval is a customer preview / POC, not a GA service.
 
 Stable enough to try:
 
-- `p2m init` — conversational config designer
+- `assert-eval init` — conversational config designer
 - spec -> behavior categories -> test cases -> execute -> judge workflow
 - local artifact layout
 - `target.callable` with OTel trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) — the recommended integration path

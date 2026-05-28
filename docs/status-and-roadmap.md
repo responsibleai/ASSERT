@@ -4,7 +4,7 @@ Adaptive Eval is in customer preview. It is useful for design partners and struc
 
 ## Stable enough to try
 
-- `p2m init` — conversational config designer that creates eval configs interactively.
+- `assert-eval init` — conversational config designer that creates eval configs interactively.
 - Spec-driven pipeline: spec -> behavior categories -> test cases -> execute -> judge.
 - Local artifact layout under `artifacts/results/`.
 - `target.callable` for any agent or multi-agent system with a Python entrypoint.

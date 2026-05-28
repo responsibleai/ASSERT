@@ -9,10 +9,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from examples.agents.health_assistant import Tools as HealthAssistantTools
-from p2m.core.model_client import GenerateOptions, Message, ModelResponse, ToolCall
-from p2m.core.session import HostedSession
-from p2m.core.tool_backend import ToolBackendResolver, inspect_tool_module
-from p2m.core.tools import load_toolset_file
+from assert_eval.core.model_client import GenerateOptions, Message, ModelResponse, ToolCall
+from assert_eval.core.session import HostedSession
+from assert_eval.core.tool_backend import ToolBackendResolver, inspect_tool_module
+from assert_eval.core.tools import load_toolset_file
 
 
 def _docker_available() -> bool:
@@ -110,8 +110,8 @@ class HostedSessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("p2m.core.session.generate_with_tools", new=fake_generate_with_tools),
-            patch("p2m.core.session.generate", new=fake_generate),
+            patch("assert_eval.core.session.generate_with_tools", new=fake_generate_with_tools),
+            patch("assert_eval.core.session.generate", new=fake_generate),
         ):
             result = await session.run_turn([Message(role="user", content="hi")])
 

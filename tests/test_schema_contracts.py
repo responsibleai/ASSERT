@@ -11,18 +11,18 @@ import json
 import re
 import unittest
 
-from p2m.core.judge import (
+from assert_eval.core.judge import (
     CITE_XML_EXAMPLE,
     CITE_XML_PATTERN,
     build_judge_schema,
     render_output_schema,
 )
-from p2m.stages.test_set import (
+from assert_eval.stages.test_set import (
     TEST_CASE_SCHEMA,
     TEST_CASE_SCHEMA_WITH_TOOLS,
     output_schema_example,
 )
-from p2m.core.io import fill_template
+from assert_eval.core.io import fill_template
 
 
 class SeedSchemaExampleTest(unittest.TestCase):

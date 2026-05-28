@@ -12,7 +12,7 @@ This page visualizes the flagship customer-preview example:
 
 ```mermaid
 flowchart TD
-  subgraph P2M["Adaptive Eval inference loop"]
+  subgraph ASSERT["Adaptive Eval inference loop"]
     Seed["generated test case"]
     Tester["tester LLM<br/>next user turn"]
     Runtime["CallableSession.run_turn<br/>calls target callable"]

@@ -5,14 +5,14 @@
 
 Unlike the phoenix_auto_trace demos (which use Phoenix's auto-instrumentors),
 this demo shows that ANY custom orchestration can produce OTel traces that
-p2m's eval pipeline understands. No framework required — just OpenTelemetry.
+ASSERT's eval pipeline understands. No framework required — just OpenTelemetry.
 
 Architecture:
     coordinator → intent_classifier → flight_searcher → hotel_searcher
                                    → safety_advisor → itinerary_optimizer
 
 Each "agent" is a plain Python function wrapped in a manual OTel span.
-The spans follow OpenInference semantic conventions so p2m/core/otel.py
+The spans follow OpenInference semantic conventions so assert_eval/core/otel.py
 can parse them into transcript events for the judge.
 """
 
@@ -45,7 +45,7 @@ if not isinstance(_existing, TracerProvider):
 
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
 
 
 # ── Agent functions (each manually instrumented) ──────────────

@@ -7,17 +7,17 @@ import random
 import unittest
 from itertools import combinations, product
 
-from p2m.analysis.stratification_metrics import (
+from assert_eval.analysis.stratification_metrics import (
     coverage_metrics,
     labeler_retest_agreement,
     normalized_entropy,
 )
-from p2m.core.io import stratification_dimensions, fill_template
-from p2m.stages.stratification import (
+from assert_eval.core.io import stratification_dimensions, fill_template
+from assert_eval.stages.stratification import (
     build_behavior_factor,
     normalize_stratification,
 )
-from p2m.stages.test_set import (
+from assert_eval.stages.test_set import (
     build_covering_array,
     build_generation_jobs,
     build_generation_prompt,
@@ -462,7 +462,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
         """When a covering-array tuple's budget exceeds MAX_TEST_CASES_PER_BATCH,
         the tuple produces multiple jobs whose counts are each ≤ the cap and
         whose start_index slots remain contiguous within the tuple."""
-        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
+        from assert_eval.stages.test_set import MAX_TEST_CASES_PER_BATCH
 
         taxonomy = _make_policy()
         stratification = _make_stratification_with_behavior(2)
@@ -495,7 +495,7 @@ class BuildGenerationJobsTest(unittest.TestCase):
     def test_generation_jobs_no_split_when_count_within_cap(self) -> None:
         """When per-tuple count fits inside MAX_TEST_CASES_PER_BATCH, each tuple
         still produces exactly one job (covers the small-batch case)."""
-        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
+        from assert_eval.stages.test_set import MAX_TEST_CASES_PER_BATCH
 
         taxonomy = _make_policy()
         stratification = _make_stratification_with_behavior(2)

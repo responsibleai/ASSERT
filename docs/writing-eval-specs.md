@@ -1,6 +1,6 @@
 # Writing Eval Specs
 
-> **Tip:** `p2m init --model <litellm-model>` can generate a complete eval config
+> **Tip:** `assert-eval init --model <litellm-model>` can generate a complete eval config
 > interactively — including
 > the behavior spec, context, variations, and judge dimensions — by asking you
 > about your agent and eval goals. See the

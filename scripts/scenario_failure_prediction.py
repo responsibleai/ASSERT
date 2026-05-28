@@ -32,7 +32,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from p2m.core.io import (
+from assert_eval.core.io import (
     definitions_by_behavior,
     load_json,
     load_jsonl,

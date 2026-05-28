@@ -7,8 +7,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.model_client import ModelResponse
-from p2m.stages.systematize import run_systematize
+from assert_eval.core.model_client import ModelResponse
+from assert_eval.stages.systematize import run_systematize
 
 
 class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
@@ -51,7 +51,7 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            with patch("p2m.stages.systematize.generate_structured", new=fake_generate_structured):
+            with patch("assert_eval.stages.systematize.generate_structured", new=fake_generate_structured):
                 result = await run_systematize(
                     behavior="Harmful advice",
                     model="azure/gpt-5.4",
@@ -104,7 +104,7 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
             )
 
         with TemporaryDirectory() as tmp_dir:
-            with patch("p2m.stages.systematize.generate_structured", new=fake_generate_structured):
+            with patch("assert_eval.stages.systematize.generate_structured", new=fake_generate_structured):
                 result = await run_systematize(
                     behavior="Harmful advice",
                     model="azure/gpt-5.4",

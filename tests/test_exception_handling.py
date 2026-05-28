@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Tests for exception handling and error reporting across p2m modules."""
+"""Tests for exception handling and error reporting across ASSERT modules."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from p2m.config import ConfigError, load_config
-from p2m.core.otel import _parse_otlp_json
-from p2m.core.tools import load_toolset_file
+from assert_eval.config import ConfigError, load_config
+from assert_eval.core.otel import _parse_otlp_json
+from assert_eval.core.tools import load_toolset_file
 
 
 # ── config.py ──────────────────────────────────────────────────
@@ -97,7 +97,7 @@ class LoadToolsetFileErrorTest(unittest.TestCase):
 
 class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_module_raises_value_error(self) -> None:
-        from p2m.core.session import CallableSession
+        from assert_eval.core.session import CallableSession
 
         session = CallableSession(callable_ref="nonexistent_module_xyz123:func")
         with self.assertRaises(ValueError) as ctx:
@@ -106,7 +106,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
 
     async def test_missing_function_raises_value_error(self) -> None:
-        from p2m.core.session import CallableSession
+        from assert_eval.core.session import CallableSession
 
         session = CallableSession(callable_ref="json:nonexistent_func_xyz123")
         with self.assertRaises(ValueError) as ctx:
@@ -115,7 +115,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nonexistent_func_xyz123", str(ctx.exception))
 
     async def test_valid_callable_opens_successfully(self) -> None:
-        from p2m.core.session import CallableSession
+        from assert_eval.core.session import CallableSession
 
         session = CallableSession(callable_ref="json:dumps")
         await session.open()
@@ -133,8 +133,8 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         rejections to a recorded transcript event instead of aborting the
         whole batch.
         """
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import LLMInputError, Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import LLMInputError, Message
 
         # Lightweight stand-in for ``litellm.BadRequestError`` that avoids
         # importing litellm in the unit test. ``_classify_llm_error`` reads
@@ -160,8 +160,8 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         await session.open()
         try:
             with (
-                patch("p2m.core.session.invoke_callable", new=fake_invoke_callable),
-                patch("p2m.core.session._classify_llm_error", new=_classified),
+                patch("assert_eval.core.session.invoke_callable", new=fake_invoke_callable),
+                patch("assert_eval.core.session._classify_llm_error", new=_classified),
             ):
                 with self.assertRaises(LLMInputError) as ctx:
                     await session.run_turn([Message(role="user", content="hi")])
@@ -175,8 +175,8 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         crashes, ValueError from misconfigured tools) must propagate as-is
         rather than being smuggled into one of the four LLM error classes.
         """
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         class CustomAgentError(RuntimeError):
             pass
@@ -187,7 +187,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         session = CallableSession(callable_ref="json:dumps")
         await session.open()
         try:
-            with patch("p2m.core.session.invoke_callable", new=fake_invoke_callable):
+            with patch("assert_eval.core.session.invoke_callable", new=fake_invoke_callable):
                 with self.assertRaises(CustomAgentError) as ctx:
                     await session.run_turn([Message(role="user", content="hi")])
             self.assertIn("user agent blew up", str(ctx.exception))
@@ -197,7 +197,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
 
 class OTelTracedSessionErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_module_raises_value_error(self) -> None:
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel_session import OTelTracedSession
 
         session = OTelTracedSession(callable_ref="nonexistent_module_xyz123:func")
         with self.assertRaises(ValueError) as ctx:
@@ -206,7 +206,7 @@ class OTelTracedSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
 
     async def test_missing_function_raises_value_error(self) -> None:
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel_session import OTelTracedSession
 
         session = OTelTracedSession(callable_ref="json:nonexistent_func_xyz123")
         with self.assertRaises(ValueError) as ctx:
@@ -225,16 +225,16 @@ class HTTPEndpointSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         import os
         from unittest.mock import patch as env_patch
 
-        from p2m.core.session import HTTPEndpointSession
+        from assert_eval.core.session import HTTPEndpointSession
 
-        with env_patch.dict(os.environ, {"P2M_ALLOW_PRIVATE_ENDPOINTS": "1"}):
+        with env_patch.dict(os.environ, {"ASSERT_ALLOW_PRIVATE_ENDPOINTS": "1"}):
             session = HTTPEndpointSession(
                 endpoint="http://127.0.0.1:59123",  # closed high port
                 message_timeout_s=1.0,
             )
         await session.open()
         try:
-            from p2m.core.model_client import Message
+            from assert_eval.core.model_client import Message
 
             with self.assertRaises(RuntimeError) as ctx:
                 await session.run_turn([Message(role="user", content="hello")])
@@ -260,7 +260,7 @@ class JudgePolicyParseErrorTest(unittest.TestCase):
 
 class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_file_raises_file_not_found(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
+        from assert_eval.stages.systematization_convert import run_systematization_to_taxonomy
 
         with self.assertRaises(FileNotFoundError) as ctx:
             await run_systematization_to_taxonomy(
@@ -269,7 +269,7 @@ class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Systematization file not found", str(ctx.exception))
 
     async def test_corrupt_json_raises_value_error(self) -> None:
-        from p2m.stages.systematization_convert import run_systematization_to_taxonomy
+        from assert_eval.stages.systematization_convert import run_systematization_to_taxonomy
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "bad_syst.json"
@@ -286,14 +286,14 @@ class SystematizationConvertErrorTest(unittest.IsolatedAsyncioTestCase):
 class InferenceWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
     async def test_worker_logs_debug_on_runtime_failure(self) -> None:
         """Verify that the inference worker logs debug info when a runtime error occurs."""
-        from p2m.core.config_model import (
+        from assert_eval.core.config_model import (
             TesterConfig,
             EvaluationConfig,
             JudgeConfig,
             InferenceConfig,
             TargetConfig,
         )
-        from p2m.stages.inference import run_inference
+        from assert_eval.stages.inference import run_inference
 
         target = TargetConfig(model="azure/gpt-5.4")
         evaluation = EvaluationConfig(
@@ -326,10 +326,10 @@ class InferenceWorkerLoggingTest(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch(
-                    "p2m.stages.inference._build_target_session",
+                    "assert_eval.stages.inference._build_target_session",
                     return_value=mock_runtime,
                 ),
-                self.assertLogs("p2m.stages.inference", level="DEBUG") as log_cm,
+                self.assertLogs("assert_eval.stages.inference", level="DEBUG") as log_cm,
             ):
                 with self.assertRaises(ConnectionError):
                     await run_inference(
@@ -357,8 +357,8 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
         except ImportError:
             self.skipTest("pandas not installed")
 
-        with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
-            from p2m.core.collector import PhoenixCollector
+        with patch("assert_eval.core.collector.PhoenixCollector.__init__", return_value=None):
+            from assert_eval.core.collector import PhoenixCollector
 
             collector = PhoenixCollector.__new__(PhoenixCollector)
             collector._default_project = "test-project"
@@ -375,8 +375,8 @@ class PhoenixCollectorErrorTest(unittest.TestCase):
         except ImportError:
             self.skipTest("pandas not installed")
 
-        with patch("p2m.core.collector.PhoenixCollector.__init__", return_value=None):
-            from p2m.core.collector import PhoenixCollector
+        with patch("assert_eval.core.collector.PhoenixCollector.__init__", return_value=None):
+            from assert_eval.core.collector import PhoenixCollector
 
             collector = PhoenixCollector.__new__(PhoenixCollector)
             collector._default_project = "test-project"
