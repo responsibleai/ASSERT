@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end tests for the preset library feature.
 
 Covers:
@@ -174,7 +177,7 @@ class JudgeYamlSchemaTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryListTest(unittest.TestCase):
-    """Test the ``p2m library list`` CLI command end-to-end."""
+    """Test the ``assert-eval library list`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()
@@ -243,7 +246,7 @@ class CliLibraryListTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryShowTest(unittest.TestCase):
-    """Test the ``p2m library show`` CLI command end-to-end."""
+    """Test the ``assert-eval library show`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()
@@ -445,6 +448,81 @@ class OverrideSemanticsTest(unittest.TestCase):
         dims = ctx["evaluation"].judge.dimensions
         self.assertEqual(len(dims), 1)
         self.assertEqual(dims[0]["name"], "my_dim")
+
+
+# ===================================================================
+# 6b. Multi-preset combining — pipeline.judge.preset accepts list
+# ===================================================================
+
+class MultiPresetTest(unittest.TestCase):
+    """`pipeline.judge.preset` accepts a single name or a list of names."""
+
+    def test_list_with_single_preset_equivalent_to_string(self):
+        ctx_str = _load_ctx(judge_overrides={"preset": "safety-core"})
+        ctx_list = _load_ctx(judge_overrides={"preset": ["safety-core"]})
+        names_str = [d["name"] for d in ctx_str["evaluation"].judge.dimensions]
+        names_list = [d["name"] for d in ctx_list["evaluation"].judge.dimensions]
+        self.assertEqual(names_str, names_list)
+
+    def test_list_combines_dimensions_from_all_presets(self):
+        ctx = _load_ctx(judge_overrides={"preset": ["safety-core", "grounding"]})
+        names = [d["name"] for d in ctx["evaluation"].judge.dimensions]
+        # safety-core contributes: policy_violation, overrefusal
+        # grounding contributes:    hallucination, attribution_error
+        self.assertIn("policy_violation", names)
+        self.assertIn("overrefusal", names)
+        self.assertIn("hallucination", names)
+        self.assertIn("attribution_error", names)
+        self.assertEqual(len(names), 4)
+
+    def test_list_deduplicates_repeated_preset_name(self):
+        ctx = _load_ctx(judge_overrides={"preset": ["safety-core", "safety-core"]})
+        single = _load_ctx(judge_overrides={"preset": "safety-core"})
+        self.assertEqual(
+            [d["name"] for d in ctx["evaluation"].judge.dimensions],
+            [d["name"] for d in single["evaluation"].judge.dimensions],
+        )
+
+    def test_inline_dim_overrides_dim_from_any_preset_in_list(self):
+        ctx = _load_ctx(judge_overrides={
+            "preset": ["safety-core", "grounding"],
+            "dimensions": {
+                "hallucination": {
+                    "description": "inline override",
+                    "rubric": "inline rubric",
+                },
+            },
+        })
+        dims = ctx["evaluation"].judge.dimensions
+        hallucination = next(d for d in dims if d["name"] == "hallucination")
+        self.assertEqual(hallucination["description"], "inline override")
+        self.assertEqual(hallucination["rubric"], "inline rubric")
+
+    def test_empty_list_treated_as_no_preset(self):
+        ctx = _load_ctx(judge_overrides={
+            "preset": [],
+            "dimensions": {
+                "only_inline": {"description": "x", "rubric": "y"},
+            },
+        })
+        names = [d["name"] for d in ctx["evaluation"].judge.dimensions]
+        self.assertEqual(names, ["only_inline"])
+
+    def test_invalid_preset_type_raises(self):
+        with self.assertRaisesRegex(ValueError, "pipeline.judge.preset"):
+            _load_ctx(judge_overrides={"preset": 42})
+
+    def test_non_string_list_item_raises(self):
+        with self.assertRaisesRegex(ValueError, r"pipeline\.judge\.preset\[1\]"):
+            _load_ctx(judge_overrides={"preset": ["safety-core", 7]})
+
+    def test_empty_string_in_list_raises(self):
+        with self.assertRaisesRegex(ValueError, r"pipeline\.judge\.preset\[0\]"):
+            _load_ctx(judge_overrides={"preset": ["  "]})
+
+    def test_unknown_preset_in_list_raises(self):
+        with self.assertRaises(ValueError):
+            _load_ctx(judge_overrides={"preset": ["safety-core", "does-not-exist"]})
 
 
 # ===================================================================

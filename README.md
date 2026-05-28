@@ -40,17 +40,17 @@ cp .env.example .env
 phoenix serve
 
 # Run the full pipeline: spec -> taxonomy -> test cases -> execution -> verdicts.
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 
 # Inspect the run.
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 Codespaces / VS Code Dev Containers:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `assert-eval run` command above.
 
 Windows PowerShell equivalent:
 
@@ -62,8 +62,8 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 What the quickstart does:
@@ -77,6 +77,22 @@ What the quickstart does:
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
+
+### Create your own config with `p2m init`
+
+Don't want to write YAML by hand? `p2m init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config.
+
+`p2m init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
+
+```bash
+p2m init --model azure/gpt-5.4
+# or skip the first question:
+p2m init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+# or edit/extend an existing config:
+p2m init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+```
+
+See [`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively) for the full option reference.
 
 ## How it works
 
@@ -148,6 +164,7 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 - **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
 - **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
+- **Create a config:** `p2m init` — interactive config designer ([`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively))
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **AI assistants:** [`AGENTS.md`](AGENTS.md)
 - **Preview status:** [`docs/status-and-roadmap.md`](docs/status-and-roadmap.md)
@@ -158,6 +175,7 @@ Adaptive Eval is a customer preview / POC, not a GA service.
 
 Stable enough to try:
 
+- `p2m init` — conversational config designer
 - spec -> behavior categories -> test cases -> execute -> judge workflow
 - local artifact layout
 - `target.callable` with OTel trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) — the recommended integration path
@@ -176,6 +194,16 @@ Preview feedback is welcome: confusing names, missing target examples, trace gap
 - **macOS, `litellm` AttributeError after install** — some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`, causing errors like `AttributeError: module 'litellm' has no attribute 'acompletion'`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
 - **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
+
+## Telemetry
+
+This project does not collect or send telemetry to Microsoft by default. Runs write local artifacts under `artifacts/results/`, and optional OpenTelemetry trace capture is controlled by your configuration and local collector setup, such as Phoenix.
+
+If you configure a target, judge, trace collector, or model provider to send data to an external service, the prompts, responses, traces, metadata, and other evaluation artifacts sent to that service are governed by that service's terms and your configuration.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is subject to those third party's policies.
 
 ## Important: Risks and limitations
 

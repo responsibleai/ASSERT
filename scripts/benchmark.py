@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Concurrency / throughput benchmark harness.
 
 Drives the full p2m pipeline against a base benchmark config, with
@@ -538,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  log file       : {args.log_file}")
     print("=" * 72, flush=True)
 
-    # Configure logging the same way `p2m run` does so stage progress and
+    # Configure logging the same way `assert-eval run` does so stage progress and
     # any failure output actually reaches the terminal. Must run BEFORE
     # we attach the rate-limit counter, because configure_logging clears
     # existing handlers on the root logger.

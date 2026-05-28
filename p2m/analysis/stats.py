@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Core statistical utilities for pipeline analysis.
 
 Provides cluster-bootstrapped confidence intervals, binary prediction metrics,

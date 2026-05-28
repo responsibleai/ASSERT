@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Same agent, wrapped by the AgentShield runtime defined in guardrails.yaml.
 
 Drop-in callable replacement: same `chat(message: str) -> str` signature,

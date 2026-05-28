@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Run unified prompt/scenario inferences and write inference-set rows."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for behavior.preset and judge.preset integration in config loading."""
 import unittest
 from pathlib import Path

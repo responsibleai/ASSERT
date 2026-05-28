@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """LangGraph travel planner — OTel auto-instrumented agent.
 
 Multi-node graph with mock tools: agent calls tools, OTel captures every
 LLM call, tool invocation, and routing decision via Phoenix auto-instrumentation.
 
 Usage:
-    uv run p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+    uv run assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 """
 # NOTE: do NOT use `from __future__ import annotations` — LangGraph's StateGraph
 # requires runtime-resolvable type hints for state schema introspection.

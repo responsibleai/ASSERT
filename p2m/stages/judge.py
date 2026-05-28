@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Score unified inference-set artifacts."""
 
 from __future__ import annotations

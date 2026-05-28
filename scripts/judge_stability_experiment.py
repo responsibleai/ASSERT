@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Judge stability experiment: score full conversations with different models, temperatures, and n values."""
 
 from __future__ import annotations

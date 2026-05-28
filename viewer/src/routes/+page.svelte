@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import { activeRuns } from '$lib/active-runs.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
@@ -36,8 +39,12 @@
 			);
 		}
 		if (statusFilter !== 'all') {
-			const minRank = statusRank[statusFilter] ?? 0;
-			items = items.filter((s) => (statusRank[s.status] ?? 0) >= minRank);
+			if (statusFilter === 'empty') {
+				items = items.filter((s) => s.status === 'empty');
+			} else {
+				const minRank = statusRank[statusFilter] ?? 0;
+				items = items.filter((s) => (statusRank[s.status] ?? 0) >= minRank);
+			}
 		}
 		items = [...items].sort((a, b) => {
 			if (sortBy === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
@@ -135,6 +142,7 @@
 				ariaLabel="Filter by evaluation status"
 				options={[
 					{ value: 'all', label: 'All statuses' },
+					{ value: 'empty', label: 'No behavior categories' },
 					{ value: 'systematized', label: '○ Behavior Categories Defined' },
 					{ value: 'test_set_ready', label: '● Evaluation Test Set Generated' },
 					{ value: 'has_results', label: '◉ Has Evaluation Result' }
@@ -201,16 +209,18 @@
 {:else if viewMode === 'card'}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#each filtered as suite (suite.suite_id)}
-			{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
+			{@const sc = statusConfig[suite.status]}
 			<div class="card-hover group relative isolate rounded-lg border border-border bg-surface p-4 no-underline">
 				<div class="flex items-start justify-between gap-3">
 					<p class="min-w-0 flex-1 flex items-center gap-1.5 pt-0.5 font-mono text-[10px] uppercase leading-4 tracking-wider text-text-muted">
 						<svg class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
 						<span class="truncate">{suite.suite_id}</span>
 					</p>
-					<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] leading-4 {sc.class}">
-						<span>{sc.icon}</span> {sc.label}
-					</span>
+					{#if sc}
+						<span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] leading-4 {sc.class}">
+							<span>{sc.icon}</span> {sc.label}
+						</span>
+					{/if}
 				</div>
 				<a
 					href="/suite/{suite.suite_id}"
@@ -257,7 +267,7 @@
 			</thead>
 			<tbody>
 				{#each paginatedList as suite}
-					{@const sc = statusConfig[suite.status] ?? statusConfig.systematized}
+					{@const sc = statusConfig[suite.status]}
 					<tr class="border-b border-border transition-colors last:border-b-0 hover:bg-surface">
 						<td class="max-w-xs px-4 py-2.5 align-middle">
 							<a
@@ -272,7 +282,11 @@
 						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.prompt_test_case_count + suite.scenario_test_case_count}</td>
 						<td class="px-4 py-2.5 align-middle text-sm text-text-muted">{suite.run_count}</td>
 						<td class="px-4 py-2.5 align-middle">
-							<span class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}"><span>{sc.icon}</span> {sc.label}</span>
+							{#if sc}
+								<span class="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] {sc.class}"><span>{sc.icon}</span> {sc.label}</span>
+							{:else}
+								<span class="text-[10px] text-text-muted">—</span>
+							{/if}
 						</td>
 					</tr>
 				{/each}

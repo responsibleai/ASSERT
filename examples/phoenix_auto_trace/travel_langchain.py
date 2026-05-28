@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LangChain/LangGraph (multi-node graph).
 
 Instrumentation: 2 lines. Agent code: standard LangGraph.

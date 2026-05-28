@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for exception handling and error reporting across p2m modules."""
 
 from __future__ import annotations

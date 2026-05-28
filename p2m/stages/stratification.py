@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Stratification: dimension normalization, generation, and catalog rendering."""
 
 from __future__ import annotations

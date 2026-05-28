@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """OTel-traced session for multi-turn adversarial evaluation.
 
 Architecture:

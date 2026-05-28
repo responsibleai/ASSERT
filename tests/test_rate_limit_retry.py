@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the per-model adaptive rate limiter and retry logic."""
 
 import asyncio

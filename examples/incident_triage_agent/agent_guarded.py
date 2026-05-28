@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Incident-triage agent wrapped with the AgentShield SDK.
 
 Same callable contract as :mod:`agent` (`chat(message: str) -> str`) so this

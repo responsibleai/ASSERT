@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Helpers for running Node.js + TypeScript snippets from tests.
 
 Node ≥ 23.6 strips TypeScript by default for ``.ts`` file imports. Node

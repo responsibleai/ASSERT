@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Outcome stability analysis across multiple runs.
 
 Provides two distinct analyses:

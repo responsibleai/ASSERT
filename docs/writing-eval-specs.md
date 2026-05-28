@@ -1,5 +1,12 @@
 # Writing Eval Specs
 
+> **Tip:** `p2m init --model <litellm-model>` can generate a complete eval config
+> interactively — including
+> the behavior spec, context, variations, and judge dimensions — by asking you
+> about your agent and eval goals. See the
+> [CLI reference](reference/cli.md#design-a-config-interactively). The guidance
+> below is for when you want to author or refine a spec by hand.
+
 An eval spec is the free-form text you put in `behavior.description` inside your
 YAML config. It describes the behavior_categories you want to measure. There is
 no separate markdown file — the spec, the context, the variations, and the

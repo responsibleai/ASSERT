@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Stratification quality and labeling metrics.
 
 Pure post-hoc statistics computed over test-case assignments and stratification catalogs:

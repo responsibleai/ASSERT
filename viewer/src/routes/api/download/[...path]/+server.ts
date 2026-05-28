@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { error } from '@sveltejs/kit';
 import { resolveArtifactPath } from '$lib/server/artifacts.js';
 import path from 'node:path';

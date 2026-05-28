@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Convert a systematization artifact to a structured taxonomy JSON."""
 
 from __future__ import annotations

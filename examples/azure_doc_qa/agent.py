@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Multi-agent Azure Doc QA system built with LangGraph.
 
 Multi-agent graph with triage routing, specialist agents, and escalation.
@@ -8,10 +11,10 @@ Architecture:
 
 Usage:
     # Real MCP mode (requires Azure auth + Node.js):
-    p2m run --config examples/azure_doc_qa/eval_config.yaml
+    assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 
     # Mock mode (offline, no auth needed):
-    USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+    USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 """
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getModelCatalog } from '$lib/server/models.js';
