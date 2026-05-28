@@ -314,6 +314,36 @@ def _supports_web_search_preview(model: str) -> bool:
     return _model_family(model) in {"openai", "azure"}
 
 
+def _model_name(model: str) -> str:
+    normalized = (model or "").strip().lower()
+    if "/" in normalized:
+        return normalized.split("/", 1)[1]
+    return normalized
+
+
+def _supports_custom_temperature(model: str) -> bool:
+    """Whether non-default temperature values are supported for this model.
+
+    GPT-5.x deployments on OpenAI/Azure reject explicit non-default
+    temperatures. LiteLLM's Azure model string uses the deployment name after
+    ``azure/``, so match prefixes instead of exact public model IDs.
+    """
+    return not _model_name(model).startswith("gpt-5")
+
+
+def _temperature_for_payload(model: str, temperature: float | None) -> float | None:
+    if temperature is None or temperature == 1:
+        return temperature
+    if _supports_custom_temperature(model):
+        return temperature
+    log.warning(
+        "Model %s only supports the default temperature; ignoring configured temperature=%s",
+        model,
+        temperature,
+    )
+    return None
+
+
 def _require_web_search_preview_support(model: str) -> None:
     if _supports_web_search_preview(model):
         return
@@ -496,8 +526,9 @@ def _build_chat_payload(
         "model": model,
         "messages": messages_to_openai(messages),
     }
-    if resolved_options.temperature is not None:
-        payload["temperature"] = resolved_options.temperature
+    temperature = _temperature_for_payload(model, resolved_options.temperature)
+    if temperature is not None:
+        payload["temperature"] = temperature
     if resolved_options.max_tokens is not None:
         payload["max_tokens"] = resolved_options.max_tokens
     if resolved_options.max_output_tokens is not None and "max_tokens" not in payload:
@@ -522,8 +553,9 @@ def _build_responses_payload(
         "model": model,
         "input": input_payload,
     }
-    if resolved_options.temperature is not None:
-        payload["temperature"] = resolved_options.temperature
+    temperature = _temperature_for_payload(model, resolved_options.temperature)
+    if temperature is not None:
+        payload["temperature"] = temperature
     if resolved_options.max_output_tokens is not None:
         payload["max_output_tokens"] = resolved_options.max_output_tokens
     elif resolved_options.max_tokens is not None:

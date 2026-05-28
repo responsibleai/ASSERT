@@ -922,6 +922,43 @@
 			</p>
 		{/if}
 
+
+		{#if data.metrics.policyViolationOnPermissible || data.metrics.policyViolationOnNotPermissible}
+			{@const promptPerm = data.metrics.policyViolationOnPermissible}
+			{@const promptNotPerm = data.metrics.policyViolationOnNotPermissible}
+			{#if (promptPerm?.count ?? 0) + (promptNotPerm?.count ?? 0) > 0}
+				<div class="mb-4 grid gap-3 sm:grid-cols-2" title="Per-behavior judgments aggregated across prompts. Denominator is judgments the judge marked relevant for that behavior.">
+					{#each [
+						{ key: 'permissible', label: 'Allowed requests failed', summary: promptPerm, hint: 'Requests the assistant should have helped with, but instead refused, deflected, or failed to complete.' },
+						{ key: 'not_permissible', label: 'Blocked requests failed', summary: promptNotPerm, hint: 'Requests the assistant should have blocked, but instead helped with or allowed.' }
+					] as card (card.key)}
+						{@const summary = card.summary}
+						<div class="rounded-lg border border-border bg-surface px-5 py-4">
+							<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{card.label}</div>
+							<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{card.hint}</p>
+							<div class="mt-2 flex items-baseline gap-1.5">
+								<span class="text-3xl font-bold tabular-nums {metricRateClass(summary ? summary.rate : 0)}">{summary && summary.count > 0 ? metricRateText(summary.rate) : '—'}</span>
+								<span class="text-sm text-text-muted">{summary && summary.count > 0 ? 'violated' : 'no relevant judgments'}</span>
+							</div>
+							{#if summary && summary.count > 0}
+								{@const pct = binaryBar(summary.counts)}
+								<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+									{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+									{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+								</div>
+								<div class="mt-1 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-[9px] tabular-nums text-text-muted">
+									<span>{summary.clear_count} clear</span>
+									<span>{summary.flagged_count} violated</span>
+									<span>{summary.count} relevant judgments</span>
+								</div>
+							{/if}
+							<div class="mt-2 text-[9px] text-text-muted">aggregated over relevant behavior judgments, not over prompts</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+
 		<!-- Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
@@ -1184,6 +1221,43 @@
 			<p class="mb-6 text-xs text-amber-400">
 				Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
 			</p>
+		{/if}
+
+
+		{#if data.auditMetrics.policyViolationOnPermissible || data.auditMetrics.policyViolationOnNotPermissible}
+			{@const auditPerm = data.auditMetrics.policyViolationOnPermissible}
+			{@const auditNotPerm = data.auditMetrics.policyViolationOnNotPermissible}
+			{#if (auditPerm?.count ?? 0) + (auditNotPerm?.count ?? 0) > 0}
+				<div class="mb-4 grid gap-3 sm:grid-cols-2" title="Per-behavior judgments aggregated across scenarios. Denominator is judgments the judge marked relevant for that behavior.">
+					{#each [
+						{ key: 'permissible', label: 'Allowed requests failed', summary: auditPerm, hint: 'Requests the assistant should have helped with, but instead refused, deflected, or failed to complete.' },
+						{ key: 'not_permissible', label: 'Blocked requests failed', summary: auditNotPerm, hint: 'Requests the assistant should have blocked, but instead helped with or allowed.' }
+					] as card (card.key)}
+						{@const summary = card.summary}
+						<div class="rounded-lg border border-border bg-surface px-5 py-4">
+							<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{card.label}</div>
+							<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{card.hint}</p>
+							<div class="mt-2 flex items-baseline gap-1.5">
+								<span class="text-3xl font-bold tabular-nums {metricRateClass(summary ? summary.rate : 0)}">{summary && summary.count > 0 ? metricRateText(summary.rate) : '—'}</span>
+								<span class="text-sm text-text-muted">{summary && summary.count > 0 ? 'violated' : 'no relevant judgments'}</span>
+							</div>
+							{#if summary && summary.count > 0}
+								{@const pct = binaryBar(summary.counts)}
+								<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+									{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+									{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+								</div>
+								<div class="mt-1 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-[9px] tabular-nums text-text-muted">
+									<span>{summary.clear_count} clear</span>
+									<span>{summary.flagged_count} violated</span>
+									<span>{summary.count} relevant judgments</span>
+								</div>
+							{/if}
+							<div class="mt-2 text-[9px] text-text-muted">aggregated over relevant behavior judgments, not over scenarios</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 
 		<!-- Audit Category Accordion -->
