@@ -20,6 +20,7 @@ from p2m.core.config_model import (
     ModelConfig,
 )
 from p2m.core.model_client import GenerateOptions, generate_structured
+from p2m.stages.systematization import SystematizationResponse, validate_systematization_response
 from p2m.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -126,23 +127,27 @@ async def run_systematization_to_taxonomy(
         raise ValueError(
             f"Invalid JSON in systematization file {data_path}: {exc}"
         ) from exc
-    behavior = str(data.get("behavior") or "").strip()
-    if not behavior:
-        raise ValueError("systematization_convert requires systematization.json to include behavior")
-    systematization_text = str(data.get("systematization") or "").strip()
-    if not systematization_text:
-        raise ValueError("systematization_convert requires a non-empty systematization")
-    summary_items = data.get("summary_items")
-    if summary_items is not None and not isinstance(summary_items, list):
-        raise ValueError("systematization_convert requires summary_items to be a list when present")
+    missing_fields = sorted(set(SystematizationResponse.model_fields).difference(data))
+    if missing_fields:
+        raise ValueError(
+            "systematization_convert requires structured systematization field(s): "
+            + ", ".join(missing_fields)
+        )
+    systematization = SystematizationResponse.model_validate(
+        {
+            field: data[field]
+            for field in SystematizationResponse.model_fields
+        }
+    )
+    validate_systematization_response(systematization, expected_behavior=systematization.behavior)
+    behavior = systematization.behavior
+    systematization_json = json.dumps(systematization.model_dump(), ensure_ascii=False, indent=2)
 
     prompt = (
         GUIDELINE_PROMPT.replace("{{behavior_category_count}}", str(behavior_category_count_hint))
         + "\n\n# SYSTEMATIZATION\n"
-        + systematization_text
+        + systematization_json
     )
-    if summary_items:
-        prompt += "\n\n# SUMMARY ITEMS\n" + json.dumps(summary_items, ensure_ascii=False, indent=2)
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
     if model_cfg.reasoning_effort is not None:

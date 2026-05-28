@@ -6,38 +6,103 @@
 from __future__ import annotations
 
 import json
-import logging
-import re
 from pathlib import Path
-
-log = logging.getLogger(__name__)
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from p2m.core.config_model import ModelConfig
-from p2m.core.io import load_prompt_text
+from p2m.core.io import load_prompt_text, write_json
 from p2m.core.model_client import GenerateOptions, generate_structured
 
-SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
+VALIDATION_CRITERIA_PROMPT = load_prompt_text("validation_criteria.md")
+SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md").replace(
+    "{validation_criteria}", VALIDATION_CRITERIA_PROMPT
+)
 ALLOWED_MODES = {"research", "direct"}
 
 
-class SummaryItem(BaseModel):
-    description: str
-    example: str
+class StakeholderLens(BaseModel):
+    label: str
+    expertise: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class KeyTerm(BaseModel):
+    term: str
+    definition: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotValue(BaseModel):
+    slot_value: str
+    definition: str
+    example_phrase: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NestedSlotComponent(BaseModel):
+    parent_slot_value: str
+    component: str
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotComponent(BaseModel):
+    component: str
+    nested_slot_components: list[NestedSlotComponent] | None
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class Pattern(BaseModel):
+    pattern: str
+    pattern_role: Literal["problematic", "acceptable"]
+    primary_theory: str
+    related_theory: str
+    key_terms: list[KeyTerm]
+    slot_components: list[SlotComponent]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BehaviorSpec(BaseModel):
+    behavior: str
+    patterns: list[Pattern]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ValidationItem(BaseModel):
+    attribute: str
+    score: str
+    justification: str
 
     model_config = ConfigDict(extra="forbid")
 
 
 class SystematizationResponse(BaseModel):
-    systematization: str
-    summary_items: list[SummaryItem]
+    behavior: str
+    scope: str
+    impact_analysis: str
+    alternative_systematizations: str
+    references: list[str]
+    stakeholder_lenses: list[StakeholderLens]
+    validation: list[ValidationItem]
+    reasoning_summary: str
+    concept_spec: BehaviorSpec
 
     model_config = ConfigDict(extra="forbid")
 
 
-def _humanize_behavior_name(behavior_name: str | None) -> str:
-    return str(behavior_name or "").replace("_", " ").replace("-", " ").strip()
+def systematization_json_schema() -> dict[str, Any]:
+    return SystematizationResponse.model_json_schema()
+
 
 def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = None) -> str:
     parts = [
@@ -48,58 +113,78 @@ def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = No
         f"## Background Behavior of Interest\n{behavior_text.strip()}\n",
     ]
     if context:
-        parts.append(f"\n## Application Context\n{context.strip()}\n")
+        parts.append(f"\n# Application Context\n{context.strip()}\n")
     return "".join(parts)
 
 
-def _extract_pattern_blocks(systematization: str) -> list[str]:
-    """Split the systematization into individual pattern blocks.
-
-    Each block starts with ``- **Pattern**:`` and extends until the next
-    pattern bullet or the end of the patterns section.
-    """
-    parts = re.split(r"(?m)^- \*\*Pattern\*\*:", systematization)
-    return [part.strip() for part in parts[1:] if part.strip()]
+def _require_nonempty(value: str, field: str) -> None:
+    if not value.strip():
+        raise ValueError(f"systematization returned empty {field}")
 
 
-def _validate_pattern_block(block: str) -> None:
-    """Validate a single slot-based pattern block."""
-    if "**Key Terms**:" not in block:
-        raise ValueError("systematization pattern block is missing Key Terms section")
-    if "**Variables**:" not in block:
-        raise ValueError("systematization pattern block is missing Variables section")
-    slot_refs = re.findall(r"\[([A-Z][A-Z0-9_]*)\]", block.split("**Variables**:")[0])
-    if not slot_refs:
-        raise ValueError("systematization pattern template has no [SLOT] placeholders")
-    variable_names = re.findall(r"\*\*\[([A-Z][A-Z0-9_]*)\]\*\*:\s*\{\{", block)
-    if not variable_names:
-        raise ValueError("systematization pattern has no {{ }} variable blocks")
-    for slot in slot_refs:
-        if slot not in variable_names:
-            raise ValueError(f"systematization pattern has [SLOT] '{slot}' with no matching variable block")
+def validate_systematization_response(parsed: SystematizationResponse, *, expected_behavior: str) -> None:
+    _require_nonempty(parsed.behavior, "behavior")
+    if parsed.behavior != expected_behavior:
+        raise ValueError(
+            "systematization behavior must match input behavior label: "
+            f"expected {expected_behavior!r}, got {parsed.behavior!r}"
+        )
+    if parsed.concept_spec.behavior != parsed.behavior:
+        raise ValueError("systematization concept_spec.behavior must match behavior")
 
+    for field_name in (
+        "scope",
+        "impact_analysis",
+        "alternative_systematizations",
+        "reasoning_summary",
+    ):
+        _require_nonempty(str(getattr(parsed, field_name)), field_name)
 
-def _validate_systematization(systematization: str) -> None:
-    text = systematization.strip()
-    if not text:
-        raise ValueError("systematization returned empty systematization")
+    for index, reference in enumerate(parsed.references):
+        _require_nonempty(reference, f"references[{index}]")
+    for index, lens in enumerate(parsed.stakeholder_lenses):
+        _require_nonempty(lens.label, f"stakeholder_lenses[{index}].label")
+        _require_nonempty(lens.expertise, f"stakeholder_lenses[{index}].expertise")
+    if not parsed.validation:
+        raise ValueError("systematization validation must include at least one item")
+    for index, item in enumerate(parsed.validation):
+        _require_nonempty(item.attribute, f"validation[{index}].attribute")
+        _require_nonempty(item.score, f"validation[{index}].score")
+        _require_nonempty(item.justification, f"validation[{index}].justification")
 
-    # The systematization prompt now produces structured JSON output.
-    # The text field may contain either Markdown-formatted or plain-text
-    # systematization. Only validate non-emptiness — the Pydantic model
-    # already enforces schema correctness.
-    # Legacy Markdown header validation is skipped since the prompt was
-    # updated to produce JSON-structured output.
-
-
-def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
-    if not summary_items:
-        raise ValueError("systematization requires at least one summary item")
-    for item in summary_items:
-        if not item.description.strip():
-            raise ValueError("systematization summary_items.description must be non-empty")
-        if not item.example.strip():
-            raise ValueError("systematization summary_items.example must be non-empty")
+    if not parsed.concept_spec.patterns:
+        raise ValueError("systematization concept_spec.patterns must include at least one pattern")
+    for pattern_index, pattern in enumerate(parsed.concept_spec.patterns):
+        prefix = f"concept_spec.patterns[{pattern_index}]"
+        _require_nonempty(pattern.pattern, f"{prefix}.pattern")
+        _require_nonempty(pattern.primary_theory, f"{prefix}.primary_theory")
+        _require_nonempty(pattern.related_theory, f"{prefix}.related_theory")
+        for term_index, term in enumerate(pattern.key_terms):
+            _require_nonempty(term.term, f"{prefix}.key_terms[{term_index}].term")
+            _require_nonempty(term.definition, f"{prefix}.key_terms[{term_index}].definition")
+        if not pattern.slot_components:
+            raise ValueError(f"systematization {prefix}.slot_components must include at least one component")
+        for component_index, component in enumerate(pattern.slot_components):
+            component_prefix = f"{prefix}.slot_components[{component_index}]"
+            _require_nonempty(component.component, f"{component_prefix}.component")
+            if not component.slot_values:
+                raise ValueError(f"systematization {component_prefix}.slot_values must include at least one value")
+            for value_index, slot_value in enumerate(component.slot_values):
+                value_prefix = f"{component_prefix}.slot_values[{value_index}]"
+                _require_nonempty(slot_value.slot_value, f"{value_prefix}.slot_value")
+                _require_nonempty(slot_value.definition, f"{value_prefix}.definition")
+                _require_nonempty(slot_value.example_phrase, f"{value_prefix}.example_phrase")
+            for nested_index, nested in enumerate(component.nested_slot_components or []):
+                nested_prefix = f"{component_prefix}.nested_slot_components[{nested_index}]"
+                _require_nonempty(nested.parent_slot_value, f"{nested_prefix}.parent_slot_value")
+                _require_nonempty(nested.component, f"{nested_prefix}.component")
+                if not nested.slot_values:
+                    raise ValueError(f"systematization {nested_prefix}.slot_values must include at least one value")
+                for value_index, slot_value in enumerate(nested.slot_values):
+                    value_prefix = f"{nested_prefix}.slot_values[{value_index}]"
+                    _require_nonempty(slot_value.slot_value, f"{value_prefix}.slot_value")
+                    _require_nonempty(slot_value.definition, f"{value_prefix}.definition")
+                    _require_nonempty(slot_value.example_phrase, f"{value_prefix}.example_phrase")
 
 
 async def run_systematization(
@@ -117,7 +202,6 @@ async def run_systematization(
         raise ValueError("systematization requires non-empty behavior text")
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
-    log.debug(f"systematization: behavior={behavior}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
 
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
@@ -128,7 +212,7 @@ async def run_systematization(
         model_cfg.name,
         _build_prompt(behavior=behavior, behavior_text=behavior_text, context=context),
         schema_name="systematization",
-        json_schema=SystematizationResponse.model_json_schema(),
+        json_schema=systematization_json_schema(),
         options=GenerateOptions(
             temperature=temperature,
             max_tokens=model_cfg.max_tokens,
@@ -136,7 +220,7 @@ async def run_systematization(
             reasoning_effort=model_cfg.reasoning_effort,
         ),
     )
-    if getattr(response, "finish_reason", None) == "length":
+    if getattr(response, "finish_reason", None) in ("length", "max_output_tokens"):
         raise ValueError(
             "systematization response was truncated (finish_reason=length). "
             "Increase max_tokens (current: {}) or reduce prompt complexity.".format(
@@ -156,20 +240,14 @@ async def run_systematization(
             ) from exc
 
     parsed = SystematizationResponse.model_validate(payload)
-    _validate_systematization(parsed.systematization)
-    _validate_summary_items(parsed.summary_items)
+    validate_systematization_response(parsed, expected_behavior=behavior)
 
-    artifact = {
-        "behavior": behavior,
-        "systematization": parsed.systematization,
-        "summary_items": [item.model_dump() for item in parsed.summary_items],
-        "meta": {
-            "mode": mode,
-            "model": model_cfg.name,
-            "reasoning_effort": model_cfg.reasoning_effort,
-        },
+    artifact = parsed.model_dump()
+    artifact["meta"] = {
+        "mode": mode,
+        "model": model_cfg.name,
+        "reasoning_effort": model_cfg.reasoning_effort,
     }
     output_path = Path(save_path).expanduser().with_suffix(".json")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(output_path, artifact)
     return output_path

@@ -4,29 +4,68 @@
 <script lang="ts">
 	import { renderMarkdown } from '$lib/markdown';
 
-	interface SummaryItem {
-		description: string;
-		example: string;
+	type PatternSummary = {
+		pattern: string;
+		role: string;
+		examples: string[];
+	};
+
+	function parsePatternSummaries(raw: unknown): PatternSummary[] {
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+		const conceptSpec = (raw as Record<string, unknown>).concept_spec;
+		if (!conceptSpec || typeof conceptSpec !== 'object' || Array.isArray(conceptSpec)) return [];
+		const patterns = (conceptSpec as Record<string, unknown>).patterns;
+		if (!Array.isArray(patterns)) return [];
+		return patterns
+			.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+			.map((item) => {
+				const slotComponents = Array.isArray(item.slot_components) ? item.slot_components : [];
+				const examples = slotComponents.flatMap((component) => {
+					if (!component || typeof component !== 'object' || Array.isArray(component)) return [];
+					const values = (component as Record<string, unknown>).slot_values;
+					if (!Array.isArray(values)) return [];
+					return values
+						.filter((value): value is Record<string, unknown> => typeof value === 'object' && value !== null)
+						.map((value) => value.example_phrase)
+						.filter((example): example is string => typeof example === 'string' && example.trim().length > 0);
+				});
+				return {
+					pattern: typeof item.pattern === 'string' ? item.pattern : '',
+					role: typeof item.pattern_role === 'string' ? item.pattern_role : '',
+					examples
+				};
+			})
+			.filter((item) => item.pattern);
 	}
 
-	function parseSummaryItems(raw: unknown): SummaryItem[] {
-		if (!Array.isArray(raw)) return [];
+	function formatValidation(raw: unknown): string {
+		if (!Array.isArray(raw)) return '';
 		return raw
-			.filter(
-				(item): item is SummaryItem =>
-					typeof item === 'object' &&
-					item !== null &&
-					typeof (item as Record<string, unknown>).description === 'string' &&
-					typeof (item as Record<string, unknown>).example === 'string'
-			)
-			.map((item) => ({
-				description: item.description,
-				example: item.example
-			}));
+			.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+			.map((item) => {
+				const attribute = typeof item.attribute === 'string' ? item.attribute : '';
+				const score = typeof item.score === 'string' ? item.score : '';
+				const justification = typeof item.justification === 'string' ? item.justification : '';
+				if (!attribute && !score && !justification) return '';
+				return `- **${attribute || 'criterion'}${score ? ` (${score}/5)` : ''}:** ${justification}`;
+			})
+			.filter(Boolean)
+			.join('\n');
 	}
 
 	function parseSystematization(raw: unknown): string {
-		return typeof raw === 'string' ? raw.trim() : '';
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '';
+		const payload = raw as Record<string, unknown>;
+		const sections = [
+			['Scope', payload.scope],
+			['Impact analysis', payload.impact_analysis],
+			['Validation', formatValidation(payload.validation)],
+			['Alternative systematizations', payload.alternative_systematizations],
+			['Reasoning summary', payload.reasoning_summary]
+		]
+			.filter((section): section is [string, string] => typeof section[1] === 'string' && section[1].trim().length > 0)
+			.map(([title, body]) => `## ${title}\n\n${body.trim()}`);
+		return sections.join('\n\n');
 	}
 
 	function parseMode(raw: unknown): string | null {
@@ -46,8 +85,8 @@
 		systematization: Record<string, unknown> | null;
 	} = $props();
 
-	let items = $derived(parseSummaryItems(systematization?.summary_items));
-	let systematizationText = $derived(parseSystematization(systematization?.systematization));
+	let items = $derived(parsePatternSummaries(systematization));
+	let systematizationText = $derived(parseSystematization(systematization));
 	let mode = $derived(parseMode(systematization));
 </script>
 
@@ -97,10 +136,13 @@
 											{idx + 1}
 										</span>
 										<div class="min-w-0 flex-1">
-											<p class="text-sm leading-relaxed text-text">{item.description}</p>
-											{#if item.example}
+											{#if item.role}
+												<div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">{item.role}</div>
+											{/if}
+											<p class="text-sm leading-relaxed text-text">{item.pattern}</p>
+											{#if item.examples.length > 0}
 												<div class="mt-2 border-l-2 border-interactive/30 pl-3 text-xs italic text-text-muted">
-													"{item.example}"
+													"{item.examples[0]}"
 												</div>
 											{/if}
 										</div>
