@@ -33,8 +33,8 @@ Across your ask turns, cover:
 
 ### 2. Target Type
 Help select one:
-- `callable` — Python function or agent framework
-- `model` — hosted model + system prompt (make sure to ask for a system prompt for the model)
+- `callable` — Python function or agent framework (do NOT ask for a system prompt — the agent owns its own prompt)
+- `model` — hosted model + system prompt (ask for the system prompt that will be sent to the model)
 - `endpoint` — HTTP API
 
 ### 3. Behavior Definition
