@@ -1726,6 +1726,218 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload[0]["status"], "has_results")
 
 
+    def test_run_metrics_policy_violation_by_permissibility(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            metrics_path = harness_dir / "metrics.ts"
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ computeRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
+                const behaviors = [
+                  {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
+                ];
+                const samples = [
+                  {{
+                    test_case_id: 'seed-1',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'perm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: true }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 1, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }},
+                  {{
+                    test_case_id: 'seed-2',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'notperm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: false, overrefusal: false }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        null,
+                        'malformed-node',
+                        {{ node_index: 1, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }}
+                ];
+                const withBehaviors = computeRunMetrics(samples, behaviors);
+                const withoutBehaviors = computeRunMetrics(samples, []);
+                console.log(JSON.stringify({{ withBehaviors, withoutBehaviors }}));
+                """
+            )
+            result = self._run_node(
+                harness_dir=harness_dir,
+                script=script,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+
+            with_behaviors = payload["withBehaviors"]
+            self.assertEqual(with_behaviors["scored_total"], 2)
+            permissible = with_behaviors["policy_violation_on_permissible"]
+            self.assertIsNotNone(permissible)
+            self.assertEqual(permissible["count"], 2)
+            self.assertEqual(permissible["flagged_count"], 1)
+            self.assertEqual(permissible["clear_count"], 1)
+            self.assertAlmostEqual(permissible["rate"], 0.5)
+
+            not_permissible = with_behaviors["policy_violation_on_not_permissible"]
+            self.assertIsNotNone(not_permissible)
+            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["flagged_count"], 1)
+            self.assertEqual(not_permissible["clear_count"], 0)
+            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+
+            without_behaviors = payload["withoutBehaviors"]
+            self.assertIsNone(without_behaviors["policy_violation_on_permissible"])
+            self.assertIsNone(without_behaviors["policy_violation_on_not_permissible"])
+
+    def test_audit_run_metrics_policy_violation_by_permissibility(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            metrics_path = harness_dir / "metrics.ts"
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ computeAuditRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
+                const behaviors = [
+                  {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
+                ];
+                const scores = [
+                  {{
+                    test_case_id: 'scenario-1',
+                    target: 'target-model',
+                    tester_model: 'tester-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: false }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 1, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }}
+                ];
+                const metrics = computeAuditRunMetrics(scores, behaviors);
+                console.log(JSON.stringify(metrics));
+                """
+            )
+            result = self._run_node(
+                harness_dir=harness_dir,
+                script=script,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            metrics = json.loads(result.stdout)
+
+            self.assertEqual(metrics["scored_total"], 1)
+            permissible = metrics["policy_violation_on_permissible"]
+            self.assertIsNotNone(permissible)
+            self.assertEqual(permissible["count"], 1)
+            self.assertEqual(permissible["flagged_count"], 0)
+            self.assertEqual(permissible["clear_count"], 1)
+            self.assertAlmostEqual(permissible["rate"], 0.0)
+
+            not_permissible = metrics["policy_violation_on_not_permissible"]
+            self.assertIsNotNone(not_permissible)
+            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["flagged_count"], 1)
+            self.assertEqual(not_permissible["clear_count"], 0)
+            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+
+    def test_load_run_judge_taxonomy_prefers_run_config(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            artifacts_path = harness_dir / "artifacts.ts"
+
+            suite_dir = Path(tmp_dir) / "demo-suite"
+            run_dir = suite_dir / "demo-run"
+            run_dir.mkdir(parents=True)
+            judge_taxonomy = {
+                "behavior": {"name": "demo", "definition": "demo"},
+                "behavior_categories": [
+                    {"name": "judge_only", "definition": "", "examples": [], "permissible": False}
+                ],
+            }
+            taxonomy_path = suite_dir / "taxonomy.override.json"
+            taxonomy_path.write_text(json.dumps(judge_taxonomy), encoding="utf-8")
+            relative_taxonomy_path = Path("..") / "taxonomy.override.json"
+            outside_taxonomy_path = Path(tmp_dir) / "outside-taxonomy.json"
+            outside_taxonomy_path.write_text(
+                json.dumps({"behavior": {"name": "outside", "definition": "outside"}, "behavior_categories": []}),
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text(
+                f"pipeline:\n  judge:\n    taxonomy_path: {relative_taxonomy_path.as_posix()}\n",
+                encoding="utf-8",
+            )
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ loadRunJudgeTaxonomyForRun, loadRunJudgeTaxonomy, loadRunJudgeTaxonomyFromArtifacts }} = await import({json.dumps(artifacts_path.as_uri())});
+                const fromRun = loadRunJudgeTaxonomyForRun('demo-suite', 'demo-run');
+                const fromConfig = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ suite: 'demo-suite', pipeline: {{ judge: {{ taxonomy_path: {json.dumps(relative_taxonomy_path.as_posix())} }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromArtifact = loadRunJudgeTaxonomyFromArtifacts({{ suite: 'demo-suite' }}, {{ systematize: {{ path: 'taxonomy.override.json' }} }});
+                const fromAbsolute = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ pipeline: {{ judge: {{ taxonomy_path: {json.dumps(str(outside_taxonomy_path))} }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromEscape = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ pipeline: {{ judge: {{ taxonomy_path: '../../../outside-taxonomy.json' }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromMissing = loadRunJudgeTaxonomy({{ pipeline: {{ judge: {{}} }} }});
+                console.log(JSON.stringify({{ fromRun, fromConfig, fromArtifact, fromAbsolute, fromEscape, fromMissing }}));
+                """
+            )
+            env = os.environ.copy()
+            env["ARTIFACTS_ROOT"] = str(Path(tmp_dir))
+            result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(payload["fromRun"], judge_taxonomy)
+            self.assertEqual(payload["fromConfig"], judge_taxonomy)
+            self.assertEqual(payload["fromArtifact"], judge_taxonomy)
+            self.assertIsNone(payload["fromAbsolute"])
+            self.assertIsNone(payload["fromEscape"])
+            self.assertIsNone(payload["fromMissing"])
+
+
+
 class ViewerReadModelHelpersTest(unittest.TestCase):
     """Tests for path-traversal defenses that don't depend on Node TS support."""
 
@@ -1823,6 +2035,8 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                     suite_dir / "test_set.jsonl",
                     msg=f"expected fallback for {raw_path!r}",
                 )
+
+
 
 
 if __name__ == "__main__":
