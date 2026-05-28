@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import yaml
 
-from p2m.core.model_client import ModelResponse
-from p2m.core.io import row_behavior
+from assert_eval.core.model_client import ModelResponse
+from assert_eval.core.io import row_behavior
 
 
 ROOT = Path(__file__).resolve().parents[1]

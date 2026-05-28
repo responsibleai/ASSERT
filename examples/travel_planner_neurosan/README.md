@@ -1,7 +1,7 @@
 # Custom-Instrumented Travel Planner (NeurOSan Pattern)
 
 Demonstrates that **any custom agent orchestration** — no framework required — can
-produce OTel traces that p2m's evaluation pipeline understands.
+produce OTel traces that ASSERT's evaluation pipeline understands.
 
 ## Why this matters
 
@@ -10,7 +10,7 @@ and instruments them with 2 lines. But what about custom orchestrators, in-house
 frameworks, or agents that Phoenix doesn't auto-instrument?
 
 This demo proves the general case: if your code emits OpenTelemetry spans following
-[OpenInference conventions](https://arize-ai.github.io/openinference/), p2m can
+[OpenInference conventions](https://arize-ai.github.io/openinference/), ASSERT can
 evaluate it — no adapter, no framework lock-in.
 
 ## Architecture

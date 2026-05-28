@@ -8,8 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
-from p2m.core.transcript import (
+from assert_eval.core.config_model import EvaluationConfig, JudgeConfig, InferenceConfig
+from assert_eval.core.transcript import (
     AddMessageEdit,
     Message,
     SetSystemMessageEdit,
@@ -19,14 +19,14 @@ from p2m.core.transcript import (
     ToolCallEdit,
     count_transcript_turns,
 )
-from p2m.core.judge import (
+from assert_eval.core.judge import (
     aggregate_judge_verdicts,
     build_judge_schema,
     extract_xml_citations,
     infer_judge_status,
 )
-from p2m.stages.judge import run_judge
-from p2m.viewer_read_model import ViewerReadModelBuildError
+from assert_eval.stages.judge import run_judge
+from assert_eval.viewer_read_model import ViewerReadModelBuildError
 
 
 class MeasurementFixesTest(unittest.TestCase):
@@ -76,7 +76,7 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertIn("[Turn 2] User:\nDo the thing", formatted)
 
     def test_transcript_collect_messages_handles_tasks_namespace_events(self) -> None:
-        from p2m.stages.inference import _record_system_message
+        from assert_eval.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "Namespace-safe prompt")
@@ -94,7 +94,7 @@ class MeasurementFixesTest(unittest.TestCase):
         )
 
     def test_count_transcript_turns_ignores_non_target_notes(self) -> None:
-        from p2m.stages.inference import _record_system_message
+        from assert_eval.stages.inference import _record_system_message
 
         transcript = Transcript(metadata=self._meta())
         _record_system_message(transcript, "New system prompt")
@@ -891,7 +891,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 result = asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -922,7 +922,7 @@ class MeasurementFixesTest(unittest.TestCase):
         from PR #44 commit dcaa91f — was previously only available as a
         benchmark monkey-patch in scripts/benchmark.py.)
         """
-        from p2m.core.model_client import LLMInputError
+        from assert_eval.core.model_client import LLMInputError
 
         attempt_calls: list[str] = []
 
@@ -990,7 +990,7 @@ class MeasurementFixesTest(unittest.TestCase):
                     )
                     handle.write(json.dumps(transcript.to_dict(), ensure_ascii=False) + "\n")
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 result = asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1071,7 +1071,7 @@ class MeasurementFixesTest(unittest.TestCase):
             scores_path = Path(tmp_dir) / "scores.jsonl"
             ok_attempts = self._ok_attempts_factory()
 
-            from p2m.stages import judge as judge_stage
+            from assert_eval.stages import judge as judge_stage
             real_append = judge_stage.append_jsonl_row
             row_counts_after_each_append: list[int] = []
 
@@ -1082,8 +1082,8 @@ class MeasurementFixesTest(unittest.TestCase):
                         len(scores_path.read_text(encoding="utf-8").splitlines())
                     )
 
-            with patch("p2m.core.judge._run_judge_attempts", new=ok_attempts), \
-                 patch("p2m.stages.judge.append_jsonl_row", new=spy_append):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=ok_attempts), \
+                 patch("assert_eval.stages.judge.append_jsonl_row", new=spy_append):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1117,7 +1117,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 call_count["n"] += 1
                 return await ok_attempts(*args, **kwargs)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=counting_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1160,7 +1160,7 @@ class MeasurementFixesTest(unittest.TestCase):
                 call_count["n"] += 1
                 return await ok_attempts(*args, **kwargs)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=counting_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=counting_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1194,7 +1194,7 @@ class MeasurementFixesTest(unittest.TestCase):
             self._make_minimal_transcripts(inference_set_path, ["a", "b"])
 
             ok_attempts = self._ok_attempts_factory()
-            with patch("p2m.core.judge._run_judge_attempts", new=ok_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=ok_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1261,9 +1261,9 @@ class MeasurementFixesTest(unittest.TestCase):
             transcript.save_jsonl(inference_set_path)
 
             with (
-                patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts),
+                patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts),
                 patch(
-                    "p2m.stages.judge.build_run_viewer_artifacts",
+                    "assert_eval.stages.judge.build_run_viewer_artifacts",
                     side_effect=ViewerReadModelBuildError("viewer build failed"),
                 ),
             ):
@@ -1338,7 +1338,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1415,7 +1415,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1475,7 +1475,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1533,7 +1533,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1599,7 +1599,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1681,7 +1681,7 @@ class MeasurementFixesTest(unittest.TestCase):
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1754,7 +1754,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),
@@ -1817,7 +1817,7 @@ If the bloating is frequent or painful, check with a healthcare professional."""
             )
             transcript.save_jsonl(inference_set_path)
 
-            with patch("p2m.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 asyncio.run(
                     run_judge(
                         inference_set_path=str(inference_set_path),

@@ -27,7 +27,7 @@
 
 	// Populated from /api/models on mount. Starts empty so the wizard's model
 	// dropdowns only list models the operator has actually configured via
-	// .env (P2M_MODEL_OPTIONS, OPENAI_MODEL, AZURE_OPENAI_DEPLOYMENT, ...).
+	// .env (ASSERT_MODEL_OPTIONS, OPENAI_MODEL, AZURE_OPENAI_DEPLOYMENT, ...).
 	// Each <select> also exposes a "+ Add custom model…" option that prompts
 	// the user for an arbitrary LiteLLM-compatible "provider/model" string
 	// and appends it to the catalog for the rest of the session.

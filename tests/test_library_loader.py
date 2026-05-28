@@ -5,7 +5,7 @@
 
 import unittest
 
-from p2m.library.loader import (
+from assert_eval.library.loader import (
     VALID_KINDS,
     discover,
     load_preset,

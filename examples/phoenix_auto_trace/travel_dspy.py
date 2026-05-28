@@ -28,7 +28,7 @@ load_dotenv()
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
 
 lm = dspy.LM(_MODEL, temperature=0)
 dspy.configure(lm=lm)

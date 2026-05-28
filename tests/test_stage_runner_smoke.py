@@ -7,8 +7,8 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
 
-from p2m.core.config_model import DEFAULT_INFERENCE_MAX_TOKENS, EvaluationConfig, JudgeConfig, TargetConfig
-from p2m.stages import judge, systematize, inference, test_set
+from assert_eval.core.config_model import DEFAULT_INFERENCE_MAX_TOKENS, EvaluationConfig, JudgeConfig, TargetConfig
+from assert_eval.stages import judge, systematize, inference, test_set
 from tests.helpers import StageSmokeCase, run_stage_smoke_case, write_json, write_jsonl
 
 
@@ -54,7 +54,7 @@ def _seeds_case() -> StageSmokeCase:
     return StageSmokeCase(
         name="test_set",
         run=test_set.run,
-        workflow_patch="p2m.stages.test_set.run_test_set",
+        workflow_patch="assert_eval.stages.test_set.run_test_set",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -92,7 +92,7 @@ def _inference_case() -> StageSmokeCase:
     return StageSmokeCase(
         name="inference",
         run=inference.run,
-        workflow_patch="p2m.stages.inference.run_inference",
+        workflow_patch="assert_eval.stages.inference.run_inference",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -132,7 +132,7 @@ def _judge_case() -> StageSmokeCase:
     return StageSmokeCase(
         name="judge",
         run=judge.run,
-        workflow_patch="p2m.stages.judge.run_judge",
+        workflow_patch="assert_eval.stages.judge.run_judge",
         cfg_factory=cfg_factory,
         context_factory=context_factory,
         result_factory=result_factory,
@@ -161,8 +161,8 @@ class StageRunnerSmokeTest(unittest.TestCase):
                     return out_path
 
                 with (
-                    patch("p2m.stages.systematization.run_systematization", new=fake_run_systematization),
-                    patch("p2m.stages.systematization_convert.run_systematization_to_taxonomy", new=fake_run_systematization_to_taxonomy),
+                    patch("assert_eval.stages.systematization.run_systematization", new=fake_run_systematization),
+                    patch("assert_eval.stages.systematization_convert.run_systematization_to_taxonomy", new=fake_run_systematization_to_taxonomy),
                 ):
                     result = asyncio.run(
                         systematize.run(

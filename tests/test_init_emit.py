@@ -1,4 +1,4 @@
-"""Tests for the emit (file writer) module in ``p2m init``."""
+"""Tests for the emit (file writer) module in ``assert-eval init``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.init._emit import emit_config
+from assert_eval.init._emit import emit_config
 
 
 _VALID_YAML = "suite: test\nbehavior:\n  name: b\n  description: d\n"

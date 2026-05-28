@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Smoke test for the joint AgentShield + p2m incident-triage demo.
+"""Smoke test for the joint AgentShield + ASSERT incident-triage demo.
 
 Validates the demo's static surface without making any LLM calls:
 
@@ -70,7 +70,7 @@ class IncidentTriageGuardedImportTest(unittest.TestCase):
     """The guarded agent + AgentShield runtime construction.
 
     Skipped when the optional `agent_shield` extra is not installed (the
-    case in the default p2m dev environment).
+    case in the default ASSERT dev environment).
     """
 
     def test_guarded_agent_runtime_builds_from_yaml(self) -> None:

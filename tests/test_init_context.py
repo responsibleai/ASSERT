@@ -1,10 +1,10 @@
-"""Tests for the context builder in ``p2m init``."""
+"""Tests for the context builder in ``assert-eval init``."""
 
 from __future__ import annotations
 
 import unittest
 
-from p2m.init._context import (
+from assert_eval.init._context import (
     _context_window_for,
     _estimate_tokens,
     build_system_message,

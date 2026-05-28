@@ -23,13 +23,13 @@ assert-eval results status travel-planner-langgraph-v1 demo-1
 
 ## Create your own config
 
-Use `p2m init` to design an eval config interactively instead of writing YAML by hand.
+Use `assert-eval init` to design an eval config interactively instead of writing YAML by hand.
 Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
 
 ```powershell
-p2m init --model azure/gpt-5.4-mini
+assert-eval init --model azure/gpt-5.4-mini
 # or seed from an existing example:
-p2m init --model azure/gpt-5.4-mini --from examples\travel_planner_langgraph\eval_config.yaml
+assert-eval init --model azure/gpt-5.4-mini --from examples\travel_planner_langgraph\eval_config.yaml
 ```
 
 See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) for all options.
@@ -39,7 +39,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Goal | Example | Notes |
 |---|---|---|
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph\eval_config.yaml` | Flagship. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
-| **See runtime + eval close the loop on a real workflow** | `incident_triage_agent\eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint AgentShield + p2m demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent\README.md`](incident_triage_agent/README.md) and [`docs\case-study-incident-triage-joint.md`](../docs/case-study-incident-triage-joint.md). |
+| **See runtime + eval close the loop on a real workflow** | `incident_triage_agent\eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint AgentShield + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent\README.md`](incident_triage_agent/README.md) and [`docs\case-study-incident-triage-joint.md`](../docs/case-study-incident-triage-joint.md). |
 | Understand framework instrumentation breadth | `phoenix_auto_trace\README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |

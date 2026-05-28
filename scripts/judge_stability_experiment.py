@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from p2m.core.io import (
+from assert_eval.core.io import (
     load_jsonl,
     permissible_by_behavior,
     policy_permissible,
@@ -19,9 +19,9 @@ from p2m.core.io import (
     row_behavior,
     row_factors,
 )
-from p2m.core.judge import build_judge_contract, run_transcript_judge
-from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
-from p2m.stages.judge import JUDGE_SYSTEM_PROMPT
+from assert_eval.core.judge import build_judge_contract, run_transcript_judge
+from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_eval.stages.judge import JUDGE_SYSTEM_PROMPT
 
 
 def transcript_from_row(row: dict) -> Transcript:

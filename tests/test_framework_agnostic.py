@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from p2m.core.otel import parse_otel_traces, OTelSpan, _flatten_attributes
+from assert_eval.core.otel import parse_otel_traces, OTelSpan, _flatten_attributes
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_TRACES = FIXTURES / "sample_otel_traces.json"
@@ -24,7 +24,7 @@ SAMPLE_TRACES = FIXTURES / "sample_otel_traces.json"
 
 
 class TestOTelParser(unittest.TestCase):
-    """Validates that OTLP JSON traces are correctly converted to p2m transcript rows."""
+    """Validates that OTLP JSON traces are correctly converted to ASSERT transcript rows."""
 
     def test_parse_groups_by_session_id(self):
         """Two sessions in the fixture should produce two transcript rows."""
@@ -149,14 +149,14 @@ class TestCallableSession(unittest.TestCase):
     """Validates CallableSession can invoke sync/async callables."""
 
     def test_import(self):
-        """CallableSession should be importable from p2m.core.session."""
-        from p2m.core.session import CallableSession
+        """CallableSession should be importable from assert_eval.core.session."""
+        from assert_eval.core.session import CallableSession
         self.assertTrue(callable(CallableSession))
 
     def test_sync_callable(self):
         """CallableSession should handle a sync fn(str) -> str."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         # Create a temp module with a sync callable
         import types
@@ -185,8 +185,8 @@ class TestCallableSession(unittest.TestCase):
 
     def test_async_callable(self):
         """CallableSession should handle an async fn(str) -> str."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         import types
         mod = types.ModuleType("_test_async_target")
@@ -215,8 +215,8 @@ class TestCallableSession(unittest.TestCase):
 
     def test_callable_with_history(self):
         """CallableSession should detect and pass history parameter."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         import types
         mod = types.ModuleType("_test_history_target")
@@ -250,14 +250,14 @@ class TestCallableSession(unittest.TestCase):
 
     def test_runtime_mode(self):
         """CallableSession.runtime_mode should be 'callable'."""
-        from p2m.core.session import CallableSession
+        from assert_eval.core.session import CallableSession
         session = CallableSession(callable_ref="some.module:fn")
         self.assertEqual(session.runtime_mode, "callable")
 
     def test_model_response_return(self):
         """CallableSession should extract tool traces from ModelResponse returns."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message, ModelResponse, ToolCall
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message, ModelResponse, ToolCall
 
         import sys
         import types
@@ -294,8 +294,8 @@ class TestCallableSession(unittest.TestCase):
 
     def test_litellm_style_dict_return(self):
         """CallableSession should normalize a dict with 'choices' (litellm-style)."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -336,8 +336,8 @@ class TestCallableSession(unittest.TestCase):
 
     def test_plain_str_still_works(self):
         """CallableSession backward compat: str return still produces basic TurnResult."""
-        from p2m.core.session import CallableSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.session import CallableSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -369,20 +369,20 @@ class TestTargetConfigCallable(unittest.TestCase):
 
     def test_callable_target_is_valid(self):
         """TargetConfig with callable should not raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         tc = TargetConfig(callable="my_module:my_fn")
         self.assertTrue(tc.is_callable)
         self.assertFalse(tc.is_external)
 
     def test_callable_and_model_conflicts(self):
         """TargetConfig with both callable and model should raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(callable="my_module:my_fn", model="openai/gpt-4o")
 
     def test_callable_and_connector_conflicts(self):
         """TargetConfig with both callable and connector should raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(callable="my_module:my_fn", connector="some.connector")
 
@@ -394,7 +394,7 @@ class TestSpanValidation(unittest.TestCase):
     """Validates span validation logic."""
 
     def test_valid_llm_span(self):
-        from p2m.core.otel import validate_spans, OTelSpan
+        from assert_eval.core.otel import validate_spans, OTelSpan
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
             name="llm_call", kind="LLM",
@@ -412,7 +412,7 @@ class TestSpanValidation(unittest.TestCase):
         self.assertEqual(result.warnings, [])
 
     def test_missing_span_kind(self):
-        from p2m.core.otel import validate_spans, OTelSpan
+        from assert_eval.core.otel import validate_spans, OTelSpan
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
             name="unknown", kind="UNKNOWN",
@@ -424,7 +424,7 @@ class TestSpanValidation(unittest.TestCase):
 
     def test_llm_span_missing_output(self):
         """LLM span without output.value: warns but doesn't drop."""
-        from p2m.core.otel import validate_spans, OTelSpan
+        from assert_eval.core.otel import validate_spans, OTelSpan
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
             name="llm_call", kind="LLM",
@@ -437,7 +437,7 @@ class TestSpanValidation(unittest.TestCase):
 
     def test_llm_span_missing_recommended(self):
         """LLM span without model name/tokens: warns, valid=False."""
-        from p2m.core.otel import validate_spans, OTelSpan
+        from assert_eval.core.otel import validate_spans, OTelSpan
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
             name="llm_call", kind="LLM",
@@ -451,7 +451,7 @@ class TestSpanValidation(unittest.TestCase):
 
     def test_tool_span_missing_recommended(self):
         """TOOL span without tool.name: warns, valid=False."""
-        from p2m.core.otel import validate_spans, OTelSpan
+        from assert_eval.core.otel import validate_spans, OTelSpan
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
             name="tool_call", kind="TOOL",
@@ -463,7 +463,7 @@ class TestSpanValidation(unittest.TestCase):
         self.assertTrue(any("tool.name" in w for w in result.warnings))
 
     def test_empty_spans_valid(self):
-        from p2m.core.otel import validate_spans
+        from assert_eval.core.otel import validate_spans
         result = validate_spans([])
         self.assertTrue(result.valid)
         self.assertEqual(result.missing_attributes, [])
@@ -477,13 +477,13 @@ class TestCompressTrace(unittest.TestCase):
     """Validates trace compression for judge token budget."""
 
     def test_no_compression_under_limit(self):
-        from p2m.core.otel import compress_trace_for_judge
+        from assert_eval.core.otel import compress_trace_for_judge
         events = [{"actor": "target", "raw": {"_node": "n1"}} for _ in range(5)]
         result = compress_trace_for_judge(events, max_events=10)
         self.assertEqual(len(result), 5)
 
     def test_tool_events_always_kept(self):
-        from p2m.core.otel import compress_trace_for_judge
+        from assert_eval.core.otel import compress_trace_for_judge
         events = [
             {"actor": "tool", "edit": {"tool_name": f"tool_{i}"}} for i in range(5)
         ] + [
@@ -494,7 +494,7 @@ class TestCompressTrace(unittest.TestCase):
         self.assertEqual(tool_count, 5)
 
     def test_compression_keeps_first_and_last_per_node(self):
-        from p2m.core.otel import compress_trace_for_judge
+        from assert_eval.core.otel import compress_trace_for_judge
         events = [
             {"actor": "target", "raw": {"_node": "node_a"}, "idx": i}
             for i in range(10)
@@ -505,7 +505,7 @@ class TestCompressTrace(unittest.TestCase):
         self.assertTrue(len(result) >= 2)
 
     def test_strip_tool_args(self):
-        from p2m.core.otel import compress_trace_for_judge
+        from assert_eval.core.otel import compress_trace_for_judge
         events = [
             {"actor": "tool", "edit": {"tool_name": "search", "tool_args": {"q": "test"}}},
         ]
@@ -513,7 +513,7 @@ class TestCompressTrace(unittest.TestCase):
         self.assertNotIn("tool_args", result[0]["edit"])
 
     def test_strip_token_counts(self):
-        from p2m.core.otel import compress_trace_for_judge
+        from assert_eval.core.otel import compress_trace_for_judge
         events = [
             {"actor": "target", "raw": {"_node": "n1", "_tokens": {"input": 10, "output": 5}}},
         ]
@@ -528,7 +528,7 @@ class TestTraceExporters(unittest.TestCase):
     """Validates trace exporter implementations."""
 
     def test_in_memory_exporter_add_and_export(self):
-        from p2m.core.otel import InMemoryTraceExporter, OTelSpan
+        from assert_eval.core.otel import InMemoryTraceExporter, OTelSpan
         exporter = InMemoryTraceExporter()
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
@@ -542,7 +542,7 @@ class TestTraceExporters(unittest.TestCase):
         self.assertEqual(result[0].span_id, "s1")
 
     def test_in_memory_exporter_filters_by_session(self):
-        from p2m.core.otel import InMemoryTraceExporter, OTelSpan
+        from assert_eval.core.otel import InMemoryTraceExporter, OTelSpan
         exporter = InMemoryTraceExporter()
         exporter.add_span(OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
@@ -559,15 +559,15 @@ class TestTraceExporters(unittest.TestCase):
         self.assertEqual(len(exporter.export_session("nonexistent")), 0)
 
     def test_in_memory_exporter_satisfies_protocol(self):
-        from p2m.core.otel import InMemoryTraceExporter, TraceExporter
+        from assert_eval.core.otel import InMemoryTraceExporter, TraceExporter
         self.assertIsInstance(InMemoryTraceExporter(), TraceExporter)
 
     def test_file_exporter_satisfies_protocol(self):
-        from p2m.core.otel import FileTraceExporter, TraceExporter
+        from assert_eval.core.otel import FileTraceExporter, TraceExporter
         self.assertIsInstance(FileTraceExporter("dummy.json"), TraceExporter)
 
     def test_file_exporter_reads_fixture(self):
-        from p2m.core.otel import FileTraceExporter
+        from assert_eval.core.otel import FileTraceExporter
         exporter = FileTraceExporter(SAMPLE_TRACES)
         spans = exporter.export_session("sess_tokyo_trip")
         self.assertGreater(len(spans), 0)
@@ -581,18 +581,18 @@ class TestOTelTracedSession(unittest.TestCase):
     """Validates OTelTracedSession lifecycle and trace capture."""
 
     def test_import(self):
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel_session import OTelTracedSession
         self.assertTrue(callable(OTelTracedSession))
 
     def test_runtime_mode(self):
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel_session import OTelTracedSession
         session = OTelTracedSession(callable_ref="some.module:fn")
         self.assertEqual(session.runtime_mode, "otel_traced")
 
     def test_run_turn_basic(self):
         """OTelTracedSession should invoke callable and return TurnResult."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -620,8 +620,8 @@ class TestOTelTracedSession(unittest.TestCase):
 
     def test_run_turn_with_history(self):
         """OTelTracedSession should detect and pass history parameter."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -654,9 +654,9 @@ class TestOTelTracedSession(unittest.TestCase):
 
     def test_run_turn_with_spans(self):
         """When exporter has spans, they should appear in TurnResult.raw."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.otel import InMemoryTraceExporter, OTelSpan
-        from p2m.core.model_client import Message
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel import InMemoryTraceExporter, OTelSpan
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -731,8 +731,8 @@ class TestOTelTracedSession(unittest.TestCase):
 
     def test_scenario_accumulation(self):
         """Multiple turns should accumulate trace data."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -770,8 +770,8 @@ class TestOTelTracedSession(unittest.TestCase):
 
     def test_session_metadata(self):
         """session_metadata should reflect current state."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.model_client import Message
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.model_client import Message
 
         import sys
         import types
@@ -805,9 +805,9 @@ class TestInferenceOTelWiring(unittest.TestCase):
     """Validates that _build_target_session routes to OTelTracedSession."""
 
     def test_callable_with_trace_returns_otel_session(self):
-        from p2m.core.config_model import TargetConfig, TraceConfig, InferenceConfig
-        from p2m.stages.inference import _build_target_session
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.config_model import TargetConfig, TraceConfig, InferenceConfig
+        from assert_eval.stages.inference import _build_target_session
+        from assert_eval.core.otel_session import OTelTracedSession
 
         target = TargetConfig(
             callable="some.module:fn",
@@ -823,9 +823,9 @@ class TestInferenceOTelWiring(unittest.TestCase):
         self.assertIsInstance(session, OTelTracedSession)
 
     def test_callable_without_trace_returns_callable_session(self):
-        from p2m.core.config_model import TargetConfig, InferenceConfig
-        from p2m.stages.inference import _build_target_session
-        from p2m.core.session import CallableSession
+        from assert_eval.core.config_model import TargetConfig, InferenceConfig
+        from assert_eval.stages.inference import _build_target_session
+        from assert_eval.core.session import CallableSession
 
         target = TargetConfig(callable="some.module:fn")
         session = _build_target_session(
@@ -849,7 +849,7 @@ class TestSpanCollectorProtocol(unittest.TestCase):
     """Validates the SpanCollector Protocol and implementations."""
 
     def test_dataframe_collector_satisfies_protocol(self):
-        from p2m.core.collector import DataFrameCollector, SpanCollector
+        from assert_eval.core.collector import DataFrameCollector, SpanCollector
 
         class FakeDF:
             columns = ["a", "b"]
@@ -858,8 +858,8 @@ class TestSpanCollectorProtocol(unittest.TestCase):
         self.assertIsInstance(collector, SpanCollector)
 
     def test_dataframe_collector_get_spans(self):
-        from p2m.core.collector import ListCollector
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.collector import ListCollector
+        from assert_eval.core.otel import OTelSpan
 
         span = OTelSpan(trace_id="t1", span_id="s1", parent_span_id=None,
                         name="test", kind="LLM", start_time_ns=0, end_time_ns=1000)
@@ -869,8 +869,8 @@ class TestSpanCollectorProtocol(unittest.TestCase):
         self.assertEqual(result[0].name, "test")
 
     def test_dataframe_collector_validate_missing_columns(self):
-        from p2m.core.collector import ListCollector
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.collector import ListCollector
+        from assert_eval.core.otel import OTelSpan
 
         span = OTelSpan(trace_id="t1", span_id="s1", parent_span_id=None,
                         name="test", kind="UNKNOWN", start_time_ns=0, end_time_ns=1000)
@@ -880,8 +880,8 @@ class TestSpanCollectorProtocol(unittest.TestCase):
         self.assertIn("missing", warnings[0])
 
     def test_dataframe_collector_validate_all_present(self):
-        from p2m.core.collector import ListCollector
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.collector import ListCollector
+        from assert_eval.core.otel import OTelSpan
 
         span = OTelSpan(trace_id="t1", span_id="s1", parent_span_id=None,
                         name="test", kind="CHAIN", start_time_ns=0, end_time_ns=1000,
@@ -891,7 +891,7 @@ class TestSpanCollectorProtocol(unittest.TestCase):
         self.assertEqual(warnings, [])
 
     def test_dataframe_collector_validate_non_dataframe(self):
-        from p2m.core.collector import ListCollector
+        from assert_eval.core.collector import ListCollector
 
         collector = ListCollector([])
         warnings = collector.validate([])
@@ -899,7 +899,7 @@ class TestSpanCollectorProtocol(unittest.TestCase):
 
     @unittest.skip("Pre-existing: conflicting phoenix module lacks Client attribute")
     def test_phoenix_collector_import_error(self):
-        from p2m.core.collector import PhoenixCollector
+        from assert_eval.core.collector import PhoenixCollector
 
         with self.assertRaises(ImportError) as ctx:
             PhoenixCollector()
@@ -907,7 +907,7 @@ class TestSpanCollectorProtocol(unittest.TestCase):
 
     def test_custom_collector_satisfies_protocol(self):
         """A plain class with get_spans/validate should satisfy SpanCollector."""
-        from p2m.core.collector import SpanCollector
+        from assert_eval.core.collector import SpanCollector
 
         class MyCollector:
             def get_spans(self, project_name, **kw):
@@ -926,7 +926,7 @@ class TestExtractSpanInputs(unittest.TestCase):
     """Validates extract_span_inputs returns correct structure."""
 
     def _make_span(self, **overrides):
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.otel import OTelSpan
 
         defaults = dict(
             trace_id="t1",
@@ -949,7 +949,7 @@ class TestExtractSpanInputs(unittest.TestCase):
         return OTelSpan(**defaults)
 
     def test_basic_extraction(self):
-        from p2m.core.otel import extract_span_inputs
+        from assert_eval.core.otel import extract_span_inputs
 
         spans = [self._make_span()]
         result = extract_span_inputs(spans)
@@ -964,7 +964,7 @@ class TestExtractSpanInputs(unittest.TestCase):
         self.assertAlmostEqual(row["latency_ms"], 2.0)
 
     def test_filters_by_kind(self):
-        from p2m.core.otel import extract_span_inputs
+        from assert_eval.core.otel import extract_span_inputs
 
         spans = [
             self._make_span(kind="LLM", span_id="s1"),
@@ -976,7 +976,7 @@ class TestExtractSpanInputs(unittest.TestCase):
         self.assertEqual(result[0]["span_id"], "s1")
 
     def test_custom_span_kind_filter(self):
-        from p2m.core.otel import extract_span_inputs
+        from assert_eval.core.otel import extract_span_inputs
 
         spans = [
             self._make_span(kind="TOOL", span_id="s1"),
@@ -985,7 +985,7 @@ class TestExtractSpanInputs(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
     def test_empty_spans(self):
-        from p2m.core.otel import extract_span_inputs
+        from assert_eval.core.otel import extract_span_inputs
 
         result = extract_span_inputs([])
         self.assertEqual(result, [])
@@ -995,7 +995,7 @@ class TestExtractTrajectoryInputs(unittest.TestCase):
     """Validates extract_trajectory_inputs groups by trace correctly."""
 
     def _make_span(self, **overrides):
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.otel import OTelSpan
 
         defaults = dict(
             trace_id="t1",
@@ -1011,7 +1011,7 @@ class TestExtractTrajectoryInputs(unittest.TestCase):
         return OTelSpan(**defaults)
 
     def test_groups_by_trace(self):
-        from p2m.core.otel import extract_trajectory_inputs
+        from assert_eval.core.otel import extract_trajectory_inputs
 
         spans = [
             self._make_span(
@@ -1049,7 +1049,7 @@ class TestExtractTrajectoryInputs(unittest.TestCase):
         self.assertEqual(tool_calls[0]["name"], "search")
 
     def test_node_path_captured(self):
-        from p2m.core.otel import extract_trajectory_inputs
+        from assert_eval.core.otel import extract_trajectory_inputs
 
         spans = [
             self._make_span(
@@ -1072,7 +1072,7 @@ class TestExtractTrajectoryInputs(unittest.TestCase):
         self.assertEqual(node_path, ["planner", "executor"])
 
     def test_token_aggregation(self):
-        from p2m.core.otel import extract_trajectory_inputs
+        from assert_eval.core.otel import extract_trajectory_inputs
 
         spans = [
             self._make_span(
@@ -1100,7 +1100,7 @@ class TestExtractTrajectoryInputs(unittest.TestCase):
         self.assertEqual(result[0]["total_tokens"]["output"], 75)
 
     def test_empty_spans(self):
-        from p2m.core.otel import extract_trajectory_inputs
+        from assert_eval.core.otel import extract_trajectory_inputs
 
         result = extract_trajectory_inputs([])
         self.assertEqual(result, [])
@@ -1110,7 +1110,7 @@ class TestExtractSessionInputs(unittest.TestCase):
     """Validates extract_session_inputs groups by session correctly."""
 
     def _make_span(self, **overrides):
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.otel import OTelSpan
 
         defaults = dict(
             trace_id="t1",
@@ -1126,7 +1126,7 @@ class TestExtractSessionInputs(unittest.TestCase):
         return OTelSpan(**defaults)
 
     def test_groups_by_session(self):
-        from p2m.core.otel import extract_session_inputs
+        from assert_eval.core.otel import extract_session_inputs
 
         spans = [
             self._make_span(
@@ -1172,7 +1172,7 @@ class TestExtractSessionInputs(unittest.TestCase):
         self.assertEqual(outputs, ["hi there", "sure"])
 
     def test_tool_calls_collected(self):
-        from p2m.core.otel import extract_session_inputs
+        from assert_eval.core.otel import extract_session_inputs
 
         spans = [
             self._make_span(
@@ -1192,7 +1192,7 @@ class TestExtractSessionInputs(unittest.TestCase):
         self.assertIn("search(query)", tool_calls)
 
     def test_empty_spans(self):
-        from p2m.core.otel import extract_session_inputs
+        from assert_eval.core.otel import extract_session_inputs
 
         result = extract_session_inputs([])
         self.assertEqual(result, [])
@@ -1205,7 +1205,7 @@ class TestOTelTracedSessionCollector(unittest.TestCase):
     """Validates OTelTracedSession accepts SpanCollector."""
 
     def test_accepts_collector_kwarg(self):
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel_session import OTelTracedSession
 
         class FakeCollector:
             def get_spans(self, project_name, **kw):
@@ -1222,8 +1222,8 @@ class TestOTelTracedSessionCollector(unittest.TestCase):
 
     def test_backward_compat_exporter_still_works(self):
         """Passing exporter= still works as before."""
-        from p2m.core.otel_session import OTelTracedSession
-        from p2m.core.otel import InMemoryTraceExporter
+        from assert_eval.core.otel_session import OTelTracedSession
+        from assert_eval.core.otel import InMemoryTraceExporter
 
         session = OTelTracedSession(
             callable_ref="some.module:fn",
@@ -1239,19 +1239,19 @@ class TestHTTPEndpointSession(unittest.TestCase):
     """Validates HTTPEndpointSession import, config, and runtime_mode."""
 
     def test_endpoint_import(self):
-        """HTTPEndpointSession should be importable from p2m.core.session."""
-        from p2m.core.session import HTTPEndpointSession
+        """HTTPEndpointSession should be importable from assert_eval.core.session."""
+        from assert_eval.core.session import HTTPEndpointSession
         self.assertTrue(callable(HTTPEndpointSession))
 
     def test_endpoint_runtime_mode(self):
         """HTTPEndpointSession.runtime_mode should be 'http_endpoint'."""
-        from p2m.core.session import HTTPEndpointSession
+        from assert_eval.core.session import HTTPEndpointSession
         session = HTTPEndpointSession(endpoint="http://localhost:8080/chat")
         self.assertEqual(session.runtime_mode, "http_endpoint")
 
     def test_endpoint_config_valid(self):
         """TargetConfig(endpoint='http://...') should be accepted."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         tc = TargetConfig(endpoint="http://localhost:8080/chat")
         self.assertTrue(tc.is_endpoint)
         self.assertFalse(tc.is_callable)
@@ -1259,27 +1259,27 @@ class TestHTTPEndpointSession(unittest.TestCase):
 
     def test_endpoint_config_conflicts_with_model(self):
         """TargetConfig with both endpoint and model should raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://localhost:8080/chat", model="openai/gpt-4o")
 
     def test_endpoint_and_callable_conflicts(self):
         """TargetConfig with both endpoint and callable should raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://localhost:8080/chat", callable="my_module:fn")
 
     def test_endpoint_and_connector_conflicts(self):
         """TargetConfig with both endpoint and connector should raise."""
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://localhost:8080/chat", connector="some.connector")
 
     def test_endpoint_inference_wiring(self):
         """_build_target_session should return HTTPEndpointSession for endpoint targets."""
-        from p2m.core.config_model import TargetConfig, InferenceConfig
-        from p2m.stages.inference import _build_target_session
-        from p2m.core.session import HTTPEndpointSession
+        from assert_eval.core.config_model import TargetConfig, InferenceConfig
+        from assert_eval.stages.inference import _build_target_session
+        from assert_eval.core.session import HTTPEndpointSession
 
         target = TargetConfig(endpoint="http://localhost:8080/chat")
         session = _build_target_session(
@@ -1301,7 +1301,7 @@ class TestJudgeTracesCLI(unittest.TestCase):
     def test_judge_traces_parses_fixture(self):
         """Invoke CLI with sample fixture, verify it finds conversations."""
         from click.testing import CliRunner
-        from p2m.cli import cli
+        from assert_eval.cli import cli
 
         # We need a minimal config YAML for the --config option
         import tempfile
@@ -1328,7 +1328,7 @@ class TestJudgeTracesCLI(unittest.TestCase):
     def test_judge_traces_empty_traces_fails(self):
         """CLI should exit 1 when no conversations are found."""
         from click.testing import CliRunner
-        from p2m.cli import cli
+        from assert_eval.cli import cli
 
         # Create an empty traces file and a config
         empty_traces = Path(FIXTURES) / "_test_empty_traces.json"
@@ -1362,7 +1362,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
 
     def _make_span(self, span_id, parent=None, kind="LLM", name="test", start=0, **attrs):
         """Helper to create OTelSpan with minimal boilerplate."""
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.otel import OTelSpan
         base_attrs = {"openinference.span.kind": kind}
         base_attrs.update(attrs)
         return OTelSpan(
@@ -1372,7 +1372,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
         )
 
     def test_single_root_no_children(self):
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [self._make_span("s1")]
         roots = build_span_tree(spans)
         self.assertEqual(len(roots), 1)
@@ -1380,7 +1380,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
         self.assertEqual(roots[0].children, [])
 
     def test_parent_child_linking(self):
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [
             self._make_span("parent", kind="AGENT", start=100),
             self._make_span("child1", parent="parent", start=200),
@@ -1393,7 +1393,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
         self.assertEqual(roots[0].children[1].span.span_id, "child2")
 
     def test_deep_nesting(self):
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [
             self._make_span("r", kind="AGENT", start=100),
             self._make_span("c1", parent="r", kind="AGENT", start=200),
@@ -1407,7 +1407,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
 
     def test_orphaned_spans_become_roots(self):
         """Spans referencing missing parents should be promoted to roots."""
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [
             self._make_span("s1", parent="missing_parent", start=100),
             self._make_span("s2", start=200),
@@ -1416,7 +1416,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
         self.assertEqual(len(roots), 2)
 
     def test_children_sorted_by_start_time(self):
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [
             self._make_span("parent", kind="AGENT", start=100),
             self._make_span("late", parent="parent", start=500),
@@ -1429,7 +1429,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
 
     def test_multiple_roots(self):
         """Multiple traces in one span list produce multiple roots."""
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         spans = [
             self._make_span("r1", start=100),
             self._make_span("r2", start=200),
@@ -1439,7 +1439,7 @@ class TestSpanTreeBuilding(unittest.TestCase):
         self.assertEqual(len(roots), 2)
 
     def test_empty_spans(self):
-        from p2m.core.otel import build_span_tree
+        from assert_eval.core.otel import build_span_tree
         self.assertEqual(build_span_tree([]), [])
 
 
@@ -1447,7 +1447,7 @@ class TestSpanNodeSerialization(unittest.TestCase):
     """Tests for SpanNode.to_dict — selective serialization for judge."""
 
     def _make_node(self, kind="LLM", **attrs):
-        from p2m.core.otel import OTelSpan, SpanNode
+        from assert_eval.core.otel import OTelSpan, SpanNode
         base = {
             "openinference.span.kind": kind,
             "output.value": "test output",
@@ -1493,7 +1493,7 @@ class TestSpanNodeSerialization(unittest.TestCase):
         self.assertEqual(d["input"], "test input")
 
     def test_content_truncation(self):
-        from p2m.core.otel import OTelSpan, SpanNode
+        from assert_eval.core.otel import OTelSpan, SpanNode
         long_output = "x" * 2000
         span = OTelSpan(
             trace_id="t1", span_id="s1", parent_span_id=None,
@@ -1505,7 +1505,7 @@ class TestSpanNodeSerialization(unittest.TestCase):
         self.assertLessEqual(len(d["output"]), 100)
 
     def test_children_serialized_recursively(self):
-        from p2m.core.otel import OTelSpan, SpanNode
+        from assert_eval.core.otel import OTelSpan, SpanNode
         parent = self._make_node(kind="AGENT")
         child = self._make_node(kind="LLM")
         parent.children.append(child)
@@ -1518,7 +1518,7 @@ class TestTieredExtraction(unittest.TestCase):
     """Tests for auto_select_extraction_mode and extract_for_judge."""
 
     def _make_span(self, span_id, parent=None, kind="LLM", start=0, **attrs):
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.otel import OTelSpan
         base = {"openinference.span.kind": kind, "output.value": "test"}
         base.update(attrs)
         return OTelSpan(
@@ -1528,26 +1528,26 @@ class TestTieredExtraction(unittest.TestCase):
         )
 
     def test_empty_spans_selects_flat(self):
-        from p2m.core.otel import auto_select_extraction_mode, ExtractionMode
+        from assert_eval.core.otel import auto_select_extraction_mode, ExtractionMode
         self.assertEqual(auto_select_extraction_mode([]), ExtractionMode.FLAT)
 
     def test_simple_trace_selects_flat(self):
-        from p2m.core.otel import auto_select_extraction_mode, ExtractionMode
+        from assert_eval.core.otel import auto_select_extraction_mode, ExtractionMode
         spans = [self._make_span(f"s{i}", start=i*100) for i in range(5)]
         self.assertEqual(auto_select_extraction_mode(spans), ExtractionMode.FLAT)
 
     def test_medium_trace_with_agents_selects_tree(self):
-        from p2m.core.otel import auto_select_extraction_mode, ExtractionMode
+        from assert_eval.core.otel import auto_select_extraction_mode, ExtractionMode
         spans = [self._make_span(f"s{i}", start=i*100) for i in range(15)]
         self.assertEqual(auto_select_extraction_mode(spans), ExtractionMode.TREE)
 
     def test_complex_trace_selects_chunked(self):
-        from p2m.core.otel import auto_select_extraction_mode, ExtractionMode
+        from assert_eval.core.otel import auto_select_extraction_mode, ExtractionMode
         spans = [self._make_span(f"s{i}", start=i*100) for i in range(35)]
         self.assertEqual(auto_select_extraction_mode(spans), ExtractionMode.CHUNKED)
 
     def test_many_agents_selects_chunked(self):
-        from p2m.core.otel import auto_select_extraction_mode, ExtractionMode
+        from assert_eval.core.otel import auto_select_extraction_mode, ExtractionMode
         spans = [
             self._make_span("a1", kind="AGENT", start=100),
             self._make_span("a2", kind="AGENT", start=200),
@@ -1558,7 +1558,7 @@ class TestTieredExtraction(unittest.TestCase):
         self.assertEqual(auto_select_extraction_mode(spans), ExtractionMode.CHUNKED)
 
     def test_extract_flat_mode(self):
-        from p2m.core.otel import extract_for_judge, ExtractionMode
+        from assert_eval.core.otel import extract_for_judge, ExtractionMode
         spans = [self._make_span(f"s{i}", start=i*100) for i in range(3)]
         result = extract_for_judge(spans, mode=ExtractionMode.FLAT)
         self.assertEqual(result["mode"], "flat")
@@ -1567,7 +1567,7 @@ class TestTieredExtraction(unittest.TestCase):
         self.assertEqual(result["metadata"]["span_count"], 3)
 
     def test_extract_tree_mode(self):
-        from p2m.core.otel import extract_for_judge, ExtractionMode
+        from assert_eval.core.otel import extract_for_judge, ExtractionMode
         spans = [
             self._make_span("parent", kind="AGENT", start=100),
             self._make_span("child", parent="parent", start=200),
@@ -1580,7 +1580,7 @@ class TestTieredExtraction(unittest.TestCase):
         self.assertIn("children", root)
 
     def test_extract_chunked_mode(self):
-        from p2m.core.otel import extract_for_judge, ExtractionMode
+        from assert_eval.core.otel import extract_for_judge, ExtractionMode
         spans = [
             self._make_span("r1", kind="AGENT", start=100),
             self._make_span("c1", parent="r1", start=200),
@@ -1592,7 +1592,7 @@ class TestTieredExtraction(unittest.TestCase):
         self.assertEqual(len(result["representation"]), 2)  # 2 root agents
 
     def test_auto_mode_returns_valid_result(self):
-        from p2m.core.otel import extract_for_judge
+        from assert_eval.core.otel import extract_for_judge
         spans = [self._make_span(f"s{i}", start=i*100) for i in range(5)]
         result = extract_for_judge(spans)  # mode=None → auto
         self.assertIn(result["mode"], ["flat", "tree", "chunked"])
@@ -1600,7 +1600,7 @@ class TestTieredExtraction(unittest.TestCase):
 
     def test_token_budget_truncation(self):
         """Tree mode should truncate when exceeding token budget."""
-        from p2m.core.otel import extract_for_judge, ExtractionMode
+        from assert_eval.core.otel import extract_for_judge, ExtractionMode
         # Create spans with long output
         spans = [
             self._make_span("r", kind="AGENT", start=100,
@@ -1618,33 +1618,33 @@ class TestHTTPEndpointSession(unittest.TestCase):
     """Tests for HTTPEndpointSession."""
 
     def test_import(self):
-        from p2m.core.session import HTTPEndpointSession
+        from assert_eval.core.session import HTTPEndpointSession
         self.assertTrue(callable(HTTPEndpointSession))
 
     def test_runtime_mode(self):
-        from p2m.core.session import HTTPEndpointSession
+        from assert_eval.core.session import HTTPEndpointSession
         session = HTTPEndpointSession(endpoint="http://localhost:8000/chat")
         self.assertEqual(session.runtime_mode, "http_endpoint")
 
     def test_endpoint_config_valid(self):
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         tc = TargetConfig(endpoint="http://localhost:8000/chat")
         self.assertTrue(tc.is_endpoint)
         self.assertFalse(tc.is_external)
         self.assertFalse(tc.is_callable)
 
     def test_endpoint_and_model_conflicts(self):
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://...", model="openai/gpt-4o")
 
     def test_endpoint_and_callable_conflicts(self):
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://...", callable="mod:fn")
 
     def test_endpoint_and_connector_conflicts(self):
-        from p2m.core.config_model import TargetConfig
+        from assert_eval.core.config_model import TargetConfig
         with self.assertRaises(ValueError):
             TargetConfig(endpoint="http://...", connector="some.mod")
 
@@ -1653,8 +1653,8 @@ class TestCollectorProtocolExpanded(unittest.TestCase):
     """Expanded tests for SpanCollector Protocol — defensible architecture."""
 
     def test_dataframe_collector_validates_missing_columns(self):
-        from p2m.core.collector import ListCollector
-        from p2m.core.otel import OTelSpan
+        from assert_eval.core.collector import ListCollector
+        from assert_eval.core.otel import OTelSpan
 
         span = OTelSpan(trace_id="t1", span_id="s1", parent_span_id=None,
                         name="test", kind="LLM", start_time_ns=0, end_time_ns=1000)
@@ -1666,13 +1666,13 @@ class TestCollectorProtocolExpanded(unittest.TestCase):
 
     def test_phoenix_collector_import_error(self):
         """PhoenixCollector should give clear error when phoenix not installed."""
-        from p2m.core.collector import PhoenixCollector
+        from assert_eval.core.collector import PhoenixCollector
         # Phoenix may or may not be installed — test the interface exists
         self.assertTrue(callable(PhoenixCollector))
 
     def test_all_required_attributes_are_openinference(self):
         """REQUIRED_ATTRIBUTES should reference OpenInference conventions."""
-        from p2m.core.collector import REQUIRED_ATTRIBUTES
+        from assert_eval.core.collector import REQUIRED_ATTRIBUTES
         for attr in REQUIRED_ATTRIBUTES:
             self.assertTrue(
                 "." in attr,
@@ -1687,7 +1687,7 @@ class TestFixtureComplexity(unittest.TestCase):
 
     def test_simple_fixture_selects_flat(self):
         """The existing simple fixture (5 spans) should auto-select FLAT."""
-        from p2m.core.otel import _parse_otlp_json, auto_select_extraction_mode
+        from assert_eval.core.otel import _parse_otlp_json, auto_select_extraction_mode
         spans = _parse_otlp_json(self.FIXTURES / "sample_otel_traces.json")
         # Group by session and check the larger group
         tokyo_spans = [s for s in spans if s.attributes.get("session.id") == "sess_tokyo_trip"]
@@ -1699,7 +1699,7 @@ class TestFixtureComplexity(unittest.TestCase):
         path = self.FIXTURES / "medium_otel_traces.json"
         if not path.exists():
             self.skipTest("medium fixture not yet generated")
-        from p2m.core.otel import _parse_otlp_json, auto_select_extraction_mode
+        from assert_eval.core.otel import _parse_otlp_json, auto_select_extraction_mode
         spans = _parse_otlp_json(path)
         mode = auto_select_extraction_mode(spans)
         self.assertIn(mode, ["tree", "chunked"])
@@ -1709,13 +1709,13 @@ class TestFixtureComplexity(unittest.TestCase):
         path = self.FIXTURES / "complex_otel_traces.json"
         if not path.exists():
             self.skipTest("complex fixture not yet generated")
-        from p2m.core.otel import _parse_otlp_json, auto_select_extraction_mode
+        from assert_eval.core.otel import _parse_otlp_json, auto_select_extraction_mode
         spans = _parse_otlp_json(path)
         mode = auto_select_extraction_mode(spans)
         self.assertEqual(mode, "chunked")
 
     def test_extract_for_judge_works_on_simple_fixture(self):
-        from p2m.core.otel import _parse_otlp_json, extract_for_judge
+        from assert_eval.core.otel import _parse_otlp_json, extract_for_judge
         spans = _parse_otlp_json(self.FIXTURES / "sample_otel_traces.json")
         tokyo_spans = [s for s in spans if s.attributes.get("session.id") == "sess_tokyo_trip"]
         result = extract_for_judge(tokyo_spans)
@@ -1732,7 +1732,7 @@ class TestEndToEndIntegration(unittest.TestCase):
 
     def test_full_pipeline_simple(self):
         """Parse → extract → validate: simple fixture produces judge-ready output."""
-        from p2m.core.otel import extract_for_judge, _parse_otlp_json, validate_spans
+        from assert_eval.core.otel import extract_for_judge, _parse_otlp_json, validate_spans
 
         # Step 1: Parse
         spans = _parse_otlp_json(self.FIXTURES / "sample_otel_traces.json")
@@ -1749,7 +1749,7 @@ class TestEndToEndIntegration(unittest.TestCase):
 
     def test_parse_otel_traces_produces_valid_inference_rows(self):
         """parse_otel_traces should produce rows with metadata, events, raw."""
-        from p2m.core.otel import parse_otel_traces
+        from assert_eval.core.otel import parse_otel_traces
         rows = parse_otel_traces(self.FIXTURES / "sample_otel_traces.json")
         for row in rows:
             self.assertIn("metadata", row)
@@ -1759,8 +1759,8 @@ class TestEndToEndIntegration(unittest.TestCase):
 
     def test_all_session_types_have_consistent_interface(self):
         """All session types should have open/close/run_turn/runtime_mode."""
-        from p2m.core.session import CallableSession, HTTPEndpointSession
-        from p2m.core.otel_session import OTelTracedSession
+        from assert_eval.core.session import CallableSession, HTTPEndpointSession
+        from assert_eval.core.otel_session import OTelTracedSession
 
         for cls in [CallableSession, HTTPEndpointSession, OTelTracedSession]:
             instance = cls.__new__(cls)  # don't call __init__

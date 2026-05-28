@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from p2m.core.artifact_cache import (
+from assert_eval.core.artifact_cache import (
     activate_artifact_plan,
     activate_latest_artifacts,
     artifact_ref,
@@ -24,7 +24,7 @@ from p2m.core.artifact_cache import (
     _relative_to_suite,
     _resolve_ref_path,
 )
-from p2m.core.io import write_json
+from assert_eval.core.io import write_json
 
 
 class ArtifactCacheTest(unittest.TestCase):
@@ -395,7 +395,7 @@ class ArtifactCacheTest(unittest.TestCase):
         raw_cfg = {"foo": "bar"}
         # Use a placeholder plan; the function should short-circuit before
         # touching it for non-cacheable stage names.
-        from p2m.core.artifact_cache import ArtifactPlan, ArtifactFingerprint
+        from assert_eval.core.artifact_cache import ArtifactPlan, ArtifactFingerprint
 
         plan = ArtifactPlan(
             stage_name="inference",
@@ -441,7 +441,7 @@ class ArtifactCacheTest(unittest.TestCase):
             )
             activate_artifact_plan(ctx, plan)
 
-            with self.assertLogs("p2m.core.artifact_cache", level="WARNING") as cm:
+            with self.assertLogs("assert_eval.core.artifact_cache", level="WARNING") as cm:
                 override_cacheable_output_paths("systematize", raw_cfg, plan)
 
             joined = "\n".join(cm.output)
@@ -467,11 +467,11 @@ class ArtifactCacheTest(unittest.TestCase):
             )
             activate_artifact_plan(ctx, plan)
 
-            logger = logging.getLogger("p2m.core.artifact_cache")
+            logger = logging.getLogger("assert_eval.core.artifact_cache")
             previous_level = logger.level
             logger.setLevel(logging.WARNING)
             try:
-                with self.assertNoLogs("p2m.core.artifact_cache", level="WARNING"):
+                with self.assertNoLogs("assert_eval.core.artifact_cache", level="WARNING"):
                     override_cacheable_output_paths("systematize", raw_cfg, plan)
             finally:
                 logger.setLevel(previous_level)
@@ -670,7 +670,7 @@ class AllocateVersionDirTest(unittest.TestCase):
         our mkdir: the loop must rescan and pick ``v0002`` rather than fail
         or silently reuse the contended slot."""
 
-        from p2m.core import artifact_cache
+        from assert_eval.core import artifact_cache
 
         with TemporaryDirectory() as tmp_dir:
             stage_root = Path(tmp_dir) / "systematize"
@@ -704,7 +704,7 @@ class AllocateVersionDirTest(unittest.TestCase):
         """Pathological: every mkdir fails. We give up loudly rather than
         loop forever or return a bogus version."""
 
-        from p2m.core import artifact_cache
+        from assert_eval.core import artifact_cache
 
         with TemporaryDirectory() as tmp_dir:
             stage_root = Path(tmp_dir) / "systematize"
@@ -816,12 +816,12 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             )
 
             output_paths = {"taxonomy": version_dir / "taxonomy.json"}
-            logger = logging.getLogger("p2m.core.artifact_cache")
+            logger = logging.getLogger("assert_eval.core.artifact_cache")
             previous_level = logger.level
             logger.setLevel(logging.WARNING)
             try:
                 with self.assertNoLogs(
-                    "p2m.core.artifact_cache", level="WARNING"
+                    "assert_eval.core.artifact_cache", level="WARNING"
                 ):
                     refresh_compatibility_files(ctx, "systematize", output_paths)
             finally:
@@ -852,7 +852,7 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
 
             output_paths = {"taxonomy": version_dir / "taxonomy.json"}
             with self.assertLogs(
-                "p2m.core.artifact_cache", level="WARNING"
+                "assert_eval.core.artifact_cache", level="WARNING"
             ) as captured:
                 refresh_compatibility_files(ctx, "systematize", output_paths)
 
@@ -896,12 +896,12 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
             (suite_root / "taxonomy.json").write_text('{"v":1}', encoding="utf-8")
 
             output_paths = {"taxonomy": v0002 / "taxonomy.json"}
-            logger = logging.getLogger("p2m.core.artifact_cache")
+            logger = logging.getLogger("assert_eval.core.artifact_cache")
             previous_level = logger.level
             logger.setLevel(logging.WARNING)
             try:
                 with self.assertNoLogs(
-                    "p2m.core.artifact_cache", level="WARNING"
+                    "assert_eval.core.artifact_cache", level="WARNING"
                 ):
                     refresh_compatibility_files(ctx, "systematize", output_paths)
             finally:
@@ -942,7 +942,7 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
                 "systematization": version_dir / "systematization.json",
             }
             with self.assertLogs(
-                "p2m.core.artifact_cache", level="WARNING"
+                "assert_eval.core.artifact_cache", level="WARNING"
             ) as captured:
                 refresh_compatibility_files(ctx, "systematize", output_paths)
 

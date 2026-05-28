@@ -1,4 +1,4 @@
-# p2m Results Viewer
+# ASSERT Results Viewer
 
 Web app for browsing measurement results. It reads directly from `artifacts/results/` and shows the suite list, taxonomy browser, prompt results, scenario results, run comparison, and the live run monitor.
 

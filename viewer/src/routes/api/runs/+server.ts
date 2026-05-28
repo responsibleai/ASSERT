@@ -6,7 +6,7 @@ import { getActiveRuns } from '$lib/server/runner.js';
 import {
 	normalizeWizardPayload,
 	writeRunConfigFiles,
-	spawnP2mRun,
+	spawnAssertEvalRun,
 	runDirExists,
 	WizardValidationError,
 	RunConflictError,
@@ -105,7 +105,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	let spawned;
 	try {
-		spawned = await spawnP2mRun(written);
+		spawned = await spawnAssertEvalRun(written);
 	} catch (err) {
 		const message = err instanceof SpawnError ? err.message : (err as Error).message ?? String(err);
 		return json(

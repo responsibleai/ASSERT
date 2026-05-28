@@ -22,7 +22,7 @@ from smolagents import ToolCallingAgent, tool, LiteLLMModel  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
 
 model = LiteLLMModel(model_id=_MODEL)
 
