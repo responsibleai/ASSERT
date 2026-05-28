@@ -111,9 +111,11 @@ Accepted keys:
 
 - `prompt` — mapping. Optional.
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
+  - `sampling` — sampling config. Optional. Defaults to `{method: stratified, stratify_by: [behavior]}`. See [Sampling](#sampling) below.
   - `model` — model config.
 - `scenario` — mapping. Optional.
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
+  - `sampling` — sampling config. Optional. Same default and shape as `prompt.sampling`.
   - `model` — model config.
 - `stratify` — mapping. Optional.
   - `dimensions` — list of dimensions crossed with behavior categories.
@@ -125,6 +127,32 @@ Accepted keys:
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `test_set.prompt.model`, then `test_set.model`, then `default_model`. Scenario generation uses the same order with `test_set.scenario.model` first. Stratify generation uses `test_set.stratify.model`, then `test_set.model`, then `default_model`.
 
 `tool_source: per_test_case` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
+
+#### Sampling
+
+`sampling` controls how the cross-product of `behavior` and any generated stratification dimensions is turned into the `sample_size` assignments that drive test-case generation. Sampling is deterministic for a given run `seed`.
+
+Supported methods:
+
+- `stratified` (default) — equal allocation per stratum. `stratify_by` defaults to `[behavior]`, so smoke runs stay balanced across behavior categories when the budget allows. If `sample_size` is smaller than the number of strata, the sampler chooses `sample_size` strata uniformly at random and gives each one test case.
+- `full_factorial` — covers every cell of the full cross-product at least once. `replication: balanced` is the default and requires `sample_size` to be at least the full size. `replication: none` requires `sample_size` to equal the full size exactly.
+- `random` — IID uniform draws over the full cross-product. `with_replacement` defaults to `true`; set it to `false` to require distinct cells.
+
+Examples:
+
+```yaml
+pipeline:
+  test_set:
+    prompt:
+      sample_size: 12
+      sampling:
+        method: stratified
+        stratify_by: [behavior, domain]
+    scenario:
+      sample_size: 4
+      sampling:
+        method: full_factorial
+```
 
 Example:
 

@@ -45,6 +45,7 @@ from p2m.core.model_client import (
 )
 from p2m.core.tools import normalize_tool_defs
 from p2m.stages.stratification import DEFAULT_LEVEL_COUNT, normalize_stratification, run_stratification
+from p2m.stages.sampling import sample_assignments, validate_sampling_shape
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROMPT_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
@@ -588,17 +589,35 @@ class TestCaseJob:
     tuple_spec: dict[str, dict[str, Any]] | None = None
 
 
+def _chunk_sampled_assignments(
+    assignments: list[dict[str, str]],
+    *,
+    max_batch_size: int = MAX_TEST_CASES_PER_BATCH,
+) -> list[tuple[dict[str, str], int]]:
+    """Collapse adjacent identical assignments into generation batches."""
+    chunks: list[tuple[dict[str, str], int]] = []
+    for row in assignments:
+        if chunks and chunks[-1][0] == row and chunks[-1][1] < max_batch_size:
+            chunks[-1] = (chunks[-1][0], chunks[-1][1] + 1)
+        else:
+            chunks.append((dict(row), 1))
+    return chunks
+
+
 def build_generation_jobs(
     *,
     taxonomy: dict[str, Any],
     stratification: dict[str, list[dict[str, Any]]],
     sample_size: int,
     rng: random.Random,
+    sampling: dict[str, Any] | None = None,
 ) -> tuple[list[TestCaseJob], list[dict[str, str]] | None]:
-    """Build generation jobs — one per covering-array tuple.
+    """Build generation jobs, grouped by sampled assignment.
 
-    Budget is spread evenly across tuples via divmod. Each job produces
-    its allocated number of test_set for a single (behavior, dimension…) tuple.
+    By default, assignments use Omni-compatible stratified sampling by behavior.
+    Legacy callers/tests can pass a precomputed ``_covering_array`` in the
+    stratification object; explicit ``_sample_assignments`` takes precedence and
+    is used by the stage after applying ``test_set.{kind}.sampling``.
     """
     behavior_entries = stratification["behavior"]
     factor_names = stratification_dimensions(stratification)
@@ -611,27 +630,32 @@ def build_generation_jobs(
     behavior_level_lookup = {
         str(entry["name"]): entry for entry in behavior_entries
     }
-    covering_stratification = dict(stratification)
-    covering_stratification["behavior"] = behavior_entries
     all_axes = ("behavior",) + factor_names if factor_names else ("behavior",)
-    covering_array = stratification.get("_covering_array")
-    if not covering_array:
-        covering_array = build_covering_array(covering_stratification, rng, axes=all_axes)
-
-    # Shuffle so remainder budget is distributed randomly
-    tuples = list(covering_array)
-    rng.shuffle(tuples)
-
-    base, remainder = divmod(sample_size, len(tuples))
+    explicit_assignments = stratification.get("_sample_assignments")
+    if explicit_assignments:
+        tuples = [dict(row) for row in explicit_assignments]
+    elif stratification.get("_covering_array"):
+        covering_array = stratification["_covering_array"]
+        tuples = list(covering_array)
+        rng.shuffle(tuples)
+        base, remainder = divmod(sample_size, len(tuples))
+        expanded: list[dict[str, str]] = []
+        for i, row in enumerate(tuples):
+            count = base + (1 if i < remainder else 0)
+            expanded.extend(dict(row) for _ in range(count))
+        tuples = expanded
+    else:
+        tuples = sample_assignments(
+            design=stratification,
+            sample_size=sample_size,
+            sampling=sampling,
+            rng=rng,
+        )
 
     all_assignments: list[dict[str, str]] = []
     jobs: list[TestCaseJob] = []
     next_index = 0
-    for i, row in enumerate(tuples):
-        count = base + (1 if i < remainder else 0)
-        if count == 0:
-            continue
-
+    for row, count in _chunk_sampled_assignments(tuples):
         behavior_name = row["behavior"]
         behavior_entry = behavior_level_lookup[behavior_name]
         spec: dict[str, dict[str, Any]] = {
@@ -639,29 +663,17 @@ def build_generation_jobs(
             for factor_name in factor_names
         }
         spec["behavior"] = behavior_entry
+        all_assignments.extend(dict(row) for _ in range(count))
 
-        for _ in range(count):
-            all_assignments.append(dict(row))
-
-        # Split the per-tuple budget into chunks ≤ MAX_TEST_CASES_PER_BATCH so
-        # each LLM call stays inside the default max_tokens budget. Each
-        # chunk becomes its own TestCaseJob with a contiguous start_index slot
-        # so generated test case IDs remain stable and unique within the tuple.
-        chunk_offset = 0
-        remaining = count
-        while remaining > 0:
-            chunk = min(MAX_TEST_CASES_PER_BATCH, remaining)
-            jobs.append(
-                TestCaseJob(
-                    order=len(jobs),
-                    behavior=behavior_entry,
-                    count=chunk,
-                    start_index=next_index + chunk_offset,
-                    tuple_spec=spec,
-                )
+        jobs.append(
+            TestCaseJob(
+                order=len(jobs),
+                behavior=behavior_entry,
+                count=count,
+                start_index=next_index,
+                tuple_spec=spec,
             )
-            chunk_offset += chunk
-            remaining -= chunk
+        )
         next_index += count
 
     return jobs, all_assignments or None
@@ -680,6 +692,7 @@ async def _generate_records(
     max_tokens: int | None,
     reasoning_effort: str | None = None,
     timeout_s: float | None,
+    sampling: dict[str, Any] | None = None,
     tool_source: str = TOOL_SOURCE_RUNTIME,
     fixed_system_prompt: str | None = None,
     context: str | None = None,
@@ -714,6 +727,7 @@ async def _generate_records(
         stratification=stratification_data,
         sample_size=sample_size,
         rng=random.Random(seed),
+        sampling=sampling,
     )
     factor_names = stratification_dimensions(stratification_data)
 
@@ -890,6 +904,7 @@ async def run_test_set(
             ),
             reasoning_effort=cfg.get("reasoning_effort"),
             timeout_s=cfg.get("timeout_s"),
+            sampling=cfg.get("sampling"),
             tool_source=tool_source, fixed_system_prompt=fixed_system_prompt,
             context=normalized_context,
             stratification=stratification,
@@ -961,7 +976,7 @@ def _parse_kind_config(
     reject_unknown_keys(
         raw,
         field_name=f"test_set.{kind}",
-        allowed={"model", "sample_size", "timeout_s"},
+        allowed={"model", "sample_size", "sampling", "timeout_s"},
     )
     model = raw.get("model") or raw_cfg.get("model")
     if not isinstance(model, dict):
@@ -975,6 +990,7 @@ def _parse_kind_config(
     return {
         "model": model_cfg.name,
         "sample_size": raw.get("sample_size", sample_size),
+        "sampling": validate_sampling_shape(raw.get("sampling")),
         "temperature": model_cfg.temperature,
         "max_tokens": model_cfg.max_tokens,
         "reasoning_effort": model_cfg.reasoning_effort,

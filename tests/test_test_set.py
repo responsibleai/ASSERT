@@ -5,6 +5,7 @@
 
 import random
 import unittest
+from collections import Counter
 from itertools import combinations, product
 
 from p2m.analysis.stratification_metrics import (
@@ -21,9 +22,11 @@ from p2m.stages.test_set import (
     build_covering_array,
     build_generation_jobs,
     build_generation_prompt,
+    MAX_TEST_CASES_PER_BATCH,
     sample_from_covering_array,
     test_case_record as make_test_case_record,
 )
+from p2m.stages.sampling import sample_assignments
 
 FACTOR_NAMES = ("domain", "user_context")
 
@@ -364,6 +367,30 @@ class BuildGenerationJobsTest(unittest.TestCase):
             all(set(row) == {"behavior", *FACTOR_NAMES} for row in assignments or [])
         )
 
+    def test_sampling_assignments_can_drive_generation_jobs(self) -> None:
+        """Omni #395 sampling parity: explicit sampler assignments should be
+        consumable by existing generation-job batching.
+        """
+        taxonomy = _make_policy()
+        stratification = normalize_stratification(
+            _make_factor_stratification(2), taxonomy, inject_behavior=True
+        )
+        assignments = sample_assignments(
+            design=stratification,
+            sample_size=6,
+            sampling={"method": "stratified", "stratify_by": ["behavior"]},
+            rng=random.Random(42),
+        )
+        jobs, all_assignments = build_generation_jobs(
+            taxonomy=taxonomy,
+            stratification={**stratification, "_sample_assignments": assignments},
+            sample_size=6,
+            rng=random.Random(999),
+        )
+        self.assertEqual(sum(job.count for job in jobs), 6)
+        self.assertEqual(len(all_assignments or []), len(assignments))
+        self.assertEqual(Counter(tuple(sorted(row.items())) for row in all_assignments or []), Counter(tuple(sorted(row.items())) for row in assignments))
+
     def test_generation_jobs_with_behavior_only_stratification(self) -> None:
         taxonomy = _make_policy()
         jobs, assignments = build_generation_jobs(
@@ -391,26 +418,20 @@ class BuildGenerationJobsTest(unittest.TestCase):
         self.assertEqual(sum(job.count for job in jobs), len(jobs))
         self.assertTrue(all(job.count == 1 for job in jobs))
 
-    def test_generation_jobs_budget_allocation_divmod(self) -> None:
-        """Budget spreads evenly with remainder going to first tuples.
-        Counts here (2 or 3) all fit inside MAX_TEST_CASES_PER_BATCH so each
-        tuple still produces exactly one job."""
+    def test_generation_jobs_default_stratifies_by_behavior(self) -> None:
         taxonomy = _make_policy()
         stratification = _make_stratification_with_behavior(2)
-        ca = build_covering_array(stratification, random.Random(42), axes=("behavior",) + FACTOR_NAMES)
-        num_tuples = len(ca)
-        sample_size = num_tuples * 2 + 3
         jobs, assignments = build_generation_jobs(
             taxonomy=taxonomy,
             stratification=stratification,
-            sample_size=sample_size,
+            sample_size=10,
             rng=random.Random(42),
         )
-        self.assertEqual(len(jobs), num_tuples)
-        self.assertEqual(sum(job.count for job in jobs), sample_size)
-        counts = [job.count for job in jobs]
-        self.assertEqual(counts.count(3), 3)
-        self.assertEqual(counts.count(2), num_tuples - 3)
+        self.assertEqual(sum(job.count for job in jobs), 10)
+        self.assertIsNotNone(assignments)
+        counts = Counter(row["behavior"] for row in assignments or [])
+        self.assertEqual(counts, {"Behavior A": 5, "Behavior B": 5})
+        self.assertTrue(all(job.count <= MAX_TEST_CASES_PER_BATCH for job in jobs))
 
     def test_generation_jobs_sample_size_smaller_than_array(self) -> None:
         """When sample_size < covering array, some tuples get 0 and are skipped."""
@@ -458,60 +479,21 @@ class BuildGenerationJobsTest(unittest.TestCase):
             for factor_name in FACTOR_NAMES:
                 self.assertIn(factor_name, job.tuple_spec)
 
-    def test_generation_jobs_split_when_per_tuple_count_exceeds_cap(self) -> None:
-        """When a covering-array tuple's budget exceeds MAX_TEST_CASES_PER_BATCH,
-        the tuple produces multiple jobs whose counts are each ≤ the cap and
-        whose start_index slots remain contiguous within the tuple."""
-        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
-
+    def test_generation_jobs_keep_start_index_contiguous_after_sampling(self) -> None:
         taxonomy = _make_policy()
         stratification = _make_stratification_with_behavior(2)
-        ca = build_covering_array(
-            stratification, random.Random(42), axes=("behavior",) + FACTOR_NAMES
-        )
-        num_tuples = len(ca)
-        per_tuple = MAX_TEST_CASES_PER_BATCH * 3 + 2
-        sample_size = num_tuples * per_tuple
         jobs, _ = build_generation_jobs(
             taxonomy=taxonomy,
             stratification=stratification,
-            sample_size=sample_size,
+            sample_size=MAX_TEST_CASES_PER_BATCH * 4,
             rng=random.Random(42),
         )
-
-        self.assertEqual(sum(job.count for job in jobs), sample_size)
-        self.assertTrue(all(job.count <= MAX_TEST_CASES_PER_BATCH for job in jobs))
-
-        expected_jobs_per_tuple = (
-            per_tuple + MAX_TEST_CASES_PER_BATCH - 1
-        ) // MAX_TEST_CASES_PER_BATCH
-        self.assertEqual(len(jobs), num_tuples * expected_jobs_per_tuple)
 
         running = 0
         for job in jobs:
             self.assertEqual(job.start_index, running)
             running += job.count
-
-    def test_generation_jobs_no_split_when_count_within_cap(self) -> None:
-        """When per-tuple count fits inside MAX_TEST_CASES_PER_BATCH, each tuple
-        still produces exactly one job (covers the small-batch case)."""
-        from p2m.stages.test_set import MAX_TEST_CASES_PER_BATCH
-
-        taxonomy = _make_policy()
-        stratification = _make_stratification_with_behavior(2)
-        ca = build_covering_array(
-            stratification, random.Random(42), axes=("behavior",) + FACTOR_NAMES
-        )
-        num_tuples = len(ca)
-        sample_size = num_tuples * MAX_TEST_CASES_PER_BATCH
-        jobs, _ = build_generation_jobs(
-            taxonomy=taxonomy,
-            stratification=stratification,
-            sample_size=sample_size,
-            rng=random.Random(42),
-        )
-        self.assertEqual(len(jobs), num_tuples)
-        self.assertTrue(all(job.count == MAX_TEST_CASES_PER_BATCH for job in jobs))
+        self.assertTrue(all(job.count <= MAX_TEST_CASES_PER_BATCH for job in jobs))
 
 
 class BuildPolicyNodeFactorTest(unittest.TestCase):
