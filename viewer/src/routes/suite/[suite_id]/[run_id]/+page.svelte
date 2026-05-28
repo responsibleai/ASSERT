@@ -760,9 +760,9 @@
 				{/if}
 			</div>
 			<div class="mt-2 text-sm text-text-muted">
-				Evaluation target: <span class="font-mono text-text">{data.metrics?.target ?? data.auditMetrics?.target ?? '—'}</span>
+				Evaluation target: <span class="font-mono text-text">{data.metrics?.target || data.auditMetrics?.target || '—'}</span>
 				<span class="mx-2 text-text-muted/50">·</span>
-				Judge: <span class="font-mono text-text">{data.metrics?.judge_model ?? data.auditMetrics?.judge_model ?? '—'}</span>
+				Judge: <span class="font-mono text-text">{data.metrics?.judge_model || data.auditMetrics?.judge_model || '—'}</span>
 			</div>
 			{#if data.manifest?.stages}
 				<button
