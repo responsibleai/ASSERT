@@ -11,7 +11,6 @@ import logging
 import random
 import warnings
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -46,9 +45,8 @@ from assert_eval.core.model_client import (
 from assert_eval.core.tools import normalize_tool_defs
 from assert_eval.stages.stratification import DEFAULT_LEVEL_COUNT, normalize_stratification, run_stratification
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-PROMPT_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_direct_single.md").read_text(encoding="utf-8")
-SCENARIO_TEST_CASE_TEMPLATE = (BASE_DIR / "prompts" / "test_set_scenario_single.md").read_text(encoding="utf-8")
+PROMPT_TEST_CASE_TEMPLATE = load_prompt_text("test_set_direct_single.md")
+SCENARIO_TEST_CASE_TEMPLATE = load_prompt_text("test_set_scenario_single.md")
 TEST_SET_FILE = "test_set.jsonl"
 SCOPE = "suite"
 SUITE_OUTPUT = TEST_SET_FILE

@@ -42,9 +42,14 @@ assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
-Codespaces / VS Code Dev Containers:
+---
+**HELPFUL HINT**
+
+Run this in GitHub Codespaces / VSCode Dev Containers:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
+
+---
 
 The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `assert-eval run` command above.
 
@@ -231,4 +236,3 @@ Use of this system may also result in meaningful compute and inference costs. Yo
 - **Costs may scale quickly.** Large evaluations, repeated retries, or tool-heavy runs can incur substantial inference and execution costs.
 - **This is not a substitute for human review.** High-stakes conclusions should be supported by expert review, grounded evidence, and, where appropriate, additional statistical validation.
 - **Reproducibility may be imperfect.** Results can vary across model versions, deployments, tool backends, and runtime settings.
-

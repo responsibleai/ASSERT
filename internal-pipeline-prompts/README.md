@@ -1,13 +1,13 @@
 # Prompt Templates
 
-These templates control what the pipeline tells each model. Most users never need to edit them. The table below maps each file to its pipeline stage.
+These internal-facing prompt templates control what the pipeline tells each model. Most users never need to edit them. The table below maps each file to its pipeline stage.
 
 ## Vocabulary note
 
 The pipeline uses two related but distinct judgment layers:
 
-- **permissible / not permissible** — taxonomy-level label on each behavior indicating whether the target model producing this behavior pattern is acceptable (permissible) or undesirable (not permissible). Appears in taxonomy configs, systematization outputs, and the `permissible` field on test_set.
-- **violated** — per-node binary judgment the judge assigns after scoring a inference conversation. The judge evaluates each behavior node as `violated = true/false/null`.
+- **permissible / not permissible** — policy labels in the `taxonomy.json` file indicating whether the target model producing this behavior pattern is acceptable (permissible) or undesirable (not permissible). Appears in taxonomy configs, systematization outputs, and the `permissible` field on the generated test sets.
+- **violated** — per-node binary judgment the judge assigns after scoring a inference conversation. The judge evaluates each behavior node as `violated = true/false/null` pased on the policy labels.
 
 Prompts and code use these terms consistently; do not interchange them.
 
