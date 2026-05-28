@@ -28,7 +28,7 @@ class ViewerMetricsTest(unittest.TestCase):
         )
 
     def test_audit_metrics_fall_back_to_tester_model_for_target_label(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
             harness_dir = Path(tmp_dir)
             source = METRICS_SRC.read_text(encoding="utf-8")
             source = source.replace("from '$lib/judgment.js';", "from './judgment.js';")
