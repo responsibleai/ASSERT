@@ -1252,22 +1252,20 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
                 continue
             # ── Responses API fallback ──────────────────────────
             # Azure returns a region-specific "Responses API is not
-            # enabled" error that will never succeed on retry.
-            # Disable Responses API for the rest of the process
-            # and retry once with Chat Completions.
+            # enabled" error that will never succeed on retry while
+            # the model is still routed through the Responses bridge.
+            # Activate the process-wide Chat Completions fallback and
+            # retry exactly once. If the fallback was already active
+            # (so this call was already on the Chat path) the error is
+            # not actually a routing problem — re-raise it as a normal
+            # LLMProviderError so the caller sees the failure.
             if isinstance(classified, _ResponsesApiNotAvailableError):
-                global _responses_api_fallback_warned
-                _apply_chat_completions_preference()
-                if not _responses_api_fallback_warned:
-                    _responses_api_fallback_warned = True
-                    log.warning(
-                        "%s%s: Azure Responses API is not available in this "
-                        "region; falling back to Chat Completions for the "
-                        "remainder of this run. Set "
-                        "ASSERT_PREFER_CHAT_COMPLETIONS=1 to skip this "
-                        "error upfront.",
-                        model, tag,
-                    )
+                if _force_chat_completions:
+                    raise classified from exc
+                _activate_chat_completions_fallback(
+                    "Azure Responses API not enabled in region",
+                    model=model, tag=tag,
+                )
                 continue
             raise classified from exc
 
