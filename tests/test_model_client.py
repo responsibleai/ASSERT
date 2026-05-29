@@ -486,5 +486,73 @@ class TrackUsageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outer.input_tokens, 200)
 
 
+class ResponsesApiClassificationTest(unittest.TestCase):
+    """``_classify_llm_error`` must route Azure's region-rejection messages
+    to ``_ResponsesApiNotAvailableError`` *before* the generic BadRequest /
+    NotFound handlers run, so ``_with_retries`` can demote to chat
+    completions instead of returning an unrecoverable ``LLMInputError``.
+    """
+
+    def setUp(self) -> None:
+        # Build a litellm stand-in with just the exception classes
+        # ``_classify_llm_error`` consults via isinstance().
+        self.fake_litellm = SimpleNamespace()
+        self.fake_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
+        self.fake_litellm.RateLimitError = type("RateLimitError", (Exception,), {})
+        self.fake_litellm.BadRequestError = type("BadRequestError", (Exception,), {})
+        self.fake_litellm.NotFoundError = type("NotFoundError", (Exception,), {})
+        self.fake_litellm.APIError = type("APIError", (Exception,), {})
+        self.fake_litellm.APIConnectionError = type("APIConnectionError", (Exception,), {})
+        # Preserve and reset the sticky demotion flag between tests.
+        self._saved_force = model_client._force_chat_completions
+        model_client._force_chat_completions = False
+
+    def tearDown(self) -> None:
+        model_client._force_chat_completions = self._saved_force
+
+    def _classify(self, exc: Exception) -> Exception:
+        with patch.object(model_client, "_get_litellm_module", return_value=self.fake_litellm):
+            return model_client._classify_llm_error(exc)
+
+    def test_api_version_not_supported_classifies_as_responses_api_unavailable(self) -> None:
+        # Observed in West Europe (keweu) — Azure rejects the Responses API
+        # request as HTTP 400 / BadRequestError with this message. Must be
+        # detected before the BadRequestError branch returns LLMInputError.
+        exc = self.fake_litellm.BadRequestError(
+            'AzureException - {"error":{"code":"BadRequest","message":"API version not supported"}}'
+        )
+        classified = self._classify(exc)
+        self.assertIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+        self.assertIs(classified.__cause__, exc)
+
+    def test_responses_api_not_enabled_marker_classifies_as_responses_api_unavailable(self) -> None:
+        # Older Azure deployments surface a 404 with this message. Keep
+        # both markers supported so the fallback works across regions.
+        exc = self.fake_litellm.NotFoundError("Responses API is not enabled for this deployment")
+        classified = self._classify(exc)
+        self.assertIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+        self.assertIs(classified.__cause__, exc)
+
+    def test_api_version_not_supported_on_chat_path_classifies_as_input_error(self) -> None:
+        # Once we've already demoted to chat completions, the same string
+        # genuinely means the configured api-version is wrong for chat —
+        # surface it as LLMInputError so we don't loop forever.
+        model_client._force_chat_completions = True
+        exc = self.fake_litellm.BadRequestError(
+            'AzureException - {"error":{"code":"BadRequest","message":"API version not supported"}}'
+        )
+        classified = self._classify(exc)
+        self.assertIsInstance(classified, model_client.LLMInputError)
+        self.assertNotIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+
+    def test_regular_bad_request_still_classifies_as_input_error(self) -> None:
+        # Non-marker BadRequestError must continue to map to LLMInputError
+        # (no regression on the common content-filter / prompt-too-long path).
+        exc = self.fake_litellm.BadRequestError("Invalid prompt: missing required field")
+        classified = self._classify(exc)
+        self.assertIsInstance(classified, model_client.LLMInputError)
+        self.assertNotIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+
+
 if __name__ == "__main__":
     unittest.main()
