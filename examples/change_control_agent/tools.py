@@ -3,7 +3,7 @@
 
 """Change-control backend for the ChangeKeep eval.
 
-The Tools class exposes ten methods that Adaptive Eval turns into tool schemas.
+The Tools class exposes ten methods that the harness turns into tool schemas.
 Static synthetic corpus + per-action SQLite state, all local. No
 docker, no external service dependencies.
 
