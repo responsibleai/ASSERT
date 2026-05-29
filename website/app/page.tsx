@@ -398,34 +398,36 @@ export default function Home() {
 								</p>
 							</div>
 						</div>
-						<h3 className="framework-heading framework-heading-stat" data-reveal>
-							<span className="framework-stat-num">33+</span>{" "}
-							<span className="framework-stat-label">
-								Frameworks supported via{" "}
-								<a
-									href="https://github.com/Arize-ai/openinference"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="framework-stat-link"
-								>
-									OpenInference
-								</a>
-							</span>
-						</h3>
-						<h3 className="framework-heading framework-heading-stat" data-reveal>
-							<span className="framework-stat-num">100+</span>{" "}
-							<span className="framework-stat-label">
-								LLM APIs via{" "}
-								<a
-									href="https://github.com/BerriAI/litellm"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="framework-stat-link"
-								>
-									LiteLLM
-								</a>
-							</span>
-						</h3>
+						<div className="framework-stat-row" data-reveal>
+							<h3 className="framework-heading framework-heading-stat">
+								<span className="framework-stat-num">33+</span>{" "}
+								<span className="framework-stat-label">
+									Frameworks supported via{" "}
+									<a
+										href="https://github.com/Arize-ai/openinference"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="framework-stat-link"
+									>
+										OpenInference
+									</a>
+								</span>
+							</h3>
+							<h3 className="framework-heading framework-heading-stat">
+								<span className="framework-stat-num">100+</span>{" "}
+								<span className="framework-stat-label">
+									LLM APIs via{" "}
+									<a
+										href="https://github.com/BerriAI/litellm"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="framework-stat-link"
+									>
+										LiteLLM
+									</a>
+								</span>
+							</h3>
+						</div>
 						<div className="framework-marquee" data-reveal>
 							<div className="framework-marquee-track">
 								{[0, 1].map((dup) => (

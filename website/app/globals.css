@@ -3664,6 +3664,17 @@ h3 {
 }
 
 /* "+33 Frameworks Supported" — standalone title above the marquee */
+.framework-stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 48px;
+  row-gap: 8px;
+  padding: 48px 0 16px;
+}
+.framework-stat-row > .framework-heading-stat {
+  padding: 0;
+}
 .framework-heading-stat {
   margin: 0;
   padding: 48px 0 16px;
@@ -3681,15 +3692,15 @@ h3 {
   color: #AF86F5;
 }
 .framework-heading-stat .framework-stat-link {
-  color: #AF86F5;
+  color: #ffffff;
   text-decoration: underline;
-  text-decoration-color: rgba(175, 134, 245, 0.4);
+  text-decoration-color: rgba(255, 255, 255, 0.55);
   text-underline-offset: 3px;
   transition: text-decoration-color 200ms ease, color 200ms ease;
 }
 .framework-heading-stat .framework-stat-link:hover {
-  color: #C7A8FA;
-  text-decoration-color: #C7A8FA;
+  color: #ffffff;
+  text-decoration-color: #ffffff;
 }
 
 /* Full-bleed horizontal infinite logo marquee (below the 2-column grid) */
