@@ -121,6 +121,8 @@ def infer_judge_status(record: Dict[str, Any]) -> str:
     status = record.get("judge_status")
     verdict = cast(Optional[Dict[str, Any]], record.get("verdict"))
     success = has_successful_judge_verdict(verdict)
+    if status == "scoring_skipped":
+        return "scoring_skipped"
     if status == "ok":
         return "ok" if success else "judge_failed"
     if isinstance(status, str) and status:

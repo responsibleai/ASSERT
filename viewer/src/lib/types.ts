@@ -143,7 +143,7 @@ export interface JudgmentErrorVerdict {
 	[key: string]: unknown;
 }
 
-export type JudgeStatus = 'ok' | 'judge_failed';
+export type JudgeStatus = 'ok' | 'judge_failed' | 'scoring_skipped';
 
 export interface MultiJudge {
 	n: number;
@@ -211,6 +211,7 @@ export interface ViewerResultContext {
 	tools?: SeedPayload['tools'];
 	turns_count?: number | null;
 	stop_reason?: string | null;
+	stop_reason_display?: StopReasonDisplay | null;
 }
 
 export interface ViewerResultItem {
@@ -431,9 +432,18 @@ export interface AuditScore {
 	metadata: {
 		turns_count: number;
 		stop_reason: string;
+		stop_reason_display?: StopReasonDisplay | null;
 	};
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
+}
+
+export type StopReasonTone = 'refusal' | 'error' | 'info';
+
+export interface StopReasonDisplay {
+	label: string;
+	description: string;
+	tone: StopReasonTone;
 }
 
 // --- Grouping types ---

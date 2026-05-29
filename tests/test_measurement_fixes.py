@@ -854,6 +854,10 @@ class MeasurementFixesTest(unittest.TestCase):
             infer_judge_status({"judge_status": "ok", "verdict": {"error": "judge_failed"}}),
             "judge_failed",
         )
+        self.assertEqual(
+            infer_judge_status({"judge_status": "scoring_skipped", "verdict": {}}),
+            "scoring_skipped",
+        )
 
     def test_run_judge_writes_minimal_rows(self) -> None:
         async def fake_run_judge_attempts(*args: object, **kwargs: object) -> tuple[list[dict[str, object]], list[str], int]:
@@ -1010,6 +1014,7 @@ class MeasurementFixesTest(unittest.TestCase):
 
         self.assertEqual(len(attempt_calls), 3)
         self.assertEqual(result["count"], 3)
+        self.assertEqual(result["judge_failures"], 1)
         self.assertEqual(len(score_rows), 3)
 
         by_test_case = {row["test_case_id"]: row for row in score_rows}
@@ -1019,6 +1024,126 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(refused["verdict"], {})
         for ok_seed in ("seed-ok", "seed-ok-2"):
             self.assertEqual(by_test_case[ok_seed]["judge_status"], "ok")
+
+    def test_run_judge_skips_scoring_for_unscorable_stop_reasons(self) -> None:
+        """Refused or errored inference rows must not be sent to the judge.
+
+        When a transcript's ``stop_reason`` indicates the inference run
+        never produced a meaningful target response — the tester or target
+        refused, or either side errored — there is nothing useful to score.
+        Sending these to the judge wastes tokens and pollutes the rates
+        with judgments built from empty/near-empty transcripts. The judge
+        stage short-circuits these rows with ``judge_status='scoring_skipped'``
+        so the test case isn't lost but the LLM is never invoked.
+        """
+        attempt_calls: list[str] = []
+
+        async def fake_run_judge_attempts(
+            *args: object, **kwargs: object,
+        ) -> tuple[list[dict[str, object]], list[str], int]:
+            user_msg = kwargs.get("user_msg")
+            if user_msg is None and len(args) >= 4:
+                user_msg = args[3]
+            text = ""
+            if user_msg is not None:
+                content = getattr(user_msg, "content", "")
+                if isinstance(content, str):
+                    text = content
+            attempt_calls.append(text[:120])
+            return (
+                [
+                    {
+                        "dimensions": {
+                            "policy_violation": False,
+                            "overrefusal": False,
+                        },
+                        "justification": "safe [1]",
+                        "dimension_justifications": {
+                            "policy_violation": "safe [1]",
+                            "overrefusal": "safe [1]",
+                        },
+                        "node_judgments": [],
+                        "highlights": '1. <cite id="1" description="Greeting">Hello</cite>',
+                    }
+                ],
+                ['{"judge":"ok"}'],
+                0,
+            )
+
+        unscorable = (
+            ("seed-tester-refused", "tester_input_refused"),
+            ("seed-target-refused", "target_input_refused"),
+            ("seed-target-error", "target_error"),
+            ("seed-tester-error", "tester_error"),
+        )
+        scorable = (
+            ("seed-ok", None),
+            ("seed-completed", "completed"),
+            ("seed-max-turns", "max_turns"),
+            ("seed-runtime-close", "runtime_close_error"),
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            inference_set_path = Path(tmp_dir) / "inference_set.jsonl"
+            taxonomy_path = Path(tmp_dir) / "taxonomy.json"
+            taxonomy_path.write_text(
+                json.dumps({"behavior": {"name": "behavior", "definition": "def"}, "behavior_categories": []}),
+                encoding="utf-8",
+            )
+            with inference_set_path.open("w", encoding="utf-8") as handle:
+                for sid, stop_reason in (*unscorable, *scorable):
+                    meta = TranscriptMetadata(
+                        kind="scenario",
+                        test_case_id=sid,
+                        behavior="behavior",
+                        target="target",
+                        dimensions={"behavior": "test"},
+                        tester_model="tester",
+                    )
+                    transcript = Transcript(metadata=meta)
+                    transcript.add_event(
+                        TranscriptEvent(
+                            view=["target", "combined"],
+                            actor="target",
+                            edit=AddMessageEdit(message=Message(role="assistant", content="Hello")),
+                        )
+                    )
+                    transcript.stop_reason = stop_reason
+                    handle.write(json.dumps(transcript.to_dict(), ensure_ascii=False) + "\n")
+
+            with patch("assert_eval.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
+                result = asyncio.run(
+                    run_judge(
+                        inference_set_path=str(inference_set_path),
+                        taxonomy_path=str(taxonomy_path),
+                        save_dir=tmp_dir,
+                        evaluation=EvaluationConfig(
+                            judge=JudgeConfig(model="judge"),
+                            inference=InferenceConfig(concurrency=1),
+                        ),
+                    )
+                )
+
+            score_rows = [
+                json.loads(line)
+                for line in (Path(tmp_dir) / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        # Every test case still gets a row (none are lost).
+        self.assertEqual(result["count"], len(unscorable) + len(scorable))
+        self.assertEqual(result["judge_failures"], 0)
+        self.assertEqual(len(score_rows), len(unscorable) + len(scorable))
+        # The judge LLM is invoked only for the scorable rows.
+        self.assertEqual(len(attempt_calls), len(scorable))
+
+        by_test_case = {row["test_case_id"]: row for row in score_rows}
+        for sid, stop_reason in unscorable:
+            row = by_test_case[sid]
+            self.assertEqual(row["judge_status"], "scoring_skipped", sid)
+            self.assertEqual(row["verdict"], {}, sid)
+            self.assertIn(stop_reason, row["judge_error"] or "", sid)
+        for sid, _ in scorable:
+            self.assertEqual(by_test_case[sid]["judge_status"], "ok", sid)
 
     def _make_minimal_transcripts(self, inference_set_path: Path, test_case_ids: list[str]) -> None:
         with inference_set_path.open("w", encoding="utf-8") as handle:

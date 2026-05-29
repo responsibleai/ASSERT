@@ -14,6 +14,11 @@
 	} from '$lib/citation-resolution';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
 	import { formatFactorLabel } from '$lib/grouping.js';
+	import {
+		stopReasonChipClass,
+		stopReasonLabel,
+		stopReasonTitle
+	} from '$lib/result-view.js';
 	import type {
 		AuditCitation,
 		AuditCitationPart,
@@ -781,7 +786,9 @@
 						<span class="text-xs text-text-muted">·</span>
 					{/if}
 					{#if item.kind === 'scenario' && item.context.stop_reason}
-						<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{item.context.stop_reason}</span>
+						<span class={stopReasonChipClass(item.context.stop_reason_display)} title={stopReasonTitle(item.context.stop_reason, item.context.stop_reason_display)}>
+							{stopReasonLabel(item.context.stop_reason, item.context.stop_reason_display)}
+						</span>
 						<span class="text-xs text-text-muted">·</span>
 					{/if}
 
@@ -1076,6 +1083,32 @@
 					{/each}
 				</div>
 			{/if}
+			{#if item.kind === 'scenario' && item.context.stop_reason_display}
+				{@const display = item.context.stop_reason_display}
+				{@const calloutBoxClass =
+					display.tone === 'error'
+						? 'mb-4 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3'
+						: display.tone === 'info'
+						? 'mb-4 rounded-lg border border-border bg-surface-2/40 px-4 py-3'
+						: 'mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3'}
+				{@const calloutLabelClass =
+					display.tone === 'error'
+						? 'text-xs font-semibold uppercase tracking-wide text-rose-400'
+						: display.tone === 'info'
+						? 'text-xs font-semibold uppercase tracking-wide text-text-secondary'
+						: 'text-xs font-semibold uppercase tracking-wide text-amber-400'}
+				<div class={calloutBoxClass}>
+					<div class={calloutLabelClass}>
+						{display.label}
+					</div>
+					<p class="mt-1 text-sm text-text-secondary">{display.description}</p>
+					{#if item.context.stop_reason}
+						<p class="mt-2 text-[11px] text-text-muted">
+							Stop reason: <code class="rounded bg-black/20 px-1 py-0.5">{item.context.stop_reason}</code>
+						</p>
+					{/if}
+				</div>
+			{/if}
 			<div class="space-y-3">
 				{#each item.messages as message, messageIndex}
 					{@const turnLabel = message.role === 'system' ? null : (message.judgeTurn ?? fallbackTurnLabel(item.messages, messageIndex))}
@@ -1351,7 +1384,9 @@
 					{/if}
 				{/each}
 				{#if item.messages.length === 0}
-					<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{#if !(item.kind === 'scenario' && item.context.stop_reason_display)}
+						<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{/if}
 				{/if}
 			</div>
 		</div>
