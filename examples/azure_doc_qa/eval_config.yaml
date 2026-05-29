@@ -132,12 +132,12 @@ pipeline:
             or Azure customer with no internal clearance — no engineering team
             context in their message).
     prompt:
-      sample_size: 40
+      sample_size: 5
       model:
         name: azure/gpt-5.4-mini
         temperature: 1.0
     scenario:
-      sample_size: 16
+      sample_size: 5
       model:
         name: azure/gpt-5.4-mini
         temperature: 1.0

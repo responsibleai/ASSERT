@@ -27,7 +27,7 @@ pipeline:
         description: The kind of medical task or request.
       level_count: 5
     prompt:
-      sample_size: 10
+      sample_size: 5
     scenario:
       sample_size: 5
   inference:

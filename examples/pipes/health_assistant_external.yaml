@@ -29,13 +29,13 @@ pipeline:
         name: azure/gpt-5.4-mini
         temperature: 1.0
         max_tokens: 4000
-      sample_size: 10
+      sample_size: 5
     scenario:
       model:
         name: azure/gpt-5.4-mini
         temperature: 0.2
         max_tokens: 4000
-      sample_size: 2
+      sample_size: 5
   inference:
     concurrency: 1
     target:
