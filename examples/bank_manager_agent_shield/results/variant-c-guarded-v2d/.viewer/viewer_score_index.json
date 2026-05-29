@@ -1,0 +1,184 @@
+{
+  "items": {
+    "prompt:test_case_000001": {
+      "type": "prompt",
+      "test_case_id": "test_case_000001",
+      "offset": 0,
+      "length": 3936
+    },
+    "prompt:test_case_000002": {
+      "type": "prompt",
+      "test_case_id": "test_case_000002",
+      "offset": 3936,
+      "length": 3855
+    },
+    "prompt:test_case_000004": {
+      "type": "prompt",
+      "test_case_id": "test_case_000004",
+      "offset": 7791,
+      "length": 4360
+    },
+    "prompt:test_case_000003": {
+      "type": "prompt",
+      "test_case_id": "test_case_000003",
+      "offset": 12151,
+      "length": 4585
+    },
+    "prompt:test_case_000006": {
+      "type": "prompt",
+      "test_case_id": "test_case_000006",
+      "offset": 16736,
+      "length": 3697
+    },
+    "prompt:test_case_000005": {
+      "type": "prompt",
+      "test_case_id": "test_case_000005",
+      "offset": 20433,
+      "length": 4427
+    },
+    "prompt:test_case_000007": {
+      "type": "prompt",
+      "test_case_id": "test_case_000007",
+      "offset": 24860,
+      "length": 3561
+    },
+    "prompt:test_case_000008": {
+      "type": "prompt",
+      "test_case_id": "test_case_000008",
+      "offset": 28421,
+      "length": 4898
+    },
+    "prompt:test_case_000009": {
+      "type": "prompt",
+      "test_case_id": "test_case_000009",
+      "offset": 33319,
+      "length": 3539
+    },
+    "prompt:test_case_000010": {
+      "type": "prompt",
+      "test_case_id": "test_case_000010",
+      "offset": 36858,
+      "length": 3984
+    },
+    "prompt:test_case_000011": {
+      "type": "prompt",
+      "test_case_id": "test_case_000011",
+      "offset": 40842,
+      "length": 4090
+    },
+    "prompt:test_case_000014": {
+      "type": "prompt",
+      "test_case_id": "test_case_000014",
+      "offset": 44932,
+      "length": 3589
+    },
+    "prompt:test_case_000012": {
+      "type": "prompt",
+      "test_case_id": "test_case_000012",
+      "offset": 48521,
+      "length": 4567
+    },
+    "prompt:test_case_000013": {
+      "type": "prompt",
+      "test_case_id": "test_case_000013",
+      "offset": 53088,
+      "length": 4890
+    },
+    "prompt:test_case_000015": {
+      "type": "prompt",
+      "test_case_id": "test_case_000015",
+      "offset": 57978,
+      "length": 5437
+    },
+    "prompt:test_case_000018": {
+      "type": "prompt",
+      "test_case_id": "test_case_000018",
+      "offset": 63415,
+      "length": 4199
+    },
+    "prompt:test_case_000016": {
+      "type": "prompt",
+      "test_case_id": "test_case_000016",
+      "offset": 67614,
+      "length": 4191
+    },
+    "prompt:test_case_000017": {
+      "type": "prompt",
+      "test_case_id": "test_case_000017",
+      "offset": 71805,
+      "length": 4833
+    },
+    "prompt:test_case_000019": {
+      "type": "prompt",
+      "test_case_id": "test_case_000019",
+      "offset": 76638,
+      "length": 5000
+    },
+    "prompt:test_case_000020": {
+      "type": "prompt",
+      "test_case_id": "test_case_000020",
+      "offset": 81638,
+      "length": 4524
+    },
+    "prompt:test_case_000022": {
+      "type": "prompt",
+      "test_case_id": "test_case_000022",
+      "offset": 86162,
+      "length": 4247
+    },
+    "prompt:test_case_000021": {
+      "type": "prompt",
+      "test_case_id": "test_case_000021",
+      "offset": 90409,
+      "length": 7011
+    },
+    "prompt:test_case_000023": {
+      "type": "prompt",
+      "test_case_id": "test_case_000023",
+      "offset": 97420,
+      "length": 3724
+    },
+    "prompt:test_case_000026": {
+      "type": "prompt",
+      "test_case_id": "test_case_000026",
+      "offset": 101144,
+      "length": 4355
+    },
+    "prompt:test_case_000024": {
+      "type": "prompt",
+      "test_case_id": "test_case_000024",
+      "offset": 105499,
+      "length": 4330
+    },
+    "prompt:test_case_000025": {
+      "type": "prompt",
+      "test_case_id": "test_case_000025",
+      "offset": 109829,
+      "length": 5406
+    },
+    "prompt:test_case_000027": {
+      "type": "prompt",
+      "test_case_id": "test_case_000027",
+      "offset": 115235,
+      "length": 5140
+    },
+    "prompt:test_case_000029": {
+      "type": "prompt",
+      "test_case_id": "test_case_000029",
+      "offset": 120375,
+      "length": 3873
+    },
+    "prompt:test_case_000028": {
+      "type": "prompt",
+      "test_case_id": "test_case_000028",
+      "offset": 124248,
+      "length": 3904
+    },
+    "prompt:test_case_000030": {
+      "type": "prompt",
+      "test_case_id": "test_case_000030",
+      "offset": 128152,
+      "length": 4954
+    }
+  }
+}

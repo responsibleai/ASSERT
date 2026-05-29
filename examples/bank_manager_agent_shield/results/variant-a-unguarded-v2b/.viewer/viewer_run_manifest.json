@@ -1,0 +1,55 @@
+{
+  "schema_version": 4,
+  "generator_version": "viewer-read-model-v3",
+  "suite_id": "bank-manager-agent-shield",
+  "run_id": "variant-a-unguarded-v2b",
+  "source_files": {
+    "inference_set.jsonl": {
+      "path": "inference_set.jsonl",
+      "size_bytes": 49740,
+      "mtime_ms": 1780039953438
+    },
+    "scores.jsonl": {
+      "path": "scores.jsonl",
+      "size_bytes": 133205,
+      "mtime_ms": 1780045019186
+    },
+    "test_set.jsonl": {
+      "path": "..\\artifacts\\test_set\\v0009\\test_set.jsonl",
+      "size_bytes": 17092,
+      "mtime_ms": 1780039281028
+    },
+    "manifest.json": {
+      "path": "manifest.json",
+      "size_bytes": 2097,
+      "mtime_ms": 1780044976163
+    },
+    "config.yaml": {
+      "path": "config.yaml",
+      "size_bytes": 3621,
+      "mtime_ms": 1780039181907
+    }
+  },
+  "derived_files": {
+    "viewer_prompt_rows.json": {
+      "path": ".viewer\\viewer_prompt_rows.json",
+      "size_bytes": 46831,
+      "mtime_ms": 1780045019313
+    },
+    "viewer_audit_rows.json": {
+      "path": ".viewer\\viewer_audit_rows.json",
+      "size_bytes": 2,
+      "mtime_ms": 1780045019318
+    },
+    "viewer_transcript_index.json": {
+      "path": ".viewer\\viewer_transcript_index.json",
+      "size_bytes": 4692,
+      "mtime_ms": 1780045019247
+    },
+    "viewer_score_index.json": {
+      "path": ".viewer\\viewer_score_index.json",
+      "size_bytes": 4704,
+      "mtime_ms": 1780045019323
+    }
+  }
+}
