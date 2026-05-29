@@ -11,6 +11,7 @@ import contextvars
 import importlib
 import json
 import logging
+import os
 import random
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -558,6 +559,14 @@ def _get_litellm_module() -> Any:
         # sole retry layer — avoids double-retry and lets the
         # coordinated per-model cooldown work correctly.
         _LITELLM_MODULE.num_retries = 0
+        # If the user has opted into Chat Completions proactively,
+        # disable the Responses API now so LiteLLM never attempts it.
+        if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip() in ("1", "true", "yes"):
+            _apply_chat_completions_preference()
+            log.info(
+                "ASSERT_PREFER_CHAT_COMPLETIONS is set; using Chat "
+                "Completions API for all models."
+            )
     return _LITELLM_MODULE
 
 
@@ -598,6 +607,29 @@ class LLMRateLimitError(Exception):
 
 class LLMProviderError(Exception):
     """Provider-side error (5xx) — may be retryable."""
+
+
+class _ResponsesApiNotAvailableError(Exception):
+    """Region does not support Azure Responses API — triggers automatic
+    fallback to Chat Completions for the remainder of the run."""
+
+
+# ── Responses API → Chat Completions fallback state ────────────
+_responses_api_fallback_warned: bool = False
+"""Set to True after the first Responses-API-not-available warning is
+emitted so we only log the user-facing message once per run."""
+
+
+def _apply_chat_completions_preference() -> None:
+    """Force LiteLLM to use Chat Completions instead of Responses API.
+
+    This sets ``LITELLM_USE_RESPONSES_API=false`` in the process
+    environment which LiteLLM checks before each call.  It is
+    called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS``
+    is set) and reactively (on the first region-not-enabled error).
+    """
+    import os
+    os.environ["LITELLM_USE_RESPONSES_API"] = "false"
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
@@ -685,6 +717,20 @@ def _classify_llm_error(exc: Exception) -> Exception:
             err = LLMContentFilterError(f"Content filtered: {exc}")
         else:
             err = LLMInputError(f"Bad request: {exc}")
+        err.__cause__ = exc
+        return err
+    # ── Responses API region fallback (must precede NotFoundError / APIError) ──
+    # Azure OpenAI returns a 404 (often wrapped as APIError by some
+    # LiteLLM versions) when the Responses API is not enabled in the
+    # deployment's region. We detect this *before* the generic 404 and
+    # 5xx handlers so it routes to the one-time Chat-Completions fallback
+    # in _with_retries instead of being treated as a normal input error
+    # or being retried fruitlessly as a transient provider error.
+    _responses_api_marker = "responses api is not enabled"
+    if _responses_api_marker in str(exc).lower():
+        err = _ResponsesApiNotAvailableError(
+            f"Azure Responses API not available: {exc}"
+        )
         err.__cause__ = exc
         return err
     # 404 — model/deployment not found
@@ -1124,6 +1170,25 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
                     model, tag, attempts_used, attempts_total, wait_s, classified,
                 )
                 await asyncio.sleep(wait_s)
+                continue
+            # ── Responses API fallback ──────────────────────────
+            # Azure returns a region-specific "Responses API is not
+            # enabled" error that will never succeed on retry.
+            # Disable Responses API for the rest of the process
+            # and retry once with Chat Completions.
+            if isinstance(classified, _ResponsesApiNotAvailableError):
+                global _responses_api_fallback_warned
+                _apply_chat_completions_preference()
+                if not _responses_api_fallback_warned:
+                    _responses_api_fallback_warned = True
+                    log.warning(
+                        "%s%s: Azure Responses API is not available in this "
+                        "region; falling back to Chat Completions for the "
+                        "remainder of this run. Set "
+                        "ASSERT_PREFER_CHAT_COMPLETIONS=1 to skip this "
+                        "error upfront.",
+                        model, tag,
+                    )
                 continue
             raise classified from exc
 
