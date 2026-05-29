@@ -30,7 +30,7 @@ assert-eval results status travel-planner-langgraph-v1 demo-1
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Measure ACS policy on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_baseline_prompt.yaml` / `eval_config_guarded.yaml` | Bank-manager example with three variants: baseline (unguarded), prompt-hardened, and ACS-gated; measured across four behavior axes with a 10-dimension judge at n=100. |
+| Measure deterministic ACS guardrails on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Bank-manager A/B example: unguarded baseline vs. the same agent wrapped with minimal deterministic ACS gates across four failure-mode axes at n=30. |
 
 ## Layout
 

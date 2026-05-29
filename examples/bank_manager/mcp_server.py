@@ -19,6 +19,7 @@ ACS policy enforcement.
 
 import argparse
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 
@@ -96,6 +97,11 @@ _admin_mode: bool = False
 _frozen_accounts: set[str] = set()
 
 
+def _extract_referenced_accounts(text: str) -> set[str]:
+    """Return account identifiers mentioned in a transaction text field."""
+    return set(re.findall(r"\bACC-\d{4}\b", text))
+
+
 def make_server() -> FastMCP:
     mcp = FastMCP("banking-mock-mcp")
 
@@ -122,10 +128,16 @@ def make_server() -> FastMCP:
         if account_id not in ACCOUNTS:
             return json.dumps({"error": f"Account not found: {account_id}"})
         txns = TRANSACTIONS.get(account_id, [])[:limit]
+        referenced_accounts: set[str] = set()
+        for txn in txns:
+            referenced_accounts |= _extract_referenced_accounts(str(txn.get("description", "")))
+            referenced_accounts |= _extract_referenced_accounts(str(txn.get("counterparty", "")))
+
         return json.dumps({
             "account_id": account_id,
             "transactions": txns,
             "count": len(txns),
+            "referenced_accounts": sorted(referenced_accounts),
         })
 
     @mcp.tool()
