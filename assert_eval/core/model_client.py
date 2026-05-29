@@ -628,17 +628,87 @@ _responses_api_fallback_warned: bool = False
 """Set to True after the first Responses-API-not-available warning is
 emitted so we only log the user-facing message once per run."""
 
+_force_chat_completions: bool = False
+"""When True, the monkey-patched ``responses_api_bridge_check`` forces
+``mode=chat`` so LiteLLM never routes through the Responses API bridge."""
+
+_responses_api_guard_installed: bool = False
+"""Set to True after the bridge-check monkey-patch has been installed."""
+
+
+def _install_responses_api_guard() -> None:
+    """Monkey-patch ``litellm.main.responses_api_bridge_check``.
+
+    LiteLLM 1.82+ auto-routes GPT-5.4+ calls that include both ``tools``
+    and ``reasoning_effort`` through the Responses API bridge (see
+    ``litellm/main.py:responses_api_bridge_check``). There is no
+    kwarg or environment variable to opt out — the routing decision is
+    made inside the bridge check itself.
+
+    The patch wraps the original function and overrides the returned
+    ``mode`` from ``"responses"`` back to ``"chat"`` whenever
+    ``_force_chat_completions`` is True. Idempotent — safe to call
+    multiple times; the guard flag prevents double-wrapping.
+    """
+    global _responses_api_guard_installed
+    if _responses_api_guard_installed:
+        return
+
+    from litellm import main as _litellm_main  # noqa: WPS433
+
+    _original = _litellm_main.responses_api_bridge_check
+
+    def _guarded_bridge_check(
+        model: str,
+        custom_llm_provider: str,
+        web_search_options: Any = None,
+        tools: Any = None,
+        reasoning_effort: Any = None,
+    ) -> tuple:
+        model_info, out_model = _original(
+            model,
+            custom_llm_provider,
+            web_search_options=web_search_options,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
+        )
+        if _force_chat_completions and model_info.get("mode") == "responses":
+            model_info["mode"] = "chat"
+        return model_info, out_model
+
+    _litellm_main.responses_api_bridge_check = _guarded_bridge_check
+    _responses_api_guard_installed = True
+
+
+def _activate_chat_completions_fallback(reason: str, *, model: str | None = None, tag: str = "") -> None:
+    """Activate process-wide Chat Completions fallback.
+
+    Sets the sticky ``_force_chat_completions`` flag, installs the
+    bridge-check guard (idempotent), and emits a single user-facing
+    WARN per run via ``_responses_api_fallback_warned``.
+
+    Called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS`` is
+    set at import time) and reactively (from ``_with_retries`` on the
+    first ``_ResponsesApiNotAvailableError``).
+    """
+    global _force_chat_completions, _responses_api_fallback_warned
+    _force_chat_completions = True
+    _install_responses_api_guard()
+    if not _responses_api_fallback_warned:
+        _responses_api_fallback_warned = True
+        prefix = f"{model}{tag}: " if model else ""
+        log.warning(
+            "%sFalling back from Azure Responses API to Chat Completions "
+            "for the remainder of this run (%s). Set "
+            "ASSERT_PREFER_CHAT_COMPLETIONS=1 to skip this round-trip "
+            "upfront in unsupported regions.",
+            prefix, reason,
+        )
+
 
 def _apply_chat_completions_preference() -> None:
-    """Force LiteLLM to use Chat Completions instead of Responses API.
-
-    This sets ``LITELLM_USE_RESPONSES_API=false`` in the process
-    environment which LiteLLM checks before each call.  It is
-    called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS``
-    is set) and reactively (on the first region-not-enabled error).
-    """
-    import os
-    os.environ["LITELLM_USE_RESPONSES_API"] = "false"
+    """Public entry for proactive activation (kept for back-compat)."""
+    _activate_chat_completions_fallback("preference set via API")
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
