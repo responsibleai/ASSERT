@@ -91,7 +91,7 @@ const shieldResources = [
 	},
 	{
 		title: "Framework Support",
-		body: "Adapters for LangChain, AutoGen, Semantic Kernel, OpenAI Agents, CrewAI, Antropic, Node.js, and .NET.",
+		body: "Adapters for LangChain, AutoGen, Semantic Kernel, OpenAI Agents, CrewAI, Anthropic, Node.js, and .NET.",
 		href: `${BASE_PATH}/agent-shield/docs/getting-started/setup/`,
 	},
 	{

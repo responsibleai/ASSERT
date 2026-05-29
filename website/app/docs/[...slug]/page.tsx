@@ -10,8 +10,9 @@ export async function generateStaticParams(): Promise<Params[]> {
 	return getAllDocs().map((doc) => ({ slug: doc.slug }));
 }
 
-export async function generateMetadata({ params }: { params: Params }) {
-	const doc = getDocBySlug(params.slug);
+export async function generateMetadata({ params }: { params: Promise<Params> }) {
+	const { slug } = await params;
+	const doc = getDocBySlug(slug);
 	if (!doc) return { title: "Not found · ASSERT Docs" };
 	return {
 		title: `${doc.title} · ASSERT Docs`,
@@ -19,8 +20,9 @@ export async function generateMetadata({ params }: { params: Params }) {
 	};
 }
 
-export default function DocPage({ params }: { params: Params }) {
-	const doc = getDocBySlug(params.slug);
+export default async function DocPage({ params }: { params: Promise<Params> }) {
+	const { slug } = await params;
+	const doc = getDocBySlug(slug);
 	if (!doc) return null;
 	const groupLabel = getDocGroupLabel(doc);
 	const headings = getHeadings(doc.content);

@@ -13,7 +13,7 @@
     "github-slugger": "^2.0.0",
     "gray-matter": "^4.0.3",
     "highlight.js": "^11.11.1",
-    "next": "14.2.17",
+    "next": "15.5.18",
     "ogl": "^1.0.11",
     "react": "18.3.1",
     "react-dom": "18.3.1",
@@ -28,8 +28,12 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "eslint": "^8.57.1",
-    "eslint-config-next": "14.2.17",
+    "eslint-config-next": "15.5.18",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "brace-expansion": "^2.0.2"
   }
 }
