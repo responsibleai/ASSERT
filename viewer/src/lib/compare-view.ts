@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { getRecordFlag, getVerdictFlag, scoreSortValue } from '$lib/judgment.js';
 import type { JudgedSample } from '$lib/types.js';
 

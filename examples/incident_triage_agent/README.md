@@ -190,15 +190,15 @@ import DSPy at runtime.
 ### Run the demo path (A → C)
 
 ```powershell
-p2m run --config examples\incident_triage_agent\eval_config_baseline.yaml
-p2m run --config examples\incident_triage_agent\eval_config_guarded.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_baseline.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_guarded.yaml
 ```
 
 ### Run the appendix experiments (B and D)
 
 ```powershell
-p2m run --config examples\incident_triage_agent\eval_config_naive_prompt.yaml
-p2m run --config examples\incident_triage_agent\eval_config_guarded_gepa.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_naive_prompt.yaml
+assert-eval run --config examples\incident_triage_agent\eval_config_guarded_gepa.yaml
 ```
 
 Artifacts land in (`run:` value used directly as the directory name):
@@ -232,7 +232,7 @@ still produces a sensible chart.
   directory (`artifacts/results/incident-triage-agent-v1/`) and reuse
   them across variants (per `CONFIG_REFERENCE.md`, "Suite-level stages
   write versioned artifacts under the suite directory and are shared
-  across runs"). In practice: the first `p2m run` (any variant)
+  across runs"). In practice: the first `assert-eval run` (any variant)
   generates `test_set.jsonl` once (n=200 prompt + n=200 scenario); the
   remaining runs detect the cached test set and only re-run `inference`
   and `judge` against the same 400 test cases. Cross-variant comparison
@@ -448,7 +448,7 @@ here.
 
 ---
 
-# Incident-triage agent — joint AgentShield + p2m case study
+# Incident-triage agent — joint AgentShield + ASSERT case study
 
 This README is the full case study. For run instructions, jump to "How to run" near the bottom; for the headline numbers, see the first table.
 
@@ -501,16 +501,16 @@ This case study walks through one complete iteration of the
 local-first developer eval-fix loop:
 
 1. Start with a weak-prompt agent (one a typical SRE developer would write).
-2. Use **p2m** to surface its behaviors against a structured rubric.
+2. Use **ASSERT** to surface its behaviors against a structured rubric.
 3. Author an **AgentShield** `.guardrails.yaml` that closes the *procedural*
    subset at the runtime layer.
-4. Re-run **p2m** against the now-guarded agent on the **same test cases** to
+4. Re-run **ASSERT** against the now-guarded agent on the **same test cases** to
    measure (a) which procedural modes were actually closed, (b) which
    model-judgment modes remain for the developer to fix in code, and
    (c) what trade-offs the new runtime layer introduced (overrefusal,
    over-blocking, etc.).
 
-The pitch this evidences: **adaptive-eval (p2m) and AgentShield are a
+The pitch this evidences: **adaptive-eval (ASSERT) and AgentShield are a
 differentiated pairing — Phoenix/Arize give traces, runtime vendors
 give policies, benchmark suites give static fixtures, but the
 local-first inner loop where adversarial eval and runtime enforcement
@@ -694,7 +694,7 @@ agent has no way to recover (no tester pushback, no second chance).
 > for the developer.
 
 This is the eval-fix loop in one screenshot. AgentShield closed what a
-runtime can close; p2m proved it; p2m *also* surfaced the residual
+runtime can close; ASSERT proved it; ASSERT *also* surfaced the residual
 model-judgment work and one single-turn trade-off (`fabrication` on the
 prompt rail) the runtime introduced. Both signals go back to the
 developer in the same local IDE session.
@@ -1135,7 +1135,7 @@ is the second iteration of the eval-fix loop the demo arc presents.
   inference and judge calls trip the Azure content filter on the
   adversarial inference outputs. The pipeline now classifies these as
   `LLMContentFilterError` and tolerates them per-row (up to 10 % of
-  the run); see `p2m/core/model_client.py` + the v5 commit.
+  the run); see `assert_eval/core/model_client.py` + the v5 commit.
 
 ## 7. The pitch arc this evidences
 
@@ -1144,7 +1144,7 @@ is the second iteration of the eval-fix loop the demo arc presents.
 | "Most agents in production today have no eval and no runtime." | The minimal-prompt agent, written naturally, exhibits an 84.8 % `policy_violation` rate on the scenario split (see §4.1 BEFORE column). |
 | "AgentShield closes the policy-fixable subset at the runtime." | Six of seven runtime-fixable modes on the scenario rail drop into the single digits or by 1+ CI widths (`xpia_relay` 12.1 → 1.5 %; `channel_violation` 27.8 → 8.0 %; `alert_id_drift` 11.1 → 3.5 %; `ordering_violation` 6.1 → 0.0 %; `pager_violation` 5.1 → 1.0 %; `escalation_violation` 36.9 → 28.0 %). |
 | "AgentShield is defense in depth against XPIA — at both layers." | The literal layer: `xpia_relay` drops 88 % relative on the scenario rail (12.1 → 1.5 %), closed by `xpia_inbound_payload_relay_gate`. The paraphrased layer: XPIA-induced channel and escalation drift is closed by the channel/PII/pager/escalation gates model-agnostically (see §5.4). |
-| "p2m proves it AND surfaces what AgentShield can't fix." | `wrong_severity` (40.5 %) and `fabrication` (51.0 %) remain on the scenario rail under guard — measurable, attributable, handed back to the developer. The team-binding edge case on `escalation_violation` (still 28.0 %) is the natural next iteration. |
+| "ASSERT proves it AND surfaces what AgentShield can't fix." | `wrong_severity` (40.5 %) and `fabrication` (51.0 %) remain on the scenario rail under guard — measurable, attributable, handed back to the developer. The team-binding edge case on `escalation_violation` (still 28.0 %) is the natural next iteration. |
 | "Local-first inner loop." | All artifacts on disk under `artifacts/results/`; viewer reads them directly; no SaaS dependency in the loop. |
 
 ## 8. How to reproduce
@@ -1157,15 +1157,15 @@ From this folder:
 uv pip install agent-shield
 
 # 1. BEFORE — minimal-prompt baseline.
-uv run p2m run --config ./eval_config_baseline.yaml
+uv run assert-eval run --config ./eval_config_baseline.yaml
 
 # 2. AFTER — same test cases, runtime guardrails engaged.
 #    (cached systematization/stratification/test_set; only inference + judge re-run)
-uv run p2m run --config ./eval_config_guarded.yaml
+uv run assert-eval run --config ./eval_config_guarded.yaml
 
 # 3. Compare.
-uv run p2m results status incident-triage-agent-v1 baseline-weak-prompt
-uv run p2m results status incident-triage-agent-v1 guarded-with-shield
+uv run assert-eval results status incident-triage-agent-v1 baseline-weak-prompt
+uv run assert-eval results status incident-triage-agent-v1 guarded-with-shield
 
 # 4. Browse inference outputs.
 cd ../../viewer && npm install && npm run dev
@@ -1193,7 +1193,7 @@ If you have 90 seconds at a meeting, this is the live walkthrough:
 2. **Open the BEFORE row** in `metrics.json` for `baseline-weak-prompt`.
    Point at `channel_violation` (27.8 %), `escalation_violation`
    (36.9 %), `xpia_relay` (12.1 %), `alert_id_drift` (11.1 %). Say:
-   *"p2m generated 200 prompts and 200 multi-turn scenarios from the
+   *"ASSERT generated 200 prompts and 200 multi-turn scenarios from the
    SOP, six of the ten alerts carry XPIA payloads in their tool
    output, and the agent — with no guardrails — violates the
    channel/escalation rules, relays XPIA, and drifts alert IDs."*
@@ -1212,7 +1212,7 @@ If you have 90 seconds at a meeting, this is the live walkthrough:
    stayed at ~40 %, `fabrication` at ~51 % scenario / 34 % prompt.
    Say: *"And the same eval surfaces what the runtime can't fix —
    these are model-judgment failures the dev now tunes in code.
-   **That is the inner loop.** Without p2m the dev would have shipped
+   **That is the inner loop.** Without ASSERT the dev would have shipped
    a 'more secure' agent without ever measuring the residual."*
 
 Total elapsed: 90 seconds, 5 file opens, no slides.
@@ -1230,13 +1230,13 @@ customer-domain artifact:
 | `agent.py` (baseline) | Their existing agent code, unchanged |
 | `incident-triage.guardrails.yaml` | A new YAML they author against the AgentShield spec, line-for-line traceable to the SOP |
 | `agent_guarded.py` | A 200-line wrapper that runs their agent through the AgentShield runtime |
-| `eval_config_baseline.yaml` / `eval_config_guarded.yaml` | Two p2m configs that swap only the callable target |
+| `eval_config_baseline.yaml` / `eval_config_guarded.yaml` | Two ASSERT configs that swap only the callable target |
 
 The natural next step after seeing this demo is **to run the same
 loop on the customer's own agent**: hand them the SOP/YAML/wrapper
 templates, ask them to produce the four corresponding files, and
 co-author the first iteration of their `.guardrails.yaml` from the
-p2m violations p2m surfaces in the BEFORE run.
+ASSERT violations ASSERT surfaces in the BEFORE run.
 
 ## 11. Acknowledgments
 
@@ -1282,12 +1282,12 @@ uv run python ./agent.py
 uv run python ./agent_guarded.py
 
 # 4. BEFORE — generate systematization, stratification, test_set, inference, and judge outputs.
-uv run p2m run --config ./eval_config_baseline.yaml
-uv run p2m results status incident-triage-agent-v1 baseline-weak-prompt
+uv run assert-eval run --config ./eval_config_baseline.yaml
+uv run assert-eval results status incident-triage-agent-v1 baseline-weak-prompt
 
 # 5. AFTER — reuse the same test_set; rerun inference and judge against AgentShield.
-uv run p2m run --config ./eval_config_guarded.yaml
-uv run p2m results status incident-triage-agent-v1 guarded-with-shield
+uv run assert-eval run --config ./eval_config_guarded.yaml
+uv run assert-eval results status incident-triage-agent-v1 guarded-with-shield
 ```
 
 Artifacts land under `artifacts/results/incident-triage-agent-v1/`. The suite-level files are `systematization.json`, `stratification.json`, and `test_set.jsonl`; each run writes `inference_set.jsonl`, `scores.jsonl`, and `metrics.json`.

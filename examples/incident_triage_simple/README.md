@@ -1,6 +1,6 @@
-# Incident-triage agent (simplified) — joint AgentShield + p2m demo
+# Incident-triage agent (simplified) — joint AgentShield + ASSERT demo
 
-> **Joint pitch.** P2M lets developers stay lazy at authoring time (NL → comprehensive eval); Agent Shield lets enforcement be deterministic at runtime (structured-attribute gates first, LLM classifiers second); together they close the loop — p2m finds the failure space, Agent Shield closes the structurally-fixable subset, p2m re-measures the residual.
+> **Joint pitch.** ASSERT lets developers stay lazy at authoring time (NL → comprehensive eval); Agent Shield lets enforcement be deterministic at runtime (structured-attribute gates first, LLM classifiers second); together they close the loop — ASSERT finds the failure space, Agent Shield closes the structurally-fixable subset, ASSERT re-measures the residual.
 
 Three alerts, four tools, ~85-line `guardrails.yaml`. Same loop as the full case study (`../incident_triage_agent/`) but small enough to read in one sitting.
 
@@ -22,12 +22,12 @@ uv sync
 cp ./.env.example ./.env
 
 # BEFORE — bare agent
-uv run p2m run --config ./eval_config.yaml --run before
+uv run assert-eval run --config ./eval_config.yaml --run before
 
 # AFTER — switch target.callable in eval_config.yaml to
 # examples.incident_triage_simple.agent_guarded:chat, then rerun
 uv pip install agent-shield        # required for the AFTER run only
-uv run p2m run --config ./eval_config.yaml --run after
+uv run assert-eval run --config ./eval_config.yaml --run after
 ```
 
 To disable the aux classifier (e.g. offline/no-Azure): `INCIDENT_TRIAGE_AUX_DISABLED=1`.

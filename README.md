@@ -1,18 +1,14 @@
-<p align="center">
-  <img src="logo.jpg" alt="Adaptive Eval" width="60%">
-</p>
+# ASSERT
 
-# Adaptive Eval
+**ASSERT** (**A**daptive **S**pec-driven **S**coring for **E**valuation and **R**egression **T**esting) is a local-first, framework-agnostic, trace-aware evaluation harness for agents and multi-agent systems.
 
-**Spec-driven evaluation for any agent or multi-agent system - local-first, framework-agnostic, and trace-aware.**
+> **Customer preview.** ASSERT is a preview / POC distribution for design partners. The core workflow is stable: write an eval spec, generate targeted test cases, execute them against your agent, and judge the results against your rubric. Some YAML field names are still evolving; the docs bridge current names to the intended developer-facing terminology.
 
-> **Customer preview.** Adaptive Eval is a preview / POC distribution for design partners. The core workflow is stable: write an eval spec, generate targeted test cases, execute them against your agent, and judge the results against your rubric. Some YAML field names are still evolving; the docs bridge current names to the intended developer-facing terminology.
-
-## Why Adaptive Eval
+## Why ASSERT
 
 Most eval tools start with a fixed benchmark. Real agents fail in product-specific ways: they call the wrong tool, ignore a constraint, fabricate a price, skip a safety check, or agree with a risky plan.
 
-Adaptive Eval flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives behavior categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. The recommended integration captures the agent's OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can inspect tool calls, arguments, routing, latency, and intermediate decisions — not just the final response.
+ASSERT flips the workflow. **You write a short spec describing what your agent should and should not do.** The pipeline derives behavior categories, generates single-turn and multi-turn test cases, executes them against your target, and uses an LLM judge to score each conversation against your spec. **Any agent or multi-agent system** that runs in Python plugs in through `target.callable`. The recommended integration captures the agent's OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can inspect tool calls, arguments, routing, latency, and intermediate decisions — not just the final response.
 
 You get:
 
@@ -40,17 +36,17 @@ cp .env.example .env
 phoenix serve
 
 # Run the full pipeline: spec -> taxonomy -> test cases -> execution -> verdicts.
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 
 # Inspect the run.
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 Codespaces / VS Code Dev Containers:
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `p2m run` command above.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After the container finishes setup, add your provider credentials to `.env` and run the same `assert-eval run` command above.
 
 Windows PowerShell equivalent:
 
@@ -62,8 +58,8 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve
-p2m run --config examples/travel_planner_langgraph/eval_config.yaml
-p2m results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 What the quickstart does:
@@ -77,6 +73,22 @@ What the quickstart does:
 | 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 Start with the full walkthrough: [`docs/quickstart.md`](docs/quickstart.md).
+
+### Create your own config with `assert-eval init`
+
+Don't want to write YAML by hand? `assert-eval init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config.
+
+`assert-eval init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
+
+```bash
+assert-eval init --model azure/gpt-5.4
+# or skip the first question:
+assert-eval init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+# or edit/extend an existing config:
+assert-eval init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+```
+
+See [`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively) for the full option reference.
 
 ## How it works
 
@@ -148,16 +160,18 @@ Browse them with the CLI, the local viewer, or any JSONL tool. Nothing leaves yo
 - **Get started:** [`docs/quickstart.md`](docs/quickstart.md), [`docs/concepts.md`](docs/concepts.md)
 - **Targets:** [`docs/targets/`](docs/targets/) (overview), [`docs/targets/callable.md`](docs/targets/callable.md) (any agent), [`docs/targets/model-and-tools.md`](docs/targets/model-and-tools.md)
 - **Authoring:** [`docs/writing-eval-specs.md`](docs/writing-eval-specs.md), [`docs/reading-results.md`](docs/reading-results.md)
+- **Create a config:** `assert-eval init` — interactive config designer ([`docs/reference/cli.md`](docs/reference/cli.md#design-a-config-interactively))
 - **Reference:** [`docs/reference/cli.md`](docs/reference/cli.md), [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **AI assistants:** [`AGENTS.md`](AGENTS.md)
 - **Preview status:** [`docs/status-and-roadmap.md`](docs/status-and-roadmap.md)
 
 ## Status
 
-Adaptive Eval is a customer preview / POC, not a GA service.
+ASSERT is a customer preview / POC, not a GA service.
 
 Stable enough to try:
 
+- `assert-eval init` — conversational config designer
 - spec -> behavior categories -> test cases -> execute -> judge workflow
 - local artifact layout
 - `target.callable` with OTel trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) — the recommended integration path
@@ -177,9 +191,19 @@ Preview feedback is welcome: confusing names, missing target examples, trace gap
 - **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
 
+## Telemetry
+
+This project does not collect or send telemetry to Microsoft by default. Runs write local artifacts under `artifacts/results/`, and optional OpenTelemetry trace capture is controlled by your configuration and local collector setup, such as Phoenix.
+
+If you configure a target, judge, trace collector, or model provider to send data to an external service, the prompts, responses, traces, metadata, and other evaluation artifacts sent to that service are governed by that service's terms and your configuration.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is subject to those third party's policies.
+
 ## Important: Risks and limitations
 
-Adaptive Evaluation is designed to generate and run scenario-based evaluations for AI systems, including adversarial and edge-case tests. These scenarios are intended to help surface potential weaknesses, unsafe behaviors, and other undesirable outcomes. They do not guarantee that a system has failed, nor are they guarantees that a system is safe.
+ASSERT is designed to generate and run scenario-based evaluations for AI systems, including adversarial and edge-case tests. These scenarios are intended to help surface potential weaknesses, unsafe behaviors, and other undesirable outcomes. They do not guarantee that a system has failed, nor are they guarantees that a system is safe.
 
 Because generated scenarios can meaningfully affect system behavior, using this product without adequate sandboxing or environment controls can cause real-world side effects. Depending on the target system, evaluations may trigger unwanted actions such as data modification or deletion, information disclosure, code or configuration changes, external messages, or other operational impacts.
 
@@ -192,7 +216,7 @@ You are responsible for ensuring that evaluations run only in environments that 
 
 You should review generated adversarial or stress-test prompts before use and confirm that your environment can safely handle them. Some generated scenarios may involve jailbreak-style behavior, prompt injection, tool misuse, over-broad requests, or other forms of adversarial interaction.
 
-Adaptive Evaluation is not a compliance or certification tool. You and your users remain responsible for ensuring that evaluated systems comply with applicable laws, regulations, contractual obligations, internal policies, and industry standards.
+ASSERT is not a compliance or certification tool. You and your users remain responsible for ensuring that evaluated systems comply with applicable laws, regulations, contractual obligations, internal policies, and industry standards.
 
 Use of this system may also result in meaningful compute and inference costs. You should monitor usage, model calls, tool execution, and resource consumption during evaluations.
 

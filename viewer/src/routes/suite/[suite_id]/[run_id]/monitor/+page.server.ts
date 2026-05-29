@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types.js';

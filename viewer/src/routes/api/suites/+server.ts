@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { json } from '@sveltejs/kit';
 import { listSuites } from '$lib/server/data.js';
 import type { RequestHandler } from './$types.js';

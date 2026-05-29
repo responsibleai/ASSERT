@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Multi-agent travel planner built with LangGraph.
 
 Multi-node graph with conditional routing, tool calling, and shared state.
@@ -6,7 +9,7 @@ Architecture:
                                    → safety_advisor → itinerary_optimizer
 
 Usage:
-    uv run p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+    uv run assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_DEPLOYMENT = os.environ.get("P2M_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
 
 
 def _get_llm(temperature: float = 0) -> AzureChatOpenAI:
@@ -209,7 +212,7 @@ async def chat(message: str) -> str:
 
 
 def chat_sync(message: str) -> str:
-    """Synchronous wrapper for p2m callable integration."""
+    """Synchronous wrapper for ASSERT callable integration."""
     return asyncio.run(chat(message))
 
 

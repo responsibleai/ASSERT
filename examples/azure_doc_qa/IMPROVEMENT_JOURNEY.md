@@ -1,6 +1,6 @@
 # Improving an Agent with Eval-Driven Development
 
-This document walks through how we used **p2m** (Adaptive Eval) to iteratively
+This document walks through how we used **ASSERT** (Adaptive Eval) to iteratively
 improve a multi-agent RAG system from a **~20% pass rate to 82%** over 7 rounds
 of targeted fixes. It demonstrates the **eval → diagnose → fix → re-eval** loop
 that makes agent development systematic rather than guesswork.
@@ -31,7 +31,7 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 The initial run showed a **~80% policy_violation rate** — nearly every test case
@@ -83,7 +83,7 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 Result: **34/56 passing (61%)**, up from ~20%. The routing JSON leak was
@@ -152,7 +152,7 @@ The dimension breakdown made the patterns quantifiable:
 
 | Commit | Fix | What changed |
 |--------|-----|-------------|
-| `29e0861` | Conversation memory | Accept p2m's `history` parameter, convert to LangChain messages |
+| `29e0861` | Conversation memory | Accept ASSERT's `history` parameter, convert to LangChain messages |
 | `8e00b6e` | Relax internal docs prompt | Distinguish "CONFIDENTIAL" docs from general internal content |
 | `68edee0` | Triage prefers specialists | Narrow escalation criteria; route uncertain queries to specialists |
 | `ad3001d` | Specialists get escalation tool | Add `escalate_to_human` to specialist tool lists as last resort |
@@ -183,7 +183,7 @@ narrows the search space dramatically.
 ### 4. Multi-turn eval requires conversation memory
 
 If your agent will be used in multi-turn conversations, your eval must test
-multi-turn scenarios — and your agent must actually maintain context. p2m
+multi-turn scenarios — and your agent must actually maintain context. ASSERT
 passes conversation history via the `history` parameter to your callable,
 but your agent needs to use it.
 
@@ -422,7 +422,7 @@ pip install -e ".[otel,langgraph]"
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
 # Run eval
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 
 # Check results
 cat artifacts/results/azure-doc-qa-v1/demo-1/metrics.json
@@ -447,7 +447,7 @@ b8dc13d fix: stop leaking triage routing JSON into graph messages
 6c32118 fix: use un-bound LLM for synthesis followup calls
 49f40e2 fix: filter routing JSON artifacts in chat() response
   ── Re-evaluation: 34/56 pass (61%) ──
-29e0861 fix: add conversation memory via p2m history parameter
+29e0861 fix: add conversation memory via ASSERT history parameter
 8e00b6e fix: relax internal docs prompt to share non-confidential content
 68edee0 fix: make triage prefer specialists over premature escalation
 ad3001d fix: give specialist nodes escalation tool as last resort

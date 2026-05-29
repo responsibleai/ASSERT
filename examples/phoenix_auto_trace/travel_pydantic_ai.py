@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — PydanticAI (agent framework with typed tools).
 
 Instrumentation: 2 lines. Agent code: standard PydanticAI.
@@ -19,7 +22,7 @@ from pydantic_ai import Agent  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-5.4-mini")
 
 
 def _get_model():

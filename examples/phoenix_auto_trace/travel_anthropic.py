@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Anthropic Claude (native tool use).
 
 Instrumentation: 2 lines. Agent code: standard Anthropic SDK.

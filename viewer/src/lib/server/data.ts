@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { ARTIFACTS_ROOT } from './config.js';
 import { loadDimensions } from './dimensions.js';
 import {
@@ -6,6 +9,8 @@ import {
 	ViewerReadModelError,
 	loadIndexedRunScoreRow,
 	loadIndexedRunTranscriptRow,
+	loadRunJudgeTaxonomyForRun,
+	loadRunJudgeTaxonomyFromArtifacts,
 	loadRunRuntimeMode,
 	loadRunScoreRow,
 	loadRunTranscriptRow,
@@ -29,7 +34,7 @@ import {
 	emptyScoreCounts
 } from './metrics.js';
 import { getRecordFlag } from '$lib/judgment.js';
-import { normalizePromptResult, normalizeScenarioResult } from '$lib/result-view.js';
+import { normalizePromptResult, normalizeScenarioResult, scenarioStopReasonDisplay } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
 	AuditRunMetrics,
@@ -49,6 +54,7 @@ import type {
 	RunMetrics,
 	ScenarioSeed,
 	ScenarioSeedInfo,
+	StopReasonDisplay,
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
@@ -64,6 +70,8 @@ interface PromptMetricView {
 	counts: BinaryCounts;
 	policyViolationRate: number;
 	overrefusalRate: number;
+	policyViolationOnPermissible: DimensionMetrics | null;
+	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
 	judge_model: string;
@@ -77,6 +85,8 @@ interface AuditMetricView {
 	counts: BinaryCounts;
 	policyViolationRate: number;
 	overrefusalRate: number;
+	policyViolationOnPermissible: DimensionMetrics | null;
+	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
 	tester_model: string;
@@ -88,6 +98,7 @@ interface InferencePreviewRow {
 	behavior: string;
 	turns_count: number;
 	stop_reason: string;
+	stop_reason_display: StopReasonDisplay | null;
 }
 
 interface CompareDimensionSummary {
@@ -179,6 +190,15 @@ function normalizeBehavior(b: Behavior): Behavior {
 	return { ...b, permissible: b.permissible ?? false };
 }
 
+function metricBehaviors(
+	snapshot: SuiteSnapshot | null,
+	runConfig?: Record<string, unknown> | null,
+	artifacts?: Record<string, unknown> | null
+): Behavior[] {
+	const judgeTaxonomy = loadRunJudgeTaxonomyFromArtifacts(runConfig ?? null, artifacts ?? null);
+	return (judgeTaxonomy?.behavior_categories ?? snapshot?.taxonomy?.behavior_categories ?? []).map(normalizeBehavior);
+}
+
 function normalizePolicy(taxonomy: Taxonomy | null | undefined): Taxonomy | null {
 	if (!taxonomy) return null;
 	const behavior = taxonomy.behavior ?? taxonomy.risk;
@@ -208,7 +228,16 @@ function normalizeJudgedSample(sample: JudgedSample): JudgedSample {
 }
 
 function normalizeAuditScore(score: AuditScore): AuditScore {
-	return score;
+	if (score.metadata?.stop_reason_display != null) return score;
+	const stopReason = typeof score.metadata?.stop_reason === 'string' ? score.metadata.stop_reason : '';
+	return {
+		...score,
+		metadata: {
+			...score.metadata,
+			stop_reason_display:
+				score.metadata?.stop_reason_display ?? scenarioStopReasonDisplay(stopReason)
+		}
+	};
 }
 
 function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript {
@@ -522,7 +551,8 @@ function buildAuditScoreRow(
 		dimensions,
 		metadata: {
 			turns_count: turnsCount,
-			stop_reason: stopReason
+			stop_reason: stopReason,
+			stop_reason_display: scenarioStopReasonDisplay(stopReason)
 		}
 	});
 }
@@ -582,7 +612,10 @@ function buildInferencePreviewRowsFromSnapshot(snapshot: RunSnapshot): Inference
 				test_case_id: seedId,
 				behavior: readRowBehavior(row),
 				turns_count: countConversationMessages(messages),
-				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
+				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : '',
+				stop_reason_display: scenarioStopReasonDisplay(
+					typeof row.stop_reason === 'string' ? row.stop_reason : ''
+				)
 			}];
 			});
 }
@@ -615,7 +648,8 @@ function buildScenarioDrawerItem(
 				dimensions: readFactors(transcriptRow.dimensions) ?? seedInfo?.dimensions,
 				metadata: {
 					turns_count: turnsCount,
-					stop_reason: stopReason
+					stop_reason: stopReason,
+					stop_reason_display: scenarioStopReasonDisplay(stopReason)
 				}
 			};
 
@@ -625,6 +659,33 @@ function buildScenarioDrawerItem(
 		readLlmCalls(transcriptRow.llm_calls),
 		seedInfo
 	);
+}
+
+function runRecencyTimestamp(item: { manifest: Manifest | null }): number {
+	// Sort key for newest-first run lists. Prefer the manifest start time so
+	// completed and in-flight runs are ordered the same way; fall back to
+	// ended_at, then heartbeat_at for runs that crashed before any timestamp
+	// was recorded. Runs with no parseable timestamp sort to the bottom and
+	// then break ties on run_id below.
+	const manifest = item.manifest;
+	if (!manifest) return Number.NEGATIVE_INFINITY;
+	const candidates = [manifest.started_at, manifest.ended_at, manifest.heartbeat_at];
+	for (const value of candidates) {
+		if (!value) continue;
+		const ts = Date.parse(value);
+		if (!Number.isNaN(ts)) return ts;
+	}
+	return Number.NEGATIVE_INFINITY;
+}
+
+function sortRunsNewestFirst<T extends { run_id: string; manifest: Manifest | null }>(
+	items: T[]
+): T[] {
+	return [...items].sort((a, b) => {
+		const diff = runRecencyTimestamp(b) - runRecencyTimestamp(a);
+		if (diff !== 0) return diff;
+		return b.run_id.localeCompare(a.run_id);
+	});
 }
 
 function buildRunListEntries(snapshot: SuiteSnapshot): {
@@ -649,6 +710,7 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 		const hasPromptScores = promptScores.length > 0;
 		const hasAuditScores = auditScores.length > 0;
 		const hasScoreStage = manifest?.stages?.judge != null;
+		const behaviors = metricBehaviors(snapshot, runSnapshot.config, manifest?.artifact_versions ?? null);
 
 		if ((hasPromptScores || hasScoreStage) && !(manifest?.status === 'failed' && !hasPromptScores)) {
 			runs.push({
@@ -656,7 +718,7 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 				has_judged: hasPromptScores,
 				has_scenario_scores: hasAuditScores,
 				manifest,
-				metrics: hasPromptScores ? computeRunMetrics(promptScores) : null
+				metrics: hasPromptScores ? computeRunMetrics(promptScores, behaviors) : null
 			});
 		}
 
@@ -665,12 +727,12 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 				run_id: runId,
 				has_scores: hasAuditScores,
 				manifest,
-				metrics: hasAuditScores ? computeAuditRunMetrics(auditScores) : null
+				metrics: hasAuditScores ? computeAuditRunMetrics(auditScores, behaviors) : null
 			});
 		}
 	}
 
-	return { runs, auditRuns };
+	return { runs: sortRunsNewestFirst(runs), auditRuns: sortRunsNewestFirst(auditRuns) };
 }
 
 function buildZeroPromptMetrics(): PromptMetricView {
@@ -682,6 +744,8 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		counts: emptyScoreCounts(),
 		policyViolationRate: 0,
 		overrefusalRate: 0,
+		policyViolationOnPermissible: null,
+		policyViolationOnNotPermissible: null,
 		dimensions: {},
 		target: '',
 		judge_model: ''
@@ -697,6 +761,8 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		counts: emptyScoreCounts(),
 		policyViolationRate: 0,
 		overrefusalRate: 0,
+		policyViolationOnPermissible: null,
+		policyViolationOnNotPermissible: null,
 		dimensions: {},
 		target: '',
 		tester_model: '',
@@ -714,6 +780,8 @@ function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
 		counts: metrics.counts,
 		policyViolationRate: metrics.policy_violation_rate,
 		overrefusalRate: metrics.overrefusal_rate,
+		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
+		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
 		target: metrics.target,
 		judge_model: metrics.judge_model
@@ -730,6 +798,8 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		counts: metrics.counts,
 		policyViolationRate: metrics.policy_violation_rate,
 		overrefusalRate: metrics.overrefusal_rate,
+		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
+		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
 		target: metrics.target,
 		tester_model: metrics.tester_model,
@@ -948,14 +1018,16 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		if (hasData) hasResults = true;
 	}
 
-	let status: SuiteStatus = 'systematized';
+	const categoryCount = snapshot.taxonomy?.behavior_categories?.length ?? 0;
+	let status: SuiteStatus = 'empty';
 	if (hasResults) status = 'has_results';
 	else if (itemCounts.prompt > 0 || itemCounts.scenario > 0) status = 'test_set_ready';
+	else if (categoryCount > 0) status = 'systematized';
 
 	return {
 		suite_id: suiteId,
 		behavior_name: normalizePolicy(snapshot.taxonomy)?.behavior?.name || suiteId,
-		behavior_category_count: snapshot.taxonomy?.behavior_categories?.length ?? 0,
+		behavior_category_count: categoryCount,
 		prompt_test_case_count: itemCounts.prompt,
 		scenario_test_case_count: itemCounts.scenario,
 		run_count: evalRunCount,
@@ -1059,8 +1131,7 @@ async function loadSuiteHeavyData(
 	const runs: RunListItem[] = [];
 	const auditRuns: AuditRunListItem[] = [];
 	const evalCountsByBehavior: Record<string, number> = {};
-	let primaryEvalRunId: string | null = null;
-	let primaryRunSnapshot: RunSnapshot | null = null;
+	const candidateSnapshots = new Map<string, RunSnapshot>();
 
 	for (const runId of snapshot.runIds) {
 		const runSnapshot = loadRunSnapshot(suiteId, runId, snapshot.seedRows, {
@@ -1080,6 +1151,7 @@ async function loadSuiteHeavyData(
 		const hasPromptScores = promptScores.length > 0;
 		const hasAuditScores = auditScores.length > 0;
 		const hasScoreStage = manifest?.stages?.judge != null;
+		const behaviors = metricBehaviors(snapshot, runSnapshot.config, manifest?.artifact_versions ?? null);
 
 		const addedToRuns =
 			(hasPromptScores || hasScoreStage) &&
@@ -1094,7 +1166,7 @@ async function loadSuiteHeavyData(
 				has_judged: hasPromptScores,
 				has_scenario_scores: hasAuditScores,
 				manifest,
-				metrics: hasPromptScores ? computeRunMetrics(promptScores) : null
+				metrics: hasPromptScores ? computeRunMetrics(promptScores, behaviors) : null
 			});
 		}
 		if (addedToAuditRuns) {
@@ -1102,7 +1174,7 @@ async function loadSuiteHeavyData(
 				run_id: runId,
 				has_scores: hasAuditScores,
 				manifest,
-				metrics: hasAuditScores ? computeAuditRunMetrics(auditScores) : null
+				metrics: hasAuditScores ? computeAuditRunMetrics(auditScores, behaviors) : null
 			});
 		}
 
@@ -1114,11 +1186,19 @@ async function loadSuiteHeavyData(
 			}
 		}
 
-		if (primaryEvalRunId === null && (addedToRuns || addedToAuditRuns)) {
-			primaryEvalRunId = runId;
-			primaryRunSnapshot = runSnapshot;
+		if (addedToRuns || addedToAuditRuns) {
+			candidateSnapshots.set(runId, runSnapshot);
 		}
 	}
+
+	const sortedRuns = sortRunsNewestFirst(runs);
+	const sortedAuditRuns = sortRunsNewestFirst(auditRuns);
+
+	// Primary run drives the "samples from a recent evaluation" panels on the
+	// suite page; pick the newest run so users see their latest results, not
+	// whichever run-id happens to sort first alphabetically.
+	const primaryRunId = sortedRuns[0]?.run_id ?? sortedAuditRuns[0]?.run_id ?? null;
+	const primaryRunSnapshot = primaryRunId ? candidateSnapshots.get(primaryRunId) ?? null : null;
 
 	const primaryRunPromptsByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
 		? groupSamplesByBehavior(buildJudgedPromptsFromSnapshot(primaryRunSnapshot))
@@ -1128,10 +1208,10 @@ async function loadSuiteHeavyData(
 		: {};
 
 	return {
-		runs,
-		auditRuns,
+		runs: sortedRuns,
+		auditRuns: sortedAuditRuns,
 		evalCountsByBehavior,
-		primaryEvalRunId,
+		primaryEvalRunId: primaryRunId,
 		primaryRunPromptsByBehavior,
 		primaryRunScenariosByBehavior
 	};
@@ -1204,8 +1284,10 @@ function loadCompletedRunPageData(
 	const samples = resolvedTab === 'prompts' ? promptRows : [];
 	const auditScores = resolvedTab === 'audit' ? auditRows : [];
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
-	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples) : null;
-	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores) : null;
+	const judgeTaxonomy = loadRunJudgeTaxonomyForRun(suiteId, runId);
+	const behaviors = (judgeTaxonomy?.behavior_categories ?? suiteSnapshot?.taxonomy?.behavior_categories ?? []).map(normalizeBehavior);
+	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
+	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
 
 	return {
 		suite_id: suiteId,
@@ -1270,8 +1352,9 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
 	const promptSeedTitleMap = buildPromptSeedTitleMap(suiteSnapshot);
-	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples) : null;
-	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores) : null;
+	const behaviors = metricBehaviors(suiteSnapshot, runSnapshot.config, runSnapshot.manifest?.artifact_versions ?? null);
+	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
+	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
 	const scenarioSeedMap = resolvedTab === 'audit' ? buildScenarioSeedMap(scenarioSeeds, auditScores) : {};
 
 	return {

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from __future__ import annotations
 
 import json
@@ -384,7 +387,7 @@ def _chat_with_system_prompt(message: str, system_prompt: str) -> str:
 
 
 def chat(message: str) -> str:
-    """Run one isolated incident-triage turn for p2m callable targets."""
+    """Run one isolated incident-triage turn for ASSERT callable targets."""
     return _chat_with_system_prompt(message, SYSTEM_PROMPT)
 
 

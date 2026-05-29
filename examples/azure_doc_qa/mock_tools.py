@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Mock tool implementations for offline / CI use.
 
 Provides mock versions of all tools used by the azure_doc_qa agents:
@@ -33,7 +36,7 @@ def search_internal_docs(query: str, top_k: int = 3) -> str:
     """
     results = []
     for doc_file in sorted(INTERNAL_DOCS_DIR.glob("*.md")):
-        content = doc_file.read_text()
+        content = doc_file.read_text(encoding="utf-8")
         if any(word.lower() in content.lower() for word in query.split()):
             results.append(
                 {
@@ -59,7 +62,7 @@ def get_internal_document(doc_id: str) -> str:
     doc_path = INTERNAL_DOCS_DIR / f"{doc_id}.md"
     if not doc_path.exists():
         return json.dumps({"error": f"Document {doc_id} not found"})
-    content = doc_path.read_text()
+    content = doc_path.read_text(encoding="utf-8")
     return json.dumps(
         {
             "doc_id": doc_id,
@@ -115,7 +118,7 @@ def knowledge_base_retrieve(query: str, top_k: int = 3) -> str:
     """
     results = []
     for doc_file in sorted(EXTERNAL_DOCS_DIR.glob("*.md")):
-        content = doc_file.read_text()
+        content = doc_file.read_text(encoding="utf-8")
         if any(word.lower() in content.lower() for word in query.split()):
             results.append(
                 {
@@ -142,7 +145,7 @@ def microsoft_docs_search(query: str, top_k: int = 5) -> str:
     """
     results = []
     for doc_file in sorted(EXTERNAL_DOCS_DIR.glob("*.md")):
-        content = doc_file.read_text()
+        content = doc_file.read_text(encoding="utf-8")
         if any(word.lower() in content.lower() for word in query.split()):
             url = f"https://learn.microsoft.com/azure/ai-studio/{doc_file.stem}"
             results.append(
@@ -176,7 +179,7 @@ def microsoft_docs_fetch(url: str) -> str:
                 break
     if not doc_path.exists():
         return json.dumps({"error": f"Page not found: {url}"})
-    return doc_path.read_text()
+    return doc_path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

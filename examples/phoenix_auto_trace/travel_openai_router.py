@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — model-router (SWC endpoint, multi-model ensemble)."""
 from phoenix.otel import register
 register(auto_instrument=True)

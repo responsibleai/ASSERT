@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LlamaIndex (ReAct agent).
 
 Instrumentation: 2 lines. Agent code: standard LlamaIndex.
@@ -30,7 +33,7 @@ from llama_index.llms.openai import OpenAI
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-5.4-mini")
 
 Settings.llm = OpenAI(
     model=_MODEL,

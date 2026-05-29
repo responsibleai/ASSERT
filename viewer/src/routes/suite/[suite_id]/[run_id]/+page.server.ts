@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { loadRunPageData } from '$lib/server/data.js';
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
 import { error } from '@sveltejs/kit';

@@ -129,7 +129,7 @@ Return types and what the judge sees:
 | Return type | Judge sees |
 |---|---|
 | `str`, or `dict` with `text` / `content` | final response text only |
-| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`p2m.core.model_client.ModelResponse`](../../p2m/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `p2m.core.model_client.ModelResponse` internally) |
+| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`assert_eval.core.model_client.ModelResponse`](../../assert_eval/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `assert_eval.core.model_client.ModelResponse` internally) |
 
 #### HTTP endpoint (`target.endpoint`)
 

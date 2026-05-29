@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import {
 		getJudgeError,
@@ -11,6 +14,11 @@
 	} from '$lib/citation-resolution';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
 	import { formatFactorLabel } from '$lib/grouping.js';
+	import {
+		stopReasonChipClass,
+		stopReasonLabel,
+		stopReasonTitle
+	} from '$lib/result-view.js';
 	import type {
 		AuditCitation,
 		AuditCitationPart,
@@ -276,7 +284,7 @@
 		for (let index = 0; index < references.length; index += 1) {
 			const ref = references[index];
 			withTokens += text.slice(cursor, ref.startPos);
-			const token = `@@P2M_CIT_REF_${index}@@`;
+			const token = `@@ASSERT_CIT_REF_${index}@@`;
 			replacementEntries.push([token, getCitationButtonHtml(ref.indices, ref.originalText)]);
 			withTokens += token;
 			cursor = ref.endPos;
@@ -752,63 +760,47 @@
 <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity" onclick={onClose}></div>
 
 <div class="fixed inset-4 z-50 mx-auto flex max-w-7xl flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
-	<div class="flex items-center gap-3 border-b border-border px-6 py-3 flex-shrink-0">
-		<button
-			aria-label="Close details"
-			class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text"
-			onclick={onClose}
-		>
-			<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
-		</button>
-		<div class="flex items-center gap-0.5">
-			<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx <= 0} onclick={onPrev} title="Previous (←)">
-				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7"/></svg>
+	<div class="flex flex-col gap-2 border-b border-border px-6 py-3 flex-shrink-0">
+		<div class="flex items-center gap-3">
+			<button
+				aria-label="Close details"
+				class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text"
+				onclick={onClose}
+			>
+				<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
 			</button>
-			<span class="min-w-[3rem] text-center text-[10px] tabular-nums text-text-muted">{navIdx + 1} / {navTotal}</span>
-			<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx >= navTotal - 1} onclick={onNext} title="Next (→)">
-				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-			</button>
-		</div>
-		<div class="flex-1 min-w-0">
-			<h2 class="truncate text-sm font-medium text-text" title={item.header_title}>{item.header_title}</h2>
-			<div class="mt-0.5 flex flex-wrap items-center gap-2">
-				{#if item.kind === 'scenario'}
-					<span class="text-xs text-text-muted">{conversationTurnCount(item.messages)} turns</span>
-					<span class="text-xs text-text-muted">·</span>
-				{/if}
-				{#if item.kind === 'scenario' && item.context.stop_reason}
-					<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{item.context.stop_reason}</span>
-					<span class="text-xs text-text-muted">·</span>
-				{/if}
-
-				{#if judgeStatus(item) === 'judge_failed'}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">judge failed</span>
-				{:else if judgeStatus(item) === 'unjudged'}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
-				{/if}
-				{#if item.dimensions}
-					<span class="flex flex-wrap items-center gap-1.5">
-						{#each Object.entries(item.dimensions) as [name, value]}
-							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
-								{formatFactorLabel(name)}: {value}
-							</span>
-						{/each}
-					</span>
-				{/if}
+			<div class="flex shrink-0 items-center gap-0.5">
+				<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx <= 0} onclick={onPrev} title="Previous (←)">
+					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7"/></svg>
+				</button>
+				<span class="min-w-[3rem] text-center text-[10px] tabular-nums text-text-muted">{navIdx + 1} / {navTotal}</span>
+				<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx >= navTotal - 1} onclick={onNext} title="Next (→)">
+					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+				</button>
 			</div>
-		</div>
-		<div class="flex items-center gap-1.5">
-			{#each metricNames as m}
-				{@const v = getRecordFlag(item, m)}
-				{#if v !== null}
-					<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-2 py-1 text-xs">
-						<span class="text-text-muted">{metricLabel(m)}</span>
-						<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
-					</span>
-				{/if}
-			{/each}
+			<div class="flex-1 min-w-0">
+				<h2 class="truncate text-sm font-medium text-text" title={item.header_title}>{item.header_title}</h2>
+				<div class="mt-0.5 flex flex-wrap items-center gap-2">
+					{#if item.kind === 'scenario'}
+						<span class="text-xs text-text-muted">{conversationTurnCount(item.messages)} turns</span>
+						<span class="text-xs text-text-muted">·</span>
+					{/if}
+					{#if item.kind === 'scenario' && item.context.stop_reason}
+						<span class={stopReasonChipClass(item.context.stop_reason_display)} title={stopReasonTitle(item.context.stop_reason, item.context.stop_reason_display)}>
+							{stopReasonLabel(item.context.stop_reason, item.context.stop_reason_display)}
+						</span>
+						<span class="text-xs text-text-muted">·</span>
+					{/if}
+
+					{#if judgeStatus(item) === 'judge_failed'}
+						<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">judge failed</span>
+					{:else if judgeStatus(item) === 'unjudged'}
+						<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
+					{/if}
+				</div>
+			</div>
 			{#if item.multi_judge}
-				<div class="flex items-center gap-0.5 ml-1">
+				<div class="flex shrink-0 items-center gap-0.5">
 					{#each item.multi_judge.votes?.[primaryMetric] ?? [] as vote}
 						{@const agreed = vote === getRecordFlag(item, primaryMetric)}
 						<span class="inline-block size-[7px] rounded-full" style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}></span>
@@ -816,6 +808,28 @@
 				</div>
 			{/if}
 		</div>
+		{#if metricNames.some((m) => getRecordFlag(item, m) !== null)}
+			<div class="flex flex-wrap items-center gap-1.5">
+				{#each metricNames as m}
+					{@const v = getRecordFlag(item, m)}
+					{#if v !== null}
+						<span class="inline-flex items-center gap-1 whitespace-nowrap rounded bg-surface-2 px-2 py-1 text-xs">
+							<span class="text-text-muted">{metricLabel(m)}</span>
+							<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
+						</span>
+					{/if}
+				{/each}
+			</div>
+		{/if}
+		{#if item.dimensions && Object.keys(item.dimensions).length > 0}
+			<div class="flex flex-wrap items-center gap-1.5">
+				{#each Object.entries(item.dimensions) as [name, value]}
+					<span class="inline-flex items-center whitespace-nowrap rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
+						{formatFactorLabel(name)}: {value}
+					</span>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<div class="flex flex-1 min-h-0">
@@ -1067,6 +1081,32 @@
 							{segment.agent}
 						</button>
 					{/each}
+				</div>
+			{/if}
+			{#if item.kind === 'scenario' && item.context.stop_reason_display}
+				{@const display = item.context.stop_reason_display}
+				{@const calloutBoxClass =
+					display.tone === 'error'
+						? 'mb-4 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3'
+						: display.tone === 'info'
+						? 'mb-4 rounded-lg border border-border bg-surface-2/40 px-4 py-3'
+						: 'mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3'}
+				{@const calloutLabelClass =
+					display.tone === 'error'
+						? 'text-xs font-semibold uppercase tracking-wide text-rose-400'
+						: display.tone === 'info'
+						? 'text-xs font-semibold uppercase tracking-wide text-text-secondary'
+						: 'text-xs font-semibold uppercase tracking-wide text-amber-400'}
+				<div class={calloutBoxClass}>
+					<div class={calloutLabelClass}>
+						{display.label}
+					</div>
+					<p class="mt-1 text-sm text-text-secondary">{display.description}</p>
+					{#if item.context.stop_reason}
+						<p class="mt-2 text-[11px] text-text-muted">
+							Stop reason: <code class="rounded bg-black/20 px-1 py-0.5">{item.context.stop_reason}</code>
+						</p>
+					{/if}
 				</div>
 			{/if}
 			<div class="space-y-3">
@@ -1344,7 +1384,9 @@
 					{/if}
 				{/each}
 				{#if item.messages.length === 0}
-					<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{#if !(item.kind === 'scenario' && item.context.stop_reason_display)}
+						<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{/if}
 				{/if}
 			</div>
 		</div>

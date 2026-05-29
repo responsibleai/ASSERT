@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import type { DimensionDef, JudgeStatus } from './types.js';
 
 type VerdictLike = Record<string, unknown> | null | undefined;
@@ -64,6 +67,9 @@ export function inferJudgeStatus(
 	record: JudgmentRecordLike,
 	requiredBaseMetrics: string[]
 ): JudgeStatus {
+	if (record.judge_status === 'scoring_skipped') {
+		return 'scoring_skipped';
+	}
 	if (record.judge_status != null) {
 		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredBaseMetrics)
 			? 'ok'
