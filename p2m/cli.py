@@ -544,7 +544,7 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     help=(
         "Override inference/judge fan-out for this run. Wins over "
         "pipeline.inference.concurrency in the YAML. Defaults to the value in "
-        "the config (or 25 if unset)."
+        "the config (or 10 if unset)."
     ),
     show_envvar=True,
 )
