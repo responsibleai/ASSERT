@@ -429,7 +429,7 @@ h3 {
   pointer-events: none;
 }
 
-/* Stronger, faster shine on the P2M image — sits OUTSIDE the image edges */
+/* Stronger, faster shine on the policy image — sits OUTSIDE the image edges */
 .shine-card.media-policy {
   border-radius: 14px;
   overflow: visible;
