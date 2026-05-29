@@ -609,9 +609,18 @@ class LLMProviderError(Exception):
     """Provider-side error (5xx) — may be retryable."""
 
 
-class _ResponsesApiNotAvailableError(Exception):
+class _ResponsesApiNotAvailableError(LLMProviderError):
     """Region does not support Azure Responses API — triggers automatic
-    fallback to Chat Completions for the remainder of the run."""
+    fallback to Chat Completions for the remainder of the run.
+
+    Inherits from :class:`LLMProviderError` so that callers up the stack
+    that catch ``LLMProviderError`` (notably ``stages/inference.py`` and
+    ``init/_design_agent.py``) still treat this as a real failure when
+    the in-loop fallback exhausts its retry and re-raises. Without this
+    inheritance the exception falls through generic ``except Exception``
+    catch-alls and silently produces empty content, which a judge then
+    happily scores ✓.
+    """
 
 
 # ── Responses API → Chat Completions fallback state ────────────
