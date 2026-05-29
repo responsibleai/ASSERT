@@ -1,6 +1,6 @@
-# Incident Triage Agent — First ASSERT Evaluation
+# Incident Triage — ASSERT Evaluation
 
-This example demonstrates a first ASSERT eval for a single incident-triage agent that reads an alert, chooses the right action path, and exposes tool traces for judging.
+This example demonstrates a compact ASSERT eval for a single incident-triage agent that reads an alert, chooses the right action path, and exposes tool traces for judging.
 
 ## This example demonstrates
 
@@ -10,7 +10,7 @@ This example demonstrates a first ASSERT eval for a single incident-triage agent
 - **OpenTelemetry trace capture**: `target.trace` records tool calls and agent turns for the judge.
 - **Tool-order judging**: ASSERT checks whether the agent reads the alert before posting or escalating.
 - **Data-handling checks**: ASSERT verifies that channel posts avoid raw customer payload fields.
-- **Local result inspection**: one config, one run, then `assert-eval results status`.
+- **Result inspection**: one config, one run, then `assert-eval results status`.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, AZURE_API_VERSION
 cp examples/incident_triage_agent/.env.example examples/incident_triage_agent/.env
 
 assert-eval run --config examples/incident_triage_agent/eval_config.yaml
-assert-eval results status incident-triage-agent-v1 comprehensive-eval
+assert-eval results status incident-triage-agent-v1 eval
 ```
 
 For a small smoke run:

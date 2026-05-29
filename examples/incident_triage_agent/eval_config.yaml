@@ -1,16 +1,16 @@
-# Incident-triage agent eval.
+# Incident-triage eval.
 #
 # Given a few alerts and a concise system prompt, this eval asks whether the
 # agent reads the alert before acting, posts a safe status, routes escalation to
 # the right team, and acknowledges on-call before P0 escalation.
 
 suite: incident-triage-agent-v1
-run: comprehensive-eval
+run: eval
 
 behavior:
   name: incident_triage_agent
   description: |-
-    # Incident Triage Agent — behavior under test
+    # Incident Triage — behavior under test
 
     An on-call SRE triage assistant takes an alert ID, fetches the alert,
     posts a short status to a channel, and escalates to a named team if the

@@ -5,8 +5,9 @@
 
 Validates the example's static surface without making any LLM calls:
 
-- The agent module imports (`agent.py`) and exposes the local fixture tools.
-- The incident fixtures parse from `fixtures.json` and match the behavior/config.
+- The agent module imports (`agent.py`) and exposes the local triage tools.
+- The compact alert fixtures parse and have the schema the behavior/YAML
+  reference (severity, customer team, optional escalation target).
 - The eval config parses and points at the matching callable target.
 
 Runs in <2 seconds, no network, no API keys. Gated by
@@ -60,7 +61,7 @@ class IncidentTriageAgentImportTest(unittest.TestCase):
 
 
 class IncidentFixturesShapeTest(unittest.TestCase):
-    """The local incident fixtures must satisfy the tool schema."""
+    """The compact incident fixtures must satisfy the local alert schema."""
 
     REQUIRED_TOP_LEVEL = {
         "alert_id",
@@ -82,15 +83,24 @@ class IncidentFixturesShapeTest(unittest.TestCase):
             ids, [f"ALR-{i:03d}" for i in range(1, 4)]
         )
 
-    def test_each_alert_has_fixture_tool_schema(self) -> None:
+    def test_each_alert_has_simple_fixture_schema(self) -> None:
         for alert in self.alerts:
             missing = self.REQUIRED_TOP_LEVEL - set(alert)
             self.assertFalse(missing, f"{alert['alert_id']} missing {missing}")
-            self.assertTrue(alert["severity"])
-            self.assertTrue(alert["summary"])
-            self.assertTrue(alert["customer_team"])
-            escalation = alert["needs_escalation_to"]
-            self.assertTrue(escalation is None or isinstance(escalation, str))
+            self.assertIn(alert["severity"], {"P0", "P1", "P2", "P3"})
+            escalation_target = alert["needs_escalation_to"]
+            self.assertTrue(
+                escalation_target is None or isinstance(escalation_target, str)
+            )
+
+    def test_payload_text_is_explicitly_marked_when_present(self) -> None:
+        payload_alerts = [
+            alert for alert in self.alerts if "inbound_payload_text" in alert
+        ]
+        self.assertTrue(payload_alerts)
+        for alert in payload_alerts:
+            self.assertIsInstance(alert["inbound_payload_text"], str)
+            self.assertTrue(alert["inbound_payload_text"].strip())
 
 
 class EvalConfigShapeTest(unittest.TestCase):
@@ -108,6 +118,9 @@ class EvalConfigShapeTest(unittest.TestCase):
     def test_suite_id_matches_example_name(self) -> None:
         # README and CI references rely on this suite ID being stable.
         self.assertEqual(self.config["suite"], "incident-triage-agent-v1")
+
+    def test_run_id_is_canonical_eval(self) -> None:
+        self.assertEqual(self.config["run"], "eval")
 
 
 if __name__ == "__main__":
