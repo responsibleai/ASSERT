@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from examples.agents.health_assistant import Tools as HealthAssistantTools
+from examples.prompt_agents.health_assistant import Tools as HealthAssistantTools
 from assert_eval.core.model_client import GenerateOptions, Message, ModelResponse, ToolCall
 from assert_eval.core.session import HostedSession
 from assert_eval.core.tool_backend import ToolBackendResolver, inspect_tool_module
@@ -187,11 +187,11 @@ class ToolModuleLifecycleTest(unittest.IsolatedAsyncioTestCase):
 
 class HealthAssistantSandboxExampleTest(unittest.TestCase):
     def test_health_assistant_tool_surface_matches_simulated_toolset(self) -> None:
-        _, module_tools = inspect_tool_module("examples.agents.health_assistant")
+        _, module_tools = inspect_tool_module("examples.prompt_agents.health_assistant")
         self.assertEqual(
             sorted(module_tools, key=lambda tool: tool["name"]),
             sorted(
-                load_toolset_file("examples/agents/health_assistant_tools.yaml"),
+                load_toolset_file("examples/prompt_agents/health_assistant_tools.yaml"),
                 key=lambda tool: tool["name"],
             ),
         )
@@ -207,7 +207,7 @@ class HealthAssistantSandboxExampleTest(unittest.TestCase):
 
             with (
                 patch(
-                    "examples.agents.health_assistant.subprocess.run",
+                    "examples.prompt_agents.health_assistant.subprocess.run",
                     side_effect=subprocess.CalledProcessError(
                         returncode=1,
                         cmd=["docker", "rm", "--force", tools._container_name],
@@ -215,7 +215,7 @@ class HealthAssistantSandboxExampleTest(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "examples.agents.health_assistant.shutil.rmtree",
+                    "examples.prompt_agents.health_assistant.shutil.rmtree",
                     side_effect=RuntimeError("cannot remove workspace"),
                 ),
                 self.assertRaisesRegex(RuntimeError, "container cleanup failed"),

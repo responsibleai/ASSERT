@@ -476,8 +476,8 @@ def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -
     epilog=(
         "\b\n"
         "Examples:\n"
-        "  assert-eval run --config examples/pipes/health_assistant.yaml\n"
-        "  assert-eval run --config examples/pipes/health_assistant_external.yaml\n"
+        "  assert-eval run --config examples/prompt_agents/health_assistant.yaml\n"
+        "  assert-eval run --config examples/prompt_agents/health_assistant_external.yaml\n"
         "  assert-eval results list\n"
         "  assert-eval results compare health-assistant-v1 gpt54-eval gpt54-eval\n"
         "  assert-eval results compare-suites suite-a/run-1 suite-b/run-1 suite-c/run-1"

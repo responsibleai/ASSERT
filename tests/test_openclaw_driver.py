@@ -4,7 +4,7 @@
 import unittest
 from unittest import mock
 
-from examples.agents.openclaw import (
+from examples.prompt_agents.openclaw import (
     Adapter,
     _text_from_payload,
     _text_from_events,

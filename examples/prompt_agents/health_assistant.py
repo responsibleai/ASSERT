@@ -3,7 +3,7 @@
 
 """Docker-backed tool module for health-assistant evals.
 
-Config key: tools.module: examples.agents.health_assistant
+Config key: tools.module: examples.prompt_agents.health_assistant
 
 ASSERT calls methods on the Tools class and returns real results to the
 target model. The tool surface stays health-assistant-shaped, but each

@@ -554,7 +554,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             with patch("assert_eval.stages.inference.ExternalSession", return_value=FakeExternalSession()):
                 await run_inference(
                     test_set_path=str(test_set_path),
-                    target=TargetConfig(connector="examples.agents.demo"),
+                    target=TargetConfig(connector="examples.prompt_agents.demo"),
                     evaluation=EvaluationConfig(judge=JudgeConfig(model="azure/gpt-5.4")),
                     save_dir=str(out_dir),
                     run_id="run-inference",
@@ -618,7 +618,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
-                    target=TargetConfig(connector="examples.agents.demo"),
+                    target=TargetConfig(connector="examples.prompt_agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
                         tester=TesterConfig(model="azure/gpt-5.4"),
@@ -702,7 +702,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             ):
                 await run_inference(
                     test_set_path=str(test_set_path),
-                    target=TargetConfig(connector="examples.agents.demo"),
+                    target=TargetConfig(connector="examples.prompt_agents.demo"),
                     evaluation=EvaluationConfig(
                         judge=JudgeConfig(model="azure/gpt-5.4"),
                         tester=TesterConfig(model="azure/gpt-5.4"),

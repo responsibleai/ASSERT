@@ -85,7 +85,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                         "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
-                                "tools": {"module": "examples.agents.health_assistant", "toolset": "tools.yaml"},
+                                "tools": {"module": "examples.prompt_agents.health_assistant", "toolset": "tools.yaml"},
                             },
                         }
                     },
@@ -100,7 +100,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                         "inference": {
                             "target": {
                                 "model": {"name": "azure/gpt-5.4"},
-                                "connector": "examples.agents.demo",
+                                "connector": "examples.prompt_agents.demo",
                             }
                         }
                     }
@@ -113,8 +113,8 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                     "pipeline": {
                         "inference": {
                             "target": {
-                                "connector": "examples.agents.demo",
-                                "tools": {"module": "examples.agents.health_assistant"},
+                                "connector": "examples.prompt_agents.demo",
+                                "tools": {"module": "examples.prompt_agents.health_assistant"},
                             }
                         }
                     }
@@ -129,18 +129,18 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                     "inference": {
                         "target": {
                             "model": {"name": "azure/gpt-5.4"},
-                            "tools": {"module": "examples.agents.health_assistant"},
+                            "tools": {"module": "examples.prompt_agents.health_assistant"},
                         },
-                        "test_set_path": "examples/agents/health_assistant_tools.yaml",
+                        "test_set_path": "examples/prompt_agents/health_assistant_tools.yaml",
                     }
                 },
             },
-            Path("examples/pipes/health_assistant.yaml"),
+            Path("examples/prompt_agents/health_assistant.yaml"),
             stage_modules={"inference": type("Stage", (), {"SCOPE": "run"})()},
         )
 
         self.assertEqual(context["target"].model.name, "azure/gpt-5.4")
-        self.assertEqual(context["target"].tools.module, "examples.agents.health_assistant")
+        self.assertEqual(context["target"].tools.module, "examples.prompt_agents.health_assistant")
         self.assertNotIn("environment", context)
 
     def test_parse_pipeline_config_keeps_system_prompt_as_literal_text(self) -> None:
@@ -171,8 +171,8 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "external target must not define target.tools"):
             PipelineConfig(
                 target=TargetConfig(
-                    connector="examples.agents.demo",
-                    tools=ToolsConfig(module="examples.agents.health_assistant"),
+                    connector="examples.prompt_agents.demo",
+                    tools=ToolsConfig(module="examples.prompt_agents.health_assistant"),
                 ),
             )
 

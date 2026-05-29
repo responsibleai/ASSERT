@@ -3,7 +3,7 @@
 
 """External connector for OpenClaw.
 
-Config key: connector: examples.agents.openclaw
+Config key: connector: examples.prompt_agents.openclaw
 
 ASSERT delegates the conversation to the external agent and records what
 it says.  Each Adapter instance spins up its own Docker container via

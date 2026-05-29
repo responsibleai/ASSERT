@@ -25,7 +25,7 @@ class RuntimeContextTest(unittest.TestCase):
                     "judge": {"model": {"name": "azure/gpt-5.4"}},
                 },
             },
-            Path("examples/pipes/health_assistant.yaml"),
+            Path("examples/prompt_agents/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
@@ -43,7 +43,7 @@ class RuntimeContextTest(unittest.TestCase):
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
-                Path("examples/pipes/health_assistant.yaml"),
+                Path("examples/prompt_agents/health_assistant.yaml"),
                 stage_modules=STAGES,
             )
 
@@ -76,7 +76,7 @@ class RuntimeContextTest(unittest.TestCase):
                     "inference": {"enabled": False, "test_set_path": "test_set.jsonl"},
                 },
             },
-            Path("examples/pipes/health_assistant.yaml"),
+            Path("examples/prompt_agents/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
@@ -92,7 +92,7 @@ class RuntimeContextTest(unittest.TestCase):
                     "judge": {"enabled": False, "inference_set_path": "inference_set.jsonl"},
                 },
             },
-            Path("examples/pipes/health_assistant.yaml"),
+            Path("examples/prompt_agents/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
@@ -114,7 +114,7 @@ class IdentifierValidationTest(unittest.TestCase):
         raw = {**self._BASE_CONFIG, **overrides}
         return load_runtime_context(
             raw,
-            Path("examples/pipes/health_assistant.yaml"),
+            Path("examples/prompt_agents/health_assistant.yaml"),
             stage_modules=STAGES,
         )
 
@@ -155,7 +155,7 @@ class IdentifierValidationTest(unittest.TestCase):
                         "judge": {"model": {"name": "azure/gpt-5.4"}},
                     },
                 },
-                Path("examples/pipes/health_assistant.yaml"),
+                Path("examples/prompt_agents/health_assistant.yaml"),
                 stage_modules=STAGES,
             )
 

@@ -63,7 +63,7 @@ pipeline:
 
         '
       tools:
-        module: examples.agents.health_assistant
+        module: examples.prompt_agents.health_assistant
     tester:
       model:
         name: azure/gpt-5.4-mini

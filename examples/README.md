@@ -41,9 +41,9 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph\eval_config.yaml` | Flagship. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
 | Evaluate a realistic incident-triage agent | `incident_triage_agent\eval_config.yaml` | SRE incident-triage walkthrough with one callable agent, local fixture tools, a concise 4-dimension eval, OTel trace capture, and per-dimension scores. See [`incident_triage_agent\README.md`](incident_triage_agent/README.md). |
 | Understand framework instrumentation breadth | `phoenix_auto_trace\README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |
-| Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
-| Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
-| Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
+| Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
+| Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
+| Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
 
 ## Layout
 
@@ -52,9 +52,8 @@ examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
 ├── incident_triage_agent/      SRE incident-triage callable-agent walkthrough
 ├── phoenix_auto_trace/         framework instrumentation gallery
-├── pipes/                      simple hosted-model and Prompt Agent configs
-├── behavior_specs/             reusable behavior spec references
-└── agents/                     simple tool modules and tool schemas
+├── prompt_agents/              Prompt Agent configs, tool modules, toolsets, and OpenClaw connector
+└── behavior_specs/             reusable behavior spec references
 ```
 
 See [`behavior_specs/README.md`](behavior_specs/README.md) for reusable behavior spec references.

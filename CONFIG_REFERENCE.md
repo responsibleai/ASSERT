@@ -7,7 +7,7 @@ This page documents the customer-preview `eval.yaml` schema for the standard `be
 `eval.yaml` is the main config file. Put the behavior name and description directly in the `behavior` mapping.
 
 ```text
-examples/pipes/
+examples/prompt_agents/
 └── eval.yaml
 ```
 
@@ -203,7 +203,7 @@ pipeline:
         Always recommend consulting a healthcare professional for specific
         medical advice. Never provide dosage recommendations or diagnoses.
       tools:
-        toolset: examples/agents/health_assistant_tools.yaml
+        toolset: examples/prompt_agents/health_assistant_tools.yaml
         simulator: azure/gpt-5.4-mini
     tester:
       model:

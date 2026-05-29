@@ -5,12 +5,12 @@ Run scripts in this directory with `uv run python ...` from the repo root so the
 ## Seed sampling
 
 Test-set stratification and generation run through `assert-eval run` now. Start from
-`examples/pipes/health_assistant.yaml`, keep `pipeline.test_set.stratify` and
+`examples/prompt_agents/health_assistant.yaml`, keep `pipeline.test_set.stratify` and
 `pipeline.test_set`, then run:
 
 ```bash
 source .env
-uv run assert-eval run --config examples/pipes/health_assistant.yaml
+uv run assert-eval run --config examples/prompt_agents/health_assistant.yaml
 ```
 
 Use `uv run assert-eval --help` for CLI options.

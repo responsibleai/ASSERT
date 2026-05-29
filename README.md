@@ -127,8 +127,8 @@ Pick a target based on how your agent is built.
 |---|---|---|
 | [`examples/travel_planner_langgraph`](examples/travel_planner_langgraph/) | Full pipeline with `target.callable` + Phoenix OTel trace capture, generated test cases, and judge dimensions for quality + safety | Start here for any agent or multi-agent system |
 | [`examples/phoenix_auto_trace`](examples/phoenix_auto_trace/) | The same travel-planner idea across 33 framework instrumentation paths | Understanding framework breadth |
-| [`examples/pipes/health_assistant.yaml`](examples/pipes/health_assistant.yaml) | Simple hosted model target with a system prompt | Quick smoke test for a single model |
-| [`examples/pipes/health_assistant_simulated_tools.yaml`](examples/pipes/health_assistant_simulated_tools.yaml) | Hosted model with simulated tool responses from a fixed schema | Prompt Agents with planned tools but no backend yet |
+| [`examples/prompt_agents/health_assistant.yaml`](examples/prompt_agents/health_assistant.yaml) | Simple hosted model target with a system prompt | Quick smoke test for a single model |
+| [`examples/prompt_agents/health_assistant_simulated_tools.yaml`](examples/prompt_agents/health_assistant_simulated_tools.yaml) | Hosted model with simulated tool responses from a fixed schema | Prompt Agents with planned tools but no backend yet |
 
 See [`examples/README.md`](examples/README.md).
 
@@ -193,7 +193,7 @@ Preview feedback is welcome: confusing names, missing target examples, trace gap
 
 - **macOS, `litellm` AttributeError after install** — some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`, causing errors like `AttributeError: module 'litellm' has no attribute 'acompletion'`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
 - **Windows, `UnicodeEncodeError` when running auto-trace demos** — set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
-- **Docker-backed pipes fail with "docker daemon unavailable"** — `examples/pipes/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
+- **Docker-backed Prompt Agent configs fail with "docker daemon unavailable"** — `examples/prompt_agents/health_assistant_sandbox.yaml` and `_external.yaml` need Docker Desktop running.
 
 ## Telemetry
 
