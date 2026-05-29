@@ -1468,6 +1468,41 @@ async def generate_with_tools(
     return result
 
 
+# ── Import-time AZURE_API_BASE normalization ───────────────────
+# LiteLLM appends the OpenAI-API path itself (``/openai/deployments/…``
+# or ``/openai/v1/responses``), so AZURE_API_BASE must be the bare
+# account endpoint. A trailing ``/openai/...`` or ``/openai/v1/...``
+# suffix (commonly copy-pasted from the Azure portal's "Endpoint"
+# field for the Responses API) causes LiteLLM to build malformed URLs
+# like ``…/openai/v1/responses/openai/deployments/…``, which surface as
+# "Resource not found" or "api-version query parameter is not allowed
+# when using /v1 path". Strip any such suffix defensively at import
+# time so users don't have to debug it themselves.
+def _normalize_azure_api_base() -> None:
+    raw = os.environ.get("AZURE_API_BASE", "").strip()
+    if not raw:
+        return
+    cleaned = raw.rstrip("/")
+    lowered = cleaned.lower()
+    # Find the leftmost ``/openai`` segment and drop it + everything
+    # after it. This handles ``/openai``, ``/openai/v1``,
+    # ``/openai/v1/responses``, ``/openai/deployments/...``, etc.
+    idx = lowered.find("/openai")
+    if idx > 0:  # skip when ``/openai`` is part of the host (it shouldn't be)
+        cleaned = cleaned[:idx]
+    # LiteLLM is happiest with a trailing slash on the base URL.
+    normalized = cleaned.rstrip("/") + "/"
+    if normalized != raw:
+        log.info(
+            "AZURE_API_BASE normalized: stripped path suffix so LiteLLM "
+            "can build the correct deployment URL.",
+        )
+        os.environ["AZURE_API_BASE"] = normalized
+
+
+_normalize_azure_api_base()
+
+
 # ── Import-time env-var seed ───────────────────────────────────
 # Users in Azure regions known to lack Responses API support
 # (e.g. West Europe at time of writing) can pre-arm the fallback

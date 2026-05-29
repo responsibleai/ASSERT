@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -630,6 +631,70 @@ class WithRetriesResponsesApiFallbackTest(unittest.IsolatedAsyncioTestCase):
                 await model_client._with_retries(call_fn, model="azure/gpt-5.4")
         # Two calls total: original + one Chat-path retry, then re-raise.
         self.assertEqual(calls["n"], 2)
+
+
+class NormalizeAzureApiBaseTest(unittest.TestCase):
+    """``_normalize_azure_api_base`` must strip any ``/openai/...``
+    path suffix that snuck into AZURE_API_BASE. LiteLLM appends that
+    path itself, so leaving it in causes malformed URLs.
+    """
+
+    def setUp(self) -> None:
+        self._saved_base = os.environ.get("AZURE_API_BASE")
+
+    def tearDown(self) -> None:
+        if self._saved_base is None:
+            os.environ.pop("AZURE_API_BASE", None)
+        else:
+            os.environ["AZURE_API_BASE"] = self._saved_base
+
+    def _normalize(self, value: str) -> str:
+        os.environ["AZURE_API_BASE"] = value
+        model_client._normalize_azure_api_base()
+        return os.environ["AZURE_API_BASE"]
+
+    def test_bare_endpoint_unchanged_when_already_trailing_slash(self) -> None:
+        self.assertEqual(
+            self._normalize("https://example.openai.azure.com/"),
+            "https://example.openai.azure.com/",
+        )
+
+    def test_bare_endpoint_gets_trailing_slash(self) -> None:
+        self.assertEqual(
+            self._normalize("https://example.openai.azure.com"),
+            "https://example.openai.azure.com/",
+        )
+
+    def test_strips_openai_responses_path(self) -> None:
+        self.assertEqual(
+            self._normalize(
+                "https://example.services.ai.azure.com/openai/v1/responses"
+            ),
+            "https://example.services.ai.azure.com/",
+        )
+
+    def test_strips_openai_deployments_path(self) -> None:
+        self.assertEqual(
+            self._normalize(
+                "https://example.openai.azure.com/openai/deployments/gpt-5.4"
+            ),
+            "https://example.openai.azure.com/",
+        )
+
+    def test_preserves_project_prefix_before_openai(self) -> None:
+        # Account-level projects path before /openai must be preserved.
+        self.assertEqual(
+            self._normalize(
+                "https://example.services.ai.azure.com/api/projects/myproj"
+                "/openai/v1/responses"
+            ),
+            "https://example.services.ai.azure.com/api/projects/myproj/",
+        )
+
+    def test_empty_value_is_noop(self) -> None:
+        os.environ.pop("AZURE_API_BASE", None)
+        model_client._normalize_azure_api_base()
+        self.assertNotIn("AZURE_API_BASE", os.environ)
 
 
 if __name__ == "__main__":
