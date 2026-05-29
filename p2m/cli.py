@@ -1034,7 +1034,7 @@ def _run_within_suite_compare(
         )
         table.add_row(
             row["run_id"],
-            label_stage_status(row["status"] if isinstance(row.get("status"), str) else None),
+            label_status(row["status"] if isinstance(row.get("status"), str) else None),
             _format_timestamp(row.get("started_at")),
             str(target_model),
             _fmt_percent(_dimension_rate(prompt_metrics, metric)),
