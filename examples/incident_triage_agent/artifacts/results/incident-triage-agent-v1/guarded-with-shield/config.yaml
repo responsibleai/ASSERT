@@ -1,4 +1,4 @@
-# Joint AgentShield + p2m demo incident-triage eval.
+# Joint AgentShield + Adaptive Eval demo incident-triage eval.
 #
 # The baseline run uses the minimal-prompt LiteLLM tool-loop agent.
 # The guarded run swaps only target.callable to the AgentShield-wrapped

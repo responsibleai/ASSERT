@@ -22,6 +22,8 @@ DEFAULT_SYSTEMATIZATION_CONVERT_MAX_TOKENS = None  # uncapped; model uses its ow
 DEFAULT_INFERENCE_MAX_TOOL_CALLS = 10
 DEFAULT_INFERENCE_TEMPERATURE = None
 DEFAULT_INFERENCE_MAX_TOKENS = 10000
+# Default fan-out for the inference and judge stages. Overridable per-run via
+# ``pipeline.inference.concurrency`` in YAML or the ``--concurrency`` CLI flag.
 DEFAULT_INFERENCE_CONCURRENCY = 10
 DEFAULT_TESTER_MAX_TURNS = 10
 DEFAULT_JUDGE_TEMPERATURE = None

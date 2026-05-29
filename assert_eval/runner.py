@@ -53,6 +53,7 @@ from assert_eval.core.runtime_safety import (
     PipelineWatchdog,
     run_stage_coro,
 )
+from assert_eval.display import label_metric
 from assert_eval.stages import STAGES
 
 load_dotenv()
@@ -497,12 +498,85 @@ def _install_async_cleanup_filters() -> None:
     sys.stderr = _FilteredStderr(real_stderr)
 
 
+def _log_run_headline(run_root: Path) -> None:
+    """Log the same headline numbers a user sees on the viewer's run page.
+
+    Pulls scores from ``run_root/scores.jsonl`` and prints target/judge plus the
+    headline rates (policy violation, overrefusal, judge failure). Silently
+    does nothing if the judge stage hasn't produced scores yet — that matches
+    the viewer's behavior, which only shows the headline once scores exist.
+    """
+    # Imported lazily to avoid a hard dependency for callers that import the
+    # runner without ever invoking it (e.g. test scaffolding).
+    from assert_eval.results import (
+        compute_prompt_metrics,
+        compute_scenario_metrics,
+    )
+    from assert_eval.core.io import load_jsonl
+
+    scores_path = run_root / "scores.jsonl"
+    if not scores_path.exists():
+        return
+    score_rows = load_jsonl(scores_path)
+    if not score_rows:
+        return
+
+    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
+    scenario_rows = [row for row in score_rows if row.get("tester_model")]
+    prompt_metrics = compute_prompt_metrics(prompt_rows)
+    scenario_metrics = compute_scenario_metrics(scenario_rows)
+    primary = prompt_metrics or scenario_metrics
+    if primary is None:
+        return
+
+    target = primary.get("target") or "—"
+    judge = primary.get("judge_model") or "—"
+    total = (prompt_metrics or {}).get("total", 0) + (scenario_metrics or {}).get("total", 0)
+    scored = (prompt_metrics or {}).get("scored_total", 0) + (scenario_metrics or {}).get("scored_total", 0)
+
+    log.info("Headline:")
+    log.info(f"  Target: {target}")
+    log.info(f"  Judge:  {judge}")
+    log.info(f"  Total:  {total} ({scored} scored)")
+
+    def _fmt_rate(value: Any) -> str:
+        if value is None or not isinstance(value, (int, float)):
+            return "—"
+        return f"{value * 100:.1f}%"
+
+    def _emit(label: str, prompt_value: Any, scenario_value: Any) -> None:
+        parts: list[str] = []
+        if prompt_metrics is not None:
+            parts.append(f"prompt {_fmt_rate(prompt_value)}")
+        if scenario_metrics is not None:
+            parts.append(f"scenario {_fmt_rate(scenario_value)}")
+        if parts:
+            log.info(f"  {label}: {' · '.join(parts)}")
+
+    _emit(
+        label_metric("policy_violation_rate"),
+        (prompt_metrics or {}).get("policy_violation_rate"),
+        (scenario_metrics or {}).get("policy_violation_rate"),
+    )
+    _emit(
+        label_metric("overrefusal_rate"),
+        (prompt_metrics or {}).get("overrefusal_rate"),
+        (scenario_metrics or {}).get("overrefusal_rate"),
+    )
+    _emit(
+        label_metric("judge_failure_rate"),
+        (prompt_metrics or {}).get("judge_failure_rate"),
+        (scenario_metrics or {}).get("judge_failure_rate"),
+    )
+
+
 def run_pipeline(
     *,
     config: str,
     force_stages: list[str] | None = None,
     strict: bool = False,
     overrides: list[str] | None = None,
+    concurrency: int | None = None,
 ) -> int:
     """Execute the configured stages sequentially and persist suite/run metadata."""
     # Suppress litellm's internal async logging warnings — they fire because
@@ -534,6 +608,21 @@ def run_pipeline(
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
         return 1
+
+    # CLI --concurrency wins over the YAML-resolved value so a single run can be
+    # widened or narrowed without editing the config. We mutate the live
+    # InferenceConfig instance (it's a regular dataclass, not frozen) because
+    # downstream stages read `ctx["evaluation"].inference.concurrency` directly.
+    if concurrency is not None:
+        evaluation = ctx.get("evaluation")
+        inference_cfg = getattr(evaluation, "inference", None) if evaluation is not None else None
+        if inference_cfg is not None:
+            inference_cfg.concurrency = concurrency
+            log.info(f"[runner] Concurrency override: {concurrency} (CLI --concurrency)")
+        else:
+            log.warning(
+                "[runner] --concurrency ignored: this config has no inference stage to override."
+            )
 
     requested_force_stages = set(force_stages or [])
     configured_stage_names = {stage_name for stage_name, _ in ctx["stages"]}
@@ -857,6 +946,7 @@ def _run_stages_inner(
     if failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
+            _log_run_headline(run_root)
             log.info("Results:")
             scores_path = run_root / "scores.jsonl"
             metrics_path = run_root / "metrics.json"

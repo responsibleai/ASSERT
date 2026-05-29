@@ -18,8 +18,10 @@ from click.shell_completion import CompletionItem
 from rich.console import Console
 from rich.table import Table
 
+from assert_eval.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_eval.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from assert_eval.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_eval.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_eval.logging_config import configure_logging
 from assert_eval.stages import STAGE_NAMES
 
@@ -117,8 +119,13 @@ def _fmt_binary_counts(counts: dict[int, int]) -> str:
     return f"0:{counts.get(0, 0)} 1:{counts.get(1, 0)}"
 
 
+def _fmt_flagged_pass(counts: dict[int, int]) -> str:
+    """Render the flagged/pass counts using the viewer's terminology."""
+    return f"{counts.get(1, 0)} flagged / {counts.get(0, 0)} pass"
+
+
 def _metric_label(metric: str) -> str:
-    return metric.replace("_", " ")
+    return label_metric(metric)
 
 
 def _resolve_results_dir(results_dir: Path) -> Path:
@@ -540,6 +547,17 @@ cli.add_command(init)
 )
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
 @click.option("--override", "overrides", multiple=True, help="Override a config value, e.g. test_set.sample_size=10.")
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1),
+    default=None,
+    help=(
+        "Override inference/judge fan-out for this run. Wins over "
+        "pipeline.inference.concurrency in the YAML. Defaults to the value in "
+        f"the config (or {DEFAULT_INFERENCE_CONCURRENCY} if unset)."
+    ),
+    show_envvar=True,
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug-level logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info-level output; show only warnings and errors.")
 @click.option(
@@ -563,6 +581,7 @@ def run(
     force_stage: tuple[str, ...],
     strict: bool,
     overrides: tuple[str, ...],
+    concurrency: int | None,
     verbose: bool,
     quiet: bool,
     log_file: Path | None,
@@ -584,6 +603,7 @@ def run(
         force_stages=list(force_stage),
         strict=strict,
         overrides=list(overrides),
+        concurrency=concurrency,
     )
     raise SystemExit(rc)
 
@@ -626,18 +646,18 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
         table.add_column("Run", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         table.add_column("Started", style="dim", no_wrap=True)
-        table.add_column("Prompt Viol.", style="white", no_wrap=True)
-        table.add_column("Prompt Overref.", style="white", no_wrap=True)
-        table.add_column("Scenario Viol.", style="white", no_wrap=True)
-        table.add_column("Judge Fail", style="white", no_wrap=True)
-        table.add_column("Target Model", style="white")
+        table.add_column("Prompt policy violations", style="white", no_wrap=True)
+        table.add_column("Prompt overrefusals", style="white", no_wrap=True)
+        table.add_column("Scenario policy violations", style="white", no_wrap=True)
+        table.add_column("Judge failures", style="white", no_wrap=True)
+        table.add_column("Target", style="white")
         for run_summary in suite_summary["runs"]:
             prompt_metrics = run_summary.get("prompt_metrics") or {}
             scenario_metrics = run_summary.get("scenario_metrics") or {}
             target_model = prompt_metrics.get("target") or scenario_metrics.get("target") or "-"
             table.add_row(
                 run_summary["run_id"],
-                run_summary["status"],
+                label_run_status(run_summary["status"]),
                 _format_timestamp(run_summary.get("started_at")),
                 _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
                 _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
@@ -674,7 +694,7 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
             str(suite_summary["prompt_test_case_count"]),
             str(suite_summary["scenario_test_case_count"]),
             str(suite_summary["run_count"]),
-            str(suite_summary["status"]),
+            label_status(suite_summary["status"]),
         )
     console.print(table)
 
@@ -712,7 +732,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         summary.add_column("Value", style="white")
         summary.add_row("Suite", suite_summary["suite_id"])
         summary.add_row("Behavior", str(suite_summary["behavior_name"]))
-        summary.add_row("Status", str(suite_summary["status"]))
+        summary.add_row("Status", label_status(suite_summary["status"]))
         summary.add_row("Created", _format_timestamp(suite_summary.get("created_at")))
         summary.add_row("Behavior Categories", str(suite_summary["behavior_category_count"]))
         summary.add_row("Prompt Test Cases", str(suite_summary["prompt_test_case_count"]))
@@ -725,16 +745,16 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
             table.add_column("Run", style="cyan", no_wrap=True)
             table.add_column("Status", style="white", no_wrap=True)
             table.add_column("Current Stage", style="white", no_wrap=True)
-            table.add_column("Prompt Viol.", style="white", no_wrap=True)
-            table.add_column("Prompt Overref.", style="white", no_wrap=True)
-            table.add_column("Scenario Viol.", style="white", no_wrap=True)
+            table.add_column("Prompt policy violations", style="white", no_wrap=True)
+            table.add_column("Prompt overrefusals", style="white", no_wrap=True)
+            table.add_column("Scenario policy violations", style="white", no_wrap=True)
             for run_summary in suite_summary["runs"]:
                 prompt_metrics = run_summary.get("prompt_metrics") or {}
                 scenario_metrics = run_summary.get("scenario_metrics") or {}
                 table.add_row(
                     run_summary["run_id"],
-                    run_summary["status"],
-                    str(run_summary["current_stage"]),
+                    label_run_status(run_summary["status"]),
+                    label_stage(run_summary["current_stage"]),
                     _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
                     _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
                     _fmt_percent(_dimension_rate(scenario_metrics, "policy_violation")),
@@ -763,8 +783,8 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     summary.add_column("Value", style="white")
     summary.add_row("Suite", suite)
     summary.add_row("Run", run_summary["run_id"])
-    summary.add_row("Status", str(run_summary["status"]))
-    summary.add_row("Current Stage", str(run_summary["current_stage"]))
+    summary.add_row("Status", label_run_status(run_summary["status"]))
+    summary.add_row("Current Stage", label_stage(run_summary["current_stage"]))
     summary.add_row("Started", _format_timestamp(run_summary.get("started_at")))
     summary.add_row("Ended", _format_timestamp(run_summary.get("ended_at")))
     summary.add_row("Path", run_summary["path"])
@@ -780,7 +800,11 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_column("Stage", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         for stage_name, meta in stage_meta.items():
-            table.add_row(stage_name, str(meta))
+            # ``label_stage_status`` already accepts ``str | None``; wrapping
+            # ``meta`` in ``str(...)`` would turn a missing/None value into the
+            # literal string "None" instead of the intended em-dash placeholder.
+            stage_status = meta if isinstance(meta, str) else None
+            table.add_row(label_stage(stage_name), label_stage_status(stage_status))
         console.print(table)
 
     prompt_metrics = run_summary.get("prompt_metrics")
@@ -792,20 +816,20 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Judge Model", str(prompt_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(prompt_metrics["total"]))
         table.add_row("Scored", str(prompt_metrics["scored_total"]))
-        table.add_row("Judge Failures", _fmt_percent(prompt_metrics.get("judge_failure_rate")))
+        table.add_row(label_metric("judge_failure_rate"), _fmt_percent(prompt_metrics.get("judge_failure_rate")))
         console.print(table)
         if prompt_metrics.get("dimensions"):
             dim_table = Table(title="Prompt Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Bad Event Rate", style="white", no_wrap=True)
-            dim_table.add_column("Count", style="white", no_wrap=True)
-            dim_table.add_column("Value Mix", style="white", no_wrap=True)
+            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Scored", style="white", no_wrap=True)
+            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
             for name, summary in sorted(prompt_metrics["dimensions"].items()):
                 dim_table.add_row(
-                    _metric_label(name),
+                    label_metric(name),
                     _fmt_percent(summary.get("rate")),
                     str(summary.get("count", 0)),
-                    _fmt_binary_counts(summary.get("counts", {})),
+                    _fmt_flagged_pass(summary.get("counts", {})),
                 )
             console.print(dim_table)
 
@@ -819,20 +843,20 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Judge Model", str(scenario_metrics.get("judge_model") or "-"))
         table.add_row("Total", str(scenario_metrics["total"]))
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
-        table.add_row("Judge Failures", _fmt_percent(scenario_metrics.get("judge_failure_rate")))
+        table.add_row(label_metric("judge_failure_rate"), _fmt_percent(scenario_metrics.get("judge_failure_rate")))
         console.print(table)
         if scenario_metrics.get("dimensions"):
             dim_table = Table(title="Scenario Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Bad Event Rate", style="white", no_wrap=True)
-            dim_table.add_column("Count", style="white", no_wrap=True)
-            dim_table.add_column("Value Mix", style="white", no_wrap=True)
+            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Scored", style="white", no_wrap=True)
+            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
             for name, summary in sorted(scenario_metrics["dimensions"].items()):
                 dim_table.add_row(
-                    _metric_label(name),
+                    label_metric(name),
                     _fmt_percent(summary.get("rate")),
                     str(summary.get("count", 0)),
-                    _fmt_binary_counts(summary.get("counts", {})),
+                    _fmt_flagged_pass(summary.get("counts", {})),
                 )
             console.print(dim_table)
 
@@ -851,7 +875,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     default=DEFAULT_COMPARE_METRIC,
     shell_complete=_complete_metric,
     show_default=True,
-    help="Bad-event dimension to use for the top behavior-category delta table.",
+    help="Judge dimension to use for the top behavior-category delta table.",
 )
 @click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
@@ -1005,10 +1029,10 @@ def _run_within_suite_compare(
     table.add_column("Run", style="cyan", no_wrap=True)
     table.add_column("Status", style="white", no_wrap=True)
     table.add_column("Started", style="dim", no_wrap=True)
-    table.add_column("Target Model", style="white")
-    table.add_column("Prompt Rate", style="white", no_wrap=True)
-    table.add_column("Scenario Rate", style="white", no_wrap=True)
-    table.add_column("Judge Fail", style="white", no_wrap=True)
+    table.add_column("Target", style="white")
+    table.add_column(f"Prompt {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
+    table.add_column(f"Scenario {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
+    table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
     for row in payload["runs"]:
         prompt_metrics = row["prompt"] or {}
         scenario_metrics = row["scenario"] or {}
@@ -1020,7 +1044,7 @@ def _run_within_suite_compare(
         )
         table.add_row(
             row["run_id"],
-            str(row["status"]),
+            label_run_status(row["status"] if isinstance(row.get("status"), str) else None),
             _format_timestamp(row.get("started_at")),
             str(target_model),
             _fmt_percent(_dimension_rate(prompt_metrics, metric)),
@@ -1031,13 +1055,13 @@ def _run_within_suite_compare(
 
     if behavior_category_deltas:
         delta_table = Table(
-            title=f"Top Behavior Category Deltas ({_metric_label(metric)}: {runs[0]} -> {runs[-1]})",
+            title=f"Top behavior category deltas ({_metric_label(metric).lower()}: {runs[0]} -> {runs[-1]})",
             box=None,
             show_header=True,
             show_edge=False,
             pad_edge=False,
         )
-        delta_table.add_column("Behavior Category", style="cyan")
+        delta_table.add_column("Behavior category", style="cyan")
         delta_table.add_column("Permissible", style="white", no_wrap=True)
         delta_table.add_column(runs[0], style="white", no_wrap=True)
         delta_table.add_column(runs[-1], style="white", no_wrap=True)
@@ -1066,7 +1090,7 @@ def _run_within_suite_compare(
     "--metric",
     default=DEFAULT_COMPARE_METRIC,
     show_default=True,
-    help="Bad-event dimension to compare.",
+    help="Judge dimension to compare.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
@@ -1167,18 +1191,18 @@ def results_compare_suites(
 
     # Table 1: Judge quality
     table = Table(
-        title=f"Cross-Suite Comparison ({_metric_label(metric)})",
+        title=f"Cross-suite comparison ({_metric_label(metric).lower()})",
         box=None,
         show_header=True,
         show_edge=False,
         pad_edge=False,
     )
     table.add_column("Suite / Run", style="cyan", no_wrap=True)
-    table.add_column("Scores", style="white", no_wrap=True)
-    table.add_column("Judge OK", style="white", no_wrap=True)
-    table.add_column("J.Fail%", style="white", no_wrap=True)
-    table.add_column(f"{_metric_label(metric)} Rate", style="white", no_wrap=True)
-    table.add_column("Pass Rate", style="white", no_wrap=True)
+    table.add_column("Total", style="white", no_wrap=True)
+    table.add_column("Scored", style="white", no_wrap=True)
+    table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
+    table.add_column(f"{_metric_label(metric)} rate", style="white", no_wrap=True)
+    table.add_column("Pass rate", style="white", no_wrap=True)
     for i, run_summary in enumerate(run_summaries):
         pm = run_summary.get("prompt_metrics") or {}
         total = pm.get("total", 0)
@@ -1199,7 +1223,7 @@ def results_compare_suites(
 
     # Table 2: Structural visibility
     struct_table = Table(
-        title="Structural Visibility (what the judge sees)",
+        title="Structural visibility (what the judge sees)",
         box=None,
         show_header=True,
         show_edge=False,
@@ -1209,8 +1233,8 @@ def results_compare_suites(
     struct_table.add_column("Inference rows", style="white", no_wrap=True)
     struct_table.add_column("Events", style="white", no_wrap=True)
     struct_table.add_column("Messages", style="white", no_wrap=True)
-    struct_table.add_column("Tool Events", style="white", no_wrap=True)
-    struct_table.add_column("With Tools", style="white", no_wrap=True)
+    struct_table.add_column("Tool events", style="white", no_wrap=True)
+    struct_table.add_column("With tools", style="white", no_wrap=True)
     for s in structural:
         struct_table.add_row(
             s["label"],
