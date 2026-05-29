@@ -73,7 +73,7 @@ log = logging.getLogger(__name__)
 @click.option(
     "--max-turns",
     type=int,
-    default=20,
+    default=30,
     show_default=True,
     help="Maximum conversation turns.",
 )
