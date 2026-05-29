@@ -533,17 +533,30 @@ class ResponsesApiClassificationTest(unittest.TestCase):
         self.assertIsInstance(classified, model_client._ResponsesApiNotAvailableError)
         self.assertIs(classified.__cause__, exc)
 
-    def test_api_version_not_supported_on_chat_path_classifies_as_input_error(self) -> None:
-        # Once we've already demoted to chat completions, the same string
-        # genuinely means the configured api-version is wrong for chat —
-        # surface it as LLMInputError so we don't loop forever.
+    def test_api_version_not_supported_with_force_chat_still_classifies_as_responses_api_unavailable(self) -> None:
+        # ``_classify_llm_error`` must NOT gate on ``_force_chat_completions``.
+        # At high concurrency the first task activates fallback while other
+        # tasks are still in-flight against the Responses API; those
+        # in-flight calls surface the same marker right after fallback is
+        # active. Gating the classifier on the flag caused those failures
+        # to drop into the BadRequestError → LLMInputError path and never
+        # retry on the Chat path, breaking the whole run. Per-task loop
+        # prevention is the responsibility of ``_with_retries``.
         model_client._force_chat_completions = True
         exc = self.fake_litellm.BadRequestError(
             'AzureException - {"error":{"code":"BadRequest","message":"API version not supported"}}'
         )
         classified = self._classify(exc)
-        self.assertIsInstance(classified, model_client.LLMInputError)
-        self.assertNotIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+        self.assertIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+        self.assertIs(classified.__cause__, exc)
+
+    def test_responses_api_marker_with_force_chat_still_classifies_as_responses_api_unavailable(self) -> None:
+        # Same race-condition guard as above but for the 404 marker.
+        model_client._force_chat_completions = True
+        exc = self.fake_litellm.NotFoundError("Responses API is not enabled for this deployment")
+        classified = self._classify(exc)
+        self.assertIsInstance(classified, model_client._ResponsesApiNotAvailableError)
+        self.assertIs(classified.__cause__, exc)
 
     def test_regular_bad_request_still_classifies_as_input_error(self) -> None:
         # Non-marker BadRequestError must continue to map to LLMInputError

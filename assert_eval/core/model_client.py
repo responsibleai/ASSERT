@@ -780,25 +780,33 @@ def _classify_llm_error(exc: Exception) -> Exception:
     #   - "API version not supported"            (HTTP 400 → BadRequestError)
     #   - "responses api is not enabled"         (HTTP 404 → NotFoundError/APIError)
     # We check before the BadRequestError / NotFoundError / APIError handlers
-    # so the error routes to the one-shot Chat-Completions fallback in
+    # so the error routes to the Chat-Completions fallback in
     # ``_with_retries`` instead of being recorded as an unrecoverable bad
-    # request. Once already demoted to chat (``_force_chat_completions``
-    # True), the same string genuinely means the api-version is wrong for
-    # chat completions, so we leave it for the standard handlers below.
-    if not _force_chat_completions:
-        _msg_lower = str(exc).lower()
-        if any(
-            marker in _msg_lower
-            for marker in (
-                "responses api is not enabled",
-                "api version not supported",
-            )
-        ):
-            err = _ResponsesApiNotAvailableError(
-                f"Azure Responses API not available: {exc}"
-            )
-            err.__cause__ = exc
-            return err
+    # request.
+    #
+    # Important: do NOT gate on ``_force_chat_completions`` here. At high
+    # concurrency the first task to hit this marker activates fallback and
+    # installs the bridge-check patch, but other tasks already in-flight
+    # against the Responses API will surface the same marker shortly
+    # afterwards. Gating the check on ``_force_chat_completions`` caused
+    # those in-flight failures to fall through to the NotFoundError /
+    # BadRequestError handlers, get classified as ``LLMInputError``, and
+    # propagate without ever being retried on the Chat path. Per-task
+    # loop prevention is handled inside ``_with_retries`` via a
+    # ``chat_fallback_attempts`` counter.
+    _msg_lower = str(exc).lower()
+    if any(
+        marker in _msg_lower
+        for marker in (
+            "responses api is not enabled",
+            "api version not supported",
+        )
+    ):
+        err = _ResponsesApiNotAvailableError(
+            f"Azure Responses API not available: {exc}"
+        )
+        err.__cause__ = exc
+        return err
     # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
     if isinstance(exc, litellm.BadRequestError):
         # ContentPolicyViolationError is a BadRequestError subclass on most
