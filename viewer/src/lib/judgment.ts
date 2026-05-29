@@ -67,6 +67,9 @@ export function inferJudgeStatus(
 	record: JudgmentRecordLike,
 	requiredBaseMetrics: string[]
 ): JudgeStatus {
+	if (record.judge_status === 'scoring_skipped') {
+		return 'scoring_skipped';
+	}
 	if (record.judge_status != null) {
 		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredBaseMetrics)
 			? 'ok'

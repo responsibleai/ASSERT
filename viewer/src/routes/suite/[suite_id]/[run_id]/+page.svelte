@@ -9,6 +9,7 @@
 		DimensionDef,
 		GroupAxis,
 		MultiJudge,
+		StopReasonDisplay,
 		ViewerResultItem
 	} from '$lib/types.js';
 	import { AUDIT_GROUP_AXES, PROMPT_GROUP_AXES, buildFactorAxes, groupByAxis } from '$lib/grouping.js';
@@ -16,7 +17,12 @@
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
-	import { normalizePromptResult } from '$lib/result-view.js';
+	import {
+		normalizePromptResult,
+		stopReasonChipClass,
+		stopReasonLabel,
+		stopReasonTitle
+	} from '$lib/result-view.js';
 	import {
 		getRecordFlag,
 		getRequiredBaseMetricNames,
@@ -36,7 +42,8 @@
 		test_case_id: string;
 		behavior: string;
 		turns_count: number;
-		stop_reason: string;
+		stop_reason: string | null;
+		stop_reason_display: StopReasonDisplay | null;
 	};
 
 	function judgeStatus(record: {
@@ -88,11 +95,52 @@
 	// Totals for judge failures banner
 	let promptTotal = $derived(data.samples.length);
 	let promptScored = $derived(data.samples.filter(s => judgeStatus(s) === 'ok').length);
-	let promptJudgeFailures = $derived(promptTotal - promptScored);
+	let promptJudgeFailures = $derived(
+		data.samples.filter(s => judgeStatus(s) === 'judge_failed').length
+	);
 
 	let auditTotal = $derived(data.auditScores.length);
 	let auditScored = $derived(data.auditScores.filter(s => judgeStatus(s) === 'ok').length);
-	let auditJudgeFailures = $derived(auditTotal - auditScored);
+	// Count only true judge breakdowns — scoring_skipped rows are deliberate
+	// pipeline skips (refusals/errors) and are reported in their own lines
+	// below to avoid double-counting in the "judge failures" banner.
+	let auditJudgeFailures = $derived(
+		data.auditScores.filter(s => judgeStatus(s) === 'judge_failed').length
+	);
+
+	type SkippedStopReasonKind = 'refusal' | 'error';
+
+	const SCORING_SKIPPED_STOP_REASON_KIND: Record<string, SkippedStopReasonKind> = {
+		tester_input_refused: 'refusal',
+		target_input_refused: 'refusal',
+		target_error: 'error',
+		tester_error: 'error'
+	};
+
+	function skippedStopReasonKind(stopReason: string | null | undefined): SkippedStopReasonKind | null {
+		if (!stopReason) return null;
+		return SCORING_SKIPPED_STOP_REASON_KIND[stopReason] ?? null;
+	}
+
+	// Counts refused/errored rows that are skipped by the judge and excluded from rates.
+	function countSkippedStopReasonKind(kind: SkippedStopReasonKind): number {
+		const testCaseIds = new Set<string>();
+		for (const score of data.auditScores) {
+			if (
+				judgeStatus(score) === 'scoring_skipped' &&
+				skippedStopReasonKind(score.metadata?.stop_reason) === kind
+			) {
+				testCaseIds.add(score.test_case_id);
+			}
+		}
+		for (const row of data.inferencePreviewRows ?? []) {
+			if (skippedStopReasonKind(row.stop_reason) === kind) testCaseIds.add(row.test_case_id);
+		}
+		return testCaseIds.size;
+	}
+
+	let auditRefusedCount = $derived(countSkippedStopReasonKind('refusal'));
+	let auditErroredCount = $derived(countSkippedStopReasonKind('error'));
 
 	function metricLabel(metric: string): string {
 		return metric.replace(/_/g, ' ');
@@ -1218,10 +1266,24 @@
 			{/each}
 		</div>
 
-		{#if auditJudgeFailures > 0}
-			<p class="mb-6 text-xs text-amber-400">
-				Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
-			</p>
+		{#if auditJudgeFailures > 0 || auditRefusedCount > 0 || auditErroredCount > 0}
+			<div class="-mt-6 mb-3 space-y-1 text-xs text-amber-400">
+				{#if auditJudgeFailures > 0}
+					<p>
+						Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
+					</p>
+				{/if}
+				{#if auditRefusedCount > 0}
+					<p>
+						{auditRefusedCount} {auditRefusedCount === 1 ? 'scenario was' : 'scenarios were'} refused before producing a transcript.
+					</p>
+				{/if}
+				{#if auditErroredCount > 0}
+					<p>
+						{auditErroredCount} {auditErroredCount === 1 ? 'scenario' : 'scenarios'} hit an inference error and {auditErroredCount === 1 ? 'was' : 'were'} excluded from the rates.
+					</p>
+				{/if}
+			</div>
 		{/if}
 
 
@@ -1375,7 +1437,11 @@
 										>
 											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.test_case_id}</span>
 											<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-											<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+											{#if auditScore.metadata.stop_reason}
+												<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+													{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+												</span>
+											{/if}
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(auditScore, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
@@ -1433,7 +1499,11 @@
 						>
 							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.test_case_id}</span>
 							<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+							{#if auditScore.metadata.stop_reason}
+								<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+									{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+								</span>
+							{/if}
 							<div class="flex items-center gap-1.5 flex-shrink-0">
 								{#each auditMetricNames as m}
 									{@const v = getRecordFlag(auditScore, m)}
@@ -1501,7 +1571,11 @@
 								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
 							</div>
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{preview.stop_reason}</span>
+							{#if preview.stop_reason}
+								<span class={stopReasonChipClass(preview.stop_reason_display)} title={stopReasonTitle(preview.stop_reason, preview.stop_reason_display)}>
+									{stopReasonLabel(preview.stop_reason, preview.stop_reason_display)}
+								</span>
+							{/if}
 							<span class="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
 								unjudged
 							</span>
