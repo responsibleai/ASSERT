@@ -1360,6 +1360,15 @@ async def generate(
 ) -> ModelResponse:
     """Run a standard async text generation call."""
     resolved_options = options or GenerateOptions()
+    # Proactive degradation: if the Chat-Completions fallback is already
+    # active for this run (another task tripped it, or the user opted in
+    # via ASSERT_PREFER_CHAT_COMPLETIONS), drop web_search up front —
+    # there is no Chat Completions equivalent for web grounding.
+    if _force_chat_completions and resolved_options.web_search:
+        resolved_options = _drop_web_search_for_fallback(
+            resolved_options, model,
+            reason="Chat Completions fallback is active",
+        )
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     if resolved_options.web_search:
         _require_web_search_preview_support(model)
@@ -1391,7 +1400,23 @@ async def generate(
                 timeout_s=resolved_options.timeout_s,
             )
 
-    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    try:
+        raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    except _ResponsesApiNotAvailableError:
+        # Reactive degradation: this task was the first to trip the
+        # Responses-API-not-available marker. ``_with_retries`` already
+        # activated the global fallback but had no way to rebuild the
+        # closure without the web_search tool. Re-issue the call here
+        # via Chat Completions without web grounding.
+        if not resolved_options.web_search:
+            raise
+        return await generate(
+            model, messages,
+            options=_drop_web_search_for_fallback(
+                resolved_options, model,
+                reason="Responses API not available in this region",
+            ),
+        )
     result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
@@ -1412,6 +1437,12 @@ async def generate_structured(
 ) -> ModelResponse:
     """Run a structured generation call constrained by a JSON schema."""
     resolved_options = options or GenerateOptions()
+    # Proactive degradation: see ``generate`` for the rationale.
+    if _force_chat_completions and resolved_options.web_search:
+        resolved_options = _drop_web_search_for_fallback(
+            resolved_options, model,
+            reason="Chat Completions fallback is active",
+        )
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     if resolved_options.web_search:
         _require_web_search_preview_support(model)
@@ -1453,7 +1484,20 @@ async def generate_structured(
                 timeout_s=resolved_options.timeout_s,
             )
 
-    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    try:
+        raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    except _ResponsesApiNotAvailableError:
+        # Reactive degradation: see ``generate`` for the rationale.
+        if not resolved_options.web_search:
+            raise
+        return await generate_structured(
+            model, messages,
+            schema_name=schema_name, json_schema=json_schema,
+            options=_drop_web_search_for_fallback(
+                resolved_options, model,
+                reason="Responses API not available in this region",
+            ),
+        )
     result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
