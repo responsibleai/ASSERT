@@ -619,17 +619,72 @@ _responses_api_fallback_warned: bool = False
 """Set to True after the first Responses-API-not-available warning is
 emitted so we only log the user-facing message once per run."""
 
+_force_chat_completions: bool = False
+"""When True, the monkey-patched ``responses_api_bridge_check`` forces
+``mode=chat`` so LiteLLM never routes through the Responses API bridge."""
+
+_responses_api_guard_installed: bool = False
+"""Set to True after the bridge-check monkey-patch has been installed."""
+
 
 def _apply_chat_completions_preference() -> None:
-    """Force LiteLLM to use Chat Completions instead of Responses API.
+    """Prevent LiteLLM from routing through the Responses API bridge.
 
-    This sets ``LITELLM_USE_RESPONSES_API=false`` in the process
-    environment which LiteLLM checks before each call.  It is
-    called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS``
+    LiteLLM 1.82+ automatically bridges GPT-5.4+ calls to the
+    Responses API when *both* ``tools`` and ``reasoning_effort``
+    are present in the payload.  Azure regions that have not yet
+    enabled the Responses API reject these requests with a 404
+    ("responses api is not enabled").
+
+    This function installs a thin wrapper around
+    ``litellm.main.responses_api_bridge_check`` that overrides
+    ``mode=responses`` → ``mode=chat`` whenever ``_force_chat_completions``
+    is True, keeping all requests on the Chat Completions path.
+
+    It is called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS``
     is set) and reactively (on the first region-not-enabled error).
     """
-    import os
-    os.environ["LITELLM_USE_RESPONSES_API"] = "false"
+    global _force_chat_completions
+    _force_chat_completions = True
+    _install_responses_api_guard()
+
+
+def _install_responses_api_guard() -> None:
+    """Monkey-patch ``litellm.main.responses_api_bridge_check``.
+
+    The patch wraps the original function and overrides the returned
+    ``mode`` from ``"responses"`` back to ``"chat"`` when
+    ``_force_chat_completions`` is True.  Idempotent — safe to call
+    multiple times.
+    """
+    global _responses_api_guard_installed
+    if _responses_api_guard_installed:
+        return
+
+    from litellm import main as _litellm_main  # noqa: WPS433
+
+    _original = _litellm_main.responses_api_bridge_check
+
+    def _guarded_bridge_check(
+        model: str,
+        custom_llm_provider: str,
+        web_search_options: Any = None,
+        tools: Any = None,
+        reasoning_effort: Any = None,
+    ) -> tuple:
+        model_info, out_model = _original(
+            model,
+            custom_llm_provider,
+            web_search_options=web_search_options,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
+        )
+        if _force_chat_completions and model_info.get("mode") == "responses":
+            model_info["mode"] = "chat"
+        return model_info, out_model
+
+    _litellm_main.responses_api_bridge_check = _guarded_bridge_check
+    _responses_api_guard_installed = True
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
