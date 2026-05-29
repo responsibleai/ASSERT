@@ -64,9 +64,9 @@ pipeline:
 
   test_set:
     prompt:
-      sample_size: 12
+      sample_size: 5
     scenario:
-      sample_size: 12
+      sample_size: 5
 
   inference:
     concurrency: 6

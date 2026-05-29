@@ -41,7 +41,7 @@ pipeline:
       model:
         name: azure/gpt-5.4-mini
         temperature: 1.0
-      sample_size: 20
+      sample_size: 5
     scenario:
       model:
         name: azure/gpt-5.4-mini

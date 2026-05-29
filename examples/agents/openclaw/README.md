@@ -12,6 +12,8 @@ source .env
 uv run assert-eval run --config examples/pipes/health_assistant_external.yaml
 ```
 
+That pipe config defaults to 10 total test cases so a warm Docker run should finish in under 5 minutes. For a larger external-connector smoke run, add `--override test_set.sample_size=20`; expect about 5-10 minutes after the Docker image is built.
+
 If you want to validate the Docker assets without running the full pipeline, build the image directly:
 
 ```bash

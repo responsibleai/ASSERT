@@ -18,17 +18,22 @@ Three alerts, four tools, ~85-line `guardrails.yaml`. Same loop as the full case
 ## How to run
 
 ```bash
-uv sync
-cp ./.env.example ./.env
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel]"
+cp .env.example .env
 
 # BEFORE — bare agent
-uv run assert-eval run --config ./eval_config.yaml --run before
+assert-eval run --config examples/incident_triage_simple/eval_config.yaml --run before
 
 # AFTER — switch target.callable in eval_config.yaml to
 # examples.incident_triage_simple.agent_guarded:chat, then rerun
-uv pip install agent-shield        # required for the AFTER run only
-uv run assert-eval run --config ./eval_config.yaml --run after
+python -m pip install agent-shield        # required for the AFTER run only
+assert-eval run --config examples/incident_triage_simple/eval_config.yaml --run after
 ```
+
+The published config defaults to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so each BEFORE or AFTER run should finish in under 5 minutes. To reproduce the previous larger simple sweep, add `--override test_set.sample_size=24`; expect about 5 minutes per run.
 
 To disable the aux classifier (e.g. offline/no-Azure): `INCIDENT_TRIAGE_AUX_DISABLED=1`.
 
@@ -47,4 +52,3 @@ That is the eval-and-fix loop in one folder.
 ## See also
 
 - `../incident_triage_agent/README.md` — the full case study with 10 alerts, 6 tools, 13 gates, statistical n=200 measurement.
-

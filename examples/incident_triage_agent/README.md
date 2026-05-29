@@ -33,6 +33,8 @@ All four variants ran end-to-end (n=200 prompt + n=200 scenario, judge
 documented experiments — see Appendix B for why their original predictions
 didn't land at this rubric.
 
+The committed charts and tables are from that n=400-per-variant reproduction run. The published YAML configs now default to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so a first run of any variant finishes in under 5 minutes; add `--override test_set.sample_size=400` to reproduce the statistical run.
+
 | Demo? | Variant `run:` | Role | Headline (n=200 prompt + n=200 scenario) |
 |---|---|---|---|
 | **A · demo step 1** | `baseline-weak-prompt` | The broken baseline — live demo lead | `policy_violation` 89.6%; `escalation_violation` 78.4%; `wrong_severity` 60.7%; `fabrication` 46.4%; `channel_violation` 20.6%; `xpia_relay` 12.9%; `overrefusal` 23.4% |
@@ -194,6 +196,8 @@ assert-eval run --config examples\incident_triage_agent\eval_config_baseline.yam
 assert-eval run --config examples\incident_triage_agent\eval_config_guarded.yaml
 ```
 
+Those default commands run 10 total test cases per variant and should finish in under 5 minutes each. To reproduce the published n=200 prompt + n=200 scenario numbers, append `--override test_set.sample_size=400`; budget about 65-80 minutes for the first variant, then about 35-65 minutes for each remaining variant once the shared taxonomy and test set are cached.
+
 ### Run the appendix experiments (B and D)
 
 ```powershell
@@ -233,10 +237,11 @@ still produces a sensible chart.
   them across variants (per `CONFIG_REFERENCE.md`, "Suite-level stages
   write versioned artifacts under the suite directory and are shared
   across runs"). In practice: the first `assert-eval run` (any variant)
-  generates `test_set.jsonl` once (n=200 prompt + n=200 scenario); the
-  remaining runs detect the cached test set and only re-run `inference`
-  and `judge` against the same 400 test cases. Cross-variant comparison
-  is therefore apples-to-apples by construction. The
+  generates `test_set.jsonl` once (n=10 by default, or n=400 with
+  `--override test_set.sample_size=400`); the remaining runs detect the
+  cached test set and only re-run `inference` and `judge` against the
+  same test cases. Cross-variant comparison is therefore apples-to-apples
+  by construction. The
   `pressure_escalation_intensity` stratify dimension added in this PR
   invalidates the PR #43 cache, so the first run after this PR lands
   regenerates the suite test set.

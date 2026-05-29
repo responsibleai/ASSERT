@@ -46,6 +46,8 @@ assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
+The shipped quickstart config defaults to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so a first run should finish in under 5 minutes on a typical Azure OpenAI deployment. For a larger smoke run, add `--override test_set.sample_size=20`; expect about 6-10 minutes.
+
 Codespaces / VS Code Dev Containers:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/adaptive-eval)
@@ -235,4 +237,3 @@ Use of this system may also result in meaningful compute and inference costs. Yo
 - **Costs may scale quickly.** Large evaluations, repeated retries, or tool-heavy runs can incur substantial inference and execution costs.
 - **This is not a substitute for human review.** High-stakes conclusions should be supported by expert review, grounded evidence, and, where appropriate, additional statistical validation.
 - **Reproducibility may be imperfect.** Results can vary across model versions, deployments, tool backends, and runtime settings.
-

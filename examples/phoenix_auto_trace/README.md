@@ -74,6 +74,8 @@ travel_crewai.py       -> CrewAI + 2-line instrumentation + multi-agent crew
 
 ## Running
 
+Run a standalone framework demo:
+
 ```powershell
 # Install Phoenix + the instrumentor for your framework
 pip install arize-phoenix-otel openinference-instrumentation-openai
@@ -87,6 +89,14 @@ python -m examples.phoenix_auto_trace.travel_openai
 # View traces (in a separate terminal)
 phoenix serve   # http://localhost:6006
 ```
+
+Run the Adaptive Eval config:
+
+```powershell
+assert-eval run --config examples\phoenix_auto_trace\eval_config.yaml
+```
+
+All shipped eval configs in this directory default to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so a first eval run should finish in under 5 minutes. For a larger framework smoke run, use `--override test_set.sample_size=20`; expect about 6-10 minutes depending on provider latency and the framework package import cost.
 
 ## The Adaptive Eval integration
 
