@@ -1215,6 +1215,14 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
     last_exc: Exception | None = None
     own_429s = 0
     own_5xx = 0
+    # Per-task Chat-Completions fallback budget. We allow exactly ONE
+    # demote-and-retry per task: the first ``_ResponsesApiNotAvailableError``
+    # triggers the (possibly global) fallback activation and re-tries on
+    # the Chat path. A second occurrence within the same task means the
+    # retry itself failed with the same marker — that genuinely means
+    # the Chat path is misconfigured (e.g. wrong api-version) and we
+    # must surface the error instead of looping forever.
+    chat_fallback_attempts = 0
     # Hard ceiling on total iterations to guarantee termination even
     # if other tasks keep refreshing the cooldown indefinitely. With
     # _MAX_RETRIES=5 this allows up to 24 cooldown waits without ever
@@ -1277,18 +1285,24 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
             # is a subclass of ``LLMProviderError``, so this branch must
             # run before the generic provider-error branch, otherwise the
             # request is burned through standard 5xx retries and the
-            # one-shot Chat Completions fallback never fires.
-            # If the fallback was already active (so this call was
-            # already on the Chat path) the error is not actually a
-            # routing problem — re-raise it as a normal LLMProviderError
-            # so the caller sees the failure.
+            # Chat-Completions fallback never fires.
+            #
+            # We allow ONE Chat-path retry per task (``chat_fallback_attempts``).
+            # The global ``_force_chat_completions`` flag may already be True
+            # because a concurrent task tripped the marker first — that's
+            # fine, this task still needs its one retry on the Chat path.
+            # If the retry itself surfaces the same marker, the Chat path
+            # is genuinely broken (e.g. wrong api-version) and we
+            # re-raise instead of looping forever.
             if isinstance(classified, _ResponsesApiNotAvailableError):
-                if _force_chat_completions:
+                if chat_fallback_attempts >= 1:
                     raise classified from exc
-                _activate_chat_completions_fallback(
-                    "Azure Responses API not enabled in region",
-                    model=model, tag=tag,
-                )
+                chat_fallback_attempts += 1
+                if not _force_chat_completions:
+                    _activate_chat_completions_fallback(
+                        "Azure Responses API not enabled in region",
+                        model=model, tag=tag,
+                    )
                 continue
             if isinstance(classified, LLMProviderError):
                 own_5xx += 1

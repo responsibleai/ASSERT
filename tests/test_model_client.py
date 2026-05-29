@@ -567,5 +567,70 @@ class ResponsesApiClassificationTest(unittest.TestCase):
         self.assertNotIsInstance(classified, model_client._ResponsesApiNotAvailableError)
 
 
+class WithRetriesResponsesApiFallbackTest(unittest.IsolatedAsyncioTestCase):
+    """``_with_retries`` must give every task its own Chat-path retry
+    budget. The global ``_force_chat_completions`` flag can already be
+    True when a task hits the marker (because a concurrent task tripped
+    it first) — the task must still be allowed one retry on the Chat
+    path, otherwise concurrent in-flight Responses-API calls all fail
+    after the first WARN.
+    """
+
+    def setUp(self) -> None:
+        self.fake_litellm = SimpleNamespace()
+        self.fake_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
+        self.fake_litellm.RateLimitError = type("RateLimitError", (Exception,), {})
+        self.fake_litellm.BadRequestError = type("BadRequestError", (Exception,), {})
+        self.fake_litellm.NotFoundError = type("NotFoundError", (Exception,), {})
+        self.fake_litellm.APIError = type("APIError", (Exception,), {})
+        self.fake_litellm.APIConnectionError = type("APIConnectionError", (Exception,), {})
+        self._saved_force = model_client._force_chat_completions
+        self._saved_warned = model_client._responses_api_fallback_warned
+        model_client._force_chat_completions = False
+        model_client._responses_api_fallback_warned = False
+
+    def tearDown(self) -> None:
+        model_client._force_chat_completions = self._saved_force
+        model_client._responses_api_fallback_warned = self._saved_warned
+
+    async def test_retry_succeeds_when_fallback_already_active(self) -> None:
+        # Simulates a concurrent in-flight Responses-API call that lands
+        # after another task already activated fallback. Pre-fix this
+        # call returned LLMInputError and was never retried.
+        model_client._force_chat_completions = True
+        calls = {"n": 0}
+
+        async def call_fn():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise self.fake_litellm.NotFoundError(
+                    "Responses API is not enabled for this deployment"
+                )
+            return "ok"
+
+        with patch.object(model_client, "_get_litellm_module", return_value=self.fake_litellm):
+            result = await model_client._with_retries(call_fn, model="azure/gpt-5.4")
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls["n"], 2)
+
+    async def test_re_raises_when_chat_path_retry_also_fails(self) -> None:
+        # If the Chat-path retry itself surfaces the same marker, the
+        # Chat path is genuinely broken (e.g. wrong api-version) —
+        # re-raise instead of looping forever.
+        calls = {"n": 0}
+
+        async def call_fn():
+            calls["n"] += 1
+            raise self.fake_litellm.BadRequestError(
+                'AzureException - {"error":{"message":"API version not supported"}}'
+            )
+
+        with patch.object(model_client, "_get_litellm_module", return_value=self.fake_litellm):
+            with self.assertRaises(model_client._ResponsesApiNotAvailableError):
+                await model_client._with_retries(call_fn, model="azure/gpt-5.4")
+        # Two calls total: original + one Chat-path retry, then re-raise.
+        self.assertEqual(calls["n"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
