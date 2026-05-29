@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Google GenAI (Gemini).
 
 Instrumentation: 2 lines. Agent code: standard google-genai SDK.

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Phoenix OTel auto-instrumentation for the Azure Doc QA agent.
 
 2 lines to instrument, then run the agent unchanged. Phoenix auto-discovers

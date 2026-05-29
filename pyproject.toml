@@ -1,5 +1,5 @@
 [project]
-name = "p2m-policy"
+name = "assert-eval"
 version = "0.1.0"
 description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages"
 readme = "README.md"
@@ -29,7 +29,11 @@ langgraph = [
   "langgraph>=1.1.8",
 ]
 dspy = [
-  # Optional DSPy extra for local experimentation with DSPy-based examples.
+  # Pinned for the incident-triage and bank-manager 4-axis demos'
+  # optimize_with_gepa.ipynb notebooks, which use dspy.GEPA (Agrawal et al.,
+  # arXiv:2507.19457). GEPA landed in DSPy ~2.7; cap at <3 until the API
+  # stabilizes. The four eval configs themselves do NOT import DSPy at
+  # runtime, so the base install works without this extra.
   "dspy-ai>=2.7,<3",
 ]
 analysis = [
@@ -76,7 +80,7 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
-  "p2m-policy[otel,langgraph,analysis,examples,regression]",
+  "assert-eval[otel,langgraph,analysis,examples,regression]",
 ]
 dev = [
   "pytest>=9.0.3",
@@ -87,8 +91,7 @@ dev = [
 index-url = "https://pypi.org/simple"
 
 [project.scripts]
-p2m = "p2m.cli:cli"
-assert = "p2m.cli:cli"
+assert-eval = "assert_eval.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -97,8 +100,8 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "p2m-policy[otel,langgraph,examples]",
+    "assert-eval[otel,langgraph,examples]",
 ]
 
 [tool.setuptools.packages.find]
-include = ["p2m*", "examples*"]
+include = ["assert_eval*", "examples*"]

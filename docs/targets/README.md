@@ -6,8 +6,8 @@ Adaptive Eval can evaluate any agent or multi-agent system. Pick the path that m
 
 Two questions decide which target you want:
 
-1. **Have you written orchestration code** — tool routing, sub-agents, multi-step planning? If yes, use the callable target. Your code owns the loop; p2m calls your function and (recommended) reads the OTel spans you emit.
-2. **Or do you just have a system prompt and a tool schema** and want p2m to run the loop for you? That is the **Prompt Agent target**. You declare in YAML; the runtime orchestrates (up to 10 tool-call rounds, real Python tools or LLM-simulated tool responses).
+1. **Have you written orchestration code** — tool routing, sub-agents, multi-step planning? If yes, use the callable target. Your code owns the loop; ASSERT calls your function and (recommended) reads the OTel spans you emit.
+2. **Or do you just have a system prompt and a tool schema** and want ASSERT to run the loop for you? That is the **Prompt Agent target**. You declare in YAML; the runtime orchestrates (up to 10 tool-call rounds, real Python tools or LLM-simulated tool responses).
 
 The third path — plain callable without traces — is a customization fallback for black-box APIs you cannot instrument.
 
@@ -40,9 +40,9 @@ The callable target also accepts a plain Python function with no `target.trace` 
 
 | Path | Who owns the tool-call loop? | Best for | Config anchor |
 |---|---|---|---|
-| Callable target with OTel traces (recommended) | You (your callable runs the loop; p2m reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
-| Prompt Agent (model + tools) | p2m runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
-| Plain callable (customization fallback) | Whoever (p2m doesn't see inside) | Black-box APIs you cannot instrument; pipeline smoke tests | `target.callable` (no `target.trace`) |
+| Callable target with OTel traces (recommended) | You (your callable runs the loop; ASSERT reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
+| Prompt Agent (model + tools) | ASSERT runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
+| Plain callable (customization fallback) | Whoever (ASSERT doesn't see inside) | Black-box APIs you cannot instrument; pipeline smoke tests | `target.callable` (no `target.trace`) |
 
 ## What is not a preview-first path
 

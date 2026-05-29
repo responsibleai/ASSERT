@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Unit tests for `_materialize_target_messages` turn semantics.
 
 Only the tester (user) and the target (assistant) emit "turns".
@@ -10,7 +13,7 @@ from __future__ import annotations
 
 import unittest
 
-from p2m.viewer_read_model import (
+from assert_eval.viewer_read_model import (
     _count_target_conversation_messages,
     _materialize_target_messages,
 )

@@ -1,8 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """External connector for OpenClaw.
 
 Config key: connector: examples.agents.openclaw
 
-p2m delegates the conversation to the external agent and records what
+ASSERT delegates the conversation to the external agent and records what
 it says.  Each Adapter instance spins up its own Docker container via
 docker-compose so concurrent inference workers never collide.
 """

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Real MCP client setup for Foundry IQ + Microsoft Learn MCP servers.
 
 Used by ProductDocsAgent in real (non-mock) mode. Requires:

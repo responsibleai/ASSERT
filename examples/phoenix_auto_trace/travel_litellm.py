@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LiteLLM (provider-agnostic).
 
 Instrumentation: 2 lines. Agent code: LiteLLM completion with tools.
@@ -17,7 +20,7 @@ load_dotenv()
 import litellm  # noqa: E402
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT, OPENAI_TOOLS  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
 
 
 def chat(message: str) -> str:

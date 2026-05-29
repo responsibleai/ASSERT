@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { activeRuns } from '$lib/active-runs.js';

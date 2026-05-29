@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <!--
   Primer-style pagination.
   https://primer.style/product/components/pagination/

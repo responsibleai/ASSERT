@@ -1,5 +1,5 @@
 # Environments and local config
-.venv/
+.venv*/
 .env
 .env.*
 !.env.example
@@ -21,10 +21,17 @@ plots/
 artifacts/
 !examples/bank_manager/artifacts/
 !examples/bank_manager/artifacts/**
+# Allow the incident-triage trade-off chart artifact to be checked in
+# so the README can reference it before any live n=200 run.
+!examples/incident_triage_agent/artifacts/
+!examples/incident_triage_agent/artifacts/**
 
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/
 !viewer/src/routes/**/logs/**
+
+# Chainlit local config
+.chainlit/
 
 # PyRIT data
 .pyrit_data/
@@ -45,11 +52,11 @@ node_modules/
 # Local viewer run configs
 .viewer_configs/
 
-p2m-experiments/
+ASSERT-experiments/
 
 # Build artifacts
 *.egg-info/
-p2m_policy.*
+assert_eval_policy.*
 
 # Internal Copilot CLI instructions (per-repo, never committed)
 .github/instructions/preview-boundary.instructions.md

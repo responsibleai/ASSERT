@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Export one suite's results as csv tables, an Excel workbook, or html."""
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from p2m.core.io import (
+from assert_eval.core.io import (
     get_permissible_flag,
     load_json,
     load_jsonl,
@@ -22,8 +25,8 @@ from p2m.core.io import (
     row_behavior,
     row_factors,
 )
-from p2m.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
-from p2m.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_eval.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
 EXPORT_DIR_NAME = "exports"
 CSV_FORMAT = "csv"
