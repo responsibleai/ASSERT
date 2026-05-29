@@ -86,9 +86,8 @@ def configure_logging(
         )
         root.addHandler(file_handler)
 
-    # Keep LiteLLM debug noise suppressed regardless of verbosity.
-    # Errors from LiteLLM are caught and wrapped by ASSERT's own modules.
-    # The OpenAI SDK logs every retry at INFO; suppress to avoid flooding.
+    # Keep noisy dependency loggers suppressed regardless of verbosity.
+    # Errors from these packages are caught and wrapped by ASSERT's own modules.
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
     logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
@@ -96,6 +95,12 @@ def configure_logging(
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    # Phoenix/Alembic emit INFO messages during import and registration
+    # ("setup plugin …", "Ensuring phoenix working directory …") that
+    # are internal startup details with no value to ASSERT users.
+    logging.getLogger("alembic").setLevel(logging.WARNING)
+    logging.getLogger("phoenix").setLevel(logging.WARNING)
 
 
 def _make_stderr_console():
