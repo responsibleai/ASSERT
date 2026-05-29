@@ -13,7 +13,14 @@ DEFAULT_SYSTEMATIZATION_MODEL = "azure/gpt-5.4"
 DEFAULT_GENERATION_TEMPERATURE = None
 DEFAULT_GENERATION_MAX_TOKENS = 3000
 DEFAULT_SYSTEMATIZE_TEMPERATURE = None
-DEFAULT_SYSTEMATIZE_MAX_TOKENS = 10000
+# Bumped from 10000 -> 16000 after issue #131. The travel-planner spec
+# exercises a long-prose systematization response that routinely landed
+# near the 10k ceiling and truncated mid-string. 16k gives reasonable
+# headroom for typical specs; users can still override via the YAML
+# `pipeline.systematize.model.max_tokens` field. When truncation is still
+# detected, the systematize stage now raises a clear actionable error
+# (pointing at this setting) instead of an opaque JSON-parse failure.
+DEFAULT_SYSTEMATIZE_MAX_TOKENS = 16000
 DEFAULT_SYSTEMATIZATION_TEMPERATURE = None
 DEFAULT_SYSTEMATIZATION_MAX_TOKENS = None  # uncapped; model uses its own limit
 DEFAULT_SYSTEMATIZATION_CONVERT_TEMPERATURE = None

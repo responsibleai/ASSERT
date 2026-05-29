@@ -259,6 +259,37 @@ class ModelResponse:
 _LITELLM_MODULE: Any | None = None
 
 
+# Finish-reason values that indicate the model hit the output-token limit
+# rather than completing its response. ``length`` is Chat Completions;
+# ``max_tokens`` / ``max_output_tokens`` come from the OpenAI Responses API
+# (surfaced via ``incomplete_details.reason`` in ``normalize_response``).
+# We deliberately do NOT include bare ``"incomplete"`` (the Responses API
+# ``status`` field) because that value covers any non-finished state -- including
+# content-filter refusals or provider errors that won't be fixed by enlarging
+# the token budget. Truncation must be confirmed by a specific ``reason``.
+_TRUNCATED_FINISH_REASONS: frozenset[str] = frozenset({
+    "length",
+    "max_tokens",
+    "max_output_tokens",
+})
+
+
+def is_truncated_response(response: "ModelResponse") -> bool:
+    """Return True iff *response* hit the model's output token limit.
+
+    Checks both the normalized ``finish_reason`` (which already prefers the
+    Responses API ``incomplete_details.reason`` over the ambiguous
+    ``status='incomplete'``) and the raw ``incomplete_details.reason`` as a
+    belt-and-suspenders fallback for callers that bypass ``normalize_response``.
+    """
+    reason = getattr(response, "finish_reason", None)
+    if isinstance(reason, str) and reason in _TRUNCATED_FINISH_REASONS:
+        return True
+    incomplete = getattr(response, "incomplete_details", None)
+    incomplete_reason = _get_value(incomplete, "reason")
+    return isinstance(incomplete_reason, str) and incomplete_reason in _TRUNCATED_FINISH_REASONS
+
+
 def build_json_schema_response_format(
     name: str,
     schema: dict[str, Any],
@@ -746,6 +777,18 @@ def _normalize_usage(raw_usage: Any) -> UsageStats | None:
             cached_input = _coerce_int(_get_value(prompt_details, "cached_tokens"))
     cache_creation = _coerce_int(_get_value(raw_usage, "cache_creation_input_tokens"))
 
+    # Diagnose providers that return a usage object but with all zero/None
+    # token counts. Seen with truncated Azure Responses API calls (status
+    # 'incomplete'): the accumulator records 1 call but reports 0 in / 0 out,
+    # which masks the real token spend. Log at debug so we can attribute
+    # mystery zero-token rows in the future without spamming normal runs.
+    if not prompt and not completion and not total:
+        log.debug(
+            "Usage payload contained zero/None tokens (raw=%r) -- "
+            "provider likely returned an incomplete or error response",
+            raw_usage,
+        )
+
     return UsageStats(
         prompt_tokens=prompt,
         completion_tokens=completion,
@@ -843,6 +886,7 @@ __all__ = [
     "Message",
     "MessageLike",
     "ModelResponse",
+    "is_truncated_response",
     "summarize_response",
     "ToolCall",
     "ToolCallLike",

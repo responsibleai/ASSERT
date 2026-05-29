@@ -251,5 +251,171 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
 
+class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
+    """Issue #131: when BOTH attempts of the pre-existing 2-attempt retry
+    loop are truncated by the output budget, the final error must be the
+    clear actionable truncation message, not the generic "transient model
+    issue" message. The retry behaviour itself is unchanged."""
+
+    _TAXONOMY_PAYLOAD = {
+        "behavior": {"definition": "Structured definition"},
+        "definition_of_terms": [],
+        "behavior_categories": [
+            {
+                "name": "behavior-a",
+                "definition": "behavior definition",
+                "examples": ["example-a"],
+                "permissible": False,
+            }
+        ],
+    }
+
+    def _write_fixture(self, tmp_path: Path) -> Path:
+        systematization_path = tmp_path / "systematization.json"
+        systematization_path.write_text(
+            json.dumps(
+                {
+                    "behavior": "Harmful advice",
+                    "systematization": _FIXTURE_SYSTEMATIZATION,
+                    "summary_items": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return systematization_path
+
+    async def test_persistent_truncation_raises_clear_truncation_error(self) -> None:
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model=model,
+                text='{"behavior":{"definition":"truncated',
+                finish_reason="max_output_tokens",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            with (
+                patch(
+                    "assert_eval.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaisesRegex(
+                    ValueError, "truncated.*max_output_tokens.*max_tokens=8000"
+                ),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                )
+
+    async def test_chat_completions_length_truncation_raises_clear_error(self) -> None:
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model=model,
+                text='{"behavior":{"definition":"truncated',
+                finish_reason="length",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            with (
+                patch(
+                    "assert_eval.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaisesRegex(ValueError, "truncated.*length"),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                )
+
+    async def test_persistent_empty_parse_keeps_transient_error_message(self) -> None:
+        """When neither attempt was truncated, the pre-existing 'transient
+        model issue' error message is preserved verbatim."""
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            return ModelResponse(model=model, parsed=None, finish_reason="stop", text="garbage")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            with (
+                patch(
+                    "assert_eval.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaisesRegex(ValueError, "transient model issue"),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                )
+
+    async def test_first_attempt_failure_then_success_uses_existing_retry(self) -> None:
+        """The pre-existing 2-attempt retry loop must keep working: attempt
+        1 returns empty/non-dict parsed (transient model misbehavior),
+        attempt 2 succeeds. Behavioural contract from before issue #131."""
+        attempts = 0
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return ModelResponse(model=model, parsed=None, finish_reason="stop", text="oops")
+            return ModelResponse(model=model, parsed=self._TAXONOMY_PAYLOAD, finish_reason="stop")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            with patch(
+                "assert_eval.stages.systematization_convert.generate_structured",
+                new=fake_generate_structured,
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                )
+
+        self.assertEqual(attempts, 2)
+
+    async def test_uses_constant_max_tokens_across_attempts(self) -> None:
+        """Behavioural contract: max_tokens MUST NOT change between attempts.
+        Issue #131 explicitly chose not to grow the budget on retry."""
+        seen_max_tokens: list[int | None] = []
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema
+            seen_max_tokens.append(options.max_tokens)
+            return ModelResponse(model=model, parsed=None, finish_reason="stop", text="oops")
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            with (
+                patch(
+                    "assert_eval.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaises(ValueError),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=12345),
+                )
+
+        self.assertEqual(seen_max_tokens, [12345, 12345])
+
+
 if __name__ == "__main__":
     unittest.main()

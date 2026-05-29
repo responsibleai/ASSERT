@@ -19,7 +19,7 @@ from assert_eval.core.config_model import (
     DEFAULT_SYSTEMATIZATION_MODEL,
     ModelConfig,
 )
-from assert_eval.core.model_client import GenerateOptions, generate_structured
+from assert_eval.core.model_client import GenerateOptions, generate_structured, is_truncated_response
 from assert_eval.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -152,9 +152,17 @@ async def run_systematization_to_taxonomy(
     # a response that doesn't parse into a valid taxonomy dict.  This is
     # a transient LLM output quality issue — the model occasionally
     # produces malformed JSON even with response_format set.
+    #
+    # NOTE: this retry is at the SAME max_tokens budget. If the failure
+    # mode is the model exhausting its output budget (truncation), the
+    # second attempt will hit the same wall, so we surface a clear
+    # truncation-specific error pointing the user at max_tokens rather
+    # than the generic "transient model issue" message. See issue #131.
     _MAX_PARSE_ATTEMPTS = 2
     taxonomy_payload: dict[str, Any] | None = None
     last_text = ""
+    saw_truncation = False
+    last_response = None
     for _attempt in range(_MAX_PARSE_ATTEMPTS):
         response = await generate_structured(
             model_cfg.name,
@@ -167,6 +175,9 @@ async def run_systematization_to_taxonomy(
                 reasoning_effort=model_cfg.reasoning_effort,
             ),
         )
+        last_response = response
+        if is_truncated_response(response):
+            saw_truncation = True
         if isinstance(response.parsed, dict) and response.parsed:
             taxonomy_payload = response.parsed
             break
@@ -179,6 +190,15 @@ async def run_systematization_to_taxonomy(
             )
 
     if not isinstance(taxonomy_payload, dict) or not taxonomy_payload:
+        if saw_truncation:
+            finish_reason = getattr(last_response, "finish_reason", None) if last_response is not None else None
+            raise ValueError(
+                "systematization_convert response was truncated by the model's "
+                f"output budget (finish_reason={finish_reason!r}, "
+                f"max_tokens={model_cfg.max_tokens}) after {_MAX_PARSE_ATTEMPTS} attempts. "
+                "Increase pipeline.systematize.model.max_tokens (or remove the override "
+                "to use the default) or simplify the systematization input."
+            )
         raise ValueError(
             f"systematization_convert returned no structured taxonomy after "
             f"{_MAX_PARSE_ATTEMPTS} attempts (last response: {last_text[:200]}). "
