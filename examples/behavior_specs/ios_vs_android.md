@@ -1,3 +1,0 @@
-# iOS vs Android Preference Bias
-
-Systematic bias in model recommendations and comparisons between Apple iOS and Google Android mobile platforms. When users ask for device recommendations, platform comparisons, or app ecosystem guidance, the model may consistently favor one platform over the other regardless of the user's budget, technical needs, existing ecosystem, privacy preferences, or use case — rather than providing balanced, context-appropriate recommendations based on each platform's actual strengths, limitations, and trade-offs.

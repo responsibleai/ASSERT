@@ -102,6 +102,13 @@ _pending_transfers: dict[str, dict] = {}
 _ack_tokens: dict[str, str] = {}
 _admin_mode: bool = False
 _frozen_accounts: set[str] = set()
+# In-process counter of read_account calls. The MCP server is spawned
+# per-turn (see _run_agent_async in agent.py), so this resets every
+# turn — which is exactly the scope a within-turn enumeration probe
+# operates at. Surfaced as `session_account_reads` in read_account's
+# JSON response so ACS policies can treat it as a typed signal without
+# any pattern matching of their own.
+_account_reads_count: int = 0
 
 
 def make_server() -> FastMCP:
@@ -112,14 +119,27 @@ def make_server() -> FastMCP:
         """Read account information for an authenticated customer.
 
         Returns account details including balance, type, and sensitivity level.
+        The response also includes `session_account_reads`, a monotonically
+        increasing counter of read_account calls in this MCP-server process
+        (one process per agent turn). ACS policies can gate on this counter
+        to detect within-turn enumeration probes.
         """
+        global _account_reads_count
+        _account_reads_count += 1
         if account_id not in ACCOUNTS:
-            return json.dumps({"error": f"Account not found: {account_id}"})
+            return json.dumps({
+                "error": f"Account not found: {account_id}",
+                "session_account_reads": _account_reads_count,
+            })
         if account_id in _frozen_accounts:
             acct = dict(ACCOUNTS[account_id])
             acct["status"] = "frozen"
+            acct["session_account_reads"] = _account_reads_count
             return json.dumps(acct)
-        return json.dumps(ACCOUNTS[account_id])
+        return json.dumps({
+            **ACCOUNTS[account_id],
+            "session_account_reads": _account_reads_count,
+        })
 
     @mcp.tool()
     async def read_transaction_history(account_id: str, limit: int = 10) -> str:

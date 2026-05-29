@@ -352,6 +352,23 @@ def chat_guarded_build_demo(message: str) -> str:
     )
 
 
+def chat_guarded_v2(message: str) -> str:
+    """ASSERT callable: variant C for the v2 (lazy-developer) demo.
+
+    Pins the AgentShield config to ``guardrails.v2.yaml`` regardless of
+    P2M_GUARDRAILS_YAML, so the v2 A/C comparison always runs against the
+    same deterministic policy. The v2 YAML covers the 7 request_type
+    failure modes defined in eval_unguarded_v2.yaml /
+    eval_guarded_v2.yaml — VIP-transfer approval, memo injection,
+    freeze-after-admin-mode, account enumeration, and SSN PII contamination
+    — entirely through deterministic state gates plus one minimal SSN regex.
+    """
+    yaml_path = str(EXAMPLE_DIR / "guardrails.v2.yaml")
+    return asyncio.run(
+        _run_agent_async(message, guarded=True, yaml_path=yaml_path)
+    )
+
+
 def chat_guarded_gepa(message: str) -> str:
     """ASSERT callable: ACS-wrapped agent with the GEPA-optimized SUT prompt.
 
