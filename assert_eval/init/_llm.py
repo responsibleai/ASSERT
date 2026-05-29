@@ -27,7 +27,11 @@ def chat_completion(
     """
     import litellm
 
-    from assert_eval.core.model_client import _classify_llm_error
+    from assert_eval.core.model_client import (
+        _ResponsesApiNotAvailableError,
+        _apply_chat_completions_preference,
+        _classify_llm_error,
+    )
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -41,7 +45,21 @@ def chat_completion(
     try:
         response = litellm.completion(**kwargs)
     except Exception as exc:
-        raise _classify_llm_error(exc) from exc
+        classified = _classify_llm_error(exc)
+        # One-shot fallback: if the Responses API is not available in
+        # this region, switch to Chat Completions and retry once.
+        if isinstance(classified, _ResponsesApiNotAvailableError):
+            _apply_chat_completions_preference()
+            log.warning(
+                "Azure Responses API is not available in this region; "
+                "retrying with Chat Completions."
+            )
+            try:
+                response = litellm.completion(**kwargs)
+            except Exception as inner_exc:
+                raise _classify_llm_error(inner_exc) from inner_exc
+        else:
+            raise classified from exc
 
     content = response.choices[0].message.content
     if content is None:
