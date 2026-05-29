@@ -20,9 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+log = logging.getLogger(__name__)
 
 
 # OpenInference semantic conventions
@@ -517,15 +522,75 @@ class LiveOTelExporter:
         LiveOTelExporter._sdk_exporter = _Collector()
         processor = SimpleSpanProcessor(LiveOTelExporter._sdk_exporter)
 
+        def _should_preserve_default_exporter() -> bool:
+            """Detect whether an OTel collector is reachable.
+
+            When Phoenix's ``register()`` creates a TracerProvider it
+            installs a default gRPC span exporter that targets
+            ``localhost:4317``.  If no collector is listening there the
+            exporter logs noisy retry warnings/errors that confuse users
+            even though they are harmless.
+
+            Resolution order:
+            1. ``OTEL_EXPORTER_OTLP_ENDPOINT`` or
+               ``PHOENIX_COLLECTOR_ENDPOINT`` set → **preserve**
+               (explicit user intent).
+            2. ``ASSERT_EXPORT_TRACES=1`` → **preserve**
+               (force-override for non-localhost collectors).
+            3. TCP probe ``localhost:{gRPC port}`` succeeds → **preserve**
+               (auto-detect running collector / Phoenix server).
+            4. Otherwise → **replace** (suppress gRPC errors).
+            """
+            # 1. Explicit endpoint env vars → user wants export
+            if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or \
+               os.environ.get("PHOENIX_COLLECTOR_ENDPOINT"):
+                log.debug(
+                    "OTel collector endpoint configured via env var "
+                    "— preserving default gRPC exporter"
+                )
+                return True
+
+            # 2. Force-override for non-standard setups
+            if os.environ.get("ASSERT_EXPORT_TRACES", "").strip() == "1":
+                log.debug(
+                    "ASSERT_EXPORT_TRACES=1 — preserving default gRPC exporter"
+                )
+                return True
+
+            # 3. Probe the default gRPC port
+            port = 4317
+            grpc_port_env = os.environ.get("PHOENIX_GRPC_PORT", "")
+            if grpc_port_env.isnumeric():
+                port = int(grpc_port_env)
+
+            try:
+                with socket.create_connection(("localhost", port), timeout=0.1):
+                    log.debug(
+                        "OTel collector detected on localhost:%d "
+                        "— preserving default gRPC exporter",
+                        port,
+                    )
+                    return True
+            except (ConnectionRefusedError, TimeoutError, OSError):
+                log.debug(
+                    "No OTel collector on localhost:%d "
+                    "— replacing default gRPC exporter to suppress warnings",
+                    port,
+                )
+                return False
+
         def _add_processor_preserving(provider, proc):
             # Phoenix's TracerProvider removes its default gRPC exporter
-            # when add_span_processor is called. Passing
-            # replace_default_processor=False preserves it. Standard OTel
-            # SDK providers don't accept this kwarg, so fall back to the
-            # normal call which already appends correctly.
+            # when add_span_processor is called unless told otherwise.
+            # We auto-detect whether a collector is running and only
+            # preserve the exporter when one is reachable.
+            preserve = _should_preserve_default_exporter()
             try:
-                provider.add_span_processor(proc, replace_default_processor=False)
+                provider.add_span_processor(
+                    proc, replace_default_processor=not preserve,
+                )
             except TypeError:
+                # Standard OTel SDK providers don't accept the kwarg
                 provider.add_span_processor(proc)
 
         # Piggyback on existing provider if one is set (e.g., by Phoenix register())
