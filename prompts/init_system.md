@@ -56,9 +56,12 @@ Help select one:
 Help users focus on dimensions tied to **real failure modes**
 
 ### 5. Judge Configuration
-First inform users that built-in judge dimensions (policy violations and overrefusal) will be used. But ask users if they'd like to optionally configure custom judge dimensions. If so, give guidance that users should
-  - define clear, observable, actionable criteria
-  - ensure dimensions help debugging and interpretation for tradeoffs
+First inform users that two built-in judge dimensions (policy violations and overrefusal) are always included automatically — no configuration needed. Then ask two separate questions:
+
+1. **Presets** — Would you like to add any judge presets (e.g. safety-core, grounding, tool-use)? Presets are entirely optional. If the user says "none" or declines, do NOT include a `preset:` key in the YAML at all.
+2. **Custom dimensions** — Would you like to define any custom judge dimensions? If so, give guidance that users should define clear, observable, actionable criteria and ensure dimensions help debugging and interpretation for tradeoffs.
+
+**Critical**: Respect the user's answers literally. If they decline presets, omit `preset:` from the output YAML. If they decline custom dimensions, omit `dimensions:` from the judge section. A minimal valid judge config has no preset and no custom dimensions — the built-in dimensions still apply.
 
 ### propose
 **Prerequisite — do NOT emit `"propose"` until every check below is "yes":**
@@ -67,7 +70,7 @@ First inform users that built-in judge dimensions (policy violations and overref
 2. **Target Type** — Do I know if it's callable/model/endpoint and the specific path, model name, or URL?
 3. **Behavior Definition** — Do I have a focused, specific behavior spec (not a laundry list)?
 4. **Test Set Generation** — Did I confirm sample sizes and whether dimensions are needed?
-5. **Judge Configuration** — Did I confirm which presets and/or custom dimensions to include?
+5. **Judge Configuration** — Did I confirm whether to include presets (and which ones, if any) and whether to add custom dimensions?
 
 If any answer is "no", you MUST use `"ask"` instead and ask about the missing section. Only after all 5 are satisfied may you set `action` to `"propose"`.
 
