@@ -680,23 +680,39 @@ def _install_responses_api_guard() -> None:
     _responses_api_guard_installed = True
 
 
-def _activate_chat_completions_fallback(reason: str, *, model: str | None = None, tag: str = "") -> None:
+def _activate_chat_completions_fallback(
+    reason: str,
+    *,
+    model: str | None = None,
+    tag: str = "",
+    proactive: bool = False,
+) -> None:
     """Activate process-wide Chat Completions fallback.
 
     Sets the sticky ``_force_chat_completions`` flag, installs the
     bridge-check guard (idempotent), and emits a single user-facing
-    WARN per run via ``_responses_api_fallback_warned``.
+    message per run via ``_responses_api_fallback_warned``.
 
-    Called both proactively (when ``ASSERT_PREFER_CHAT_COMPLETIONS`` is
-    set at import time) and reactively (from ``_with_retries`` on the
-    first ``_ResponsesApiNotAvailableError``).
+    When ``proactive`` is True (env-var seed at import time, or an
+    explicit API preference) the message is logged at INFO and omits
+    the "set ASSERT_PREFER_CHAT_COMPLETIONS=1" hint — the user has
+    already opted in. When False (reactive recovery from a region
+    error) it is logged at WARN with the hint.
     """
     global _force_chat_completions, _responses_api_fallback_warned
     _force_chat_completions = True
     _install_responses_api_guard()
-    if not _responses_api_fallback_warned:
-        _responses_api_fallback_warned = True
-        prefix = f"{model}{tag}: " if model else ""
+    if _responses_api_fallback_warned:
+        return
+    _responses_api_fallback_warned = True
+    prefix = f"{model}{tag}: " if model else ""
+    if proactive:
+        log.info(
+            "%sUsing Azure Chat Completions instead of Responses API "
+            "for this run (%s).",
+            prefix, reason,
+        )
+    else:
         log.warning(
             "%sFalling back from Azure Responses API to Chat Completions "
             "for the remainder of this run (%s). Set "
@@ -708,7 +724,7 @@ def _activate_chat_completions_fallback(reason: str, *, model: str | None = None
 
 def _apply_chat_completions_preference() -> None:
     """Public entry for proactive activation (kept for back-compat)."""
-    _activate_chat_completions_fallback("preference set via API")
+    _activate_chat_completions_fallback("preference set via API", proactive=True)
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
@@ -1423,4 +1439,7 @@ async def generate_with_tools(
 # on every cold start, while keeping the reactive fallback as a
 # safety net for regions that lose support later.
 if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip().lower() in ("1", "true", "yes"):
-    _activate_chat_completions_fallback("ASSERT_PREFER_CHAT_COMPLETIONS env var set")
+    _activate_chat_completions_fallback(
+        "ASSERT_PREFER_CHAT_COMPLETIONS env var set",
+        proactive=True,
+    )
