@@ -633,6 +633,204 @@ class WithRetriesResponsesApiFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["n"], 2)
 
 
+class WebSearchFallbackDegradationTest(unittest.IsolatedAsyncioTestCase):
+    """When the Responses API is unavailable in a region, ``web_search``
+    calls cannot be retried as-is on Chat Completions (there is no
+    Chat-Completions equivalent for ``web_search_preview``). The
+    fallback layer must drop ``web_search`` and route via Chat
+    Completions instead — either proactively (when the global
+    fallback is already active) or reactively (when this task is the
+    first to hit the region marker).
+    """
+
+    def setUp(self) -> None:
+        self._saved_force = model_client._force_chat_completions
+        self._saved_warned = model_client._responses_api_fallback_warned
+        self._saved_drop_warned = model_client._web_search_drop_warned
+        model_client._force_chat_completions = False
+        model_client._responses_api_fallback_warned = False
+        model_client._web_search_drop_warned = False
+
+    def tearDown(self) -> None:
+        model_client._force_chat_completions = self._saved_force
+        model_client._responses_api_fallback_warned = self._saved_warned
+        model_client._web_search_drop_warned = self._saved_drop_warned
+
+    async def test_web_search_dropped_proactively_when_fallback_active(self) -> None:
+        # Simulates a task entering ``generate_structured`` after another
+        # task has already activated the Chat-Completions fallback. The
+        # web_search request must be downgraded up front (no Responses
+        # API round-trip) and emit a one-time WARN.
+        captured: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"verdict": "pass"}',
+                        },
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        schema = {
+            "type": "object",
+            "properties": {"verdict": {"type": "string"}},
+            "required": ["verdict"],
+            "additionalProperties": False,
+        }
+        model_client._force_chat_completions = True
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+                self.assertLogs(model_client.log, level="WARNING") as cm:
+            response = await model_client.generate_structured(
+                "azure/gpt-5.4",
+                "research this",
+                schema_name="judge_output",
+                json_schema=schema,
+                options=model_client.GenerateOptions(web_search=True),
+            )
+
+        # Routed through Chat Completions (no Responses API tool).
+        self.assertNotIn("tools", captured)
+        self.assertIn("response_format", captured)
+        self.assertEqual(response.api_mode, "chat_completion")
+        self.assertEqual(response.parsed, {"verdict": "pass"})
+        # Exactly one WARN naming the model.
+        warn_lines = [r for r in cm.output if "dropping web_search" in r]
+        self.assertEqual(len(warn_lines), 1)
+        self.assertIn("azure/gpt-5.4", warn_lines[0])
+
+    async def test_web_search_dropped_reactively_on_responses_api_unavailable(self) -> None:
+        # The first call hits the Responses API and gets the region
+        # marker. ``_with_retries`` retries once on the same closure
+        # (still web_search), then re-raises ``_ResponsesApiNotAvailableError``.
+        # ``generate_structured`` must catch and recurse without
+        # web_search, succeeding via Chat Completions.
+        responses_calls = {"n": 0}
+        completion_calls: dict[str, object] = {}
+
+        class NotFoundError(Exception):
+            pass
+
+        async def fake_aresponses(**_kwargs):
+            responses_calls["n"] += 1
+            raise NotFoundError(
+                "Responses API is not enabled for this deployment"
+            )
+
+        async def fake_acompletion(**kwargs):
+            completion_calls.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"verdict": "pass"}',
+                        },
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(
+            aresponses=fake_aresponses,
+            acompletion=fake_acompletion,
+            AuthenticationError=type("AuthenticationError", (Exception,), {}),
+            RateLimitError=type("RateLimitError", (Exception,), {}),
+            BadRequestError=type("BadRequestError", (Exception,), {}),
+            NotFoundError=NotFoundError,
+            APIError=type("APIError", (Exception,), {}),
+            APIConnectionError=type("APIConnectionError", (Exception,), {}),
+        )
+        schema = {
+            "type": "object",
+            "properties": {"verdict": {"type": "string"}},
+            "required": ["verdict"],
+            "additionalProperties": False,
+        }
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+                self.assertLogs(model_client.log, level="WARNING") as cm:
+            response = await model_client.generate_structured(
+                "azure/gpt-5.4",
+                "research this",
+                schema_name="judge_output",
+                json_schema=schema,
+                options=model_client.GenerateOptions(web_search=True),
+            )
+
+        # ``_with_retries`` attempts the Responses call twice before
+        # giving up (original + one Chat-path retry that's still the
+        # responses closure), then ``generate_structured`` recurses
+        # without web_search.
+        self.assertEqual(responses_calls["n"], 2)
+        self.assertNotIn("tools", completion_calls)
+        self.assertIn("response_format", completion_calls)
+        self.assertEqual(response.api_mode, "chat_completion")
+        self.assertEqual(response.parsed, {"verdict": "pass"})
+        # Global fallback got activated as a side-effect of the retry.
+        self.assertTrue(model_client._force_chat_completions)
+        # Both the activation WARN and the web_search drop WARN appear.
+        drop_lines = [r for r in cm.output if "dropping web_search" in r]
+        self.assertEqual(len(drop_lines), 1)
+
+    async def test_web_search_drop_warning_logged_once_per_run(self) -> None:
+        # Multiple proactive degradations in the same run must produce
+        # only ONE WARN — the global ``_web_search_drop_warned`` flag.
+        async def fake_acompletion(**_kwargs):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        model_client._force_chat_completions = True
+        opts = model_client.GenerateOptions(web_search=True)
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+                self.assertLogs(model_client.log, level="WARNING") as cm:
+            await model_client.generate("azure/gpt-5.4", "first", opts)
+            await model_client.generate("azure/gpt-5.4", "second", opts)
+
+        drop_lines = [r for r in cm.output if "dropping web_search" in r]
+        self.assertEqual(len(drop_lines), 1)
+
+    async def test_proactive_degradation_skipped_when_web_search_off(self) -> None:
+        # When web_search is already off, the proactive degradation
+        # branch must be a no-op — no WARN, normal Chat-path call.
+        async def fake_acompletion(**_kwargs):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        model_client._force_chat_completions = True
+
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            response = await model_client.generate(
+                "azure/gpt-5.4",
+                "hello",
+                model_client.GenerateOptions(web_search=False),
+            )
+        self.assertEqual(response.text, "ok")
+        self.assertFalse(model_client._web_search_drop_warned)
+
+
 class NormalizeAzureApiBaseTest(unittest.TestCase):
     """``_normalize_azure_api_base`` must strip any ``/openai/...``
     path suffix that snuck into AZURE_API_BASE. LiteLLM appends that
