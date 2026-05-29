@@ -12,7 +12,7 @@ This page visualizes the flagship customer-preview example:
 
 ```mermaid
 flowchart TD
-  subgraph ASSERT["Adaptive Eval inference loop"]
+  subgraph ASSERT["ASSERT inference loop"]
     Seed["generated test case"]
     Tester["tester LLM<br/>next user turn"]
     Runtime["CallableSession.run_turn<br/>calls target callable"]
@@ -139,4 +139,4 @@ sequenceDiagram
 
 ## Caveat
 
-`chat_sync(message: str)` does not accept `history`, so Adaptive Eval maintains the outer multi-turn transcript while each target invocation is a fresh graph run from the agent's perspective.
+`chat_sync(message: str)` does not accept `history`, so ASSERT maintains the outer multi-turn transcript while each target invocation is a fresh graph run from the agent's perspective.

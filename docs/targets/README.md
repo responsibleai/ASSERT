@@ -1,6 +1,6 @@
 # Target Support Overview
 
-Adaptive Eval can evaluate any agent or multi-agent system. Pick the path that matches how your agent is built.
+ASSERT can evaluate any agent or multi-agent system. Pick the path that matches how your agent is built.
 
 ## Who owns the tool-call loop?
 

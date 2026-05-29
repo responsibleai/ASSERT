@@ -1,6 +1,6 @@
 # CLI Reference
 
-Adaptive Eval is CLI-first. All commands assume your virtualenv is activated (see the [README](../../README.md#quickstart-langgraph-travel-planner-any-agent-works-the-same-way) for setup).
+ASSERT is CLI-first. All commands assume your virtualenv is activated (see the [README](../../README.md#quickstart-langgraph-travel-planner-any-agent-works-the-same-way) for setup).
 
 ## Design a config interactively
 

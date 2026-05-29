@@ -1,6 +1,6 @@
 # Behaviors
 
-Adaptive Eval is a spec-driven evaluation pipeline for AI agents.
+ASSERT is a spec-driven evaluation pipeline for AI agents.
 
 The mental model is:
 
@@ -98,4 +98,4 @@ Outputs: `scores.jsonl` and `metrics.json`.
 
 ## Artifacts are the product surface
 
-Adaptive Eval does not require a hosted service to inspect results. The artifacts are local JSON/JSONL files that can be reviewed, diffed, archived, and used in CI.
+ASSERT does not require a hosted service to inspect results. The artifacts are local JSON/JSONL files that can be reviewed, diffed, archived, and used in CI.
