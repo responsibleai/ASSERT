@@ -66,9 +66,19 @@ const shieldStages = [
 	{ stage: "Stage 5", title: "Output Validation", body: "Scans final responses for PII leakage or sensitive data before delivery", chips: ["Regex", "Classifiers", "LLM"] }
 ];
 
+const frameworkLogos: { src: string; alt: string }[] = [
+	{ src: "langgraph logo.png", alt: "LangGraph" },
+	{ src: "crewailogo.png", alt: "CrewAI" },
+	{ src: "OpenAIlogo.png", alt: "OpenAI Agents SDK" },
+	{ src: "DSPy logo.png", alt: "DSPy" },
+	{ src: "llamalndexlogo.png", alt: "LlamaIndex" },
+	{ src: "autogen logo.png", alt: "AutoGen / MAF" },
+	// Add more logos here — drop the file into public/icons/ and add an entry.
+];
+
 const policyResources: { title: string; body?: string; href: string }[] = [
 	{ title: "GitHub repo", body: "Browse the code repository.", href: "https://github.com/microsoft/ASSERT/" },
-	{ title: "Get started", body: "Install the SDK and run your first evaluation in under 5 minutes.", href: "https://github.com/microsoft/ASSERT/blob/main/docs/quickstart.md" },
+	{ title: "Get started", body: "Install the SDK and run your first evaluation in under 5 minutes.", href: "https://aka.ms/assert-get-started" },
 	{ title: "Read the technical blog", body: "Learn more about how ASSERT works.", href: "https://aka.ms/assert" },
 	{ title: "Examples", body: "Take a look at sample config files and datasets created by ASSERT.", href: "https://aka.ms/assert-examples" }
 ];
@@ -252,7 +262,7 @@ export default function Home() {
 								</svg>
 							</a>
 							<a href="https://aka.ms/assert" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-secondary">Read the blog</a>
-							<a href="#" className="hero-btn hero-btn-shine">
+							<a href="https://aka.ms/assert-get-started" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-shine">
 								<span className="hero-btn-shine-border" aria-hidden="true" />
 								<span className="hero-btn-shine-label">Get started</span>
 							</a>
@@ -296,7 +306,6 @@ export default function Home() {
 
 			<section className="hero-why" id="why-assert">
 				<div className="hero-why-inner">
-					<HeroGrid />
 					<div className="hero-why-content" data-reveal>
 						<h2 className="hero-why-title">
 							<span className="hero-why-focus">Why ASSERT</span>
@@ -403,28 +412,33 @@ export default function Home() {
 								</a>
 							</span>
 						</h3>
+						<h3 className="framework-heading framework-heading-stat" data-reveal>
+							<span className="framework-stat-num">100+</span>{" "}
+							<span className="framework-stat-label">
+								LLM APIs via{" "}
+								<a
+									href="https://github.com/BerriAI/litellm"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="framework-stat-link"
+								>
+									LiteLLM
+								</a>
+							</span>
+						</h3>
 						<div className="framework-marquee" data-reveal>
 							<div className="framework-marquee-track">
 								{[0, 1].map((dup) => (
 									<div className="framework-marquee-group" key={dup} aria-hidden={dup === 1}>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/langgraph logo.png`} alt="LangGraph" className="framework-logo-img" />
-										</div>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/crewailogo.png`} alt="CrewAI" className="framework-logo-img" />
-										</div>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/OpenAIlogo.png`} alt="OpenAI Agents SDK" className="framework-logo-img" />
-										</div>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/DSPy logo.png`} alt="DSPy" className="framework-logo-img" />
-										</div>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/llamalndexlogo.png`} alt="LlamaIndex" className="framework-logo-img" />
-										</div>
-										<div className="framework-logo">
-											<img src={`${BASE_PATH}/icons/autogen logo.png`} alt="AutoGen / MAF" className="framework-logo-img" />
-										</div>
+										{frameworkLogos.map((logo) => (
+											<div className="framework-logo" key={`${dup}-${logo.alt}`}>
+												<img
+													src={`${BASE_PATH}/icons/${logo.src}`}
+													alt={logo.alt}
+													className="framework-logo-img"
+												/>
+											</div>
+										))}
 									</div>
 								))}
 							</div>
@@ -455,7 +469,7 @@ export default function Home() {
 									Systematization &amp; Taxonomization is the step that turns a description of a concept, e.g., an open-ended behavior description, into a structured executable evaluation.
 								</p>
 								<p>
-									Given a natural-language policy, ASSERT identifies behavior categories, defines what counts and what does not count, generates examples, and marks each category as permissible or impermissible. This creates the bridge between human-written intent and executable test generation.
+									Given a natural-language policy, ASSERT identifies behavior categories, defines policies such as permissible and impermissible for each category, and generates test cases reflecting coverage over those behaviors. This creates the bridge between human-written intent and executable test generation.
 								</p>
 							</div>
 						</div>

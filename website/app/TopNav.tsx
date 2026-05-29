@@ -91,7 +91,7 @@ export default function TopNav() {
 					>
 						Read the blog
 					</a>
-					<a href="#" className="nav-btn nav-btn-shine" onClick={() => setIsMenuOpen(false)}>
+					<a href="https://aka.ms/assert-get-started" target="_blank" rel="noopener noreferrer" className="nav-btn nav-btn-shine" onClick={() => setIsMenuOpen(false)}>
 						<span className="nav-btn-shine-border" aria-hidden="true" />
 						<span className="nav-btn-shine-label">Get started</span>
 					</a>
