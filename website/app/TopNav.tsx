@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const BASE_PATH = "/ASSERT";
@@ -18,6 +19,8 @@ function GitHubMark() {
 
 export default function TopNav() {
 	const [isMenuOpen, setIsMenuOpen] = useState(false);
+	const pathname = usePathname() || "";
+	const inDocs = pathname.startsWith("/docs") || pathname.startsWith(`${BASE_PATH}/docs`);
 
 	useEffect(() => {
 		if (!isMenuOpen) return;
@@ -42,6 +45,12 @@ export default function TopNav() {
 						/>
 						<span className="brand-word">ASSERT.</span>
 					</a>
+					{inDocs && (
+						<>
+							<span className="brand-sep" aria-hidden="true">/</span>
+							<a href={`${BASE_PATH}/docs`} className="brand-context">Documentation</a>
+						</>
+					)}
 				</div>
 
 				<button
@@ -59,7 +68,7 @@ export default function TopNav() {
 
 				<div id="top-nav-actions" className={`nav-actions${isMenuOpen ? " is-open" : ""}`}>
 					<a
-						href="https://github.com"
+						href="https://github.com/microsoft/ASSERT/"
 						target="_blank"
 						rel="noopener noreferrer"
 						className="nav-link"
@@ -68,15 +77,23 @@ export default function TopNav() {
 						<span>GitHub</span>
 						<GitHubMark />
 					</a>
-					<a href={`${BASE_PATH}/docs`} className="nav-btn nav-btn-secondary" onClick={() => setIsMenuOpen(false)}>
-						Documentation
-					</a>
-					<a href="#" className="nav-btn nav-btn-secondary" onClick={() => setIsMenuOpen(false)}>
-						Read the paper
+					{!inDocs && (
+						<a href={`${BASE_PATH}/docs`} className="nav-btn nav-btn-secondary" onClick={() => setIsMenuOpen(false)}>
+							Documentation
+						</a>
+					)}
+					<a
+						href="https://aka.ms/assert"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="nav-btn nav-btn-secondary"
+						onClick={() => setIsMenuOpen(false)}
+					>
+						Read the blog
 					</a>
 					<a href="#" className="nav-btn nav-btn-shine" onClick={() => setIsMenuOpen(false)}>
 						<span className="nav-btn-shine-border" aria-hidden="true" />
-						<span className="nav-btn-shine-label">Get Started</span>
+						<span className="nav-btn-shine-label">Get started</span>
 					</a>
 				</div>
 			</nav>

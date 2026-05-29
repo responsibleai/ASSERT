@@ -66,12 +66,11 @@ const shieldStages = [
 	{ stage: "Stage 5", title: "Output Validation", body: "Scans final responses for PII leakage or sensitive data before delivery", chips: ["Regex", "Classifiers", "LLM"] }
 ];
 
-const policyResources: { title: string; body?: string }[] = [
-	{ title: "GitHub repo", body: "Browse the code repository." },
-	{ title: "Get started", body: "Install the SDK and run your first evaluation in under 5 minutes." },
-	{ title: "Read the technical blog", body: "Learn more about how ASSERT works." },
-	{ title: "Read the paper", body: "Learn about the science and innovation behind ASSERT." },
-	{ title: "Examples", body: "Take a look at sample config files and datasets created by ASSERT." }
+const policyResources: { title: string; body?: string; href: string }[] = [
+	{ title: "GitHub repo", body: "Browse the code repository.", href: "https://github.com/microsoft/ASSERT/" },
+	{ title: "Get started", body: "Install the SDK and run your first evaluation in under 5 minutes.", href: "https://github.com/microsoft/ASSERT/blob/main/docs/quickstart.md" },
+	{ title: "Read the technical blog", body: "Learn more about how ASSERT works.", href: "https://aka.ms/assert" },
+	{ title: "Examples", body: "Take a look at sample config files and datasets created by ASSERT.", href: "https://aka.ms/assert-examples" }
 ];
 
 const shieldResources = [
@@ -162,7 +161,7 @@ export default function Home() {
 		<div className="resource-grid">
 			{policyResources.map((resource) => (
 				<ShineCard key={resource.title} className="resource-card">
-					<a className="resource-inner" href="#" target="_blank" rel="noopener noreferrer">
+					<a className="resource-inner" href={resource.href} target="_blank" rel="noopener noreferrer">
 						<div className="resource-head">
 							<div className="resource-title">{resource.title}</div>
 							<ArrowUpRight />
@@ -239,7 +238,7 @@ export default function Home() {
 						</p>
 						<div className="hero-assert-actions">
 							<a
-								href="https://github.com"
+								href="https://github.com/microsoft/ASSERT/"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="hero-link"
@@ -252,10 +251,10 @@ export default function Home() {
 									/>
 								</svg>
 							</a>
-							<a href="#" className="hero-btn hero-btn-secondary">Read the paper</a>
+							<a href="https://aka.ms/assert" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-secondary">Read the blog</a>
 							<a href="#" className="hero-btn hero-btn-shine">
 								<span className="hero-btn-shine-border" aria-hidden="true" />
-								<span className="hero-btn-shine-label">Get Started</span>
+								<span className="hero-btn-shine-label">Get started</span>
 							</a>
 						</div>
 					</div>
@@ -324,10 +323,6 @@ export default function Home() {
 						<div className="product-subsection-header">
 							<div className="product-subsection-title-row">
 								<h3 className="subsection-heading subsection-heading-lg">Start from an evaluation specification</h3>
-								<a href="#" className="nav-btn nav-btn-secondary product-learn-more">
-									Learn more
-									<span className="learn-more-chevron" aria-hidden="true">›</span>
-								</a>
 							</div>
 							<div className="subsection-body">
 								<p>
@@ -347,7 +342,7 @@ export default function Home() {
 							<div className="run-eval-copy">
 								<HeroGrid />
 								<p className="run-eval-headline">
-									Once you&rsquo;ve configured your evaluation config file, run your evaluation with a single line of code.
+									Once you&rsquo;ve configured your evaluation config file, run your evaluation with a single line of code
 								</p>
 							</div>
 							<div className="run-eval-terminal">
@@ -395,8 +390,18 @@ export default function Home() {
 							</div>
 						</div>
 						<h3 className="framework-heading framework-heading-stat" data-reveal>
-							<span className="framework-stat-num">+33</span>{" "}
-							<span className="framework-stat-label">Frameworks Supported</span>
+							<span className="framework-stat-num">33+</span>{" "}
+							<span className="framework-stat-label">
+								Frameworks supported via{" "}
+								<a
+									href="https://github.com/Arize-ai/openinference"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="framework-stat-link"
+								>
+									OpenInference
+								</a>
+							</span>
 						</h3>
 						<div className="framework-marquee" data-reveal>
 							<div className="framework-marquee-track">
@@ -434,10 +439,6 @@ export default function Home() {
 						<div className="product-subsection-header" data-reveal>
 							<div className="product-subsection-title-row">
 								<h3 className="subsection-heading subsection-heading-lg">Systematization &amp; Taxonomization</h3>
-								<a href="#" className="nav-btn nav-btn-secondary product-learn-more">
-									Learn more
-									<span className="learn-more-chevron" aria-hidden="true">›</span>
-								</a>
 							</div>
 						</div>
 						<div className="systematization-grid" data-reveal>
@@ -473,7 +474,7 @@ export default function Home() {
 									The systematizer produces this in three steps that mirror the approach of Agarwal et al. (2026)
 								</p>
 								<a
-									href="https://arxiv.org/abs/2510.07475"
+									href="https://arxiv.org/abs/2605.26001"
 									target="_blank"
 									rel="noreferrer"
 									className="nav-btn nav-btn-secondary product-learn-more"

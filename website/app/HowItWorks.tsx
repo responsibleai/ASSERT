@@ -195,7 +195,7 @@ export default function HowItWorks() {
 					<h3 className="hiw-eyebrow">How it works</h3>
 					<p className="hiw-lede">ASSERT Evaluation framework</p>
 					<p className="hiw-sublede">Specification-driven evaluation for models and agents.</p>
-					<a href="#" className="nav-btn nav-btn-secondary product-learn-more hiw-learn-more">
+					<a href="https://aka.ms/assert-concept-doc" target="_blank" rel="noopener noreferrer" className="nav-btn nav-btn-secondary product-learn-more hiw-learn-more">
 						Learn more
 						<span className="learn-more-chevron" aria-hidden="true">›</span>
 					</a>
