@@ -92,6 +92,8 @@ index-url = "https://pypi.org/simple"
 
 [project.scripts]
 assert-eval = "assert_eval.cli:cli"
+assert = "assert_eval.cli:cli"
+p2m = "assert_eval.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61.0"]
