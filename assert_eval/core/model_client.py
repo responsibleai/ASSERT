@@ -14,7 +14,7 @@ import logging
 import os
 import random
 import time
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from typing import Any, Iterator, Mapping, Sequence
 
 log = logging.getLogger(__name__)
@@ -628,6 +628,10 @@ _responses_api_fallback_warned: bool = False
 """Set to True after the first Responses-API-not-available warning is
 emitted so we only log the user-facing message once per run."""
 
+_web_search_drop_warned: bool = False
+"""Set to True after the first ``web_search`` degradation warning so
+the message is emitted once per run rather than once per task."""
+
 _force_chat_completions: bool = False
 """When True, the monkey-patched ``responses_api_bridge_check`` forces
 ``mode=chat`` so LiteLLM never routes through the Responses API bridge."""
@@ -725,6 +729,32 @@ def _activate_chat_completions_fallback(
 def _apply_chat_completions_preference() -> None:
     """Public entry for proactive activation (kept for back-compat)."""
     _activate_chat_completions_fallback("preference set via API", proactive=True)
+
+
+def _drop_web_search_for_fallback(
+    options: "GenerateOptions", model: str, *, reason: str
+) -> "GenerateOptions":
+    """Disable ``web_search`` on ``options`` and warn once per run.
+
+    ``web_search`` is implemented via the Responses API
+    ``web_search_preview`` tool — there is no Chat Completions
+    equivalent on Azure. When the Responses API is unavailable in the
+    target region (or the Chat-Completions fallback is already active),
+    we degrade gracefully: the call still succeeds but without web
+    grounding. The first occurrence is logged loudly so the user knows
+    the run produced different output than a Responses-API-supporting
+    region would have.
+    """
+    global _web_search_drop_warned
+    if not _web_search_drop_warned:
+        _web_search_drop_warned = True
+        tag = f" [{options.call_label}]" if options.call_label else ""
+        log.warning(
+            "%s%s: dropping web_search and routing via Chat Completions "
+            "(%s). Web grounding is disabled for the remainder of this run.",
+            model, tag, reason,
+        )
+    return replace(options, web_search=False)
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
