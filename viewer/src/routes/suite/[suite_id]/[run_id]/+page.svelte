@@ -145,12 +145,12 @@
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		seeds: 'Seed Generation',
-		rollout: 'Inference',
+		inference: 'Inference',
 		judge: 'Scoring',
 	};
 
 	const STAGE_TOOLTIPS: Record<string, string> = {
-		rollout: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
+		inference: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
 		judge: 'Target responses or behaviors are scored for each judge dimension.',
 	};
 

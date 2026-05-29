@@ -372,8 +372,8 @@
 		</div>
 		{#if promptSeedItems.length + scenarioSeedItems.length > 0}
 			<a
-				href="/api/download/{data.suite_id}/seeds.jsonl"
-				download
+				href="/api/download/{data.suite_id}/test_set.jsonl"
+				download="test_set.jsonl"
 				class="btn btn-primary shrink-0 no-underline whitespace-nowrap"
 				style="display:inline-flex; align-items:center; gap:0.5rem;"
 			>
