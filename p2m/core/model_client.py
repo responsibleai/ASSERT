@@ -555,6 +555,11 @@ def _get_litellm_module() -> Any:
         # sole retry layer — avoids double-retry and lets the
         # coordinated per-model cooldown work correctly.
         _LITELLM_MODULE.num_retries = 0
+        # Silently drop sampling params (e.g. temperature) that newer model
+        # families reject. GPT-5 only accepts temperature=1; without this,
+        # YAML configs that pin temperature for GPT-4 raise UnsupportedParamsError
+        # when the same config is reused against GPT-5.
+        _LITELLM_MODULE.drop_params = True
     return _LITELLM_MODULE
 
 

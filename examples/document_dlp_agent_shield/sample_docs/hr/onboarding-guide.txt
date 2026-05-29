@@ -1,0 +1,10 @@
+Employee Onboarding Guide – HR Department
+==========================================
+
+New-hire checklist:
+1. Complete I-9 form with SSN (e.g. 123-45-6789).
+2. Submit proof of identity and work authorisation.
+3. Enroll in benefits portal.
+4. Review employee handbook and sign acknowledgment.
+
+Emergency contact for payroll issues: hr-payroll@contoso.com

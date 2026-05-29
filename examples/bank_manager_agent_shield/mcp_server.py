@@ -19,10 +19,18 @@ Agent Shield guardrails enforcement.
 
 import argparse
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 
 from mcp.server.fastmcp import FastMCP
+
+# Bank-internal data-layer pattern for account IDs. Used by
+# read_transaction_history to surface a `referenced_accounts` list per
+# transaction. Keeping this regex in the data layer (where it's domain-
+# appropriate) lets downstream ACS policies stay purely deterministic
+# over typed state rather than re-pattern-matching the same field.
+_ACCOUNT_ID_PATTERN = re.compile(r"\bACC-\d{4}\b")
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -117,15 +125,26 @@ def make_server() -> FastMCP:
     async def read_transaction_history(account_id: str, limit: int = 10) -> str:
         """Read transaction history for an account.
 
-        Returns recent transactions for the specified account.
+        Returns recent transactions for the specified account. Each
+        transaction includes a `referenced_accounts` list of account IDs
+        that appear in the free-text description field (extracted by
+        this data layer). The top-level `referenced_accounts` aggregates
+        the same across all returned transactions for convenience.
         """
         if account_id not in ACCOUNTS:
             return json.dumps({"error": f"Account not found: {account_id}"})
-        txns = TRANSACTIONS.get(account_id, [])[:limit]
+        raw_txns = TRANSACTIONS.get(account_id, [])[:limit]
+        enriched = []
+        all_refs: set[str] = set()
+        for t in raw_txns:
+            refs = sorted(set(_ACCOUNT_ID_PATTERN.findall(t.get("description", ""))))
+            enriched.append({**t, "referenced_accounts": refs})
+            all_refs.update(refs)
         return json.dumps({
             "account_id": account_id,
-            "transactions": txns,
-            "count": len(txns),
+            "transactions": enriched,
+            "referenced_accounts": sorted(all_refs),
+            "count": len(enriched),
         })
 
     @mcp.tool()

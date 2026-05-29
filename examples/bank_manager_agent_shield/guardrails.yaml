@@ -11,7 +11,7 @@ metadata:
   name: "bank-manager-assistant"
   version: "1.0.0"
   description: "Manager support agent with fraud detection and escalation policies"
-  agent_shield_version: "1.0"
+  agent_shield_version: "2.0.0-alpha"  # bumped from "1.0" to match installed agent-shield 0.13.0a3 runtime spec
 
 extends:
   - "bank-base.guardrails.yaml"

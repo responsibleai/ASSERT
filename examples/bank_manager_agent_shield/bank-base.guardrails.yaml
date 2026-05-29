@@ -16,7 +16,7 @@ metadata:
   name: "bank-base-guardrails"
   version: "1.0.0"
   description: "CISO-defined base security guardrails for all banking agents"
-  agent_shield_version: "1.0"
+  agent_shield_version: "2.0.0-alpha"  # bumped from "1.0" to match installed agent-shield 0.13.0a3 runtime spec
 
 objective:
   goal:
