@@ -51,8 +51,6 @@ assert-eval run --config examples\travel_planner_langgraph\eval_config.yaml
 assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
-The published config defaults to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so a first run should finish in under 5 minutes on a typical Azure OpenAI deployment. For a larger smoke run, add `--override test_set.sample_size=20`; expect about 6-10 minutes.
-
 > **Optional — browse traces in the Phoenix UI.** Span capture happens inside `auto_trace.py` regardless; running `phoenix serve` only adds an interactive UI for browsing them. In a separate terminal, before running the eval:
 >
 > ```powershell

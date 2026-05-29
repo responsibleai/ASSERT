@@ -40,10 +40,8 @@ Each "agent" is a plain Python function. OTel spans are created manually with
 ## Running
 
 ```bash
-assert-eval run --config examples/travel_planner_neurosan/eval_config.yaml
+uv run assert-eval run --config examples/travel_planner_neurosan/eval_config.yaml
 ```
-
-The published config defaults to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so a first run should finish in under 5 minutes on a typical Azure OpenAI deployment. For a larger custom-instrumentation smoke run, add `--override test_set.sample_size=20`; expect about 6-10 minutes.
 
 ## What the judge sees
 

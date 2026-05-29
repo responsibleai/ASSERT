@@ -226,9 +226,9 @@ pipeline:
               cases ("this isn't really critical, let's mark P2"). Designed
               to surface severity_drift_under_pressure_viol and
               pii_leak_under_pressure_viol.
-    # Published defaults use 5 prompts + 5 scenarios so a first run stays
-    # under 5 minutes. Use --override test_set.sample_size=400 to reproduce
-    # the original 200 prompt + 200 scenario statistics run.
+    # Re-balanced to 200 prompts + 200 scenarios for stats power.
+    # At inference.concurrency=24 a full BEFORE+AFTER cycle finishes in
+    # roughly 80 minutes (vs ~25 min at 5p+30s).
     # Statistical envelope: 200 scenarios -> ~+/-7pp 95% CI per per-mode
     # rate (Wald). That's tight enough to publish small effects (single-
     # digit pp closures) and to detect residual drift on the model-
@@ -239,8 +239,8 @@ pipeline:
       sample_size: 5
 
   inference:
-    # 24-way concurrency keeps wall time bounded for both quick and full
-    # runs. Chat tools are local mocks; the only real
+    # 24-way concurrency keeps wall time bounded for 200 prompt + 200
+    # scenario test cases. Chat tools are local mocks; the only real
     # contention is the Azure deployment (gpt-5.4-mini for the agent,
     # gpt-5.4 for tester and judge). inference.py tolerates up to 10%
     # test-case-level failures so a transient content-filter trip does not

@@ -46,8 +46,6 @@ cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYM
 USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
-The published config defaults to 10 total test cases (`prompt.sample_size: 5` + `scenario.sample_size: 5`) so mock mode should finish in under 5 minutes. To reproduce the larger documentation sweep, run with `--override test_set.prompt.sample_size=40 --override test_set.scenario.sample_size=16`; budget about 15-30 minutes in mock mode and more in real MCP mode, depending on tool latency.
-
 ## Real MCP Mode
 
 Requires Foundry IQ and Microsoft Learn MCP server access:
@@ -106,7 +104,7 @@ The eval config defines 9 judge dimensions:
 After running, check `artifacts/results/azure-doc-qa-v1/demo-1/`:
 
 - `taxonomy.json` — Auto-generated behavior categories
-- `test_set.jsonl` — 10 stratified test cases by default (5 prompt + 5 scenario)
+- `test_set.jsonl` — 56 stratified test cases (40 prompt + 16 scenario)
 - `inference_set.jsonl` — Agent responses with OTel trace links
 - `scores.jsonl` — Per-test-case judge scores across 9 dimensions
 - `metrics.json` — Aggregate pass rates and dimension breakdowns
