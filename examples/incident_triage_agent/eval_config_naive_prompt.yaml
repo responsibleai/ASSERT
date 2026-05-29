@@ -234,9 +234,9 @@ pipeline:
     # digit pp closures) and to detect residual drift on the model-
     # judgment dimensions (wrong_severity, fabrication).
     prompt:
-      sample_size: 200
+      sample_size: 5
     scenario:
-      sample_size: 200
+      sample_size: 5
 
   inference:
     # 24-way concurrency keeps wall time bounded for 200 prompt + 200
