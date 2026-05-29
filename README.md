@@ -1,8 +1,6 @@
 # ASSERT
 
-**ASSERT** stands for **Adaptive Spec-driven Scoring for Evaluation and Regression Testing**.
-
-ASSERT is a local-first, framework-agnostic, trace-aware evaluation harness for agents and multi-agent systems.
+**ASSERT** (**Adaptive Spec-driven Scoring for Evaluation and Regression Testing**) is a local-first, framework-agnostic, trace-aware evaluation harness for agents and multi-agent systems.
 
 > **Customer preview.** ASSERT is a preview / POC distribution for design partners. The core workflow is stable: write an eval spec, generate targeted test cases, execute them against your agent, and judge the results against your rubric. Some YAML field names are still evolving; the docs bridge current names to the intended developer-facing terminology.
 
