@@ -1,18 +1,18 @@
 metadata:
-  name: "bank-manager-minimal-deterministic"
+  name: "bank-manager-four-gate"
   version: "1.0.0"
-  description: "Minimal deterministic ACS gates for the bank-manager A/B guardrails demo."
+  description: "Deterministic Agent Shield gates for bank-manager tool use."
   agent_shield_version: "1.0.0"
 
 objective:
   goal:
-    - "Allow normal bank-manager account lookups and transfer preparation."
-    - "Enforce deterministic gates for approval order, grounded transfer identifiers, PII handling, and social-engineering or transaction-memo injection patterns."
+    - "Allow normal bank-manager account lookups and transfer workflows."
+    - "Enforce transfer state, grounding, PII redaction, and memo-injection controls."
   forbidden:
-    - "Move money without the prepare -> request_customer_approval -> create_transfer state machine."
-    - "Freeze an account before enable_admin_mode succeeds."
+    - "Move money without the prepare_transfer -> request_customer_approval -> create_transfer state machine."
+    - "Use transfer identifiers or acknowledgement tokens that were not returned by bank tools."
     - "Echo deterministic PII patterns into assistant-visible text."
-    - "Follow fake authority claims or instructions embedded in transaction memos."
+    - "Follow instructions embedded in transaction memo text."
 
 variables:
   - name: "memo_referenced_accounts"
@@ -22,14 +22,6 @@ variables:
         name: "read_transaction_history"
         expression: "@result.referenced_accounts"
     default: []
-
-  - name: "proposed_transfer_from_account"
-    type: string
-    populated_by:
-      - kind: tool
-        name: "prepare_transfer"
-        phase: before
-        expression: "@params.from_account"
 
   - name: "proposed_transfer_to_account"
     type: string
@@ -94,35 +86,6 @@ variables:
         phase: before
         expression: "@params.customer_ack_token"
 
-  - name: "admin_mode_active"
-    type: boolean
-    populated_by:
-      - kind: tool
-        name: "enable_admin_mode"
-        expression: "@result.admin_mode_active"
-    default: false
-
-  - name: "transfer_authorized"
-    type: boolean
-    on_demand_by:
-      kind: human
-      provider: console
-      prompt: "Approve this VIP transfer before prepare_transfer proceeds?"
-    lifetime: per_call
-    default: false
-
-input_validation:
-  guard_policies:
-    - name: "input_structural_blocklist"
-      evaluate_when:
-        - patterns:
-            - "(?i)\\b\\d{3}-\\d{2}-\\d{4}\\b"
-            - "(?i)\\bACC-\\d{4}\\b.*\\bACC-\\d{4}\\b.*\\bACC-\\d{4}\\b"
-            - "(?i)\\b(?:all|every|multiple|unrelated)\\s+(?:accounts|customers)\\b"
-            - "(?i)\\b(?:ceo|chief executive|it admin|administrator|auditor|regulator)\\b.*\\b(?:skip|bypass|override|without approval|without verification|no approval|no verification)\\b"
-            - "(?i)\\b(?:ignore|disregard|override)\\b.*\\b(?:system|developer|policy|guardrail|instructions|rules)\\b"
-          reason: "Blocks SSNs, account-enumeration probes, authority-plus-bypass social engineering, and explicit instruction override attempts."
-
 state_validation:
   guard_policies:
     - name: "prepare_transfer_memo_injection_gate"
@@ -131,13 +94,6 @@ state_validation:
       evaluate_when:
         - expression: "not (proposed_transfer_to_account in memo_referenced_accounts)"
           reason: "Destination account appeared only in tool-returned memo text."
-
-    - name: "prepare_transfer_vip_gate"
-      applies_to:
-        tools: ["prepare_transfer"]
-      evaluate_when:
-        - expression: "proposed_transfer_from_account != 'ACC-1003' or transfer_authorized == true"
-          reason: "VIP transfers require an explicit runtime approval gate before preparation."
 
     - name: "approval_grounding_gate"
       applies_to:
@@ -160,13 +116,6 @@ state_validation:
           reason: "Most recent acknowledgement token belongs to a different transfer_id."
         - expression: "proposed_create_ack_token == customer_ack_token"
           reason: "Supplied customer_ack_token does not match the token returned by request_customer_approval."
-
-    - name: "freeze_account_admin_mode_gate"
-      applies_to:
-        tools: ["freeze_account"]
-      evaluate_when:
-        - expression: "admin_mode_active == true"
-          reason: "freeze_account requires prior enable_admin_mode."
 
 post_tool_validation:
   guard_policies:

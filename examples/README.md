@@ -44,14 +44,14 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Measure deterministic ACS guardrails on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Bank-manager A/B example: unguarded baseline vs. the same agent wrapped with minimal deterministic ACS gates across four failure-mode axes at n=30. |
+| Measure deterministic Agent Shield guardrails on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Bank-manager callable example with a plain LangGraph implementation, an Agent Shield implementation, four deterministic gates, and n=100 scenarios. |
 
 ## Layout
 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
-├── bank_manager/  ACS policy eval — unguarded vs. ACS-gated comparison
+├── bank_manager/  Agent Shield policy eval for a bank-manager callable agent
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior spec references
