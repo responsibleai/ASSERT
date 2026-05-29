@@ -29,8 +29,9 @@ def chat_completion(
 
     from assert_eval.core.model_client import (
         _ResponsesApiNotAvailableError,
-        _apply_chat_completions_preference,
+        _activate_chat_completions_fallback,
         _classify_llm_error,
+        _force_chat_completions,
     )
 
     kwargs: dict[str, Any] = {
@@ -47,12 +48,15 @@ def chat_completion(
     except Exception as exc:
         classified = _classify_llm_error(exc)
         # One-shot fallback: if the Responses API is not available in
-        # this region, switch to Chat Completions and retry once.
+        # this region, activate process-wide Chat Completions and
+        # retry once. If the fallback was already active when we
+        # entered, this isn't a routing problem — re-raise.
         if isinstance(classified, _ResponsesApiNotAvailableError):
-            _apply_chat_completions_preference()
-            log.warning(
-                "Azure Responses API is not available in this region; "
-                "retrying with Chat Completions."
+            if _force_chat_completions:
+                raise classified from exc
+            _activate_chat_completions_fallback(
+                "Azure Responses API not enabled in region",
+                model=model,
             )
             try:
                 response = litellm.completion(**kwargs)
