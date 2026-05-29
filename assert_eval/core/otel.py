@@ -544,16 +544,17 @@ class LiveOTelExporter:
             # 1. Explicit endpoint env vars → user wants export
             if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or \
                os.environ.get("PHOENIX_COLLECTOR_ENDPOINT"):
-                log.debug(
+                log.info(
                     "OTel collector endpoint configured via env var "
-                    "— preserving default gRPC exporter"
+                    "— traces will be exported to the remote collector"
                 )
                 return True
 
             # 2. Force-override for non-standard setups
             if os.environ.get("ASSERT_EXPORT_TRACES", "").strip() == "1":
-                log.debug(
-                    "ASSERT_EXPORT_TRACES=1 — preserving default gRPC exporter"
+                log.info(
+                    "ASSERT_EXPORT_TRACES=1 — traces will be exported "
+                    "via the default gRPC exporter"
                 )
                 return True
 
@@ -565,16 +566,17 @@ class LiveOTelExporter:
 
             try:
                 with socket.create_connection(("localhost", port), timeout=0.1):
-                    log.debug(
+                    log.info(
                         "OTel collector detected on localhost:%d "
-                        "— preserving default gRPC exporter",
+                        "— traces will be exported",
                         port,
                     )
                     return True
             except (ConnectionRefusedError, TimeoutError, OSError):
-                log.debug(
+                log.info(
                     "No OTel collector on localhost:%d "
-                    "— replacing default gRPC exporter to suppress warnings",
+                    "— trace export disabled (set ASSERT_EXPORT_TRACES=1 "
+                    "to override)",
                     port,
                 )
                 return False
@@ -596,14 +598,17 @@ class LiveOTelExporter:
         # Piggyback on existing provider if one is set (e.g., by Phoenix register())
         existing = otel_trace.get_tracer_provider()
         if isinstance(existing, TracerProvider):
+            log.info("Attaching ASSERT span collector to existing TracerProvider")
             _add_processor_preserving(existing, processor)
         else:
             # Unwrap ProxyTracerProvider if needed
             real = getattr(existing, "_real_provider", None)
             if isinstance(real, TracerProvider):
+                log.info("Attaching ASSERT span collector to existing TracerProvider")
                 _add_processor_preserving(real, processor)
             else:
                 # No SDK provider exists — create one as fallback
+                log.info("No existing TracerProvider — creating a minimal one for ASSERT")
                 provider = TracerProvider()
                 provider.add_span_processor(processor)
                 otel_trace.set_tracer_provider(provider)
