@@ -1,16 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import importlib
 import unittest
 
 
 class ImportSmokeTest(unittest.TestCase):
     def test_cli_imports(self) -> None:
-        importlib.import_module("p2m.cli")
+        importlib.import_module("assert_eval.cli")
 
     def test_runner_imports(self) -> None:
-        importlib.import_module("p2m.runner")
+        importlib.import_module("assert_eval.runner")
 
     def test_stratification_stage_imports(self) -> None:
-        importlib.import_module("p2m.stages.stratification")
+        importlib.import_module("assert_eval.stages.stratification")
 
     def test_test_case_labeling_imports(self) -> None:
-        importlib.import_module("p2m.analysis.test_case_labeling")
+        importlib.import_module("assert_eval.analysis.test_case_labeling")

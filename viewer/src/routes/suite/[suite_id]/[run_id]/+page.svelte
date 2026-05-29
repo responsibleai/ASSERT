@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import type {
 		JudgedSample,
@@ -12,6 +15,7 @@
 	import ResultDrawer from '$lib/ResultDrawer.svelte';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
+	import ExpandableText from '$lib/ExpandableText.svelte';
 	import { normalizePromptResult } from '$lib/result-view.js';
 	import {
 		getRecordFlag,
@@ -142,12 +146,12 @@
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		seeds: 'Seed Generation',
-		rollout: 'Inference',
+		inference: 'Inference',
 		judge: 'Scoring',
 	};
 
 	const STAGE_TOOLTIPS: Record<string, string> = {
-		rollout: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
+		inference: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
 		judge: 'Target responses or behaviors are scored for each judge dimension.',
 	};
 
@@ -757,9 +761,9 @@
 				{/if}
 			</div>
 			<div class="mt-2 text-sm text-text-muted">
-				Evaluation target: <span class="font-mono text-text">{data.metrics?.target ?? data.auditMetrics?.target ?? '—'}</span>
+				Evaluation target: <span class="font-mono text-text">{data.metrics?.target || data.auditMetrics?.target || '—'}</span>
 				<span class="mx-2 text-text-muted/50">·</span>
-				Judge: <span class="font-mono text-text">{data.metrics?.judge_model ?? data.auditMetrics?.judge_model ?? '—'}</span>
+				Judge: <span class="font-mono text-text">{data.metrics?.judge_model || data.auditMetrics?.judge_model || '—'}</span>
 			</div>
 			{#if data.manifest?.stages}
 				<button
@@ -862,7 +866,7 @@
 			</div>
 		{/if}
 		<p class="mt-4 font-mono text-xs text-text-muted">
-			uv run p2m run --config &lt;config&gt;
+			uv run assert-eval run --config &lt;config&gt;
 		</p>
 	</div>
 {:else}
@@ -872,10 +876,10 @@
 		{@const allMetrics = metricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activePromptDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
-				<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Evaluation summary</h2>
+				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
 				<span class="shrink-0 text-xs text-text-muted">{allMetrics.length} test set dimensions</span>
 			</div>
-			<p class="mt-1 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
+			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
 		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each allMetrics as m}
@@ -889,7 +893,7 @@
 						<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{total} prompts</span>
 					</div>
 					{#if m.description}
-					<p class="mt-0.5 !text-[11px] leading-snug text-text-muted line-clamp-2">{m.description}</p>
+					<ExpandableText text={m.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
 					{/if}
 					<div class="mt-3 flex items-baseline gap-1.5">
 						<span class="text-3xl font-bold tabular-nums text-text">{metricRateText(m.summary?.rate ?? 0)}</span>
@@ -919,38 +923,51 @@
 			</p>
 		{/if}
 
+
+		{#if data.metrics.policyViolationOnPermissible || data.metrics.policyViolationOnNotPermissible}
+			{@const promptPerm = data.metrics.policyViolationOnPermissible}
+			{@const promptNotPerm = data.metrics.policyViolationOnNotPermissible}
+			{#if (promptPerm?.count ?? 0) + (promptNotPerm?.count ?? 0) > 0}
+				<div class="mb-4 grid gap-3 sm:grid-cols-2" title="Per-behavior judgments aggregated across prompts. Denominator is judgments the judge marked relevant for that behavior.">
+					{#each [
+						{ key: 'permissible', label: 'Permissible requests failed', summary: promptPerm, hint: 'Requests marked permissible in the taxonomy that the assistant refused, deflected, or failed to complete.' },
+						{ key: 'not_permissible', label: 'Not-permissible requests failed', summary: promptNotPerm, hint: 'Requests marked not permissible in the taxonomy that the assistant helped with or allowed.' }
+					] as card (card.key)}
+						{@const summary = card.summary}
+						<div class="rounded-lg border border-border bg-surface px-5 py-4">
+							<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{card.label}</div>
+							<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{card.hint}</p>
+							<div class="mt-2 flex items-baseline gap-1.5">
+								<span class="text-3xl font-bold tabular-nums {summary && summary.count > 0 ? metricRateClass(summary.rate) : 'text-text-muted'}">{summary && summary.count > 0 ? metricRateText(summary.rate) : '—'}</span>
+								<span class="text-sm text-text-muted">{summary && summary.count > 0 ? 'violated' : 'no relevant judgments'}</span>
+							</div>
+							{#if summary && summary.count > 0}
+								{@const pct = binaryBar(summary.counts)}
+								<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+									{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+									{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+								</div>
+								<div class="mt-1 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-[9px] tabular-nums text-text-muted">
+									<span>{summary.clear_count} clear</span>
+									<span>{summary.flagged_count} violated</span>
+									<span>{summary.count} relevant judgments</span>
+								</div>
+							{/if}
+							<div class="mt-2 text-[9px] text-text-muted">aggregated over relevant behavior judgments, not over prompts</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+
 		<!-- Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
-					<div class="min-w-0 flex-1">
-						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
-						<p class="mt-1 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
-					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
-						<span class="text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
-							<button
-								type="button"
-								role="tab"
-								aria-selected={promptGroupBy === 'none'}
-								class="SegmentedControl-item"
-								class:SegmentedControl-item--selected={promptGroupBy === 'none'}
-								onclick={() => setPromptGroupBy('none')}
-							><span class="SegmentedControl-content">Flat view</span></button>
-							{#each availablePromptAxes as axis}
-								<button
-									type="button"
-									role="tab"
-									aria-selected={promptGroupBy === axis.key}
-									class="SegmentedControl-item"
-									class:SegmentedControl-item--selected={promptGroupBy === axis.key}
-									onclick={() => setPromptGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
-							{/each}
-						</div>
-					</div>
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : `Results by ${activePromptAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
 				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
 			</div>
 
 			<!-- Controls row: search + filter -->
@@ -983,7 +1000,15 @@
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					<span class="text-xs text-text-muted">Filter by</span>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availablePromptAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={promptGroupBy}
+						onSelect={(v) => setPromptGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
@@ -1156,10 +1181,10 @@
 		{@const auditAllMetrics = auditMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activeAuditDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
-				<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Evaluation summary</h2>
+				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
 				<span class="shrink-0 text-xs text-text-muted">{auditAllMetrics.length} test set dimensions</span>
 			</div>
-			<p class="mt-1 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
+			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
 		<div class="mb-8 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
 			{#each auditAllMetrics as m}
@@ -1173,7 +1198,7 @@
 						<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{total} scenarios</span>
 					</div>
 					{#if m.description}
-					<p class="mt-0.5 !text-[11px] leading-snug text-text-muted line-clamp-2">{m.description}</p>
+					<ExpandableText text={m.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
 					{/if}
 					<div class="mt-3 flex items-baseline gap-1.5">
 						<span class="text-3xl font-bold tabular-nums text-text">{metricRateText(m.summary?.rate ?? 0)}</span>
@@ -1199,38 +1224,51 @@
 			</p>
 		{/if}
 
+
+		{#if data.auditMetrics.policyViolationOnPermissible || data.auditMetrics.policyViolationOnNotPermissible}
+			{@const auditPerm = data.auditMetrics.policyViolationOnPermissible}
+			{@const auditNotPerm = data.auditMetrics.policyViolationOnNotPermissible}
+			{#if (auditPerm?.count ?? 0) + (auditNotPerm?.count ?? 0) > 0}
+				<div class="mb-4 grid gap-3 sm:grid-cols-2" title="Per-behavior judgments aggregated across scenarios. Denominator is judgments the judge marked relevant for that behavior.">
+					{#each [
+						{ key: 'permissible', label: 'Permissible requests failed', summary: auditPerm, hint: 'Requests marked permissible in the taxonomy that the assistant refused, deflected, or failed to complete.' },
+						{ key: 'not_permissible', label: 'Not-permissible requests failed', summary: auditNotPerm, hint: 'Requests marked not permissible in the taxonomy that the assistant helped with or allowed.' }
+					] as card (card.key)}
+						{@const summary = card.summary}
+						<div class="rounded-lg border border-border bg-surface px-5 py-4">
+							<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{card.label}</div>
+							<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{card.hint}</p>
+							<div class="mt-2 flex items-baseline gap-1.5">
+								<span class="text-3xl font-bold tabular-nums {summary && summary.count > 0 ? metricRateClass(summary.rate) : 'text-text-muted'}">{summary && summary.count > 0 ? metricRateText(summary.rate) : '—'}</span>
+								<span class="text-sm text-text-muted">{summary && summary.count > 0 ? 'violated' : 'no relevant judgments'}</span>
+							</div>
+							{#if summary && summary.count > 0}
+								{@const pct = binaryBar(summary.counts)}
+								<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+									{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+									{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+								</div>
+								<div class="mt-1 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-[9px] tabular-nums text-text-muted">
+									<span>{summary.clear_count} clear</span>
+									<span>{summary.flagged_count} violated</span>
+									<span>{summary.count} relevant judgments</span>
+								</div>
+							{/if}
+							<div class="mt-2 text-[9px] text-text-muted">aggregated over relevant behavior judgments, not over scenarios</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+
 		<!-- Audit Category Accordion -->
 		<section class="mb-8">
 			<div class="mb-4 border-b border-border pb-2">
-				<div class="flex items-end gap-3">
-					<div class="min-w-0 flex-1">
-						<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : 'Results by behavior category'}</h2>
-						<p class="mt-1 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
-					</div>
-					<div class="flex shrink-0 flex-col items-end gap-2">
-						<span class="text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
-						<div class="SegmentedControl" role="tablist" aria-label="Grouping">
-							<button
-								type="button"
-								role="tab"
-								aria-selected={auditGroupBy === 'none'}
-								class="SegmentedControl-item"
-								class:SegmentedControl-item--selected={auditGroupBy === 'none'}
-								onclick={() => setAuditGroupBy('none')}
-							><span class="SegmentedControl-content">Flat view</span></button>
-							{#each availableAxes as axis}
-								<button
-									type="button"
-									role="tab"
-									aria-selected={auditGroupBy === axis.key}
-									class="SegmentedControl-item"
-									class:SegmentedControl-item--selected={auditGroupBy === axis.key}
-									onclick={() => setAuditGroupBy(axis.key)}
-								><span class="SegmentedControl-content">Grouped by behavior category</span></button>
-							{/each}
-						</div>
-					</div>
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : `Results by ${activeAuditAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
 				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
 			</div>
 
 			<!-- Controls row: search + filter -->
@@ -1263,7 +1301,15 @@
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					<span class="text-xs text-text-muted">Filter by</span>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availableAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={auditGroupBy}
+						onSelect={(v) => setAuditGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"

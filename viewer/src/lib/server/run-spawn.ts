@@ -1,10 +1,13 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Translation + execution helpers for POST /api/runs.
  *
  * The wizard collects state under post-PR#23 names (`systematize`,
  * `testCasesPipeline`, `inferencePipeline`, `scenarioPipeline`, `dimensions`,
  * `tester`, …). This module is the boundary between that UI JSON payload and
- * the p2m YAML schema — it validates the payload, snake_cases keys for the
+ * the ASSERT YAML schema — it validates the payload, snake_cases keys for the
  * runner, and inlines the behavior description so the wizard can submit a
  * single self-contained config.
  *
@@ -18,8 +21,8 @@
  *     -> writes eval_config.yaml (single-YAML authoring; behavior description
  *        lives inline in behavior.description)
  *
- *   spawnP2mRun(...)
- *     -> spawns `p2m run --config <eval_config.yaml>` detached
+ *   spawnAssertEvalRun(...)
+ *     -> spawns `assert-eval run --config <eval_config.yaml>` detached
  *     -> waits for the OS spawn/error event before resolving so a missing
  *        binary surfaces as HTTP 500 (not 200 then a forever-pending monitor)
  *
@@ -228,7 +231,7 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 		errors.push(
 			'evaluationTarget "agent" is not yet supported by the UI submit path. ' +
 				'The wizard does not collect a Python callable target. ' +
-				'For now, run agent evaluations via the CLI: `p2m run --config <config.yaml>`.'
+				'For now, run agent evaluations via the CLI: `assert-eval run --config <config.yaml>`.'
 		);
 	}
 
@@ -560,46 +563,47 @@ interface ResolvedCommand {
 	source: string;
 }
 
-function resolveP2mCommand(configPath: string): ResolvedCommand {
+function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 	const cliArgs = ['run', '--config', configPath];
 
-	const override = process.env.P2M_COMMAND;
+	const override = process.env.ASSERT_EVAL_COMMAND;
 	if (override && override.trim()) {
 		const parts = override.trim().split(/\s+/);
 		return {
 			command: parts[0],
 			args: [...parts.slice(1), ...cliArgs],
-			source: 'P2M_COMMAND override'
+			source: 'ASSERT_EVAL_COMMAND override'
 		};
 	}
 
 	const venv = process.env.VIRTUAL_ENV;
 	if (venv) {
-		const pythonBin =
+		const cliCandidates =
 			os.platform() === 'win32'
-				? path.join(venv, 'Scripts', 'python.exe')
-				: path.join(venv, 'bin', 'python');
-		if (fs.existsSync(pythonBin)) {
+				? [path.join(venv, 'Scripts', 'assert-eval.exe'), path.join(venv, 'Scripts', 'assert-eval')]
+				: [path.join(venv, 'bin', 'assert-eval')];
+		const cliPath = cliCandidates.find((candidate) => fs.existsSync(candidate));
+		if (cliPath) {
 			return {
-				command: pythonBin,
-				args: ['-m', 'p2m.cli', ...cliArgs],
-				source: `VIRTUAL_ENV (${pythonBin})`
+				command: cliPath,
+				args: cliArgs,
+				source: `VIRTUAL_ENV (${cliPath})`
 			};
 		}
 	}
 
 	// Fallback: PATH lookup. On Windows, .exe extension is resolved automatically
 	// by spawn when shell:false because Node uses CreateProcess search behavior.
-	return { command: 'p2m', args: cliArgs, source: 'PATH' };
+	return { command: 'assert-eval', args: cliArgs, source: 'PATH' };
 }
 
 /**
- * Spawn p2m detached, wait for the OS to confirm the spawn (or fail). Only
- * after we hear back do we resolve — that way a missing `p2m` binary surfaces
- * as a 500 instead of a 200 followed by a forever-pending monitor.
+ * Spawn assert-eval detached, wait for the OS to confirm the spawn (or fail).
+ * Only after we hear back do we resolve — that way a missing `assert-eval`
+ * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
-export function spawnP2mRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveP2mCommand(written.configPath);
+export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
+	const resolved = resolveAssertEvalCommand(written.configPath);
 
 	let logFd: number;
 	try {
@@ -609,7 +613,7 @@ export function spawnP2mRun(written: WrittenRun): Promise<SpawnedRun> {
 	}
 
 	const preamble =
-		`# p2m run launched by viewer at ${new Date().toISOString()}\n` +
+		`# assert-eval run launched by viewer at ${new Date().toISOString()}\n` +
 		`# command: ${resolved.command} ${resolved.args.join(' ')}\n` +
 		`# resolved from: ${resolved.source}\n` +
 		`# cwd: ${MEASUREMENTS_ROOT}\n` +
@@ -638,7 +642,7 @@ export function spawnP2mRun(written: WrittenRun): Promise<SpawnedRun> {
 			}
 			reject(
 				new SpawnError(
-					`Failed to spawn p2m runner via ${resolved.source}: ${(err as Error).message ?? String(err)}`,
+					`Failed to spawn assert-eval runner via ${resolved.source}: ${(err as Error).message ?? String(err)}`,
 					err
 				)
 			);
@@ -680,9 +684,9 @@ export function spawnP2mRun(written: WrittenRun): Promise<SpawnedRun> {
 			}
 			reject(
 				new SpawnError(
-					`p2m runner failed to start via ${resolved.source}: ${err?.message ?? String(err)}. ` +
+					`assert-eval runner failed to start via ${resolved.source}: ${err?.message ?? String(err)}. ` +
 						`Ensure the viewer was started in a shell with the project venv activated, ` +
-						`or set P2M_COMMAND to a working invocation (e.g. "python -m p2m.cli").`,
+						`or set ASSERT_EVAL_COMMAND to a working invocation (e.g. "assert-eval").`,
 					err
 				)
 			);

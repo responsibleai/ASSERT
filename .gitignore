@@ -1,5 +1,5 @@
 # Environments and local config
-.venv/
+.venv*/
 .env
 .env.*
 !.env.example
@@ -28,6 +28,9 @@ artifacts/
 !viewer/src/routes/**/logs/
 !viewer/src/routes/**/logs/**
 
+# Chainlit local config
+.chainlit/
+
 # PyRIT data
 .pyrit_data/
 
@@ -47,11 +50,11 @@ node_modules/
 # Local viewer run configs
 .viewer_configs/
 
-p2m-experiments/
+ASSERT-experiments/
 
 # Build artifacts
 *.egg-info/
-p2m_policy.*
+assert_eval_policy.*
 
 # Internal Copilot CLI instructions (per-repo, never committed)
 .github/instructions/preview-boundary.instructions.md

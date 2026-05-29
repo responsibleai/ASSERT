@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the runtime-safety layer: heartbeat, watchdog, bounded teardown.
 
 The motivating bug: a multi-agent LangGraph travel-planner target leaked
@@ -27,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from p2m.core.runtime_safety import (
+from assert_eval.core.runtime_safety import (
     ManifestHeartbeat,
     PipelineWatchdog,
     run_stage_coro,
@@ -107,7 +110,7 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
             await asyncio.sleep(0.01)
         return "main-coro-done"
 
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     start = time.monotonic()
     try:
         # 2s timeout so the test runs fast; in production it's 300s.
@@ -142,7 +145,7 @@ def test_run_stage_coro_clean_shutdown_logs_no_warning(
         await asyncio.to_thread(lambda: time.sleep(0.01))
         return 42
 
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     assert run_stage_coro(_coro(), cleanup_timeout_s=10.0) == 42
     assert not any(
         "Stage cleanup exceeded" in r.message for r in caplog.records
@@ -191,7 +194,7 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
         '''
         import asyncio
         import threading
-        from p2m.core.runtime_safety import run_stage_coro
+        from assert_eval.core.runtime_safety import run_stage_coro
 
         never_released = threading.Event()
 
@@ -351,7 +354,7 @@ def test_heartbeat_swallows_write_errors(
         call_count[0] += 1
         raise OSError("disk full (simulated)")
 
-    caplog.set_level(logging.DEBUG, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.DEBUG, logger="assert_eval.core.runtime_safety")
     hb = ManifestHeartbeat(manifest, tmp_path, _flaky_write, interval_s=0.05)
     hb.start()
     try:
@@ -370,7 +373,7 @@ def test_watchdog_dumps_stacks_after_idle_threshold(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Watchdog must dump thread stacks when no tick fires for >threshold."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.1, check_interval_s=0.05)
     wd.start()
     try:
@@ -388,7 +391,7 @@ def test_watchdog_does_not_dump_twice_for_same_idle_period(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Single hang -> single dump, not one per check interval."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.1, check_interval_s=0.05)
     wd.start()
     try:
@@ -408,7 +411,7 @@ def test_watchdog_tick_resets_idle_clock(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A tick before the threshold prevents (or resets) the dump."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.2, check_interval_s=0.05)
     wd.start()
     try:
@@ -437,7 +440,7 @@ def test_heartbeat_ticks_watchdog_when_attached(
     hb = ManifestHeartbeat(manifest, tmp_path, _noop_write, interval_s=0.05)
     wd = PipelineWatchdog(idle_threshold_s=0.15, check_interval_s=0.05)
     hb.attach_watchdog(wd)
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_eval.core.runtime_safety")
     wd.start()
     hb.start()
     try:

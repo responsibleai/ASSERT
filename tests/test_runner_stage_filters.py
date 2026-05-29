@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import io
 import unittest
 from pathlib import Path
@@ -5,7 +8,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from p2m.runner import run_pipeline
+from assert_eval.runner import run_pipeline
 
 
 class RunnerStageFilterTest(unittest.TestCase):
@@ -28,9 +31,9 @@ class RunnerStageFilterTest(unittest.TestCase):
             stages = {name: self._module(name, seen) for name in ["prepare", "judge", "report"]}
 
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner._write_suite_metadata"),
-                patch("p2m.runner.STAGES", stages),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner._write_suite_metadata"),
+                patch("assert_eval.runner.STAGES", stages),
             ):
                 rc = run_pipeline(config="config.yaml", from_stage="judge")
 
@@ -50,9 +53,9 @@ class RunnerStageFilterTest(unittest.TestCase):
             stages = {name: self._module(name, seen) for name in ["prepare", "judge", "report"]}
 
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner._write_suite_metadata"),
-                patch("p2m.runner.STAGES", stages),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner._write_suite_metadata"),
+                patch("assert_eval.runner.STAGES", stages),
             ):
                 rc = run_pipeline(config="config.yaml", stage_filter=["report", "prepare"])
 
@@ -71,9 +74,9 @@ class RunnerStageFilterTest(unittest.TestCase):
             stages = {"judge": self._module("judge", [])}
 
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner._write_suite_metadata"),
-                patch("p2m.runner.STAGES", stages),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner._write_suite_metadata"),
+                patch("assert_eval.runner.STAGES", stages),
                 patch("sys.stderr", new_callable=io.StringIO) as fake_err,
             ):
                 rc = run_pipeline(config="config.yaml", stage_filter=["report"])
@@ -83,7 +86,7 @@ class RunnerStageFilterTest(unittest.TestCase):
 
     # ─────────────────────────────────────────────────────────────
     # --force-stage cascade tests (added Apr 28 2026 alongside the
-    # downstream cascade fix in p2m/runner.py).
+    # downstream cascade fix in assert_eval/runner.py).
     #
     # Without cascade, `--force-stage test_set` regenerates test_set.jsonl
     # but inference silently keeps the prior transcripts (its resume
@@ -135,11 +138,11 @@ class RunnerStageFilterTest(unittest.TestCase):
             )
 
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner._write_suite_metadata"),
-                patch("p2m.runner._build_manifest", return_value=stub_manifest),
-                patch("p2m.runner._write_manifest"),
-                patch("p2m.runner.STAGES", suite_modules),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner._write_suite_metadata"),
+                patch("assert_eval.runner._build_manifest", return_value=stub_manifest),
+                patch("assert_eval.runner._write_manifest"),
+                patch("assert_eval.runner.STAGES", suite_modules),
                 patch("sys.stderr", new_callable=io.StringIO) as fake_err,
             ):
                 rc = run_pipeline(config="config.yaml", force_stages=["test_set"])
@@ -176,11 +179,11 @@ class RunnerStageFilterTest(unittest.TestCase):
             )
 
             with (
-                patch("p2m.runner._load_context", return_value=ctx),
-                patch("p2m.runner._write_suite_metadata"),
-                patch("p2m.runner._build_manifest", return_value=stub_manifest),
-                patch("p2m.runner._write_manifest"),
-                patch("p2m.runner.STAGES", suite_modules),
+                patch("assert_eval.runner._load_context", return_value=ctx),
+                patch("assert_eval.runner._write_suite_metadata"),
+                patch("assert_eval.runner._build_manifest", return_value=stub_manifest),
+                patch("assert_eval.runner._write_manifest"),
+                patch("assert_eval.runner.STAGES", suite_modules),
                 patch("sys.stderr", new_callable=io.StringIO) as fake_err,
             ):
                 rc = run_pipeline(config="config.yaml", force_stages=["judge"])

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { json } from '@sveltejs/kit';
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
 import { loadScenarioDrawerItem } from '$lib/server/data.js';

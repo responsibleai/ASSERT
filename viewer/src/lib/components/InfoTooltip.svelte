@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <!--
   Primer-style description tooltip.
   Follows https://primer.style/product/getting-started/rails/components/tooltip/

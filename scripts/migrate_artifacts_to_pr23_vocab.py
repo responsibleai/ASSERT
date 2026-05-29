@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Migrate local run artifacts to the PR #23 vocabulary."""
 
 from __future__ import annotations

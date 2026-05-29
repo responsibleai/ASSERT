@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Suite-level types (from suite.json, taxonomy.json, test_set.jsonl)
 
 export interface Suite {
@@ -229,7 +232,7 @@ export interface ViewerResultItem {
 
 // Aggregated types for views
 
-export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
+export type SuiteStatus = 'empty' | 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
@@ -273,6 +276,8 @@ export interface RunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	target: string;
 	judge_model: string;
 	dimensions: Record<string, DimensionMetrics>;
@@ -301,6 +306,8 @@ export interface AuditRunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
 	tester_model: string;

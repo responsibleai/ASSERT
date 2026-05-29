@@ -40,10 +40,10 @@ full text → synthesize answer.
 ```bash
 # From the repo root
 pip install -e ".[otel,langgraph]"
-cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, P2M_AZURE_DEPLOYMENT
+cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)
-USE_MOCK_TOOLS=1 p2m run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 ## Real MCP Mode
@@ -57,7 +57,7 @@ export FOUNDRY_IQ_TOKEN="your-bearer-token"
 # Node.js required for Learn MCP (npx -y @microsoftdocs/mcp)
 
 # Run without USE_MOCK_TOOLS (real MCP tools used)
-p2m run --config examples/azure_doc_qa/eval_config.yaml
+assert-eval run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
 ## Environment Variables
@@ -66,7 +66,7 @@ p2m run --config examples/azure_doc_qa/eval_config.yaml
 |----------|----------|-------------|
 | `AZURE_API_BASE` | Yes | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | Yes | Azure OpenAI API key |
-| `P2M_AZURE_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.4-mini`) |
+| `ASSERT_AZURE_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.4-mini`) |
 | `USE_MOCK_TOOLS` | No | Set to `1` for offline mock mode |
 | `FOUNDRY_IQ_MCP_ENDPOINT` | Real mode | Foundry IQ SSE endpoint |
 | `FOUNDRY_IQ_TOKEN` | Real mode | Foundry IQ bearer token |

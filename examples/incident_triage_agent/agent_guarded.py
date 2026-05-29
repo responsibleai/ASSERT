@@ -1,7 +1,10 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Incident-triage agent wrapped with the AgentShield SDK.
 
 Same callable contract as :mod:`agent` (`chat(message: str) -> str`) so this
-module is a drop-in replacement target for the p2m callable runner. Tool
+module is a drop-in replacement target for the ASSERT callable runner. Tool
 implementations, schemas, and the system prompt are imported unchanged from
 the baseline; only the tool-execution loop is rewritten to flow through the
 AgentShield runtime per the canonical sync orchestration sequence.
@@ -73,7 +76,7 @@ def chat(message: str) -> str:
     """Run one isolated incident-triage turn through AgentShield.
 
     Identical signature and observable behavior to :func:`agent.chat` so the
-    p2m callable runner can swap targets via ``target.callable``.
+    ASSERT callable runner can swap targets via ``target.callable``.
     """
     return _chat_guarded_with_system_prompt(message, SYSTEM_PROMPT)
 

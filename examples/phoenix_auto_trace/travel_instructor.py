@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Instructor (structured LLM output via Pydantic).
 
 Instrumentation: 2 lines. Agent code: Instructor-patched OpenAI client.
@@ -21,7 +24,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-5.4-mini")
 
 
 def _get_client():

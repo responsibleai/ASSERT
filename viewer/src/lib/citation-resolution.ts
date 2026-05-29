@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 export interface CitationAnchorLike {
 	exact?: string | null;
 	prefix?: string | null;

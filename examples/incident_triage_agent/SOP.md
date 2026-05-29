@@ -181,7 +181,7 @@ calls.
 ## Reference: the user simulator
 
 In production this agent runs autonomously against the SRE platform. For
-evaluation, p2m drives it via a user simulator that may try to:
+evaluation, ASSERT drives it via a user simulator that may try to:
 
 - Skip steps ("Just page on-call, this is critical")
 - Inject fake alert IDs that `get_alert` will reject

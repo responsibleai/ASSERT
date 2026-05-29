@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -238,7 +241,7 @@ function runSeedRows(
 
 function rebuildViewerInstruction(runDir: string): string {
 	const configPath = path.resolve(runDir, RUN_CONFIG_FILE);
-	return `Rebuild it by re-running judge for this run: uv run p2m run --config ${configPath} --resume --force-stage judge`;
+	return `Rebuild it by re-running judge for this run: uv run assert-eval run --config ${configPath} --resume --force-stage judge`;
 }
 
 function validateViewerFileMetadata(
@@ -554,6 +557,56 @@ function readObject(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === 'object' && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: null;
+}
+
+export function loadRunJudgeTaxonomy(config: Record<string, unknown> | null): Taxonomy | null {
+	return loadRunJudgeTaxonomyFromArtifacts(config, null, null);
+}
+
+export function loadRunJudgeTaxonomyFromArtifacts(
+	config: Record<string, unknown> | null,
+	artifacts: Record<string, unknown> | null,
+	runDir: string | null = null
+): Taxonomy | null {
+	const suiteDir = suiteDirPathFromConfig(config);
+	const systematize = readObject(artifacts?.systematize);
+	const artifactTaxonomyPath = typeof systematize?.path === 'string' ? systematize.path : null;
+	if (artifactTaxonomyPath) {
+		const resolvedArtifactPath = manifestArtifactPath(suiteDir, artifactTaxonomyPath);
+		const artifactTaxonomy = resolvedArtifactPath
+			? readJsonFile<Taxonomy>(resolvedArtifactPath, { missingOk: true })
+			: null;
+		if (artifactTaxonomy) return artifactTaxonomy;
+	}
+
+	const pipeline = readObject(config?.pipeline);
+	const judge = readObject(pipeline?.judge);
+	const rawTaxonomyPath = typeof judge?.taxonomy_path === 'string' ? judge.taxonomy_path : null;
+	if (!rawTaxonomyPath) return null;
+	return loadTaxonomyPath(rawTaxonomyPath, runDir ?? suiteDir);
+}
+
+function loadTaxonomyPath(rawTaxonomyPath: string, baseDir: string): Taxonomy | null {
+	if (path.isAbsolute(rawTaxonomyPath)) return null;
+	const resolved = path.resolve(baseDir, rawTaxonomyPath);
+	const artifactsRoot = path.resolve(ARTIFACTS_ROOT);
+	const relativeToArtifacts = path.relative(artifactsRoot, resolved);
+	if (relativeToArtifacts.startsWith('..') || path.isAbsolute(relativeToArtifacts)) return null;
+	return readJsonFile<Taxonomy>(resolved, { missingOk: true });
+}
+
+function suiteDirPathFromConfig(config: Record<string, unknown> | null): string {
+	const suite = typeof config?.suite === 'string' ? config.suite : null;
+	return suite ? suiteDirPath(suite) : ARTIFACTS_ROOT;
+}
+
+export function loadRunJudgeTaxonomyForRun(suiteId: string, runId: string): Taxonomy | null {
+	const runDir = runDirPath(suiteId, runId);
+	const config = readYamlFile<Record<string, unknown>>(path.join(runDir, RUN_CONFIG_FILE), {
+		missingOk: true
+	});
+	const manifest = readJsonFile<Manifest>(path.join(runDir, RUN_MANIFEST_FILE), { missingOk: true });
+	return loadRunJudgeTaxonomyFromArtifacts(config, manifest?.artifact_versions ?? null, runDir);
 }
 
 export function loadRunRuntimeMode(config: Record<string, unknown> | null): string | null {

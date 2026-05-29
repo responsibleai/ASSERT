@@ -1,8 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from p2m.core import model_client
+from assert_eval.core import model_client
 
 
 class ModelClientTest(unittest.IsolatedAsyncioTestCase):
