@@ -1413,3 +1413,14 @@ async def generate_with_tools(
     _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
     _record_usage(result.usage, model=model)
     return result
+
+
+# ── Import-time env-var seed ───────────────────────────────────
+# Users in Azure regions known to lack Responses API support
+# (e.g. West Europe at time of writing) can pre-arm the fallback
+# by exporting ``ASSERT_PREFER_CHAT_COMPLETIONS=1``. This avoids
+# the one wasted Responses API round-trip + the user-visible WARN
+# on every cold start, while keeping the reactive fallback as a
+# safety net for regions that lose support later.
+if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip().lower() in ("1", "true", "yes"):
+    _activate_chat_completions_fallback("ASSERT_PREFER_CHAT_COMPLETIONS env var set")
