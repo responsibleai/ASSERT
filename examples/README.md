@@ -50,6 +50,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
+├── incident_triage_agent/      SRE incident-triage callable-agent walkthrough
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior spec references

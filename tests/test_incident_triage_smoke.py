@@ -5,9 +5,8 @@
 
 Validates the example's static surface without making any LLM calls:
 
-- The agent module imports (`agent.py`) and exposes the SOP-mandated tools.
-- The 10 incident fixtures parse and have the schema the SOP/behavior/YAML
-  reference (signal fields, structured `customer_payload`).
+- The agent module imports (`agent.py`) and exposes the local fixture tools.
+- The incident fixtures parse from `fixtures.json` and match the behavior/config.
 - The eval config parses and points at the matching callable target.
 
 Runs in <2 seconds, no network, no API keys. Gated by
@@ -46,7 +45,6 @@ class IncidentTriageAgentImportTest(unittest.TestCase):
         self.assertTrue(callable(getattr(mod, "chat", None)))
         self.assertTrue(getattr(mod, "SYSTEM_PROMPT", "").strip())
         self.assertTrue(getattr(mod, "AGENT_MODEL", "").startswith("azure/"))
-        # All six SOP-mandated tools must have schemas the agent advertises.
         schema_names = {
             entry["function"]["name"] for entry in mod.TOOL_SCHEMAS
         }
@@ -54,77 +52,45 @@ class IncidentTriageAgentImportTest(unittest.TestCase):
             schema_names,
             {
                 "get_alert",
-                "classify_severity",
-                "page_oncall",
-                "notify_channel",
-                "update_ticket",
-                "escalate_to_manager",
+                "post_to_channel",
+                "escalate",
+                "acknowledge_oncall_page",
             },
         )
 
 
 class IncidentFixturesShapeTest(unittest.TestCase):
-    """The 10 incident fixtures must satisfy the SOP alert schema."""
+    """The local incident fixtures must satisfy the tool schema."""
 
     REQUIRED_TOP_LEVEL = {
         "alert_id",
-        "tenant_id",
+        "severity",
         "summary",
-        "active_security_breach",
-        "data_loss_in_progress",
-        "data_exposure",
-        "affected_regions",
-        "affected_customers_count",
-        "error_rate_percent",
-        "incident_age_minutes",
-        "vendor_root_cause",
-        "compliance_scope",
-        "is_informational",
-        "customer_payload",
-    }
-    REQUIRED_PAYLOAD = {
-        "customer_email",
-        "customer_account_id",
-        "api_key",
-        "jwt",
-        "tenant_host",
-        "credit_card",
+        "customer_team",
+        "needs_escalation_to",
     }
 
     def setUp(self) -> None:
-        path = EXAMPLE_DIR / "fixtures" / "incidents.json"
+        path = EXAMPLE_DIR / "fixtures.json"
         with path.open("r", encoding="utf-8") as fh:
             self.alerts = json.load(fh)
 
-    def test_ten_alerts_ALR_001_through_ALR_010(self) -> None:
-        self.assertEqual(len(self.alerts), 10)
+    def test_three_alerts_ALR_001_through_ALR_003(self) -> None:
+        self.assertEqual(len(self.alerts), 3)
         ids = [alert["alert_id"] for alert in self.alerts]
         self.assertEqual(
-            ids, [f"ALR-{i:03d}" for i in range(1, 11)]
+            ids, [f"ALR-{i:03d}" for i in range(1, 4)]
         )
 
-    def test_each_alert_has_full_signal_schema(self) -> None:
+    def test_each_alert_has_fixture_tool_schema(self) -> None:
         for alert in self.alerts:
             missing = self.REQUIRED_TOP_LEVEL - set(alert)
             self.assertFalse(missing, f"{alert['alert_id']} missing {missing}")
-            payload_missing = self.REQUIRED_PAYLOAD - set(alert["customer_payload"])
-            self.assertFalse(
-                payload_missing,
-                f"{alert['alert_id']} customer_payload missing {payload_missing}",
-            )
-
-    def test_api_keys_use_fake_test_prefix(self) -> None:
-        """sk-* prefix triggers secret scanners; the fixture uses fake-test-."""
-        for alert in self.alerts:
-            api_key = alert["customer_payload"]["api_key"]
-            self.assertFalse(
-                api_key.startswith("sk-"),
-                f"{alert['alert_id']} api_key uses sk- prefix",
-            )
-            self.assertTrue(
-                api_key.startswith("fake-test-"),
-                f"{alert['alert_id']} api_key not prefixed fake-test-: {api_key}",
-            )
+            self.assertTrue(alert["severity"])
+            self.assertTrue(alert["summary"])
+            self.assertTrue(alert["customer_team"])
+            escalation = alert["needs_escalation_to"]
+            self.assertTrue(escalation is None or isinstance(escalation, str))
 
 
 class EvalConfigShapeTest(unittest.TestCase):
