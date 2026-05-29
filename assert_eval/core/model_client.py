@@ -774,6 +774,31 @@ def _classify_llm_error(exc: Exception) -> Exception:
         err = LLMRateLimitError(f"Rate limited: {exc}")
         err.__cause__ = exc
         return err
+    # ── Responses API region fallback (must precede BadRequestError) ──
+    # Azure OpenAI rejects Responses API requests in unsupported regions
+    # (West Europe etc.) with one of these observed messages:
+    #   - "API version not supported"            (HTTP 400 → BadRequestError)
+    #   - "responses api is not enabled"         (HTTP 404 → NotFoundError/APIError)
+    # We check before the BadRequestError / NotFoundError / APIError handlers
+    # so the error routes to the one-shot Chat-Completions fallback in
+    # ``_with_retries`` instead of being recorded as an unrecoverable bad
+    # request. Once already demoted to chat (``_force_chat_completions``
+    # True), the same string genuinely means the api-version is wrong for
+    # chat completions, so we leave it for the standard handlers below.
+    if not _force_chat_completions:
+        _msg_lower = str(exc).lower()
+        if any(
+            marker in _msg_lower
+            for marker in (
+                "responses api is not enabled",
+                "api version not supported",
+            )
+        ):
+            err = _ResponsesApiNotAvailableError(
+                f"Azure Responses API not available: {exc}"
+            )
+            err.__cause__ = exc
+            return err
     # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
     if isinstance(exc, litellm.BadRequestError):
         # ContentPolicyViolationError is a BadRequestError subclass on most
@@ -812,20 +837,6 @@ def _classify_llm_error(exc: Exception) -> Exception:
             err = LLMContentFilterError(f"Content filtered: {exc}")
         else:
             err = LLMInputError(f"Bad request: {exc}")
-        err.__cause__ = exc
-        return err
-    # ── Responses API region fallback (must precede NotFoundError / APIError) ──
-    # Azure OpenAI returns a 404 (often wrapped as APIError by some
-    # LiteLLM versions) when the Responses API is not enabled in the
-    # deployment's region. We detect this *before* the generic 404 and
-    # 5xx handlers so it routes to the one-time Chat-Completions fallback
-    # in _with_retries instead of being treated as a normal input error
-    # or being retried fruitlessly as a transient provider error.
-    _responses_api_marker = "responses api is not enabled"
-    if _responses_api_marker in str(exc).lower():
-        err = _ResponsesApiNotAvailableError(
-            f"Azure Responses API not available: {exc}"
-        )
         err.__cause__ = exc
         return err
     # 404 — model/deployment not found
@@ -1250,6 +1261,27 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
                 # Skip individual backoff — the coordinated cooldown
                 # (checked at loop top) handles the wait with jitter.
                 continue
+            # ── Responses API fallback (must precede generic LLMProviderError) ──
+            # Azure returns a region-specific "Responses API is not
+            # enabled" / "API version not supported" error that will
+            # never succeed on retry while the model is still routed
+            # through the Responses bridge. ``_ResponsesApiNotAvailableError``
+            # is a subclass of ``LLMProviderError``, so this branch must
+            # run before the generic provider-error branch, otherwise the
+            # request is burned through standard 5xx retries and the
+            # one-shot Chat Completions fallback never fires.
+            # If the fallback was already active (so this call was
+            # already on the Chat path) the error is not actually a
+            # routing problem — re-raise it as a normal LLMProviderError
+            # so the caller sees the failure.
+            if isinstance(classified, _ResponsesApiNotAvailableError):
+                if _force_chat_completions:
+                    raise classified from exc
+                _activate_chat_completions_fallback(
+                    "Azure Responses API not enabled in region",
+                    model=model, tag=tag,
+                )
+                continue
             if isinstance(classified, LLMProviderError):
                 own_5xx += 1
                 attempts_used = own_5xx
@@ -1265,23 +1297,6 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
                     model, tag, attempts_used, attempts_total, wait_s, classified,
                 )
                 await asyncio.sleep(wait_s)
-                continue
-            # ── Responses API fallback ──────────────────────────
-            # Azure returns a region-specific "Responses API is not
-            # enabled" error that will never succeed on retry while
-            # the model is still routed through the Responses bridge.
-            # Activate the process-wide Chat Completions fallback and
-            # retry exactly once. If the fallback was already active
-            # (so this call was already on the Chat path) the error is
-            # not actually a routing problem — re-raise it as a normal
-            # LLMProviderError so the caller sees the failure.
-            if isinstance(classified, _ResponsesApiNotAvailableError):
-                if _force_chat_completions:
-                    raise classified from exc
-                _activate_chat_completions_fallback(
-                    "Azure Responses API not enabled in region",
-                    model=model, tag=tag,
-                )
                 continue
             raise classified from exc
 
