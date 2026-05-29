@@ -102,6 +102,10 @@ def configure_logging(
     logging.getLogger("alembic").setLevel(logging.WARNING)
     logging.getLogger("phoenix").setLevel(logging.WARNING)
 
+    # OTel SDK warns when ASSERT attaches a span processor to an existing
+    # TracerProvider ("Overriding of current TracerProvider is not allowed").
+    logging.getLogger("opentelemetry").setLevel(logging.WARNING)
+
 
 def _make_stderr_console():
     """Build a Rich Console on the unwrapped stderr."""
