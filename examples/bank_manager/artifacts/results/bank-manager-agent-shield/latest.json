@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifacts": {
+    "systematize": {
+      "artifact_type": "systematize",
+      "version": "v0002",
+      "input_hash": "09721fe9d35893fe9c75746f053a149bc40d62ead1b918c52c16f444c9e4630e",
+      "config_hash": "b6050a106651ae6033ffb33dd8ace68741c37a0c7d9f8a39bc4222aeedc6e78f",
+      "path": "artifacts/systematize/v0002/taxonomy.json",
+      "artifact_dir": "artifacts/systematize/v0002",
+      "metadata_path": "artifacts/systematize/v0002/artifact.json",
+      "file_hashes": {
+        "taxonomy": "f90e9e562c7a7c0147071b5a7688f169c0037a98544d8891d40a19215f4e6585",
+        "systematization": "55102f94b5a5e26e56d552446ad2b0a8a2d61f507174752d195320357f01a0ca"
+      },
+      "behavior_hash": "10f518f5d53833d3e6f8c6979fcfd7d91184ac674934077a39c0f9f5b9c2f964"
+    },
+    "test_set": {
+      "artifact_type": "test_set",
+      "version": "v0005",
+      "input_hash": "8ee22e72b38d5bad8864fdda0785e138c37d10d3f4d8b4642c8dc6fe63014d1c",
+      "config_hash": "f607e4ec89885ca080e00505b9b5fd2fc00a69993b9d0c162b52a89f1fc8ea9f",
+      "path": "artifacts/test_set/v0005/test_set.jsonl",
+      "artifact_dir": "artifacts/test_set/v0005",
+      "metadata_path": "artifacts/test_set/v0005/artifact.json",
+      "file_hashes": {
+        "test_set": "7dd1c586dc4bd02430743ccb5e2d67a33b87756a2d0a77921e0d86ce1ab15dda",
+        "stratification": "e6b6dde78a63ab1a805d8b0883980f3615fdcda46115c00cad41070d1550901c"
+      }
+    }
+  }
+}

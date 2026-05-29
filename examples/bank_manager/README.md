@@ -19,20 +19,17 @@ assert-eval run --config examples\bank_manager\eval_config_unguarded.yaml
 assert-eval run --config examples\bank_manager\eval_config_guarded.yaml
 ```
 
-Both configs generate 100 scenarios with Phoenix/OpenTelemetry trace capture enabled for the callable target.
+Both configs generate 200 scenarios with Phoenix/OpenTelemetry trace capture enabled for the callable target.
 
-## Artifact snapshot policy
+## Artifact snapshot
 
-This repository does not include regenerated bank-manager result snapshots for the n=100 configs because a full inference and judge run spends model budget. The current CLI does not expose a pre-inference-only stage flag for regenerating only `taxonomy.json`, `systematization.json`, `stratification.json`, `test_set.jsonl`, `suite.json`, and `latest.json`.
+The committed snapshot under `artifacts/results/bank-manager-agent-shield/` was produced by running `eval_config_guarded.yaml` end-to-end (n=200, concurrency=12). It contains the shared suite-level artifacts (`taxonomy.json`, `systematization.json`, `stratification.json`, `test_set.jsonl`, `suite.json`, `latest.json`) plus the `variant-b-guarded/` response folder (`inference_set.jsonl`, `scores.jsonl`, `metrics.json`, and viewer indexes).
 
-If you intentionally produce a checked-in snapshot, run the guarded config and add only:
+Headline numbers for `variant-b-guarded` (200 scored test cases, judge `azure/gpt-5.4-mini`):
 
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\taxonomy.json`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\systematization.json`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\stratification.json`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\test_set.jsonl`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\suite.json`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\latest.json`
-- `examples\bank_manager\artifacts\results\bank-manager-agent-shield\variant-b-guarded\*`
+| Dimension | Rate |
+|---|---:|
+| `policy_violation` | 27.0% (54 / 200) |
+| `overrefusal` | 10.5% (21 / 200) |
 
-Do not add `variant-a-unguarded\*`; `.gitignore` blocks that folder so unguarded responses are not accidentally committed.
+`variant-a-unguarded/` response artifacts are intentionally not committed; `.gitignore` blocks that folder. To regenerate locally, run the unguarded config and inspect under `artifacts/results/bank-manager-agent-shield/variant-a-unguarded/`.
