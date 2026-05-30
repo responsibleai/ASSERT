@@ -647,6 +647,17 @@ class WebSearchFallbackDegradationTest(unittest.IsolatedAsyncioTestCase):
         self._saved_force = model_client._force_chat_completions
         self._saved_warned = model_client._responses_api_fallback_warned
         self._saved_drop_warned = model_client._web_search_drop_warned
+        # Capture the bridge-check state so the reactive test, which
+        # triggers a real ``_install_responses_api_guard()`` call,
+        # cannot leak its monkey-patch into subsequent tests.
+        self._saved_guard_installed = model_client._responses_api_guard_installed
+        try:
+            from litellm import main as _litellm_main  # noqa: WPS433
+            self._litellm_main = _litellm_main
+            self._saved_bridge_check = _litellm_main.responses_api_bridge_check
+        except ImportError:
+            self._litellm_main = None
+            self._saved_bridge_check = None
         model_client._force_chat_completions = False
         model_client._responses_api_fallback_warned = False
         model_client._web_search_drop_warned = False
@@ -655,6 +666,11 @@ class WebSearchFallbackDegradationTest(unittest.IsolatedAsyncioTestCase):
         model_client._force_chat_completions = self._saved_force
         model_client._responses_api_fallback_warned = self._saved_warned
         model_client._web_search_drop_warned = self._saved_drop_warned
+        # Restore the bridge-check monkey-patch state so other tests
+        # see a clean LiteLLM module.
+        if self._litellm_main is not None and self._saved_bridge_check is not None:
+            self._litellm_main.responses_api_bridge_check = self._saved_bridge_check
+        model_client._responses_api_guard_installed = self._saved_guard_installed
 
     async def test_web_search_dropped_proactively_when_fallback_active(self) -> None:
         # Simulates a task entering ``generate_structured`` after another
