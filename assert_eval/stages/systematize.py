@@ -16,11 +16,11 @@ from assert_eval.core.config_model import (
     DEFAULT_SYSTEMATIZE_MAX_TOKENS,
     DEFAULT_SYSTEMATIZE_TEMPERATURE,
 )
-from assert_eval.core.io import write_json
+from assert_eval.core.io import load_prompt_text, write_json
 from assert_eval.core.model_client import GenerateOptions, Message, generate_structured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-GEN_PROMPT = (BASE_DIR / "prompts" / "systematize_system.md").read_text()
+GEN_PROMPT = load_prompt_text("systematize_system.md")
 DEFAULT_BEHAVIOR_CATEGORY_COUNT = 25
 MIN_TAXONOMY_BEHAVIOR_CATEGORIES = 5
 

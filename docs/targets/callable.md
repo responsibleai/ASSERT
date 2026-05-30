@@ -69,7 +69,7 @@ The customization paths exist as fallbacks. The judge sees less, so use them onl
 
 ### Customization with OTel traces (frameworks not on the auto-instrument list)
 
-If your framework is not in the [auto-instrument list](https://github.com/Arize-ai/openinference#instrumentations) — or you have custom orchestration — emit OTel spans yourself with the OpenTelemetry SDK. Adaptive Eval's `target.trace` block reads the same span data either way.
+If your framework is not in the [auto-instrument list](https://github.com/Arize-ai/openinference#instrumentations) — or you have custom orchestration — emit OTel spans yourself with the OpenTelemetry SDK. ASSERT's `target.trace` block reads the same span data either way.
 
 ```yaml
 pipeline:

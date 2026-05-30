@@ -1,8 +1,9 @@
-# Phoenix Auto-Trace Demo — Same Scenario, 33 Frameworks
+# Phoenix Auto-Trace Gallery — Same Scenario, 33 Frameworks
 
-This demo shows how a single Phoenix/OpenInference instrumentation snippet (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives you OpenTelemetry tracing across 33 supported frameworks — without per-framework integration work in Adaptive Eval itself.
+This is a **multi-framework instrumentation gallery**, not a single-agent example. It shows how one Phoenix/OpenInference setup (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives `target.callable` + `target.trace` OpenTelemetry visibility across supported frameworks — without per-framework integration work in ASSERT itself.
 
-All examples implement the **same travel planner** with 5 mock tools:
+All runnable demos implement the **same travel planner** with 5 mock tools:
+
 - `search_flights` — find flights to a destination
 - `search_hotels` — find hotels in a city
 - `check_weather` — get forecast and advisories
@@ -11,14 +12,16 @@ All examples implement the **same travel planner** with 5 mock tools:
 
 > Test query: "Plan a week in Tokyo for under $3000"
 
-Each file shows only what's different per framework. The instrumentation is
-always the same 2 lines. Mock tool responses come from `_tools.py`.
+Each `travel_<framework>.py` file shows only what's different per framework; mock tool responses come from `_tools.py`. Swap the callable path or YAML, and the eval pipeline stays the same.
 
 ---
 
 ## Supported Frameworks (OpenInference auto-instrumentation)
 
+Demo paths are relative to `examples/phoenix_auto_trace/`; rows without a Demo entry are supported instrumentors without a local demo script.
+
 ### LLM Providers
+
 | Package | Framework | Demo |
 |---------|-----------|------|
 | `openinference-instrumentation-openai` | OpenAI | `travel_openai.py` |
@@ -32,6 +35,7 @@ always the same 2 lines. Mock tool responses come from `_tools.py`.
 | `openinference-instrumentation-portkey` | Portkey | `travel_portkey.py` |
 
 ### Agent Frameworks
+
 | Package | Framework | Demo |
 |---------|-----------|------|
 | `openinference-instrumentation-langchain` | LangChain / LangGraph | `travel_langchain.py` |
@@ -45,7 +49,10 @@ always the same 2 lines. Mock tool responses come from `_tools.py`.
 | `openinference-instrumentation-smolagents` | smolagents | `travel_smolagents.py` |
 | `openinference-instrumentation-haystack` | Haystack | `travel_haystack.py` |
 
+Additional runnable variants: `travel_langgraph.py` (LangGraph-specific target using the LangChain/LangGraph instrumentor) and `travel_openai_router.py` (OpenAI-compatible router target requiring router-specific credentials and endpoint access).
+
 ### Additional (no demo file, same 2-line pattern)
+
 | Package | Framework |
 |---------|-----------|
 | `openinference-instrumentation-claude-agent-sdk` | Claude Agent SDK |
@@ -58,7 +65,7 @@ always the same 2 lines. Mock tool responses come from `_tools.py`.
 | `openinference-instrumentation-agentspec` | AgentSpec |
 | `openinference-instrumentation-vertexai` | VertexAI |
 
-**Total: 33 auto-instrumented frameworks** (this README enumerates 28 of them with example demos; the remaining handful follow the same install + `register(auto_instrument=True)` pattern). For anything not in OpenInference, you can still emit spans via the OpenTelemetry SDK with `@tracer.start_as_current_span`.
+**Total: 33 auto-instrumented frameworks** in OpenInference. This gallery includes 19 per-framework demos plus the runnable variants above; the remaining instrumentors follow the same install + `register(auto_instrument=True)` pattern. For anything not in OpenInference, you can still emit spans via the OpenTelemetry SDK with `@tracer.start_as_current_span`.
 
 ---
 
@@ -72,25 +79,37 @@ travel_crewai.py       -> CrewAI + 2-line instrumentation + multi-agent crew
 ...                    -> same pattern for each framework
 ```
 
-## Running
+## Quick Start (OpenAI)
 
-```powershell
-# Install Phoenix + the instrumentor for your framework
-pip install arize-phoenix-otel openinference-instrumentation-openai
+```bash
+# From the repo root
+python -m pip install -e ".[otel,examples]"
+python -m pip install openai openinference-instrumentation-openai
 
-# (Windows only — avoids UnicodeEncodeError on console output with arrows)
-$env:PYTHONUTF8 = "1"
+# Optional: start Phoenix in a second terminal to browse traces
+phoenix serve  # http://localhost:6006
 
-# Run any example — traces appear in Phoenix
+# Run one framework demo directly
 python -m examples.phoenix_auto_trace.travel_openai
 
-# View traces (in a separate terminal)
-phoenix serve   # http://localhost:6006
+# Run the matching eval
+assert-eval run --config examples/phoenix_auto_trace/eval_openai.yaml
 ```
 
-## The Adaptive Eval integration
+Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `P2M_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
 
-All of these can be evaluated by Adaptive Eval with the same config:
+## Phoenix and external-service prerequisites
+
+| Area | Requirement |
+|---|---|
+| Phoenix collector | Local process only: `phoenix serve` opens `http://localhost:6006`; no Docker is required for the gallery itself. |
+| Provider SDK demos | Need network access and credentials for the selected provider. |
+| Agent framework demos | Need the matching framework package plus its `openinference-instrumentation-*` package. |
+| Router variant | `travel_openai_router.py` needs router-specific credentials and endpoint access. |
+
+## The ASSERT integration
+
+All of these can be evaluated by ASSERT with the same config shape:
 
 ```yaml
 pipeline:
@@ -102,5 +121,14 @@ pipeline:
         group_by: session.id
 ```
 
-Swap the callable to any framework — the eval pipeline, judge, and artifacts
-stay identical. That's the point.
+Swap the callable to any framework — the eval pipeline, judge, and artifacts stay identical. That's the point.
+
+Starter YAMLs: `eval_openai.yaml`, `eval_litellm.yaml`, `eval_langchain.yaml`, `eval_crewai.yaml`, `eval_dspy.yaml`; `eval_config.yaml` is the OpenAI default, and `eval_framework_template.yaml` is the copy/paste starting point for another callable.
+
+## What the judge sees from traces
+
+Final-text-only judging can see the itinerary but not whether the agent skipped budget validation, ignored an advisory, or used the wrong tool. With `target.trace`, Phoenix spans expose tool names, arguments, model calls, routing, and per-step latency. `assert-eval` can use that evidence when scoring generated `behavior_categories`.
+
+## Behavior violation rate results
+
+Not yet measured for this gallery README. After running an eval, check `artifacts/results/framework-eval-mini/<run>/metrics.json` for aggregate behavior-violation and overrefusal rates. Do not compare frameworks until they use the same generated test set and judge config.

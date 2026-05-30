@@ -19,11 +19,12 @@ from assert_eval.core.config_model import (
     DEFAULT_SYSTEMATIZATION_MODEL,
     ModelConfig,
 )
+from assert_eval.core.io import load_prompt_text
 from assert_eval.core.model_client import GenerateOptions, generate_structured, is_truncated_response
 from assert_eval.stages.systematize import taxonomy_schema
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-GUIDELINE_PROMPT = (BASE_DIR / "prompts" / "systematization_convert_single.md").read_text(encoding="utf-8")
+GUIDELINE_PROMPT = load_prompt_text("systematization_convert_single.md")
 
 TAXONOMY_SCHEMA: dict[str, Any] = taxonomy_schema()
 DEFAULT_BEHAVIOR_CATEGORY_COUNT_HINT = 30

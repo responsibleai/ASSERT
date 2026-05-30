@@ -146,11 +146,11 @@ def load_json(path: Path) -> dict[str, Any] | None:
 
 # ── Prompt loading ─────────────────────────────────────────────
 
-PROMPTS_DIR = BASE_DIR / "prompts"
+PROMPTS_DIR = BASE_DIR / "internal-pipeline-prompts"
 
 
 def load_prompt_text(filename: str) -> str:
-    """Load a prompt file from the prompts/ directory."""
+    """Load a prompt file from the internal-pipeline-prompts/ directory."""
     path = PROMPTS_DIR / filename
     if not path.exists():
         raise FileNotFoundError(f"Prompt file not found: {path}")
