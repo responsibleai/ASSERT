@@ -51,6 +51,13 @@ def chat_completion(
         # this region, activate process-wide Chat Completions and
         # retry once. If the fallback was already active when we
         # entered, this isn't a routing problem — re-raise.
+        #
+        # NOTE: This intentionally duplicates the one-shot fallback
+        # pattern from ``model_client._with_retries`` rather than
+        # sharing code. The init agent runs a single LLM call up-front
+        # (no per-task retry budget, no streaming, no structured
+        # output), so wiring it through the full ``_with_retries``
+        # machinery would add more coupling than the ~20 LoC saves.
         if isinstance(classified, _ResponsesApiNotAvailableError):
             if _force_chat_completions:
                 raise classified from exc
