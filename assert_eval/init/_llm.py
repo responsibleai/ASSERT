@@ -27,7 +27,12 @@ def chat_completion(
     """
     import litellm
 
-    from assert_eval.core.model_client import _classify_llm_error
+    from assert_eval.core.model_client import (
+        _ResponsesApiNotAvailableError,
+        _activate_chat_completions_fallback,
+        _classify_llm_error,
+        _force_chat_completions,
+    )
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -41,7 +46,31 @@ def chat_completion(
     try:
         response = litellm.completion(**kwargs)
     except Exception as exc:
-        raise _classify_llm_error(exc) from exc
+        classified = _classify_llm_error(exc)
+        # One-shot fallback: if the Responses API is not available in
+        # this region, activate process-wide Chat Completions and
+        # retry once. If the fallback was already active when we
+        # entered, this isn't a routing problem — re-raise.
+        #
+        # NOTE: This intentionally duplicates the one-shot fallback
+        # pattern from ``model_client._with_retries`` rather than
+        # sharing code. The init agent runs a single LLM call up-front
+        # (no per-task retry budget, no streaming, no structured
+        # output), so wiring it through the full ``_with_retries``
+        # machinery would add more coupling than the ~20 LoC saves.
+        if isinstance(classified, _ResponsesApiNotAvailableError):
+            if _force_chat_completions:
+                raise classified from exc
+            _activate_chat_completions_fallback(
+                "Azure Responses API not enabled in region",
+                model=model,
+            )
+            try:
+                response = litellm.completion(**kwargs)
+            except Exception as inner_exc:
+                raise _classify_llm_error(inner_exc) from inner_exc
+        else:
+            raise classified from exc
 
     content = response.choices[0].message.content
     if content is None:

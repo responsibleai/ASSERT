@@ -167,25 +167,21 @@ function capitalize(s: string): string {
 <div class="space-y-8">
 	<!-- ═══ SECTION 2: Metric Picker + Summary Cards ═══ -->
 	<section class="space-y-4">
-		<div class="flex items-center justify-between gap-3 flex-wrap">
-			<h2 class="text-lg font-semibold text-text">Summary</h2>
+		<div class="flex items-center justify-between gap-3">
+			<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Summary</h2>
 			{#if data.allMetrics.length > 1}
-				<div class="SegmentedControl" role="tablist" aria-label="Metric">
-					{#each data.allMetrics as metric}
-						<button
-							type="button"
-							role="tab"
-							aria-selected={activeMetric === metric}
-							class="SegmentedControl-item"
-							class:SegmentedControl-item--selected={activeMetric === metric}
-							onclick={() => { activeMetric = metric; }}
-						>
-							<span class="SegmentedControl-content">{capitalize(metricLabel(metric))}</span>
-						</button>
-					{/each}
+				<div class="flex shrink-0 items-center gap-2">
+					<span class="text-xs text-text-muted">Metric</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Metric"
+						options={data.allMetrics.map((metric) => ({ value: metric, label: capitalize(metricLabel(metric)) }))}
+						selected={activeMetric}
+						onSelect={(value) => { activeMetric = value; }}
+					/>
 				</div>
 			{:else}
-				<span class="text-xs text-text-muted">{capitalize(metricLabel(activeMetric))}</span>
+				<span class="shrink-0 text-xs text-text-muted">{capitalize(metricLabel(activeMetric))}</span>
 			{/if}
 		</div>
 

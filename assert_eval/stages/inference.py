@@ -82,7 +82,7 @@ def _remove_stale_judge_artifacts(run_dir: Path) -> None:
     for name in _JUDGE_ARTIFACTS_TO_CLEAN:
         path = run_dir / name
         if path.exists():
-            log.info("Removing stale %s from %s", name, run_dir)
+            log.info("[inference] Removing stale %s from %s", name, run_dir)
             path.unlink()
 
 

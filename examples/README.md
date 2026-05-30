@@ -1,6 +1,6 @@
 # Examples
 
-Runnable configs and sample agents for Adaptive Eval.
+Runnable configs and sample agents for ASSERT.
 
 Start with the LangGraph travel planner. It is the customer-preview flagship because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
 
@@ -44,14 +44,18 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Run a simple hosted-model eval | `pipes\health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes\health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `pipes\health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Measure deterministic Agent Shield guardrails on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Bank-manager callable example with a plain LangGraph implementation, an Agent Shield implementation, four deterministic gates, and n=100 scenarios. |
+| Measure deterministic Agent Shield guardrails on a banking agent | `bank_manager\eval_config_unguarded.yaml` / `eval_config_guarded.yaml` | Bank-manager callable example with a plain LangGraph implementation, an Agent Shield implementation, four deterministic gates, and n=200 scenarios. |
+| Walk the eval-fix loop on the same banking agent | `bank_manager_demo\eval_unguarded_v2.yaml` / `eval_guarded_v2.yaml` / `eval_guarded_v3.yaml` | Companion to `bank_manager/`. Shows two rounds of iteration on the ACS policy *and* the judge — v2 era at n=30, v3 era at n=100 with sharper `safety_violation` / `unjustified_refusal` dimensions. |
+| Evaluate a science research agent with real retrieval tools | `science_research_agent\eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-eval run --config examples\science_research_agent\eval_config.yaml`. |
 
 ## Layout
 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
-├── bank_manager/  Agent Shield policy eval for a bank-manager callable agent
+├── bank_manager/  Agent Shield policy eval for a bank-manager callable agent
+├── bank_manager_demo/  eval-fix loop companion: v2 + v3 iterations on the same banking agent
+├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior spec references

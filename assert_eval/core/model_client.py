@@ -1,7 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""LiteLLM-backed model helpers for the measurements pipeline."""
+"""LiteLLM-backed model helpers for the measurements pipeline.
+
+Import side effects (intentional for the ``assert-eval`` CLI):
+
+* ``_normalize_azure_api_base()`` rewrites ``AZURE_API_BASE`` at import
+  time to strip any ``/openai/...`` path suffix, logging at INFO when
+  it does so. Library users importing this module will see the env
+  var mutated for the rest of the process.
+* The first activation of the Chat Completions fallback (either via
+  ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
+  API preference, or a reactive recovery from a region error) calls
+  ``_install_responses_api_guard()``, which monkey-patches
+  ``litellm.main.responses_api_bridge_check`` for the rest of the
+  process. The patch is idempotent and forwards all positional and
+  keyword arguments to the original function so it survives minor
+  LiteLLM upgrades that add new kwargs.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +27,10 @@ import contextvars
 import importlib
 import json
 import logging
+import os
 import random
 import time
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from typing import Any, Iterator, Mapping, Sequence
 
 log = logging.getLogger(__name__)
@@ -257,6 +274,37 @@ class ModelResponse:
 # ── Transport helpers ──────────────────────────────────────────
 
 _LITELLM_MODULE: Any | None = None
+
+
+# Finish-reason values that indicate the model hit the output-token limit
+# rather than completing its response. ``length`` is Chat Completions;
+# ``max_tokens`` / ``max_output_tokens`` come from the OpenAI Responses API
+# (surfaced via ``incomplete_details.reason`` in ``normalize_response``).
+# We deliberately do NOT include bare ``"incomplete"`` (the Responses API
+# ``status`` field) because that value covers any non-finished state -- including
+# content-filter refusals or provider errors that won't be fixed by enlarging
+# the token budget. Truncation must be confirmed by a specific ``reason``.
+_TRUNCATED_FINISH_REASONS: frozenset[str] = frozenset({
+    "length",
+    "max_tokens",
+    "max_output_tokens",
+})
+
+
+def is_truncated_response(response: "ModelResponse") -> bool:
+    """Return True iff *response* hit the model's output token limit.
+
+    Checks both the normalized ``finish_reason`` (which already prefers the
+    Responses API ``incomplete_details.reason`` over the ambiguous
+    ``status='incomplete'``) and the raw ``incomplete_details.reason`` as a
+    belt-and-suspenders fallback for callers that bypass ``normalize_response``.
+    """
+    reason = getattr(response, "finish_reason", None)
+    if isinstance(reason, str) and reason in _TRUNCATED_FINISH_REASONS:
+        return True
+    incomplete = getattr(response, "incomplete_details", None)
+    incomplete_reason = _get_value(incomplete, "reason")
+    return isinstance(incomplete_reason, str) and incomplete_reason in _TRUNCATED_FINISH_REASONS
 
 
 def build_json_schema_response_format(
@@ -558,6 +606,14 @@ def _get_litellm_module() -> Any:
         # sole retry layer — avoids double-retry and lets the
         # coordinated per-model cooldown work correctly.
         _LITELLM_MODULE.num_retries = 0
+        # If the user has opted into Chat Completions proactively,
+        # disable the Responses API now so LiteLLM never attempts it.
+        if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip() in ("1", "true", "yes"):
+            _apply_chat_completions_preference()
+            log.info(
+                "ASSERT_PREFER_CHAT_COMPLETIONS is set; using Chat "
+                "Completions API for all models."
+            )
     return _LITELLM_MODULE
 
 
@@ -598,6 +654,147 @@ class LLMRateLimitError(Exception):
 
 class LLMProviderError(Exception):
     """Provider-side error (5xx) — may be retryable."""
+
+
+class _ResponsesApiNotAvailableError(LLMProviderError):
+    """Region does not support Azure Responses API — triggers automatic
+    fallback to Chat Completions for the remainder of the run.
+
+    Inherits from :class:`LLMProviderError` so that callers up the stack
+    that catch ``LLMProviderError`` (notably ``stages/inference.py`` and
+    ``init/_design_agent.py``) still treat this as a real failure when
+    the in-loop fallback exhausts its retry and re-raises. Without this
+    inheritance the exception falls through generic ``except Exception``
+    catch-alls and silently produces empty content, which a judge then
+    happily scores ✓.
+    """
+
+
+# ── Responses API → Chat Completions fallback state ────────────
+_responses_api_fallback_warned: bool = False
+"""Set to True after the first Responses-API-not-available warning is
+emitted so we only log the user-facing message once per run."""
+
+_web_search_drop_warned: bool = False
+"""Set to True after the first ``web_search`` degradation warning so
+the message is emitted once per run rather than once per task."""
+
+_force_chat_completions: bool = False
+"""When True, the monkey-patched ``responses_api_bridge_check`` forces
+``mode=chat`` so LiteLLM never routes through the Responses API bridge."""
+
+_responses_api_guard_installed: bool = False
+"""Set to True after the bridge-check monkey-patch has been installed."""
+
+
+def _install_responses_api_guard() -> None:
+    """Monkey-patch ``litellm.main.responses_api_bridge_check``.
+
+    LiteLLM 1.82+ auto-routes GPT-5.4+ calls that include both ``tools``
+    and ``reasoning_effort`` through the Responses API bridge (see
+    ``litellm/main.py:responses_api_bridge_check``). There is no
+    kwarg or environment variable to opt out — the routing decision is
+    made inside the bridge check itself.
+
+    The patch wraps the original function and overrides the returned
+    ``mode`` from ``"responses"`` back to ``"chat"`` whenever
+    ``_force_chat_completions`` is True. Idempotent — safe to call
+    multiple times; the guard flag prevents double-wrapping.
+    """
+    global _responses_api_guard_installed
+    if _responses_api_guard_installed:
+        return
+
+    from litellm import main as _litellm_main  # noqa: WPS433
+
+    _original = _litellm_main.responses_api_bridge_check
+
+    # Accept ``*args, **kwargs`` and forward them as-is so the patch
+    # is forward-compatible with LiteLLM minor releases that add new
+    # parameters to ``responses_api_bridge_check``. Pinning a fixed
+    # signature here would silently drop any newly added kwargs and
+    # break Responses-API routing for callers that need it.
+    def _guarded_bridge_check(*args: Any, **kwargs: Any) -> tuple:
+        model_info, out_model = _original(*args, **kwargs)
+        if _force_chat_completions and model_info.get("mode") == "responses":
+            model_info["mode"] = "chat"
+        return model_info, out_model
+
+    _litellm_main.responses_api_bridge_check = _guarded_bridge_check
+    _responses_api_guard_installed = True
+
+
+def _activate_chat_completions_fallback(
+    reason: str,
+    *,
+    model: str | None = None,
+    tag: str = "",
+    proactive: bool = False,
+) -> None:
+    """Activate process-wide Chat Completions fallback.
+
+    Sets the sticky ``_force_chat_completions`` flag, installs the
+    bridge-check guard (idempotent), and emits a single user-facing
+    message per run via ``_responses_api_fallback_warned``.
+
+    When ``proactive`` is True (env-var seed at import time, or an
+    explicit API preference) the message is logged at INFO and omits
+    the "set ASSERT_PREFER_CHAT_COMPLETIONS=1" hint — the user has
+    already opted in. When False (reactive recovery from a region
+    error) it is logged at WARN with the hint.
+    """
+    global _force_chat_completions, _responses_api_fallback_warned
+    _force_chat_completions = True
+    _install_responses_api_guard()
+    if _responses_api_fallback_warned:
+        return
+    _responses_api_fallback_warned = True
+    prefix = f"{model}{tag}: " if model else ""
+    if proactive:
+        log.info(
+            "%sUsing Azure Chat Completions instead of Responses API "
+            "for this run (%s).",
+            prefix, reason,
+        )
+    else:
+        log.warning(
+            "%sFalling back from Azure Responses API to Chat Completions "
+            "for the remainder of this run (%s). Set "
+            "ASSERT_PREFER_CHAT_COMPLETIONS=1 to skip this round-trip "
+            "upfront in unsupported regions.",
+            prefix, reason,
+        )
+
+
+def _apply_chat_completions_preference() -> None:
+    """Public entry for proactive activation (kept for back-compat)."""
+    _activate_chat_completions_fallback("preference set via API", proactive=True)
+
+
+def _drop_web_search_for_fallback(
+    options: "GenerateOptions", model: str, *, reason: str
+) -> "GenerateOptions":
+    """Disable ``web_search`` on ``options`` and warn once per run.
+
+    ``web_search`` is implemented via the Responses API
+    ``web_search_preview`` tool — there is no Chat Completions
+    equivalent on Azure. When the Responses API is unavailable in the
+    target region (or the Chat-Completions fallback is already active),
+    we degrade gracefully: the call still succeeds but without web
+    grounding. The first occurrence is logged loudly so the user knows
+    the run produced different output than a Responses-API-supporting
+    region would have.
+    """
+    global _web_search_drop_warned
+    if not _web_search_drop_warned:
+        _web_search_drop_warned = True
+        tag = f" [{options.call_label}]" if options.call_label else ""
+        log.warning(
+            "%s%s: dropping web_search and routing via Chat Completions "
+            "(%s). Web grounding is disabled for the remainder of this run.",
+            model, tag, reason,
+        )
+    return replace(options, web_search=False)
 
 
 def _classify_llm_error(exc: Exception) -> Exception:
@@ -645,6 +842,39 @@ def _classify_llm_error(exc: Exception) -> Exception:
     # 429 — rate limited (retryable with coordinated backoff)
     if isinstance(exc, litellm.RateLimitError):
         err = LLMRateLimitError(f"Rate limited: {exc}")
+        err.__cause__ = exc
+        return err
+    # ── Responses API region fallback (must precede BadRequestError) ──
+    # Azure OpenAI rejects Responses API requests in unsupported regions
+    # (West Europe etc.) with one of these observed messages:
+    #   - "API version not supported"            (HTTP 400 → BadRequestError)
+    #   - "responses api is not enabled"         (HTTP 404 → NotFoundError/APIError)
+    # We check before the BadRequestError / NotFoundError / APIError handlers
+    # so the error routes to the Chat-Completions fallback in
+    # ``_with_retries`` instead of being recorded as an unrecoverable bad
+    # request.
+    #
+    # Important: do NOT gate on ``_force_chat_completions`` here. At high
+    # concurrency the first task to hit this marker activates fallback and
+    # installs the bridge-check patch, but other tasks already in-flight
+    # against the Responses API will surface the same marker shortly
+    # afterwards. Gating the check on ``_force_chat_completions`` caused
+    # those in-flight failures to fall through to the NotFoundError /
+    # BadRequestError handlers, get classified as ``LLMInputError``, and
+    # propagate without ever being retried on the Chat path. Per-task
+    # loop prevention is handled inside ``_with_retries`` via a
+    # ``chat_fallback_attempts`` counter.
+    _msg_lower = str(exc).lower()
+    if any(
+        marker in _msg_lower
+        for marker in (
+            "responses api is not enabled",
+            "api version not supported",
+        )
+    ):
+        err = _ResponsesApiNotAvailableError(
+            f"Azure Responses API not available: {exc}"
+        )
         err.__cause__ = exc
         return err
     # 400 — bad request (includes ContextWindowExceeded, ContentPolicyViolation)
@@ -746,6 +976,18 @@ def _normalize_usage(raw_usage: Any) -> UsageStats | None:
             cached_input = _coerce_int(_get_value(prompt_details, "cached_tokens"))
     cache_creation = _coerce_int(_get_value(raw_usage, "cache_creation_input_tokens"))
 
+    # Diagnose providers that return a usage object but with all zero/None
+    # token counts. Seen with truncated Azure Responses API calls (status
+    # 'incomplete'): the accumulator records 1 call but reports 0 in / 0 out,
+    # which masks the real token spend. Log at debug so we can attribute
+    # mystery zero-token rows in the future without spamming normal runs.
+    if not prompt and not completion and not total:
+        log.debug(
+            "Usage payload contained zero/None tokens (raw=%r) -- "
+            "provider likely returned an incomplete or error response",
+            raw_usage,
+        )
+
     return UsageStats(
         prompt_tokens=prompt,
         completion_tokens=completion,
@@ -843,6 +1085,7 @@ __all__ = [
     "Message",
     "MessageLike",
     "ModelResponse",
+    "is_truncated_response",
     "summarize_response",
     "ToolCall",
     "ToolCallLike",
@@ -1055,6 +1298,14 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
     last_exc: Exception | None = None
     own_429s = 0
     own_5xx = 0
+    # Per-task Chat-Completions fallback budget. We allow exactly ONE
+    # demote-and-retry per task: the first ``_ResponsesApiNotAvailableError``
+    # triggers the (possibly global) fallback activation and re-tries on
+    # the Chat path. A second occurrence within the same task means the
+    # retry itself failed with the same marker — that genuinely means
+    # the Chat path is misconfigured (e.g. wrong api-version) and we
+    # must surface the error instead of looping forever.
+    chat_fallback_attempts = 0
     # Hard ceiling on total iterations to guarantee termination even
     # if other tasks keep refreshing the cooldown indefinitely. With
     # _MAX_RETRIES=5 this allows up to 24 cooldown waits without ever
@@ -1109,6 +1360,33 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
                 # Skip individual backoff — the coordinated cooldown
                 # (checked at loop top) handles the wait with jitter.
                 continue
+            # ── Responses API fallback (must precede generic LLMProviderError) ──
+            # Azure returns a region-specific "Responses API is not
+            # enabled" / "API version not supported" error that will
+            # never succeed on retry while the model is still routed
+            # through the Responses bridge. ``_ResponsesApiNotAvailableError``
+            # is a subclass of ``LLMProviderError``, so this branch must
+            # run before the generic provider-error branch, otherwise the
+            # request is burned through standard 5xx retries and the
+            # Chat-Completions fallback never fires.
+            #
+            # We allow ONE Chat-path retry per task (``chat_fallback_attempts``).
+            # The global ``_force_chat_completions`` flag may already be True
+            # because a concurrent task tripped the marker first — that's
+            # fine, this task still needs its one retry on the Chat path.
+            # If the retry itself surfaces the same marker, the Chat path
+            # is genuinely broken (e.g. wrong api-version) and we
+            # re-raise instead of looping forever.
+            if isinstance(classified, _ResponsesApiNotAvailableError):
+                if chat_fallback_attempts >= 1:
+                    raise classified from exc
+                chat_fallback_attempts += 1
+                if not _force_chat_completions:
+                    _activate_chat_completions_fallback(
+                        "Azure Responses API not enabled in region",
+                        model=model, tag=tag,
+                    )
+                continue
             if isinstance(classified, LLMProviderError):
                 own_5xx += 1
                 attempts_used = own_5xx
@@ -1135,6 +1413,15 @@ async def generate(
 ) -> ModelResponse:
     """Run a standard async text generation call."""
     resolved_options = options or GenerateOptions()
+    # Proactive degradation: if the Chat-Completions fallback is already
+    # active for this run (another task tripped it, or the user opted in
+    # via ASSERT_PREFER_CHAT_COMPLETIONS), drop web_search up front —
+    # there is no Chat Completions equivalent for web grounding.
+    if _force_chat_completions and resolved_options.web_search:
+        resolved_options = _drop_web_search_for_fallback(
+            resolved_options, model,
+            reason="Chat Completions fallback is active",
+        )
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     if resolved_options.web_search:
         _require_web_search_preview_support(model)
@@ -1166,7 +1453,23 @@ async def generate(
                 timeout_s=resolved_options.timeout_s,
             )
 
-    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    try:
+        raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    except _ResponsesApiNotAvailableError:
+        # Reactive degradation: this task was the first to trip the
+        # Responses-API-not-available marker. ``_with_retries`` already
+        # activated the global fallback but had no way to rebuild the
+        # closure without the web_search tool. Re-issue the call here
+        # via Chat Completions without web grounding.
+        if not resolved_options.web_search:
+            raise
+        return await generate(
+            model, messages,
+            options=_drop_web_search_for_fallback(
+                resolved_options, model,
+                reason="Responses API not available in this region",
+            ),
+        )
     result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
@@ -1187,6 +1490,12 @@ async def generate_structured(
 ) -> ModelResponse:
     """Run a structured generation call constrained by a JSON schema."""
     resolved_options = options or GenerateOptions()
+    # Proactive degradation: see ``generate`` for the rationale.
+    if _force_chat_completions and resolved_options.web_search:
+        resolved_options = _drop_web_search_for_fallback(
+            resolved_options, model,
+            reason="Chat Completions fallback is active",
+        )
     api_mode = "responses" if resolved_options.web_search else "chat_completion"
     if resolved_options.web_search:
         _require_web_search_preview_support(model)
@@ -1228,7 +1537,20 @@ async def generate_structured(
                 timeout_s=resolved_options.timeout_s,
             )
 
-    raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    try:
+        raw_response = await _with_retries(_call, model=model, label=resolved_options.call_label)
+    except _ResponsesApiNotAvailableError:
+        # Reactive degradation: see ``generate`` for the rationale.
+        if not resolved_options.web_search:
+            raise
+        return await generate_structured(
+            model, messages,
+            schema_name=schema_name, json_schema=json_schema,
+            options=_drop_web_search_for_fallback(
+                resolved_options, model,
+                reason="Responses API not available in this region",
+            ),
+        )
     result = normalize_response(
         raw_response,
         api_mode="responses" if resolved_options.web_search else "chat_completion",
@@ -1271,3 +1593,52 @@ async def generate_with_tools(
     _log_response("generate_with_tools", model, result, time.monotonic() - t0, tools=len(tools))
     _record_usage(result.usage, model=model)
     return result
+
+
+# ── Import-time AZURE_API_BASE normalization ───────────────────
+# LiteLLM appends the OpenAI-API path itself (``/openai/deployments/…``
+# or ``/openai/v1/responses``), so AZURE_API_BASE must be the bare
+# account endpoint. A trailing ``/openai/...`` or ``/openai/v1/...``
+# suffix (commonly copy-pasted from the Azure portal's "Endpoint"
+# field for the Responses API) causes LiteLLM to build malformed URLs
+# like ``…/openai/v1/responses/openai/deployments/…``, which surface as
+# "Resource not found" or "api-version query parameter is not allowed
+# when using /v1 path". Strip any such suffix defensively at import
+# time so users don't have to debug it themselves.
+def _normalize_azure_api_base() -> None:
+    raw = os.environ.get("AZURE_API_BASE", "").strip()
+    if not raw:
+        return
+    cleaned = raw.rstrip("/")
+    lowered = cleaned.lower()
+    # Find the leftmost ``/openai`` segment and drop it + everything
+    # after it. This handles ``/openai``, ``/openai/v1``,
+    # ``/openai/v1/responses``, ``/openai/deployments/...``, etc.
+    idx = lowered.find("/openai")
+    if idx > 0:  # skip when ``/openai`` is part of the host (it shouldn't be)
+        cleaned = cleaned[:idx]
+    # LiteLLM is happiest with a trailing slash on the base URL.
+    normalized = cleaned.rstrip("/") + "/"
+    if normalized != raw:
+        log.info(
+            "AZURE_API_BASE normalized: stripped path suffix so LiteLLM "
+            "can build the correct deployment URL.",
+        )
+        os.environ["AZURE_API_BASE"] = normalized
+
+
+_normalize_azure_api_base()
+
+
+# ── Import-time env-var seed ───────────────────────────────────
+# Users in Azure regions known to lack Responses API support
+# (e.g. West Europe at time of writing) can pre-arm the fallback
+# by exporting ``ASSERT_PREFER_CHAT_COMPLETIONS=1``. This avoids
+# the one wasted Responses API round-trip + the user-visible WARN
+# on every cold start, while keeping the reactive fallback as a
+# safety net for regions that lose support later.
+if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip().lower() in ("1", "true", "yes"):
+    _activate_chat_completions_fallback(
+        "ASSERT_PREFER_CHAT_COMPLETIONS env var set",
+        proactive=True,
+    )
