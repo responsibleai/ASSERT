@@ -895,5 +895,71 @@ class NormalizeAzureApiBaseTest(unittest.TestCase):
         self.assertNotIn("AZURE_API_BASE", os.environ)
 
 
+class IsTruncatedResponseTest(unittest.TestCase):
+    """Cross-API truncation detection — see issue #131."""
+
+    def test_chat_completions_length_finish_reason(self) -> None:
+        """OpenAI/Azure Chat Completions reports 'length' on output-cap truncation."""
+        response = model_client.ModelResponse(text="partial", finish_reason="length")
+        self.assertTrue(model_client.is_truncated_response(response))
+
+    def test_responses_api_max_output_tokens_finish_reason(self) -> None:
+        """Responses API surfaces 'max_output_tokens' via normalize_response."""
+        response = model_client.ModelResponse(
+            text="partial",
+            finish_reason="max_output_tokens",
+        )
+        self.assertTrue(model_client.is_truncated_response(response))
+
+    def test_responses_api_max_tokens_finish_reason(self) -> None:
+        """LiteLLM / older Responses API variants emit 'max_tokens'."""
+        response = model_client.ModelResponse(text="partial", finish_reason="max_tokens")
+        self.assertTrue(model_client.is_truncated_response(response))
+
+    def test_falls_back_to_incomplete_details_reason(self) -> None:
+        """Belt-and-suspenders: raw incomplete_details.reason still flags truncation."""
+        response = model_client.ModelResponse(
+            text="partial",
+            finish_reason=None,
+            incomplete_details={"reason": "max_output_tokens"},
+        )
+        self.assertTrue(model_client.is_truncated_response(response))
+
+    def test_bare_incomplete_status_is_not_truncation(self) -> None:
+        """'incomplete' alone is ambiguous (content filter, provider error, etc.)
+        and should NOT trigger a max_tokens retry. Only a specific reason does."""
+        response = model_client.ModelResponse(
+            text="partial",
+            finish_reason="incomplete",
+        )
+        self.assertFalse(model_client.is_truncated_response(response))
+
+    def test_normal_stop_is_not_truncation(self) -> None:
+        response = model_client.ModelResponse(text="full", finish_reason="stop")
+        self.assertFalse(model_client.is_truncated_response(response))
+
+    def test_none_finish_reason_is_not_truncation(self) -> None:
+        response = model_client.ModelResponse(text="full", finish_reason=None)
+        self.assertFalse(model_client.is_truncated_response(response))
+
+
+class NormalizeUsageZeroTokenDiagnosticsTest(unittest.TestCase):
+    """Zero-token usage warrants a debug log so issue #131-style mystery
+    '1 call · 0 in / 0 out' rows can be traced back to provider responses."""
+
+    def test_zero_token_usage_emits_debug_log(self) -> None:
+        with self.assertLogs("assert_eval.core.model_client", level="DEBUG") as cm:
+            stats = model_client._normalize_usage({"prompt_tokens": 0, "completion_tokens": 0})
+        self.assertIsNotNone(stats)
+        self.assertTrue(any("zero/None tokens" in msg for msg in cm.output))
+
+    def test_real_usage_does_not_emit_zero_token_log(self) -> None:
+        with self.assertLogs("assert_eval.core.model_client", level="DEBUG") as cm:
+            # Need at least one log so assertLogs doesn't fail; emit a manual one.
+            model_client.log.debug("sentinel")
+            model_client._normalize_usage({"prompt_tokens": 100, "completion_tokens": 50})
+        self.assertFalse(any("zero/None tokens" in msg for msg in cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -34,7 +34,7 @@ import {
 	emptyScoreCounts
 } from './metrics.js';
 import { getRecordFlag } from '$lib/judgment.js';
-import { normalizePromptResult, normalizeScenarioResult } from '$lib/result-view.js';
+import { normalizePromptResult, normalizeScenarioResult, scenarioStopReasonDisplay } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
 	AuditRunMetrics,
@@ -54,6 +54,7 @@ import type {
 	RunMetrics,
 	ScenarioSeed,
 	ScenarioSeedInfo,
+	StopReasonDisplay,
 	Suite,
 	SuiteListItem,
 	SuiteStatus,
@@ -97,6 +98,7 @@ interface InferencePreviewRow {
 	behavior: string;
 	turns_count: number;
 	stop_reason: string;
+	stop_reason_display: StopReasonDisplay | null;
 }
 
 interface CompareDimensionSummary {
@@ -226,7 +228,16 @@ function normalizeJudgedSample(sample: JudgedSample): JudgedSample {
 }
 
 function normalizeAuditScore(score: AuditScore): AuditScore {
-	return score;
+	if (score.metadata?.stop_reason_display != null) return score;
+	const stopReason = typeof score.metadata?.stop_reason === 'string' ? score.metadata.stop_reason : '';
+	return {
+		...score,
+		metadata: {
+			...score.metadata,
+			stop_reason_display:
+				score.metadata?.stop_reason_display ?? scenarioStopReasonDisplay(stopReason)
+		}
+	};
 }
 
 function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript {
@@ -540,7 +551,8 @@ function buildAuditScoreRow(
 		dimensions,
 		metadata: {
 			turns_count: turnsCount,
-			stop_reason: stopReason
+			stop_reason: stopReason,
+			stop_reason_display: scenarioStopReasonDisplay(stopReason)
 		}
 	});
 }
@@ -600,7 +612,10 @@ function buildInferencePreviewRowsFromSnapshot(snapshot: RunSnapshot): Inference
 				test_case_id: seedId,
 				behavior: readRowBehavior(row),
 				turns_count: countConversationMessages(messages),
-				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : ''
+				stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : '',
+				stop_reason_display: scenarioStopReasonDisplay(
+					typeof row.stop_reason === 'string' ? row.stop_reason : ''
+				)
 			}];
 			});
 }
@@ -633,7 +648,8 @@ function buildScenarioDrawerItem(
 				dimensions: readFactors(transcriptRow.dimensions) ?? seedInfo?.dimensions,
 				metadata: {
 					turns_count: turnsCount,
-					stop_reason: stopReason
+					stop_reason: stopReason,
+					stop_reason_display: scenarioStopReasonDisplay(stopReason)
 				}
 			};
 

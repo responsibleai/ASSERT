@@ -1,0 +1,7 @@
+{
+  "name": "Assert",
+  "description": "Assert — turn natural-language behaviors into structured, executable evaluations. Lifecycle loop for agent quality and safety.",
+  "category": "exploration",
+  "buildCmd": "npm ci && npm run build",
+  "buildDir": "out"
+}

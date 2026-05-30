@@ -94,5 +94,5 @@ evidence the agent retrieved.
 - `fetch_url` performs a real HTTP GET — only fetch URLs you trust.
 - Web and fetch responses are cached in
   `examples/science_research_agent/.tool_cache.json` to keep reruns cheap and
-  deterministic. Set `P2M_REAL_TOOLS_NOCACHE=1` to bypass the cache and hit the
+  deterministic. Set `ASSERT_EVAL_REAL_TOOLS_NOCACHE=1` to bypass the cache and hit the
   network on every call.
