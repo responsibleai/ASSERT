@@ -62,11 +62,13 @@
 	let applicationContext = $state('');
 	let evaluationTarget = $state<'model' | 'agent'>('model');
 	let systemPrompt = $state('');
-	let toolsMode = $state<'simulated' | 'real'>('simulated');
-	let simulatedToolsDescription = $state('');
-	let realToolsYaml = $state('');
-	let realToolsFileName = $state('');
-	let realToolsAcknowledged = $state(false);
+	let toolsMode = $state<'generated' | 'simulated' | 'real'>('generated');
+	let simulatorModel = $state('openai/gpt-4.1');
+	let toolsetYaml = $state('');
+	let toolsetFileName = $state('');
+	let toolModuleCode = $state('');
+	let toolModuleFileName = $state('');
+	let toolsAcknowledged = $state(false);
 
 	// Step 2
 	let step2Source = $state<'new' | 'existing' | null>(null);
@@ -211,6 +213,7 @@
 		promptTestCasesConfig = { ...promptTestCasesConfig, model };
 		promptEvalConfig = { targetModel: model, judgeModel: model };
 		scenarioTestCasesConfig = { ...scenarioTestCasesConfig, model };
+		simulatorModel = model;
 		scenarioEvalConfig = {
 			...scenarioEvalConfig,
 			target: { ...scenarioEvalConfig.target, model },
@@ -304,9 +307,11 @@
 	let step1ContextValid = $derived(applicationContext.trim().length > 0);
 	let step1ToolsValid = $derived.by(() => {
 		if (evaluationTarget !== 'agent') return true;
-		return toolsMode === 'simulated'
-			? simulatedToolsDescription.trim().length > 0
-			: realToolsYaml.trim().length > 0 && realToolsAcknowledged;
+		if (toolsMode === 'generated') return simulatorModel.trim().length > 0;
+		if (toolsMode === 'simulated')
+			return toolsetYaml.trim().length > 0 && simulatorModel.trim().length > 0;
+		// real
+		return toolModuleCode.trim().length > 0 && toolsAcknowledged;
 	});
 	let step1SystemPromptValid = $derived(
 		evaluationTarget === 'model' ? systemPrompt.trim().length > 0 : true
@@ -317,6 +322,11 @@
 	let step2Valid = $derived.by(() => {
 		if (!step2Source) return false;
 		if (!promptTestCasesEnabled || !promptEvalEnabled) return false;
+		// Generated tools are produced during test-set generation, so they require
+		// creating a new test set — reusing an existing suite can't supply them.
+		if (evaluationTarget === 'agent' && toolsMode === 'generated' && step2Source === 'existing') {
+			return false;
+		}
 		if (step2Source === 'new') return true;
 		return selectedSuite !== null;
 	});
@@ -446,14 +456,25 @@
 			},
 			suiteId: suiteId.trim() || undefined,
 			runId: runId.trim(),
-			toolsMode,
-			...(toolsMode === 'simulated' && simulatedToolsDescription.trim()
-				? { simulatedToolsDescription: simulatedToolsDescription.trim() }
-				: {}),
-			...(toolsMode === 'real' && realToolsYaml.trim()
+			...(evaluationTarget === 'agent'
 				? {
-					realToolsYaml,
-					...(realToolsFileName ? { realToolsFileName } : {})
+					toolsMode,
+					...(toolsMode === 'generated' || toolsMode === 'simulated'
+						? { simulatorModel }
+						: {}),
+					...(toolsMode === 'simulated' && toolsetYaml.trim()
+						? {
+							toolsetYaml,
+							...(toolsetFileName ? { toolsetFileName } : {})
+						}
+						: {}),
+					...(toolsMode === 'real' && toolModuleCode.trim()
+						? {
+							toolModuleCode,
+							toolsAcknowledged,
+							...(toolModuleFileName ? { toolModuleFileName } : {})
+						}
+						: {})
 				}
 				: {})
 		};
@@ -785,55 +806,50 @@
 				{#if evaluationTarget === 'agent'}
 				<div class="mt-6">
 					<p class="mb-1 text-[16px] font-semibold text-text">Tools</p>
-					<p class="mb-2 text-xs text-text-muted">Choose how the target's tools are made available during evaluation.</p>
-					<div class="mb-3 flex gap-3" style="max-width: 560px;">
+					<p class="mb-2 text-xs text-text-muted">Choose how the agent's tools are provided and resolved during evaluation.</p>
+					<div class="mb-3 flex gap-3" style="max-width: 760px;">
+						<button
+							type="button"
+							class="flex-1 rounded-lg border p-3 text-left transition-colors {toolsMode === 'generated' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
+							onclick={() => { toolsMode = 'generated'; markDirty(); }}
+						>
+							<span class="text-sm font-medium text-text">Generated tools</span>
+							<span class="block text-xs text-text-muted">Tools are generated per test case; a simulator model produces results.</span>
+						</button>
 						<button
 							type="button"
 							class="flex-1 rounded-lg border p-3 text-left transition-colors {toolsMode === 'simulated' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
 							onclick={() => { toolsMode = 'simulated'; markDirty(); }}
 						>
 							<span class="text-sm font-medium text-text">Simulated tools</span>
-							<span class="block text-xs text-text-muted">Describe tools in natural language; the tester simulates results.</span>
+							<span class="block text-xs text-text-muted">Upload a tool-definitions YAML; a simulator model produces results.</span>
 						</button>
 						<button
 							type="button"
 							class="flex-1 rounded-lg border p-3 text-left transition-colors {toolsMode === 'real' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
 							onclick={() => { toolsMode = 'real'; markDirty(); }}
 						>
-							<span class="text-sm font-medium text-text">Real tools</span>
-							<span class="block text-xs text-text-muted">Upload a YAML file defining real tool implementations.</span>
+							<span class="text-sm font-medium text-text">Real tools (Python)</span>
+							<span class="block text-xs text-text-muted">Upload a Python tool backend; real implementations are executed.</span>
 						</button>
 					</div>
 
-					{#if toolsMode === 'simulated'}
-						<div>
-							<label for="simulated-tools" class="mb-1 block text-xs text-text-muted">Describe the tools the agent has access to (one per line or freeform). <span class="text-score-fail">*</span></label>
-							<textarea
-								id="simulated-tools"
-								class="form-control w-full text-sm font-mono"
-								rows="6"
-								placeholder={`e.g. tool_name(arg): short description of what it does and any side effects.`}
-								value={simulatedToolsDescription}
-								oninput={(e) => { simulatedToolsDescription = e.currentTarget.value; step1Touched = true; markDirty(); }}
-							></textarea>
-							{#if step1Touched && !step1ToolsValid}
-								<p class="mt-1 text-xs text-score-fail">Describe at least one tool, or switch to a different mode.</p>
-							{/if}
+					{#if toolsMode === 'generated' || toolsMode === 'simulated'}
+						<div class="mb-3" style="max-width: 360px;">
+							<label for="simulator-model" class="mb-1 block text-xs text-text-muted">Simulator model <span class="text-score-fail">*</span></label>
+							{@render modelSelect('simulator-model', simulatorModel, (m) => { simulatorModel = m; })}
+							<p class="mt-1 text-[11px] text-text-muted">Model used to simulate tool call results.</p>
 						</div>
-					{:else if toolsMode === 'real'}
-						<div
-							class="mb-3"
-							role="status"
-							aria-label="Warning"
-							style="display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.5rem 0.75rem; border: 1px solid var(--borderColor-attention-emphasis, #d4a72c); background: var(--bgColor-attention-muted, rgba(212,167,44,0.10)); color: var(--fgColor-default, var(--color-text)); border-radius: 6px; font-size: 0.85rem; line-height: 1.45;"
-						>
-							<div style="flex: 1 1 auto;">
-								<span style="font-weight: 600;">Real tools will be provisioned for your agent.</span>
-								<span> The agent may be prompted to take possibly consequential actions. We strongly recommend provisioning the agent in a non-production or sandboxed environment before running this evaluation.</span>
-							</div>
-						</div>
+					{/if}
+
+					{#if toolsMode === 'generated'}
+						<p class="text-xs text-text-muted">
+							Tool definitions are generated for each test case and their results are simulated by the model above.
+							This requires generating a new test set in the next step (it is not available when reusing an existing suite).
+						</p>
+					{:else if toolsMode === 'simulated'}
 						<div>
-							<label class="mb-1 block text-xs text-text-muted">Upload a YAML file defining your tools (name, description, parameters, boundaries / side-effects).</label>
+							<p class="mb-1 block text-xs text-text-muted">Upload a tool-definitions YAML file (a list of tools with <code>name</code>, <code>description</code>, and <code>parameters</code>). <span class="text-score-fail">*</span></p>
 							<div class="flex items-center gap-3">
 								<label class="btn btn-sm cursor-pointer">
 									Choose file
@@ -844,35 +860,81 @@
 										onchange={async (e) => {
 											const file = e.currentTarget.files?.[0];
 											if (!file) return;
-											realToolsFileName = file.name;
-											realToolsYaml = await file.text();
+											toolsetFileName = file.name;
+											toolsetYaml = await file.text();
+											step1Touched = true;
 											markDirty();
 										}}
 									/>
 								</label>
 								<span class="text-xs text-text-muted">
-									{realToolsFileName ? realToolsFileName : 'No file chosen'}
+									{toolsetFileName ? toolsetFileName : 'No file chosen'}
 								</span>
-								{#if realToolsFileName}
-									<button type="button" class="text-xs text-text-muted hover:text-score-fail" onclick={() => { realToolsFileName = ''; realToolsYaml = ''; markDirty(); }}>Clear</button>
+								{#if toolsetFileName}
+									<button type="button" class="text-xs text-text-muted hover:text-score-fail" onclick={() => { toolsetFileName = ''; toolsetYaml = ''; markDirty(); }}>Clear</button>
 								{/if}
 							</div>
-							{#if realToolsYaml}
-								<pre class="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-bg/50 p-3 text-[11px] font-mono text-text-secondary">{realToolsYaml}</pre>
+							{#if toolsetYaml}
+								<pre class="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-bg/50 p-3 text-[11px] font-mono text-text-secondary">{toolsetYaml}</pre>
+							{/if}
+							{#if step1Touched && !toolsetYaml.trim()}
+								<p class="mt-1 text-xs text-score-fail">Upload a tool-definitions YAML file.</p>
+							{/if}
+						</div>
+					{:else if toolsMode === 'real'}
+						<div
+							class="mb-3"
+							role="status"
+							aria-label="Warning"
+							style="display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.5rem 0.75rem; border: 1px solid var(--borderColor-attention-emphasis, #d4a72c); background: var(--bgColor-attention-muted, rgba(212,167,44,0.10)); color: var(--fgColor-default, var(--color-text)); border-radius: 6px; font-size: 0.85rem; line-height: 1.45;"
+						>
+							<div style="flex: 1 1 auto;">
+								<span style="font-weight: 600;">Real tools will be executed for your agent.</span>
+								<span> The uploaded Python tool backend is run locally by the evaluation runner and the agent may be prompted to take possibly consequential actions. We strongly recommend running this in a non-production or sandboxed environment.</span>
+							</div>
+						</div>
+						<div>
+							<p class="mb-1 block text-xs text-text-muted">Upload a Python tool backend (<code>.py</code>) defining a <code>Tools</code> class whose public methods become the agent's tools. <span class="text-score-fail">*</span></p>
+							<div class="flex items-center gap-3">
+								<label class="btn btn-sm cursor-pointer">
+									Choose file
+									<input
+										type="file"
+										accept=".py,text/x-python,text/plain"
+										class="sr-only"
+										onchange={async (e) => {
+											const file = e.currentTarget.files?.[0];
+											if (!file) return;
+											toolModuleFileName = file.name;
+											toolModuleCode = await file.text();
+											step1Touched = true;
+											markDirty();
+										}}
+									/>
+								</label>
+								<span class="text-xs text-text-muted">
+									{toolModuleFileName ? toolModuleFileName : 'No file chosen'}
+								</span>
+								{#if toolModuleFileName}
+									<button type="button" class="text-xs text-text-muted hover:text-score-fail" onclick={() => { toolModuleFileName = ''; toolModuleCode = ''; markDirty(); }}>Clear</button>
+								{/if}
+							</div>
+							{#if toolModuleCode}
+								<pre class="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-bg/50 p-3 text-[11px] font-mono text-text-secondary">{toolModuleCode}</pre>
 							{/if}
 						</div>
 						<label class="mt-3 flex items-start gap-2 text-xs text-text-secondary">
 							<input
 								type="checkbox"
 								class="primer-checkbox shrink-0 mt-0.5"
-								checked={realToolsAcknowledged}
-								onchange={(e) => { realToolsAcknowledged = e.currentTarget.checked; step1Touched = true; markDirty(); }}
+								checked={toolsAcknowledged}
+								onchange={(e) => { toolsAcknowledged = e.currentTarget.checked; step1Touched = true; markDirty(); }}
 							/>
-							<span>I understand the agent will be granted access to these real tools during evaluation and accept responsibility for the environment it runs in.</span>
+							<span>I understand the uploaded Python tool backend will be executed during evaluation and accept responsibility for the environment it runs in.</span>
 						</label>
 						{#if step1Touched && !step1ToolsValid}
 							<p class="mt-2 text-xs text-score-fail">
-								{#if !realToolsYaml.trim()}Upload a YAML file describing your tools.{:else}Confirm the acknowledgement above to continue.{/if}
+								{#if !toolModuleCode.trim()}Upload a Python tool backend file.{:else}Confirm the acknowledgement above to continue.{/if}
 							</p>
 						{/if}
 					{/if}
@@ -902,6 +964,13 @@
 						<span class="mt-0.5 block text-xs text-text-muted">Select models for pipeline staging from an existing suite's categories.</span>
 					</button>
 				</div>
+
+				{#if evaluationTarget === 'agent' && toolsMode === 'generated' && step2Source === 'existing'}
+					<p class="mb-4 text-xs text-score-fail">
+						Generated tools require creating a new test set. Choose "Create new", or go back to Step 1 and pick
+						"Simulated tools" or "Real tools (Python)" to reuse an existing suite.
+					</p>
+				{/if}
 
 				{#if step2Source}
 					<!-- Suite picker (existing) -->
