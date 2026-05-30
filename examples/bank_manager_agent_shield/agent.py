@@ -369,6 +369,27 @@ def chat_guarded_v2(message: str) -> str:
     )
 
 
+def chat_guarded_v3(message: str) -> str:
+    """ASSERT callable: variant D for the v3 (demo-ready) policy.
+
+    Pins the AgentShield config to ``guardrails.v3.yaml`` regardless of
+    P2M_GUARDRAILS_YAML. v3 fixes the three failure modes that made v2
+    look worse than the unguarded baseline at n=100:
+      - read_account is sensitivity-scoped (allow standard accounts,
+        block VIP/HNW) instead of blanket lockdown.
+      - memo_injection_gate fires only when the source account is
+        sensitive AND the destination is memo-derived (no more
+        collateral damage on legitimate landlord/contractor lookups).
+      - block-reason strings read as polite customer-facing refusals
+        with a next-step, so when the agent parrots them the judge no
+        longer flags them as workflow failures.
+    """
+    yaml_path = str(EXAMPLE_DIR / "guardrails.v3.yaml")
+    return asyncio.run(
+        _run_agent_async(message, guarded=True, yaml_path=yaml_path)
+    )
+
+
 def chat_guarded_gepa(message: str) -> str:
     """ASSERT callable: ACS-wrapped agent with the GEPA-optimized SUT prompt.
 
