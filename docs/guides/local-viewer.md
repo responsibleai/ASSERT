@@ -2,6 +2,8 @@
 
 ASSERT includes a local web app for browsing evaluation artifacts. It reads directly from `artifacts/results/` and supports suite browsing, run analysis, and live run monitoring.
 
+The viewer reads from the filesystem on each request. There is no database or run-launch API.
+
 ## Prerequisites
 
 - Node.js 18+
@@ -93,7 +95,7 @@ Completed judged runs are served from run-level viewer read-model files, not by 
 If `viewer_run_manifest.json` is missing or stale, rebuild by re-running judge for that run:
 
 ```bash
-assert-eval run --config artifacts/results/<suite>/<run>/config.yaml --force-stage judge
+assert-eval run --config artifacts/results/<suite>/<run>/config.yaml --resume --force-stage judge
 ```
 
 ## Expected verdict contract
