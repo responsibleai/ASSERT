@@ -413,7 +413,12 @@
 		const payload = {
 			behavior:
 				step1Mode === 'select'
-					? { mode: 'existing', name: selectedBehavior?.name, suiteId: selectedBehavior?.suiteId }
+					? {
+							mode: 'existing',
+							name: selectedBehavior?.name,
+							definition: selectedBehavior?.definition,
+							suiteId: selectedBehavior?.suiteId
+						}
 					: { mode: 'create', name: newBehavior.name, definition: newBehavior.definition },
 			...(applicationContext.trim() ? { applicationContext: applicationContext.trim() } : {}),
 			evaluationTarget,

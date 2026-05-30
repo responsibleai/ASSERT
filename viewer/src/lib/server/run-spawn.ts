@@ -79,6 +79,7 @@ export class SpawnError extends Error {
 interface WizardBehaviorExisting {
 	mode: 'existing';
 	name?: string;
+	definition?: string;
 	suiteId?: string;
 }
 interface WizardBehaviorCreate {
@@ -202,10 +203,13 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 		if (!behaviorRawName) {
 			errors.push('behavior.name is required when behavior.mode is "existing".');
 		}
-		// The catalog endpoint doesn't forward the source definition; write a
-		// short stub. When reusing an existing suite the systematize stage
-		// short-circuits anyway because its outputs already exist on disk.
-		behaviorDefinition = `Behavior: ${behaviorRawName}\n\n(Imported from a previously-defined suite.)`;
+		behaviorDefinition = trimOrEmpty(behavior.definition);
+		if (!behaviorDefinition) {
+			warnings.push(
+				`Existing behavior "${behaviorRawName}" did not include a definition; generated taxonomy quality may be poor.`
+			);
+			behaviorDefinition = `Behavior: ${behaviorRawName}\n\n(Imported from a previously-defined suite.)`;
+		}
 	} else if (behavior.mode === 'create') {
 		behaviorRawName = trimOrEmpty(behavior.name);
 		behaviorDefinition = trimOrEmpty(behavior.definition);
@@ -563,6 +567,67 @@ interface ResolvedCommand {
 	source: string;
 }
 
+function pathEnv(): string {
+	return process.env.PATH ?? process.env.Path ?? process.env.path ?? '';
+}
+
+function pathExts(): string[] {
+	if (os.platform() !== 'win32') return [''];
+
+	const raw = process.env.PATHEXT ?? process.env.Pathext ?? '.COM;.EXE';
+	const exts = raw
+		.split(';')
+		.map((ext) => ext.trim())
+		.filter(Boolean);
+	return exts.length > 0 ? exts : ['.COM', '.EXE'];
+}
+
+function findOnPath(command: string): string | undefined {
+	if (!command || command.includes(path.sep) || (path.posix.sep !== path.sep && command.includes(path.posix.sep))) {
+		return fs.existsSync(command) ? command : undefined;
+	}
+
+	const extensions = path.extname(command) ? [''] : pathExts();
+	for (const dir of pathEnv().split(path.delimiter).filter(Boolean)) {
+		for (const ext of extensions) {
+			const candidate = path.join(dir, `${command}${ext}`);
+			if (fs.existsSync(candidate)) return candidate;
+		}
+	}
+	return undefined;
+}
+
+function venvScriptCandidates(venv: string): string[] {
+	return os.platform() === 'win32'
+		? [path.join(venv, 'Scripts', 'assert-eval.exe'), path.join(venv, 'Scripts', 'assert-eval')]
+		: [path.join(venv, 'bin', 'assert-eval')];
+}
+
+function venvPythonCandidates(venv: string): string[] {
+	return os.platform() === 'win32'
+		? [path.join(venv, 'Scripts', 'python.exe'), path.join(venv, 'Scripts', 'python')]
+		: [path.join(venv, 'bin', 'python3'), path.join(venv, 'bin', 'python')];
+}
+
+function localVenvCandidates(): string[] {
+	return ['.venv', 'venv'].map((name) => path.join(MEASUREMENTS_ROOT, name));
+}
+
+function pythonPathCandidates(): { command: string; args: string[]; source: string }[] {
+	if (os.platform() === 'win32') {
+		return [
+			{ command: 'py', args: ['-3'], source: 'Python launcher on PATH' },
+			{ command: 'python', args: [], source: 'python on PATH' },
+			{ command: 'python3', args: [], source: 'python3 on PATH' }
+		];
+	}
+
+	return [
+		{ command: 'python3', args: [], source: 'python3 on PATH' },
+		{ command: 'python', args: [], source: 'python on PATH' }
+	];
+}
+
 function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 	const cliArgs = ['run', '--config', configPath];
 
@@ -576,25 +641,54 @@ function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 		};
 	}
 
-	const venv = process.env.VIRTUAL_ENV;
-	if (venv) {
-		const cliCandidates =
-			os.platform() === 'win32'
-				? [path.join(venv, 'Scripts', 'assert-eval.exe'), path.join(venv, 'Scripts', 'assert-eval')]
-				: [path.join(venv, 'bin', 'assert-eval')];
-		const cliPath = cliCandidates.find((candidate) => fs.existsSync(candidate));
+	const venvs = [process.env.VIRTUAL_ENV, ...localVenvCandidates()].filter(
+		(venv): venv is string => Boolean(venv && venv.trim())
+	);
+	for (const venv of venvs) {
+		const cliPath = venvScriptCandidates(venv).find((candidate) => fs.existsSync(candidate));
 		if (cliPath) {
 			return {
 				command: cliPath,
 				args: cliArgs,
-				source: `VIRTUAL_ENV (${cliPath})`
+				source: venv === process.env.VIRTUAL_ENV ? `VIRTUAL_ENV (${cliPath})` : `project venv (${cliPath})`
 			};
 		}
 	}
 
-	// Fallback: PATH lookup. On Windows, .exe extension is resolved automatically
-	// by spawn when shell:false because Node uses CreateProcess search behavior.
-	return { command: 'assert-eval', args: cliArgs, source: 'PATH' };
+	for (const venv of venvs) {
+		const pythonPath = venvPythonCandidates(venv).find((candidate) => fs.existsSync(candidate));
+		if (pythonPath) {
+			return {
+				command: pythonPath,
+				args: ['-m', 'assert_eval.cli', ...cliArgs],
+				source:
+					venv === process.env.VIRTUAL_ENV
+						? `VIRTUAL_ENV python (${pythonPath})`
+						: `project venv python (${pythonPath})`
+			};
+		}
+	}
+
+	const pathCli = findOnPath('assert-eval');
+	if (pathCli) {
+		return { command: pathCli, args: cliArgs, source: `PATH (${pathCli})` };
+	}
+
+	for (const candidate of pythonPathCandidates()) {
+		const pythonPath = findOnPath(candidate.command);
+		if (pythonPath) {
+			return {
+				command: pythonPath,
+				args: [...candidate.args, '-m', 'assert_eval.cli', ...cliArgs],
+				source: `${candidate.source} (${pythonPath})`
+			};
+		}
+	}
+
+	throw new SpawnError(
+		'Could not find a way to start the assert-eval runner. Set ASSERT_EVAL_COMMAND to a working invocation, ' +
+			'create/install the project venv, or install Python so the viewer can run `python -m assert_eval.cli` from the repo.'
+	);
 }
 
 /**
@@ -603,7 +697,12 @@ function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
  * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
 export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveAssertEvalCommand(written.configPath);
+	let resolved: ResolvedCommand;
+	try {
+		resolved = resolveAssertEvalCommand(written.configPath);
+	} catch (err) {
+		return Promise.reject(err);
+	}
 
 	let logFd: number;
 	try {
