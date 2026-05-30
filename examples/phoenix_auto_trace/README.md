@@ -1,8 +1,9 @@
 # Phoenix Auto-Trace Gallery — Same Scenario, 33 Frameworks
 
-This is a **multi-framework instrumentation gallery**, not a single-agent example. It shows how one Phoenix/OpenInference setup (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives `target.callable` + `target.trace` OpenTelemetry visibility across supported frameworks — without per-framework integration work in Adaptive Eval itself.
+This is a **multi-framework instrumentation gallery**, not a single-agent example. It shows how one Phoenix/OpenInference setup (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives `target.callable` + `target.trace` OpenTelemetry visibility across supported frameworks — without per-framework integration work in ASSERT itself.
 
 All runnable demos implement the **same travel planner** with 5 mock tools:
+
 - `search_flights` — find flights to a destination
 - `search_hotels` — find hotels in a city
 - `check_weather` — get forecast and advisories
@@ -20,6 +21,7 @@ Each `travel_<framework>.py` file shows only what's different per framework; moc
 Demo paths are relative to `examples/phoenix_auto_trace/`; rows without a Demo entry are supported instrumentors without a local demo script.
 
 ### LLM Providers
+
 | Package | Framework | Demo |
 |---------|-----------|------|
 | `openinference-instrumentation-openai` | OpenAI | `travel_openai.py` |
@@ -33,6 +35,7 @@ Demo paths are relative to `examples/phoenix_auto_trace/`; rows without a Demo e
 | `openinference-instrumentation-portkey` | Portkey | `travel_portkey.py` |
 
 ### Agent Frameworks
+
 | Package | Framework | Demo |
 |---------|-----------|------|
 | `openinference-instrumentation-langchain` | LangChain / LangGraph | `travel_langchain.py` |
@@ -49,6 +52,7 @@ Demo paths are relative to `examples/phoenix_auto_trace/`; rows without a Demo e
 Additional runnable variants: `travel_langgraph.py` (LangGraph-specific target using the LangChain/LangGraph instrumentor) and `travel_openai_router.py` (OpenAI-compatible router target requiring router-specific credentials and endpoint access).
 
 ### Additional (no demo file, same 2-line pattern)
+
 | Package | Framework |
 |---------|-----------|
 | `openinference-instrumentation-claude-agent-sdk` | Claude Agent SDK |
@@ -89,7 +93,7 @@ phoenix serve  # http://localhost:6006
 python -m examples.phoenix_auto_trace.travel_openai
 
 # Run the matching eval
-p2m run --config examples/phoenix_auto_trace/eval_openai.yaml
+assert-eval run --config examples/phoenix_auto_trace/eval_openai.yaml
 ```
 
 Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `P2M_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
@@ -103,9 +107,9 @@ Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible
 | Agent framework demos | Need the matching framework package plus its `openinference-instrumentation-*` package. |
 | Router variant | `travel_openai_router.py` needs router-specific credentials and endpoint access. |
 
-## The Adaptive Eval integration
+## The ASSERT integration
 
-All of these can be evaluated by Adaptive Eval with the same config shape:
+All of these can be evaluated by ASSERT with the same config shape:
 
 ```yaml
 pipeline:

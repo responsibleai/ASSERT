@@ -72,8 +72,6 @@ phoenix serve  # optional trace UI
 assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
-`p2m` is still accepted as a backward-compatible CLI alias, but new docs should use `assert-eval`.
-
 | Variable | Required | Notes |
 |---|---|---|
 | `AZURE_API_BASE` | Yes | Azure OpenAI endpoint URL for the shipped `azure/...` model config. |

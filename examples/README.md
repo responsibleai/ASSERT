@@ -1,6 +1,6 @@
 # Examples
 
-Runnable configs and sample agents for Adaptive Eval.
+Runnable configs and sample agents for ASSERT.
 
 Start with the LangGraph travel planner. It is the customer-preview flagship because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
 
