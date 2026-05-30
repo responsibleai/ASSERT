@@ -278,11 +278,14 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 				errors.push('toolsMode "simulated" requires a simulator model.');
 			}
 			const yamlText = typeof payload.toolsetYaml === 'string' ? payload.toolsetYaml : '';
-			toolContextSummary = validateToolsetYaml(yamlText, errors);
-			if (yamlText && Buffer.byteLength(yamlText, 'utf-8') > MAX_TOOL_UPLOAD_BYTES) {
+			const yamlBytes = Buffer.byteLength(yamlText, 'utf-8');
+			if (yamlText && yamlBytes > MAX_TOOL_UPLOAD_BYTES) {
 				errors.push(`Tool definitions file exceeds the ${MAX_TOOL_UPLOAD_BYTES / 1024} KB upload limit.`);
 			} else if (yamlText.trim()) {
+				toolContextSummary = validateToolsetYaml(yamlText, errors);
 				extraFiles.push({ name: TOOLSET_FILE, content: yamlText });
+			} else {
+				toolContextSummary = validateToolsetYaml(yamlText, errors);
 			}
 			toolsBlock = { toolset: TOOLSET_FILE, simulator: simulatorModel };
 			toolSource = 'runtime';
@@ -951,22 +954,56 @@ function validateToolsetYaml(text: string, errors: string[]): string {
 	}
 	const lines: string[] = [];
 	for (const entry of list) {
-		if (
-			!entry ||
-			typeof entry !== 'object' ||
-			Array.isArray(entry) ||
-			typeof (entry as Record<string, unknown>).name !== 'string' ||
-			!((entry as Record<string, unknown>).name as string).trim()
-		) {
+		if (!isRecord(entry)) {
 			errors.push('Each tool definition must be a mapping with a non-empty "name".');
 			return '';
 		}
-		const name = ((entry as Record<string, unknown>).name as string).trim();
-		const descRaw = (entry as Record<string, unknown>).description;
+		if (typeof entry.name !== 'string' || !entry.name.trim()) {
+			errors.push('Each tool definition must be a mapping with a non-empty "name".');
+			return '';
+		}
+		const name = entry.name.trim();
+		const schemaError = validateToolSchema(entry, name);
+		if (schemaError) {
+			errors.push(schemaError);
+			return '';
+		}
+		const descRaw = entry.description;
 		const desc = typeof descRaw === 'string' ? descRaw.trim() : '';
 		lines.push(desc ? `- ${name}: ${desc}` : `- ${name}`);
 	}
 	return lines.join('\n');
+}
+
+function validateToolSchema(tool: Record<string, unknown>, name: string): string | null {
+	if ('input_schema' in tool) {
+		const schema = tool.input_schema;
+		if (!isRecord(schema)) {
+			return `Tool "${name}" input_schema must be a mapping.`;
+		}
+		if (schema.type !== 'object') {
+			return `Tool "${name}" input_schema must be a JSON object schema.`;
+		}
+		return null;
+	}
+
+	if ('parameters' in tool) {
+		const params = tool.parameters;
+		if (!Array.isArray(params)) {
+			return `Tool "${name}" parameters must be a list.`;
+		}
+		for (const param of params) {
+			if (!isRecord(param) || typeof param.name !== 'string' || !param.name.trim()) {
+				return `Tool "${name}" parameters must be objects with a non-empty "name".`;
+			}
+		}
+	}
+
+	return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function buildDimensionsBlock(
