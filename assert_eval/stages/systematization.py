@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from assert_eval.core.config_model import ModelConfig
 from assert_eval.core.io import load_prompt_text
-from assert_eval.core.model_client import GenerateOptions, generate_structured
+from assert_eval.core.model_client import GenerateOptions, generate_structured, is_truncated_response
 
 SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
 ALLOWED_MODES = {"research", "direct"}
@@ -112,7 +112,16 @@ async def run_systematization(
     web_search: bool = True,
     context: str | None = None,
 ) -> Path:
-    """Generate one systematization artifact and persist it to disk."""
+    """Generate one systematization artifact and persist it to disk.
+
+    Single attempt: a truncated response (finish_reason indicating the
+    output budget was exhausted, on either Chat Completions or the
+    Responses API) raises a clear actionable error pointing the user at
+    ``pipeline.systematize.model.max_tokens``. See issue #131 for the original
+    repro on the travel-planner example, which surfaced as an opaque
+    ``json.JSONDecodeError`` because the truncation detector only knew
+    about the Chat Completions value.
+    """
     if not behavior_text.strip():
         raise ValueError("systematization requires non-empty behavior text")
     if mode not in ALLOWED_MODES:
@@ -136,12 +145,13 @@ async def run_systematization(
             reasoning_effort=model_cfg.reasoning_effort,
         ),
     )
-    if getattr(response, "finish_reason", None) == "length":
+    if is_truncated_response(response):
+        finish_reason = getattr(response, "finish_reason", None)
         raise ValueError(
-            "systematization response was truncated (finish_reason=length). "
-            "Increase max_tokens (current: {}) or reduce prompt complexity.".format(
-                model_cfg.max_tokens
-            )
+            "systematization response was truncated by the model's output budget "
+            f"(finish_reason={finish_reason!r}, max_tokens={model_cfg.max_tokens}). "
+            "Increase pipeline.systematize.model.max_tokens (or remove the override "
+            "to use the default) or simplify the behavior description."
         )
     payload = response.parsed
     if not isinstance(payload, dict) or not payload:
