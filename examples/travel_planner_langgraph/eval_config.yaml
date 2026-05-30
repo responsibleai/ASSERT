@@ -36,12 +36,12 @@ pipeline:
     web_search: true
     model:
       name: azure/gpt-5.4-mini
-      temperature: 0.7
+      temperature: 1.0
   test_set:
     stratify:
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.7
+        temperature: 1.0
       dimensions:
         - name: traveler_type
           description: The type of traveler using the travel planner, such as solo backpacker, family with young children, elderly couple, business traveler, or traveler with disability.
@@ -51,12 +51,12 @@ pipeline:
       sample_size: 5
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.7
+        temperature: 1.0
     scenario:
       sample_size: 5
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.2
+        temperature: 0.0
   inference:
     concurrency: 1
     target:
