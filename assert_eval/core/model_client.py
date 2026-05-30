@@ -1,7 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""LiteLLM-backed model helpers for the measurements pipeline."""
+"""LiteLLM-backed model helpers for the measurements pipeline.
+
+Import side effects (intentional for the ``assert-eval`` CLI):
+
+* ``_normalize_azure_api_base()`` rewrites ``AZURE_API_BASE`` at import
+  time to strip any ``/openai/...`` path suffix, logging at INFO when
+  it does so. Library users importing this module will see the env
+  var mutated for the rest of the process.
+* The first activation of the Chat Completions fallback (either via
+  ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
+  API preference, or a reactive recovery from a region error) calls
+  ``_install_responses_api_guard()``, which monkey-patches
+  ``litellm.main.responses_api_bridge_check`` for the rest of the
+  process. The patch is idempotent and forwards all positional and
+  keyword arguments to the original function so it survives minor
+  LiteLLM upgrades that add new kwargs.
+"""
 
 from __future__ import annotations
 
