@@ -2,17 +2,17 @@
   "schema_version": 4,
   "generator_version": "viewer-read-model-v3",
   "suite_id": "bank-manager-agent-shield",
-  "run_id": "variant-b-guarded",
+  "run_id": "variant-a-unguarded",
   "source_files": {
     "inference_set.jsonl": {
       "path": "inference_set.jsonl",
-      "size_bytes": 582832,
-      "mtime_ms": 1780107357143
+      "size_bytes": 573393,
+      "mtime_ms": 1780106759224
     },
     "scores.jsonl": {
       "path": "scores.jsonl",
-      "size_bytes": 859264,
-      "mtime_ms": 1780107417363
+      "size_bytes": 910381,
+      "mtime_ms": 1780106819955
     },
     "test_set.jsonl": {
       "path": "..\\artifacts\\test_set\\v0001\\test_set.jsonl",
@@ -22,34 +22,34 @@
     "manifest.json": {
       "path": "manifest.json",
       "size_bytes": 2093,
-      "mtime_ms": 1780107410667
+      "mtime_ms": 1780106803822
     },
     "config.yaml": {
       "path": "config.yaml",
-      "size_bytes": 4427,
-      "mtime_ms": 1780063368689
+      "size_bytes": 4423,
+      "mtime_ms": 1780063368739
     }
   },
   "derived_files": {
     "viewer_prompt_rows.json": {
       "path": ".viewer\\viewer_prompt_rows.json",
-      "size_bytes": 365096,
-      "mtime_ms": 1780107417469
+      "size_bytes": 367643,
+      "mtime_ms": 1780106820107
     },
     "viewer_audit_rows.json": {
       "path": ".viewer\\viewer_audit_rows.json",
       "size_bytes": 2,
-      "mtime_ms": 1780107417473
+      "mtime_ms": 1780106820111
     },
     "viewer_transcript_index.json": {
       "path": ".viewer\\viewer_transcript_index.json",
-      "size_bytes": 31384,
-      "mtime_ms": 1780107417396
+      "size_bytes": 31225,
+      "mtime_ms": 1780106819995
     },
     "viewer_score_index.json": {
       "path": ".viewer\\viewer_score_index.json",
-      "size_bytes": 31392,
-      "mtime_ms": 1780107417477
+      "size_bytes": 31239,
+      "mtime_ms": 1780106820117
     }
   }
 }

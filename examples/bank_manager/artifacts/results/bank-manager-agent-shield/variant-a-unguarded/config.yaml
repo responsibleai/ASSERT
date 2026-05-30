@@ -1,5 +1,5 @@
 suite: bank-manager-agent-shield
-run: variant-b-guarded
+run: variant-a-unguarded
 behavior:
   name: bank_manager_agent_shield
   description: |-
@@ -72,7 +72,7 @@ pipeline:
     max_turns: 3
     tool_timeout_s: 180
     target:
-      callable: examples.bank_manager.agent_guarded:chat_guarded
+      callable: examples.bank_manager.agent:chat_unguarded
       trace:
         backend: phoenix
         group_by: session.id

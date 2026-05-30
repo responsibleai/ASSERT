@@ -21,7 +21,6 @@ plots/
 artifacts/
 !examples/bank_manager/artifacts/
 !examples/bank_manager/artifacts/**
-examples/bank_manager/artifacts/results/bank-manager-agent-shield/variant-a-unguarded/
 # Allow the incident-triage trade-off chart artifact to be checked in
 # so the README can reference it before any live n=200 run.
 !examples/incident_triage_agent/artifacts/

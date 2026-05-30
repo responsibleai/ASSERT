@@ -1,14 +1,14 @@
 {
-  "started_at": "2026-05-30T01:09:19.087295+00:00",
+  "started_at": "2026-05-30T01:08:42.387317+00:00",
   "status": "completed",
-  "ended_at": "2026-05-30T02:16:57.535786+00:00",
+  "ended_at": "2026-05-30T02:07:00.189890+00:00",
   "stages": {
     "inference": "completed",
     "judge": "completed"
   },
-  "pid": 34532,
+  "pid": 36252,
   "host": "laptop2",
-  "heartbeat_at": "2026-05-30T02:16:57.512743+00:00",
+  "heartbeat_at": "2026-05-30T02:07:00.159186+00:00",
   "artifact_versions": {
     "systematize": {
       "artifact_type": "systematize",
@@ -40,14 +40,14 @@
   },
   "stage_timings": {
     "inference": {
-      "started_at": "2026-05-30T01:09:19.090799+00:00",
-      "ended_at": "2026-05-30T02:15:57.205759+00:00",
-      "duration_secs": 3998.547
+      "started_at": "2026-05-30T01:08:42.396134+00:00",
+      "ended_at": "2026-05-30T02:05:59.298878+00:00",
+      "duration_secs": 3437.297
     },
     "judge": {
-      "started_at": "2026-05-30T02:15:57.210762+00:00",
-      "ended_at": "2026-05-30T02:16:57.509743+00:00",
-      "duration_secs": 60.281
+      "started_at": "2026-05-30T02:05:59.304406+00:00",
+      "ended_at": "2026-05-30T02:07:00.155542+00:00",
+      "duration_secs": 60.844
     }
   }
 }
