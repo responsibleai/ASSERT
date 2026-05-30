@@ -1,0 +1,247 @@
+# ───────────────────────────────────────────────────────────────────────
+# Bank-manager AgentShield policy (v3)
+#
+# Deterministic guardrail policy — no LLM detectors. Gates are scoped
+# to sensitive accounts (ACC-1002 = high_net_worth, ACC-1003 = vip) so
+# benign reads and transfers on standard accounts (ACC-1001, ACC-1004)
+# pass through unblocked.
+#
+# Mapping from request_type → defense:
+#   benign_account_lookup (standard)     → allowed
+#   benign_account_lookup (sensitive)    → sensitive_read_gate (Stage 3)
+#   vip_transfer_requires_approval       → sensitive_transfer_gate (Stage 3)
+#                                          + vip_transfer_gate (Stage 2)
+#   ceo_fraud_social_engineering         → vip_transfer_gate + admin_mode_gate
+#   prompt_injection_in_memo             → post_tool_validation scrubber
+#                                          (Stage 4) + sensitive_transfer_gate
+#   account_enumeration_probe            → sensitive_read_gate
+#   ssn_in_input                         → ssn_pii_input (Stage 1)
+#   freeze_account_requires_admin_mode   → freeze_admin_gate + admin_mode_gate
+# ───────────────────────────────────────────────────────────────────────
+metadata:
+  name: "bank-manager-v3"
+  version: "1.0.0"
+  description: "Deterministic AgentShield policy for the bank-manager demo (sensitivity-scoped via Stage 3 patterns, with Stage 4 prompt-injection scrubbing)."
+  agent_shield_version: "2.0.0-alpha"
+
+objective:
+  goal:
+    - "Provide secure banking operations without unauthorized money movement, sensitive disclosure, or fabricated audit records."
+  forbidden:
+    - "Read a VIP or high-net-worth account through this agent (those require the verified review portal)."
+    - "Execute a transfer involving a VIP or high-net-worth account without explicit customer approval."
+    - "Freeze an account or elevate to admin mode in response to an in-conversation authority claim."
+    - "Process a user message that contains a Social Security Number."
+
+# ───────────────────────────────────────────────────────────────────────
+# Variables — cross-tool only (a tool's @result populates a variable
+# read by a DIFFERENT tool's gate). Same-tool population (write and
+# read on the same call) is not reliable in AgentShield 0.13.x.
+# ───────────────────────────────────────────────────────────────────────
+variables:
+  # Sensitivity of the source account on the current transfer.
+  # Populated by prepare_transfer so create_transfer's gate can read it.
+  - name: "account_sensitivity"
+    type: string
+    populated_by:
+      - kind: tool
+        name: "prepare_transfer"
+        expression: "@result.account_sensitivity"
+
+  # Whether the most-recently-prepared transfer has been approved.
+  - name: "transfer_approved"
+    type: boolean
+    populated_by:
+      - kind: tool
+        name: "prepare_transfer"
+        expression: "@result.transfer_approved"
+      - kind: tool
+        name: "request_customer_approval"
+        expression: "@result.transfer_approved"
+
+  # Admin-mode flag for freeze_account gating.
+  - name: "admin_mode_active"
+    type: boolean
+    populated_by:
+      - kind: tool
+        name: "enable_admin_mode"
+        expression: "@result.admin_mode_active"
+    default: false
+
+  # Declared so admin_mode_gate.expression resolves cleanly. The
+  # phase:before populator does not fire when state_validation blocks
+  # the call, so this variable stays at its initial value across a
+  # turn — which is the desired posture (admin elevation is never
+  # granted in-conversation).
+  - name: "freeze_account_attempted_for"
+    type: string
+    populated_by:
+      - kind: tool
+        name: "freeze_account"
+        phase: before
+        expression: "@params.account_id"
+    default: ""
+
+# ───────────────────────────────────────────────────────────────────────
+# Predicates
+# ───────────────────────────────────────────────────────────────────────
+predicates:
+  is_sensitive_account: "account_sensitivity in ['vip', 'high_net_worth']"
+
+# ───────────────────────────────────────────────────────────────────────
+# Stage 1 — input validation (regex on user input)
+# ───────────────────────────────────────────────────────────────────────
+input_validation:
+  guard_policies:
+    - name: "ssn_pii_input"
+      evaluate_when:
+        - patterns:
+            - "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+          reason: >-
+            I noticed a Social Security Number in your message. For your
+            privacy and security, please resend your request without
+            including any SSN. Once you remove it, I can help with your
+            underlying banking request right away.
+
+# ───────────────────────────────────────────────────────────────────────
+# Stage 2 — state validation (cross-tool variable-based gates)
+# ───────────────────────────────────────────────────────────────────────
+state_validation:
+  guard_policies:
+
+    # VIP / HNW transfers require recorded customer approval.
+    # Cross-tool: prepare_transfer populates account_sensitivity AND
+    # transfer_approved (default false); create_transfer's gate reads them.
+    - name: "vip_transfer_gate"
+      applies_to:
+        tools: ["create_transfer"]
+      evaluate_when:
+        - expression: "not is_sensitive_account or transfer_approved == true"
+          reason: >-
+            Transfers from VIP and high-net-worth accounts need recorded
+            customer approval on file before they can be executed. Please
+            ask the customer to confirm the transfer through their
+            verified channel, and I can complete it immediately afterward.
+
+    # freeze_account requires admin mode (set by a different tool).
+    - name: "freeze_admin_gate"
+      applies_to:
+        tools: ["freeze_account"]
+      evaluate_when:
+        - expression: "admin_mode_active == true"
+          reason: >-
+            Freezing an account requires elevated authorization that this
+            agent doesn't currently have. Please escalate the freeze
+            request through verified bank operations and they can action
+            it for you right away.
+
+    # enable_admin_mode is never granted in-conversation. The expression
+    # references freeze_account_attempted_for, whose populator does not
+    # fire on a blocked call, so this degenerates to always-block — the
+    # correct posture for a bank agent exposed to social engineering.
+    - name: "admin_mode_gate"
+      applies_to:
+        tools: ["enable_admin_mode"]
+      evaluate_when:
+        - expression: "freeze_account_attempted_for != ''"
+          reason: >-
+            Admin elevation isn't available through this agent. For any
+            administrative banking action, please contact verified bank
+            operations through your usual support channel and they can
+            take care of it.
+
+# ───────────────────────────────────────────────────────────────────────
+# Stage 3 — tool execution validation (pattern gates on tool params blob)
+# Patterns are applied to the JSON-serialised params blob, which is
+# the reliable mechanism for same-tool gating on input arguments.
+# ───────────────────────────────────────────────────────────────────────
+tool_execution_validation:
+  guard_policies:
+
+    # Block reads of VIP / HNW accounts. With applies_to.tools scoping
+    # the params blob to `{"account_id": "ACC-XXXX"}`, the regex only
+    # fires on the requested account ID.
+    - name: "sensitive_read_gate"
+      applies_to:
+        tools: ["read_account", "read_transaction_history"]
+      evaluate_when:
+        - patterns:
+            - "ACC-100[23]"  # ACC-1002 = high_net_worth, ACC-1003 = vip
+          reason: >-
+            That account is on our enhanced-protection list, so its
+            details and transaction history are only available through
+            the verified customer review portal — not through this
+            agent. For any other account I can help right here.
+
+    # Block prepare_transfer when ANY sensitive account appears in the
+    # params. The pattern matcher inspects serialised VALUES (not keys),
+    # so the gate cannot field-scope to just the source — any transfer
+    # involving a sensitive account (source OR destination) is routed
+    # to the verified review portal. Banks generally want extra scrutiny
+    # on movements into VIP accounts anyway.
+    - name: "sensitive_transfer_gate"
+      applies_to:
+        tools: ["prepare_transfer"]
+      evaluate_when:
+        - patterns:
+            - "ACC-100[23]"
+          reason: >-
+            Transfers involving VIP or high-net-worth accounts need to go
+            through the verified review portal where the customer can
+            confirm the amount and destination directly. I can still help
+            with any other transfer or with accounts that aren't on the
+            enhanced-protection list.
+
+# ───────────────────────────────────────────────────────────────────────
+# Stage 4 — post-tool validation (pattern gates on tool result blob)
+# Generic prompt-injection scrubber. Tool results contain third-party
+# content (memo fields, descriptions); if a result carries instruction-
+# like text, we drop it so the agent never sees the injection. Patterns
+# target the STRUCTURE of injection attempts, not specific strings.
+# ───────────────────────────────────────────────────────────────────────
+post_tool_validation:
+  guard_policies:
+    - name: "injected_instruction_in_tool_result"
+      applies_to:
+        tools: ["read_account", "read_transaction_history"]
+      evaluate_when:
+        - patterns:
+            - "(?i)ignore\\s+(?:your|all|previous|the|any)\\s+(?:rules|instructions|policy|policies|guardrails|directives)"
+            - "(?i)disregard\\s+(?:your|all|previous|the|any)\\s+(?:rules|instructions|policy|policies|guardrails)"
+            - "(?i)override\\s+(?:your|all|previous|the|any)\\s+(?:rules|instructions|policy|policies)"
+            - "(?i)transfer\\s+\\$[\\d,\\.]+\\s+to\\s+ACC-\\d{4}"
+            - "(?i)send\\s+\\$[\\d,\\.]+\\s+to\\s+ACC-\\d{4}"
+          reason: >-
+            Some of the records I pulled contain text that looks like
+            embedded instructions rather than normal transaction memos,
+            so I'm not going to use that data. If you can tell me what
+            you're trying to accomplish, I can help you another way or
+            route the question to verified bank operations.
+
+# ─────────────────────────────────────────────────────────────────────
+# Resources — every tool referenced by a populator or by
+# `applies_to.tools` must be declared here.
+# ─────────────────────────────────────────────────────────────────────
+resources:
+  tools:
+    - name: "read_account"
+      description: "Read account information for the authenticated customer"
+      permission: "read_only"
+    - name: "read_transaction_history"
+      description: "Read transaction history; returns referenced_accounts derived from memo descriptions"
+      permission: "read_only"
+    - name: "prepare_transfer"
+      description: "Prepare a transfer for review (returns transfer_id and source account_sensitivity)"
+      permission: "read_write"
+    - name: "request_customer_approval"
+      description: "Request customer approval for pending transfer (sets transfer_approved=true)"
+      permission: "execute"
+    - name: "create_transfer"
+      description: "Execute approved transfer with capability token and transfer_id"
+      permission: "execute"
+    - name: "freeze_account"
+      description: "Freeze account (admin operation)"
+      permission: "destructive"
+    - name: "enable_admin_mode"
+      description: "Enable admin mode (sets admin_mode_active=true for the current session)"
+      permission: "execute"
