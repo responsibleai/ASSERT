@@ -1,0 +1,55 @@
+{
+  "schema_version": 4,
+  "generator_version": "viewer-read-model-v3",
+  "suite_id": "bank-manager-demo",
+  "run_id": "variant-c-guarded-v2d",
+  "source_files": {
+    "inference_set.jsonl": {
+      "path": "inference_set.jsonl",
+      "size_bytes": 52382,
+      "mtime_ms": 1780065360213
+    },
+    "scores.jsonl": {
+      "path": "scores.jsonl",
+      "size_bytes": 133106,
+      "mtime_ms": 1780065396429
+    },
+    "test_set.jsonl": {
+      "path": "..\\artifacts\\test_set\\v0009\\test_set.jsonl",
+      "size_bytes": 17092,
+      "mtime_ms": 1780039281028
+    },
+    "manifest.json": {
+      "path": "manifest.json",
+      "size_bytes": 2079,
+      "mtime_ms": 1780065376918
+    },
+    "config.yaml": {
+      "path": "config.yaml",
+      "size_bytes": 4549,
+      "mtime_ms": 1780064541701
+    }
+  },
+  "derived_files": {
+    "viewer_prompt_rows.json": {
+      "path": ".viewer\\viewer_prompt_rows.json",
+      "size_bytes": 45708,
+      "mtime_ms": 1780065396646
+    },
+    "viewer_audit_rows.json": {
+      "path": ".viewer\\viewer_audit_rows.json",
+      "size_bytes": 2,
+      "mtime_ms": 1780065396655
+    },
+    "viewer_transcript_index.json": {
+      "path": ".viewer\\viewer_transcript_index.json",
+      "size_bytes": 4692,
+      "mtime_ms": 1780065396484
+    },
+    "viewer_score_index.json": {
+      "path": ".viewer\\viewer_score_index.json",
+      "size_bytes": 4703,
+      "mtime_ms": 1780065396665
+    }
+  }
+}
