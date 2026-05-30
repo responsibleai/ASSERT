@@ -45,7 +45,7 @@ pipeline:
     scenario:
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.2
+        temperature: 0.0
       sample_size: 5
   inference:
     concurrency: 5
