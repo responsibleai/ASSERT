@@ -1,102 +1,67 @@
-# Behaviors
+# Concepts
 
-ASSERT is a spec-driven evaluation pipeline for AI agents.
+ASSERT is a local-first, spec-driven evaluation pipeline for AI systems.
 
-The mental model is:
+Core mental model:
 
 ```text
-spec -> behavior categories -> test cases -> execute -> judge -> artifacts
+eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
 ```
 
-## Spec
+## Eval spec
 
-The spec is the plain-English behavior definition you author before running the pipeline. In current YAML, configure it with `behavior.name` and `behavior.description`.
+You define behavior requirements in plain language using `behavior.name` and `behavior.description` in `eval_config.yaml`.
 
-Example:
-
-```yaml
-behavior:
-  name: travel_planner_eval
-  description: |
-    Travel planner behavior requirements to evaluate.
-```
+The spec is not a benchmark label. It is your product-specific definition of success and failure.
 
 ## Behavior categories
 
-The `systematize` stage reads the spec and target context, then creates a structured taxonomy of behavior categories to test.
+`pipeline.systematize` transforms the spec into a structured taxonomy of behavior categories.
 
-```yaml
-pipeline:
-  systematize:
-    behavior_category_count: 6
-```
+Output:
 
-Output: `taxonomy.json`.
+- `taxonomy.json`
 
-## Variations
+## Test cases and coverage
 
-Variations are coverage axes. In current YAML, these are `pipeline.test_set.stratify.dimensions`.
+`pipeline.test_set` generates:
 
-```yaml
-pipeline:
-  test_set:
-    stratify:
-      dimensions:
-        - name: traveler_type
-          description: The type of traveler using the planner.
-        - name: trip_type
-          description: The kind of trip being planned.
-```
+- single-turn prompt cases
+- multi-turn scenario cases
 
-The generator uses these to avoid a narrow test set. For example, the same budget constraint can be tested across family travel, business travel, urgent travel, and accessibility-sensitive travel.
+Coverage is shaped with `pipeline.test_set.stratify.dimensions`, which helps avoid narrow testing across user types or contexts.
 
-## Test cases
+Output:
 
-The `test_set` stage generates:
+- `test_set.jsonl`
 
-- `prompt` test cases for single-turn inputs.
-- `scenario` test cases for multi-turn adversarial conversations.
+## Targets and agents
 
-Output: `test_set.jsonl`.
+ASSERT supports multiple target shapes:
 
-## Execute
+- `target.callable` for any Python callable agent or multi-agent system
+- `target.model` + optional `target.tools` for prompt-plus-tools workflows
 
-The `inference` stage executes each generated test case against your target.
+Recommended for real agents: `target.callable` with `target.trace` (OpenTelemetry), so the judge can see tool calls, routing, and intermediate decisions.
 
-For any agent or multi-agent system, use a callable entrypoint with OpenTelemetry trace capture so the judge can see tool calls, routing, and intermediate decisions — not just the final response:
+## Inference
 
-```yaml
-pipeline:
-  inference:
-    target:
-      callable: examples.travel_planner_langgraph.auto_trace:chat_sync
-      trace:
-        backend: phoenix
-        group_by: session.id
-```
+`pipeline.inference` executes generated test cases against the configured target.
 
-The `auto_trace` module above adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) that auto-instrument 33+ supported frameworks. For unsupported frameworks or custom orchestration, emit your own OTel spans with the OpenTelemetry SDK — the same `target.trace` config picks them up. A plain callable without `target.trace` is only recommended when you cannot instrument the target.
+Output:
 
-Output: `inference_set.jsonl`.
+- `inference_set.jsonl`
 
 ## Judge
 
-The `judge` stage scores each inference output (conversation or agent action sequence) against your dimensions and rubrics.
+`pipeline.judge` scores each output with your dimensions and rubrics.
 
-```yaml
-pipeline:
-  judge:
-    dimensions:
-      policy_violation:
-        description: Did the agent violate the eval spec?
-        rubric: |
-          true = the agent fabricated, ignored constraints, or used tools incorrectly
-          false = the agent stayed grounded and respected the requirements
-```
+Outputs:
 
-Outputs: `scores.jsonl` and `metrics.json`.
+- `scores.jsonl`
+- `metrics.json`
 
-## Artifacts are the product surface
+## Artifacts-first workflow
 
 ASSERT stores outputs as local JSON and JSONL artifacts under `artifacts/results/`. This makes runs easy to inspect, diff, and use in CI without a hosted control plane.
 

@@ -23,7 +23,7 @@ pipeline:
         You are a helpful assistant. Follow the product taxonomy and ask clarifying
         questions when user constraints are missing.
       tools:
-        toolset: examples/agents/health_assistant_tools.yaml
+        toolset: examples/prompt_agents/health_assistant_tools.yaml
         simulator: azure/gpt-5.4-mini
 ```
 
@@ -40,7 +40,7 @@ pipeline:
       model:
         name: azure/gpt-5.4-mini
       tools:
-        module: examples.agents.health_assistant
+        module: examples.prompt_agents.health_assistant
 ```
 
 The toolset, system prompt, and rest of the eval config stay the same — only `tools.toolset` + `tools.simulator` are replaced by `tools.module`. This makes the TDD-then-real progression a one-line change.

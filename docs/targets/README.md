@@ -2,6 +2,18 @@
 
 ASSERT can evaluate any agent or multi-agent system. Pick the path that matches how your agent is built.
 
+## Choose your target
+
+Pick a target based on how your agent is built.
+
+| Your target looks like... | Use this path | Start here |
+|---|---|---|
+| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, and others) | **Callable target with OTel traces (recommended)**: point `target.callable` at your entry function and add `target.trace` so Phoenix/OpenInference (or your own OTel SDK spans) feed tool calls, routing, model calls, and latency to the judge | [`callable.md`](callable.md) |
+| A system prompt + tool schema, no orchestration code yet | **Prompt Agent target** (`target.model`, `target.system_prompt`, `target.tools`): the runtime owns the tool-call loop (up to 10 rounds, real or simulated tools). Best for test-driven prompt + toolset design before any agent is implemented | [`model-and-tools.md`](model-and-tools.md) |
+| A black-box API you cannot instrument | **Plain callable (customization fallback, not recommended)**: `target.callable` with no `target.trace`. The judge sees only the final response; use only when instrumentation is impossible | [`callable.md#customization-without-traces`](callable.md#customization-without-traces) |
+
+**Use simulated tools intentionally:** simulated tools are helpful for Prompt Agents when real backends are not ready. They are not a substitute for tracing a real multi-agent framework.
+
 ## Who owns the tool-call loop?
 
 Two questions decide which target you want:
