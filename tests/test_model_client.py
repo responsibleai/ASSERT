@@ -895,6 +895,62 @@ class NormalizeAzureApiBaseTest(unittest.TestCase):
         self.assertNotIn("AZURE_API_BASE", os.environ)
 
 
+class ResponsesApiGuardForwardingTest(unittest.TestCase):
+    """``_install_responses_api_guard`` must forward all positional and
+    keyword arguments to LiteLLM's original ``responses_api_bridge_check``
+    so the patch survives minor LiteLLM upgrades that add new kwargs.
+    """
+
+    def setUp(self) -> None:
+        from litellm import main as _litellm_main  # noqa: WPS433
+        self._litellm_main = _litellm_main
+        self._saved_bridge_check = _litellm_main.responses_api_bridge_check
+        self._saved_guard_installed = model_client._responses_api_guard_installed
+        self._saved_force = model_client._force_chat_completions
+
+    def tearDown(self) -> None:
+        self._litellm_main.responses_api_bridge_check = self._saved_bridge_check
+        model_client._responses_api_guard_installed = self._saved_guard_installed
+        model_client._force_chat_completions = self._saved_force
+
+    def test_unknown_future_kwargs_reach_original(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_original(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return ({"mode": "chat"}, args[0] if args else "")
+
+        self._litellm_main.responses_api_bridge_check = fake_original
+        # Force a re-install so the patch wraps our fake.
+        model_client._responses_api_guard_installed = False
+        model_client._install_responses_api_guard()
+
+        # Call with a mix of positional + known + an invented future
+        # kwarg. All must reach ``fake_original`` untouched.
+        self._litellm_main.responses_api_bridge_check(
+            "azure/gpt-5.4",
+            "azure",
+            web_search_options=None,
+            tools=None,
+            reasoning_effort="medium",
+            future_kwarg_from_litellm_2_0="passthrough",
+        )
+        self.assertEqual(
+            captured["args"],
+            ("azure/gpt-5.4", "azure"),
+        )
+        self.assertEqual(
+            captured["kwargs"],
+            {
+                "web_search_options": None,
+                "tools": None,
+                "reasoning_effort": "medium",
+                "future_kwarg_from_litellm_2_0": "passthrough",
+            },
+        )
+
+
 class IsTruncatedResponseTest(unittest.TestCase):
     """Cross-API truncation detection — see issue #131."""
 

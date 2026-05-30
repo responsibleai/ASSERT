@@ -709,20 +709,13 @@ def _install_responses_api_guard() -> None:
 
     _original = _litellm_main.responses_api_bridge_check
 
-    def _guarded_bridge_check(
-        model: str,
-        custom_llm_provider: str,
-        web_search_options: Any = None,
-        tools: Any = None,
-        reasoning_effort: Any = None,
-    ) -> tuple:
-        model_info, out_model = _original(
-            model,
-            custom_llm_provider,
-            web_search_options=web_search_options,
-            tools=tools,
-            reasoning_effort=reasoning_effort,
-        )
+    # Accept ``*args, **kwargs`` and forward them as-is so the patch
+    # is forward-compatible with LiteLLM minor releases that add new
+    # parameters to ``responses_api_bridge_check``. Pinning a fixed
+    # signature here would silently drop any newly added kwargs and
+    # break Responses-API routing for callers that need it.
+    def _guarded_bridge_check(*args: Any, **kwargs: Any) -> tuple:
+        model_info, out_model = _original(*args, **kwargs)
         if _force_chat_completions and model_info.get("mode") == "responses":
             model_info["mode"] = "chat"
         return model_info, out_model
