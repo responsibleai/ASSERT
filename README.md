@@ -83,4 +83,4 @@ If you configure a target, judge, trace collector, or model provider to send dat
 
 ## Disclaimer: Risks and limitations of ASSERT
 
-See the full section in [`docs/concepts.md#risks-and-limitations`](docs/concepts.md#risks-and-limitations).
+See the full section in the [`Concept Doc`](docs/concepts.md#risks-and-limitations).
