@@ -12,7 +12,7 @@ Runs four analysis stages:
 Plus two robustness checks: within-behavior discrimination and tester transfer.
 
 Example:
-  uv run python scripts/scenario_failure_prediction.py \\
+    python scripts/scenario_failure_prediction.py \\
       --suite relationship-entanglement-v1
 """
 

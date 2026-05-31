@@ -67,7 +67,7 @@ Do not recommend an external connector path for customer-preview onboarding.
 
 ## Preferred setup commands
 
-For preview customers, prefer `pip` over `uv` in setup instructions:
+For preview customers, use `pip` in setup instructions:
 
 ```bash
 python -m venv .venv

@@ -87,9 +87,6 @@ dev = [
   "pytest-timeout>=2.2.0",
 ]
 
-[tool.uv]
-index-url = "https://pypi.org/simple"
-
 [project.scripts]
 assert-eval = "assert_eval.cli:cli"
 

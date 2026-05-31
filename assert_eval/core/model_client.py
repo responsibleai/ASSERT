@@ -597,7 +597,7 @@ def _get_litellm_module() -> Any:
             _LITELLM_MODULE = importlib.import_module("litellm")
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "litellm is not installed. Run `uv sync` in omni/measurements "
+                "litellm is not installed. Install it with `python -m pip install litellm` "
                 "before using assert_eval.core.model_client."
             ) from exc
         # Silence noisy litellm warnings that pollute stderr

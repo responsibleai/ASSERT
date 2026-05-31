@@ -806,7 +806,7 @@ def write_excel_export(
         from openpyxl.utils import get_column_letter
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
-            "Excel export requires openpyxl. Install it with `uv sync --extra analysis`."
+            "Excel export requires openpyxl. Install it with `python -m pip install openpyxl`."
         ) from exc
 
     workbook = Workbook()

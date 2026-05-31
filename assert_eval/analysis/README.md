@@ -37,4 +37,4 @@ The summary answers four questions about a suite of evaluation runs:
 
 ## Dependencies
 
-`stats.py` requires numpy (installed via `uv sync --extra analysis`). The other modules use only the standard library.
+`stats.py` requires numpy (for example, install the analysis extras with `python -m pip install -e ".[analysis]"`). The other modules use only the standard library.

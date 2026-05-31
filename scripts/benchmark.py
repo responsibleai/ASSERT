@@ -320,7 +320,7 @@ def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
     """
     # Imported lazily so this script keeps working in environments where
     # the package isn't fully installed (e.g. running via ``python
-    # scripts/benchmark.py`` without ``uv run``).
+    # scripts/benchmark.py`` directly from the repo root).
     from assert_eval.results import load_run_summary
 
     run_dir = REPO_ROOT / "artifacts" / "results" / suite_id / run_id
