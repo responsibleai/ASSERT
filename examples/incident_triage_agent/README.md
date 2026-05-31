@@ -230,7 +230,7 @@ still produces a sensible chart.
   `suite: incident-triage-agent-v1`, which means the `test_set` and
   `systematize` stages write versioned artifacts to a single suite-level
   directory (`artifacts/results/incident-triage-agent-v1/`) and reuse
-  them across variants (per `CONFIG_REFERENCE.md`, "Suite-level stages
+  them across variants (per `docs/config/schema.md`, "Suite-level stages
   write versioned artifacts under the suite directory and are shared
   across runs"). In practice: the first `assert-eval run` (any variant)
   generates `test_set.jsonl` once (n=200 prompt + n=200 scenario); the
@@ -1172,6 +1172,7 @@ cd ../../viewer && npm install && npm run dev
 ```
 
 Artifacts:
+
 - `./agent.py` — baseline target
 - `./agent_guarded.py` — AgentShield-wrapped target
 - `./incident-triage.guardrails.yaml` — the YAML

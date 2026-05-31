@@ -44,10 +44,32 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 
 ## Get started
 
-- Visit our [project website](https://aka.ms/assert-ghpage) to learn more about ASSERT
-- Read the [technical blog](https://aka.ms/assert) on Command Line, Microsoft's technical blog for builders
-- Quickstart with a full walkthrough in [`docs/getting-started.md`](docs/getting-started.md).
-- Browse the [documentation](https://aka.ms/assert-docs) site for concepts and guides
+<div align="center" style="display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 12px; margin-bottom: 4px;">
+        <a href="https://aka.ms/assert-ghpage" style="text-decoration: none; color: inherit; width: 240px;">
+                <div style="border: 1px solid #d0d7de; border-radius: 12px; padding: 14px; text-align: left; height: 100%; box-sizing: border-box;">
+                        <strong>🌐 Project website ↗</strong><br/>
+                        <span>Learn about ASSERT.</span>
+                </div>
+        </a>
+        <a href="https://aka.ms/assert" style="text-decoration: none; color: inherit; width: 240px;">
+                <div style="border: 1px solid #d0d7de; border-radius: 12px; padding: 14px; text-align: left; height: 100%; box-sizing: border-box;">
+                        <strong>📝 Technical blog ↗</strong><br/>
+                        <span>Read the Command Line post.</span>
+                </div>
+        </a>
+        <a href="docs/getting-started.md" style="text-decoration: none; color: inherit; width: 240px;">
+                <div style="border: 1px solid #d0d7de; border-radius: 12px; padding: 14px; text-align: left; height: 100%; box-sizing: border-box;">
+                        <strong>🚀 Quickstart guide ↗</strong><br/>
+                        <span>Follow the full walkthrough.</span>
+                </div>
+        </a>
+        <a href="https://aka.ms/assert-docs" style="text-decoration: none; color: inherit; width: 240px;">
+                <div style="border: 1px solid #d0d7de; border-radius: 12px; padding: 14px; text-align: left; height: 100%; box-sizing: border-box;">
+                        <strong>📚 Documentation ↗</strong><br/>
+                        <span>Browse concepts and guides.</span>
+                </div>
+        </a>
+</div>
 
 ## Trademarks
 

@@ -28,7 +28,7 @@ Start with these files:
 - `docs/targets/README.md` - target decision tree (rendered by default when browsing `docs/targets/`).
 - `docs/targets/callable.md` - Python callable target for any agent or multi-agent system, with OpenTelemetry trace capture as the recommended integration path.
 - `docs/targets/model-and-tools.md` - Prompt Agent target (hosted model + system prompt + optional tool schema; runtime owns the tool-call loop).
-- `CONFIG_REFERENCE.md` - current YAML schema reference.
+- `docs/config/schema.md` - current YAML schema reference.
 - `examples/README.md` - example selection guide.
 
 ## Current preview terminology
@@ -152,11 +152,11 @@ Key facts:
   OpenTelemetry trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) is the recommended integration path so the judge can score tool calls and routing, not just final text.
 - For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.
 - Read `README.md`, `docs/quickstart.md`, `docs/targets/README.md`, `docs/targets/callable.md`, and
-  `CONFIG_REFERENCE.md` before suggesting changes to YAML schema.
+  `docs/config/schema.md` before suggesting changes to YAML schema.
 - Never read or print values from `.env`. Use placeholder names like AZURE_API_KEY and AZURE_API_BASE.
 - Keep all suggestions customer-safe.
 
-When I ask for help, prefer concrete file paths, runnable commands, and the YAML keys defined in CONFIG_REFERENCE.md.
+When I ask for help, prefer concrete file paths, runnable commands, and the YAML keys defined in docs/config/schema.md.
 ```
 
 ## Output style for coding agents

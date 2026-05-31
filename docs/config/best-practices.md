@@ -27,7 +27,7 @@
 
 - Viewer is read-only and does not create evals or launch runs.
 - Non-instrumented targets limit what the judge can verify.
-- Some advanced schema behavior is evolving in preview; check `CONFIG_REFERENCE.md` for the source-of-truth details.
+- Some advanced schema behavior is evolving in preview; check `docs/config/schema.md` for the source-of-truth details.
 
 ## Checklist before running
 
