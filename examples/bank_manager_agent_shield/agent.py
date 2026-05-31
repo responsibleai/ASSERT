@@ -39,6 +39,26 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 import agent_shield.adapters.langchain  # noqa: F401
 from agent_shield import Shield
 
+# ── Optional ACS (Agent Control Specification) integration ─────────────────
+# Loaded lazily so unguarded / v2 / v3 variants still work when ACS is not
+# installed (the ACS Python SDK is built from source via maturin and not yet
+# on PyPI). The chat_guarded_acs callable requires the SDK and an ``opa``
+# binary on PATH; see README for install steps.
+try:
+    from agent_control_specification import (  # type: ignore[import-not-found]
+        AgentControl,
+        Decision,
+        EnforcementMode,
+        InterventionPoint,
+    )
+    _ACS_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised when ACS not installed
+    AgentControl = None  # type: ignore[assignment]
+    Decision = None  # type: ignore[assignment]
+    EnforcementMode = None  # type: ignore[assignment]
+    InterventionPoint = None  # type: ignore[assignment]
+    _ACS_AVAILABLE = False
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -247,6 +267,137 @@ def chat_guarded_v3(message: str) -> str:
     return asyncio.run(
         _run_agent_async(message, guarded=True, yaml_path=yaml_path)
     )
+
+
+# ── ACS (Agent Control Specification) variant ──────────────────────────────
+
+ACS_MANIFEST = EXAMPLE_DIR / "acs" / "manifest.yaml"
+
+
+def _wrap_tool_for_acs(tool, control, state):
+    """Wrap one LangChain MCP tool with ACS pre/post intervention points.
+
+    ACS is stateless: every call builds a fresh snapshot from ``state``
+    (transfer_approved, admin_mode_active) plus the tool name and args.
+    A deny verdict raises ``ToolException`` so LangGraph surfaces the
+    policy message to the agent as the tool's response (matching the
+    refusal behaviour of v2/v3). Successful tool calls update ``state``.
+    """
+    from langchain_core.tools import ToolException
+
+    original_ainvoke = tool.ainvoke
+    tool_name = tool.name
+
+    async def guarded_ainvoke(input_arg, config=None, **kwargs):
+        args_dict = input_arg if isinstance(input_arg, dict) else {"input": input_arg}
+        snapshot = {
+            "tool_call": {"name": tool_name, "args": args_dict},
+            "transfer_approved": state.get("transfer_approved", False),
+            "admin_mode_active": state.get("admin_mode_active", False),
+            "account_sensitivity": state.get("account_sensitivity", ""),
+        }
+        pre = await control.evaluate_intervention_point(
+            InterventionPoint.PRE_TOOL_CALL, snapshot
+        )
+        if pre.verdict.decision == Decision.DENY:
+            raise ToolException(
+                pre.verdict.message or pre.verdict.reason or "denied by policy"
+            )
+
+        result = await original_ainvoke(input_arg, config=config, **kwargs)
+
+        post_text = result if isinstance(result, str) else str(result)
+        post_snapshot = {
+            "tool_call": {"name": tool_name, "args": args_dict},
+            "tool_result": {"text": post_text},
+        }
+        post = await control.evaluate_intervention_point(
+            InterventionPoint.POST_TOOL_CALL, post_snapshot
+        )
+        if post.verdict.decision == Decision.DENY:
+            raise ToolException(
+                post.verdict.message or post.verdict.reason or "denied by policy"
+            )
+
+        # Successful tool call updates per-turn state.
+        if tool_name == "request_customer_approval":
+            state["transfer_approved"] = True
+        elif tool_name == "enable_admin_mode":
+            state["admin_mode_active"] = True
+        elif tool_name == "prepare_transfer" and isinstance(args_dict.get("from_account"), str):
+            src = args_dict["from_account"].upper()
+            if src in {"ACC-1002", "ACC-1003"}:
+                state["account_sensitivity"] = "vip" if src == "ACC-1003" else "high_net_worth"
+            else:
+                state["account_sensitivity"] = "standard"
+
+        return result
+
+    tool.ainvoke = guarded_ainvoke  # type: ignore[assignment]
+    return tool
+
+
+async def _run_agent_async_acs(message: str) -> str:
+    """Run the LangGraph agent with every MCP tool gated by ACS."""
+    if not _ACS_AVAILABLE:
+        raise RuntimeError(
+            "agent_control_specification is not installed. Install it from "
+            "the local checkout (see examples/bank_manager_agent_shield/README.md) "
+            "and ensure an 'opa' binary is on PATH."
+        )
+
+    control = AgentControl.from_path(str(ACS_MANIFEST))
+
+    # Optional input-stage gate: refuse user messages that contain SSNs.
+    input_result = await control.evaluate_intervention_point(
+        InterventionPoint.INPUT, {"input": {"text": message}}
+    )
+    if input_result.verdict.decision == Decision.DENY:
+        return (
+            input_result.verdict.message
+            or input_result.verdict.reason
+            or "Request blocked by policy."
+        )
+
+    params = StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])
+    state: dict[str, object] = {}
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            raw_tools = await load_mcp_tools(session)
+            llm = _build_llm()
+
+            guarded_tools = [_wrap_tool_for_acs(t, control, state) for t in raw_tools]
+
+            agent = create_react_agent(
+                llm,
+                guarded_tools,
+                prompt=SystemMessage(content=SYSTEM_PROMPT),
+            )
+            result = await agent.ainvoke(
+                {"messages": [HumanMessage(content=message)]}
+            )
+            return _extract_text(result)
+
+
+def chat_guarded_acs(message: str) -> str:
+    """ASSERT callable for the new Agent Control Specification (ACS) policy.
+
+    Loads the ACS manifest at ``acs/manifest.yaml`` and gates every MCP
+    tool call through ``pre_tool_call`` and ``post_tool_call`` intervention
+    points evaluated by OPA against ``acs/policy/bank_manager.rego``.
+    Also runs the user message through the ``input`` intervention point
+    for SSN detection.
+
+    The Rego policy mirrors guardrails.v3.yaml semantics (sensitive-account
+    read/transfer gates, approval / admin-mode gates, post-tool prompt-
+    injection scrubber). State that v3 tracked inside the AgentShield
+    runtime (transfer_approved, admin_mode_active) is tracked by this
+    host wrapper and supplied to ACS on each snapshot, since the new
+    ACS runtime is stateless.
+    """
+    return asyncio.run(_run_agent_async_acs(message))
 
 
 if __name__ == "__main__":
