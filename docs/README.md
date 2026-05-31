@@ -34,5 +34,5 @@ Welcome to ASSERT!
 ## Related docs
 
 - Root project overview: [../README.md](../README.md)
-- Full YAML reference: [../CONFIG_REFERENCE.md](../CONFIG_REFERENCE.md)
+- Full YAML reference: [config/schema.md](config/schema.md)
 - Example gallery: [../examples/README.md](../examples/README.md)

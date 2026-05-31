@@ -68,4 +68,4 @@ pipeline:
 
 - Full schema details: `docs/config/schema.md`
 - Authoring guidance: `docs/guides/create-evaluation.md`
-- Official field reference: `CONFIG_REFERENCE.md`
+- Official field reference: `docs/config/schema.md`

@@ -2,13 +2,13 @@
 
 This directory holds tool modules and tool schemas used by the example pipeline configs in [`../pipes/`](../pipes/). The flagship customer integration path is `target.callable` — see [`../travel_planner_langgraph/`](../travel_planner_langgraph/).
 
-Adaptive Eval supports three ways to give a target access to tools or external systems.
+ASSERT supports three ways to give a target access to tools or external systems.
 
 | Pattern | What happens | Config key | Example file |
 |---|---|---|---|
-| Tool module | Adaptive Eval calls Python functions and returns real results to the model | `tools.module` | [health_assistant.py](health_assistant.py) |
-| Toolset | Adaptive Eval declares tool schemas in YAML; a second model fakes the results | `tools.toolset` | [health_assistant_tools.yaml](health_assistant_tools.yaml) |
-| External connector (advanced) | Your agent owns the conversation; Adaptive Eval records and scores it. **Not the recommended onboarding path** — prefer `target.callable` instead. | `connector` | [openclaw/README.md](openclaw/README.md) |
+| Tool module | ASSERT calls Python functions and returns real results to the model | `tools.module` | [health_assistant.py](health_assistant.py) |
+| Toolset | ASSERT declares tool schemas in YAML; a second model fakes the results | `tools.toolset` | [health_assistant_tools.yaml](health_assistant_tools.yaml) |
+| External connector (advanced) | Your agent owns the conversation; ASSERT records and scores it. **Not the recommended onboarding path** — prefer `target.callable` instead. | `connector` | [openclaw/README.md](openclaw/README.md) |
 
 ## Files
 

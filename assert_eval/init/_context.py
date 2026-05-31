@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────
 
 _PROMPT_FILENAME = "init_system.md"
-_CONFIG_REF_PATH = Path(__file__).resolve().parents[2] / "CONFIG_REFERENCE.md"
+_CONFIG_REF_PATH = Path(__file__).resolve().parents[2] / "docs" / "config" / "schema.md"
 
 # Token budget thresholds (fraction of model context window).
 _WARN_THRESHOLD = 0.50
@@ -69,9 +69,9 @@ context_window_for = _context_window_for
 # ── Section builders ───────────────────────────────────────────
 
 def _build_schema_reference() -> str:
-    """Load CONFIG_REFERENCE.md as the schema section."""
+    """Load docs/config/schema.md as the schema section."""
     if not _CONFIG_REF_PATH.is_file():
-        log.warning("CONFIG_REFERENCE.md not found at %s", _CONFIG_REF_PATH)
+        log.warning("docs/config/schema.md not found at %s", _CONFIG_REF_PATH)
         return ""
     return _CONFIG_REF_PATH.read_text(encoding="utf-8")
 
