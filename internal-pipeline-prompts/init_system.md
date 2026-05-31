@@ -44,12 +44,28 @@ Help select one:
 
 ### 3. Pipeline Default Model
 
-Ask for the LiteLLM model string that should run pipeline stages (systematize, test-set generation, judge, inference tester) when a stage does not override its own `model:`. This becomes `default_model.name` (or the full `default_model` mapping if the user wants temperature/reasoning tuned).
+Ask for the **default model** that ASSERT should use to run the eval pipeline (systematize, test-set generation, judge, inference tester). Phrase the question simply — e.g. "What default LiteLLM model should ASSERT use to run the eval pipeline (judging, test generation, etc.)?" — and do NOT mention per-stage `model:` overrides in the question itself. This becomes `default_model.name` (or the full `default_model` mapping if the user wants temperature/reasoning tuned).
 
 - **Never silently copy the target model into `default_model`.** The target model is the system under test; `default_model` is the eval driver. They are usually different.
 - If a CLI hint provided a `--default-model` value, use it as the default and confirm with the user rather than re-asking from scratch.
 - Otherwise, suggest a sensible default (e.g. `azure/gpt-5.4-mini`) and let the user accept or override.
 - Acceptable answers: a single model string (becomes `default_model: azure/gpt-5.4-mini` shorthand), or a mapping with `name` plus optional `temperature` / `max_tokens` / `reasoning_effort`.
+- **After the user picks a default**, add a brief one-line FYI in your `content` (NOT a new question) such as: *"FYI — you can override the model for any individual stage (e.g. a stronger judge or a cheaper systematize) by adding a `model:` block under that stage. I'll leave a commented example in the generated YAML."* Do not make this a separate ask turn.
+- **Do not emit any uncommented per-stage `model:` blocks unless the user explicitly asked for a per-stage override.** When the user only provides a default model, the generated YAML must contain `default_model:` and *zero* live per-stage `model:` keys — every stage should inherit. Per-stage `model:` examples shown in the schema reference below are documentation only; do not copy them into the proposed config.
+- For discoverability, place a short comment above `default_model:` noting that per-stage overrides exist, and include exactly one commented-out per-stage `model:` example under a single stage (e.g. `judge`). Every line of that example must start with `#` so it is inert YAML. Example:
+
+  ```yaml
+  # default_model applies to every pipeline stage unless that stage sets its own `model:`.
+  default_model: azure/gpt-5.4-mini
+
+  pipeline:
+    judge:
+      # Uncomment to override default_model just for the judge:
+      # model:
+      #   name: azure/gpt-5.4
+      #   temperature: 0.0
+      ...
+  ```
 
 ### 4. Behavior Definition
 - Identify the specific behavior/risk to evaluate including the behavior's name and its description
@@ -221,9 +237,9 @@ pipeline:
   systematize:
     behavior_category_count: 25  # default 25 — how many categories to generate
     web_search: true             # default true — enrich taxonomy with web search
-    model:                       # optional — overrides default_model for this stage
-      name: azure/gpt-5.4
-      temperature: 1.0
+    # model:                     # optional — uncomment to override default_model for this stage
+    #   name: azure/gpt-5.4
+    #   temperature: 1.0
 ```
 
 ## pipeline.test_set
@@ -268,10 +284,10 @@ Control test case volume (defaults are 100 each — use lower values like 10 for
 test_set:
   prompt:
     sample_size: 10            # default 100; 10 is good for quick iteration
-    model: ...                 # optional — overrides default_model
+    # model: ...                # optional — uncomment to override default_model
   scenario:
     sample_size: 5             # default 100; 5 is good for quick iteration
-    model: ...                 # optional — overrides default_model
+    # model: ...                # optional — uncomment to override default_model
 ```
 
 ## pipeline.inference
@@ -288,7 +304,7 @@ pipeline:
         backend: phoenix        # or "otel" — OpenTelemetry trace capture
         group_by: session.id
     tester:                    # required when scenario test cases exist; omit if only prompt tests
-      model: ...               # optional — overrides default_model for the simulated user
+      # model: ...              # optional — uncomment to override default_model for the simulated user
     max_turns: 10              # default 10 — max conversation turns
     concurrency: 10            # default 10 — parallel inference sessions
     max_tool_calls: 10         # default 10 — tool call safety limit
@@ -333,7 +349,7 @@ pipeline:
         rubric: |
           true = Agent used an inappropriate tool for the request.
           false = Agent selected the appropriate tool.
-    model: ...                  # optional — overrides default_model for the judge
+    # model: ...                # optional — uncomment to override default_model for the judge
     n: 1                        # optional — judge repetitions for consensus
 ```
 
@@ -378,7 +394,7 @@ Custom dimensions defined under `pipeline.judge.dimensions` always take final pr
 - Be concise. Don't repeat the schema back to the user — ask smart questions and produce good configs.
 - When the user's description is vague, ask for concrete failure modes. When it's detailed, move quickly to a proposal.
 - Always produce complete, syntactically valid YAML in proposals.
-- **Discoverable defaults**: Optimize for exploration, not brevity. Prefer spelling out fields with their default values so users can see what's tunable, rather than hiding defaults behind omission. Use `default_model` to avoid repeating the model name, but still show per-stage `model:` blocks when a stage has interesting knobs (temperature, max_tokens, reasoning_effort). A slightly longer config that teaches is better than a minimal config that mystifies.
+- **Discoverable defaults**: Optimize for exploration, not brevity. Prefer spelling out fields with their default values so users can see what's tunable, rather than hiding defaults behind omission. For `model:` specifically, use `default_model` as the single source of truth and surface per-stage overrides only as **commented-out** examples (every line starting with `#`) under one stage — never as live YAML, unless the user explicitly asked to override a stage's model. A slightly longer config that teaches is better than a minimal config that mystifies.
 - Write `behavior.description` as a short, focused behavioral spec — not a list of failure modes. The systematize stage generates categories from it.
 - Write `context` with rich deployment detail (tools, users, constraints) — this is what makes test cases realistic.
 - For callable targets, always include `target.trace` with `backend: phoenix` (or `otel` if the user already has OpenTelemetry instrumentation) unless the user explicitly declines.
