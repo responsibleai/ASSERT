@@ -65,19 +65,19 @@ Run any config with `assert-eval`:
 
 | File | What it does |
 |---|---|
-| [`harmful_medical_advice.md`](harmful_medical_advice.md) | Eval spec used by the health-assistant configs. |
+| [`harmful_medical_advice.md`](../behavior_specs/harmful_medical_advice.md) | Eval spec used by the health-assistant configs. |
 | [`health_assistant.yaml`](health_assistant.yaml) | Hosted-model smoke test with a system prompt and no tools. |
 | [`health_assistant_simulated_tools.yaml`](health_assistant_simulated_tools.yaml) | Prompt Agent with fixed tool schemas and simulated results. |
 | [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) | Prompt Agent with real Python tools via `tools.module: examples.prompt_agents.health_assistant`. |
 | [`health_assistant_generated_tools.yaml`](health_assistant_generated_tools.yaml) | Prompt Agent where generated test cases provide tool definitions. |
 | [`health_assistant_external.yaml`](health_assistant_external.yaml) | External connector example for OpenClaw. |
-| [`health_assistant.py`](health_assistant.py) | Docker-backed tool module: medication lookup, interaction checks, dosage assessment, and patient profile. |
-| [`health_assistant_tools.yaml`](health_assistant_tools.yaml) | Toolset schema for simulator-backed runs. |
-| [`openclaw/`](openclaw/) | Docker assets and connector for the advanced external-connector path. |
+| [`health_assistant.py`](../agents/health_assistant.py) | Docker-backed tool module: medication lookup, interaction checks, dosage assessment, and patient profile. |
+| [`health_assistant_tools.yaml`](../agents/health_assistant_tools.yaml) | Toolset schema for simulator-backed runs. |
+| [`openclaw/`](../agents/openclaw/) | Docker assets and connector for the advanced external-connector path. |
 
 ### When to use the external-connector path
 
-Use [`openclaw/`](openclaw/) only when you need to evaluate an external process that owns the conversation and cannot be represented as a callable. This is the advanced/legacy path. For new customer onboarding, prefer `target.callable` with trace capture; it is simpler, easier to debug, and gives the judge better evidence.
+Use [`../agents/openclaw/`](../agents/openclaw/) only when you need to evaluate an external process that owns the conversation and cannot be represented as a callable. This is the advanced/legacy path. For new customer onboarding, prefer `target.callable` with trace capture; it is simpler, easier to debug, and gives the judge better evidence.
 
 ## Behavior violation rate results
 
