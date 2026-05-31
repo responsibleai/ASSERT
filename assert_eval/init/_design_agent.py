@@ -213,6 +213,7 @@ def run_design_loop(
     behavior_preset: str | None,
     judge_preset: str | None,
     dimension_hints: str | None,
+    default_model_hint: str | None = None,
     non_interactive: bool,
     max_turns: int,
     console: Console,
@@ -232,6 +233,7 @@ def run_design_loop(
         dimensions=dim_list,
         describe=describe,
         model=model,
+        default_model_hint=default_model_hint,
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_msg}]
@@ -260,6 +262,15 @@ def run_design_loop(
         initial_parts.append(f"Use judge preset: {judge_preset}")
     if dimension_hints:
         initial_parts.append(f"Dimension hints: {dimension_hints}")
+    if default_model_hint:
+        initial_parts.append(
+            f"Pipeline default_model hint (from --default-model): {default_model_hint}. "
+            "Confirm this with the user rather than re-asking from scratch."
+        )
+    initial_parts.append(
+        f"Design-agent model (drives this conversation, NOT the target, NOT the pipeline default_model): {model}. "
+        "When asking about pipeline default_model, you may suggest this as a reasonable starting default if the user has no preference."
+    )
     if non_interactive:
         initial_parts.append(
             "Generate the config immediately without asking questions. "

@@ -55,7 +55,21 @@ log = logging.getLogger(__name__)
     type=str,
     default="azure/gpt-5.4-mini",
     show_default=True,
-    help="Model for the design agent (LiteLLM model string).",
+    help=(
+        "Model the design agent itself uses to drive the init conversation "
+        "(LiteLLM model string). This is NOT the target model and NOT the "
+        "pipeline default_model."
+    ),
+)
+@click.option(
+    "--default-model",
+    "default_model_hint",
+    type=str,
+    default=None,
+    help=(
+        "Pre-seed the proposed config's pipeline default_model (LiteLLM "
+        "model string). The design agent will confirm rather than re-ask."
+    ),
 )
 @click.option(
     "--env-file",
@@ -98,6 +112,7 @@ def init(
     judge_preset: str | None,
     dimensions: str | None,
     model: str,
+    default_model_hint: str | None,
     env_file: Path,
     non_interactive: bool,
     max_turns: int,
@@ -147,6 +162,7 @@ def init(
         behavior_preset=behavior_preset,
         judge_preset=judge_preset,
         dimension_hints=dimensions,
+        default_model_hint=default_model_hint,
         non_interactive=non_interactive,
         max_turns=max_turns,
         console=console,

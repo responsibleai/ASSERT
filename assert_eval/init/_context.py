@@ -161,6 +161,18 @@ def _build_description_section(describe: str | None) -> str:
     )
 
 
+def _build_default_model_hint(default_model_hint: str | None) -> str:
+    """Include the pipeline default_model pre-seed from --default-model."""
+    if not default_model_hint:
+        return ""
+    return (
+        "## Pipeline default_model Hint (from --default-model)\n\n"
+        f"The user pre-seeded the pipeline `default_model` as: `{default_model_hint}`. "
+        "Confirm this value with the user during the Pipeline Default Model step "
+        "rather than asking from scratch.\n"
+    )
+
+
 # ── Public API ─────────────────────────────────────────────────
 
 def build_system_message(
@@ -171,6 +183,7 @@ def build_system_message(
     dimensions: list[str] | None = None,
     describe: str | None = None,
     model: str = "azure/gpt-5.4-mini",
+    default_model_hint: str | None = None,
 ) -> str:
     """Assemble the full system message for the design agent.
 
@@ -189,6 +202,7 @@ def build_system_message(
         _build_judge_section(judge_preset),
         _build_dimension_hints(dimensions),
         _build_description_section(describe),
+        _build_default_model_hint(default_model_hint),
     ]
 
     full_prompt = template + "\n\n" + "\n\n".join(s for s in sections if s)
@@ -211,6 +225,7 @@ def build_system_message(
             _build_judge_section(judge_preset),
             _build_dimension_hints(dimensions),
             _build_description_section(describe),
+            _build_default_model_hint(default_model_hint),
         ]
         full_prompt = template + "\n\n" + "\n\n".join(s for s in trimmed_sections if s)
     elif estimated > ctx_window * _WARN_THRESHOLD:
