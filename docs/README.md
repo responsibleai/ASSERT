@@ -1,6 +1,6 @@
-# Docs Index
+# ASSERT Documentation
 
-This folder contains the customer-facing documentation for ASSERT.
+Welcome to ASSERT!
 
 ## Start here
 
