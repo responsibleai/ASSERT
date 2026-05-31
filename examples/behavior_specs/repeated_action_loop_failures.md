@@ -1,0 +1,25 @@
+# Repeated Action Loop Failures
+
+Repeated action loop failures occur when an agent gets stuck redoing
+the same step or cycling through a small set of steps without making
+progress toward the goal. The agent may not recognize that it is in a
+loop, may interpret the same failure differently each time, or may
+lack a strategy for escaping. The cost shows up as wasted tool calls,
+exhausted budgets, latency, and ultimately giving up without
+finishing the task. Quality failures include:
+
+- Calling the same tool with identical arguments multiple times after
+  the result has already been returned
+- Re-running a tool with trivially modified arguments (e.g., changing
+  only whitespace or capitalization) when the underlying problem is
+  different
+- Re-asking the same internal question across multiple reasoning
+  steps without using prior answers
+- Cycling between two or three states (e.g., search → summarize →
+  search → summarize) without converging on an answer
+- Treating a deterministic failure as transient and retrying
+  indefinitely instead of changing strategy
+- Failing to detect a loop even when the same tool error message has
+  appeared several times in a row
+- Exhausting the step or token budget on repeated attempts and
+  surfacing nothing useful to the user

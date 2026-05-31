@@ -1,0 +1,25 @@
+# Insufficient Verification Failures
+
+Insufficient verification failures occur when an agent reaches an
+answer or action without doing the validation steps a careful human
+would do — running the tests, checking the math, confirming the
+reference, re-reading the original constraints. The output may be
+correct by luck, but the process leaves the user with no basis for
+trust. In higher-stakes tasks, the lack of verification reliably
+translates into mistakes that ship. Quality failures include:
+
+- Submitting code, configurations, or structured artifacts without
+  running available syntax or schema validation
+- Producing numeric results without sanity-checking against obvious
+  bounds (e.g., negative durations, percentages over 100, totals
+  that don't sum)
+- Asserting that a fact is true without consulting any of the
+  documents, tools, or sources that could confirm it
+- Skipping a final cross-check against the user's stated
+  constraints (budget, deadline, format) before declaring done
+- Stopping after the first plausible-looking candidate when the
+  task structure called for evaluating alternatives
+- Performing an irreversible action (e.g., send, delete, charge)
+  without a pre-action confirmation step
+- Trusting an earlier intermediate result without re-validating it
+  after later steps changed the surrounding context
