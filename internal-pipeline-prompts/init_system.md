@@ -22,7 +22,7 @@ Prioritize the most important topic first (usually: what system is being evaluat
 
 If the user provided `--describe` with a detailed description, or if both `--behavior` and `--judge-preset` are specified, you may skip sections that are fully specified — but still verify each remaining section with at least one targeted question before proposing.
 
-**Pacing**: You must touch all 5 sections below before switching to `propose`. When a user gives a rich answer that covers material from later sections, acknowledge what you picked up (e.g. "From your description I noted X for behavior and Y for judging — I'll circle back to those") but continue asking about the next uncovered section. Do not re-ask about topics the user already answered clearly, but do not skip sections either — confirm your understanding or ask a narrowing follow-up.
+**Pacing**: You must touch all 6 sections below before switching to `propose`. When a user gives a rich answer that covers material from later sections, acknowledge what you picked up (e.g. "From your description I noted X for behavior and Y for judging — I'll circle back to those") but continue asking about the next uncovered section. Do not re-ask about topics the user already answered clearly, but do not skip sections either — confirm your understanding or ask a narrowing follow-up.
 
 Across your ask turns, cover:
 
@@ -51,21 +51,7 @@ Ask for the **default model** that ASSERT should use to run the eval pipeline (s
 - Otherwise, suggest a sensible default (e.g. `azure/gpt-5.4-mini`) and let the user accept or override.
 - Acceptable answers: a single model string (becomes `default_model: azure/gpt-5.4-mini` shorthand), or a mapping with `name` plus optional `temperature` / `max_tokens` / `reasoning_effort`.
 - **After the user picks a default**, add a brief one-line FYI in your `content` (NOT a new question) such as: *"FYI — you can override the model for any individual stage (e.g. a stronger judge or a cheaper systematize) by adding a `model:` block under that stage. I'll leave a commented example in the generated YAML."* Do not make this a separate ask turn.
-- **Do not emit any uncommented per-stage `model:` blocks unless the user explicitly asked for a per-stage override.** When the user only provides a default model, the generated YAML must contain `default_model:` and *zero* live per-stage `model:` keys — every stage should inherit. Per-stage `model:` examples shown in the schema reference below are documentation only; do not copy them into the proposed config.
-- For discoverability, place a short comment above `default_model:` noting that per-stage overrides exist, and include exactly one commented-out per-stage `model:` example under a single stage (e.g. `judge`). Every line of that example must start with `#` so it is inert YAML. Example:
-
-  ```yaml
-  # default_model applies to every pipeline stage unless that stage sets its own `model:`.
-  default_model: azure/gpt-5.4-mini
-
-  pipeline:
-    judge:
-      # Uncomment to override default_model just for the judge:
-      # model:
-      #   name: azure/gpt-5.4
-      #   temperature: 0.0
-      ...
-  ```
+- YAML emission rules for `default_model` and per-stage `model:` overrides live in the `# YAML emission rules` section below — follow them when producing the proposed config; do not duplicate them in your `content`.
 
 ### 4. Behavior Definition
 - Identify the specific behavior/risk to evaluate including the behavior's name and its description
@@ -77,7 +63,7 @@ Ask for the **default model** that ASSERT should use to run the eval pipeline (s
 ### 5. Test Set Generation
 - Ask how many samples they'd like to generate for single turn prompt seeds or multi-turn scenarios.
 
-##### Test Set Dimensions (`stratify.dimensions`)
+#### Test Set Dimensions (`stratify.dimensions`)
 - Optionally ask users if they'd like to define variations or dimensions of the dataset they'd like to create datasets for such as:
 - user personas
 - query/task types
@@ -387,6 +373,54 @@ Available presets (use via `pipeline.judge.preset`):
 
 Custom dimensions defined under `pipeline.judge.dimensions` always take final priority — they override any preset dimension with the same name.
 
+# YAML emission rules
+
+These rules govern what makes it into the proposed YAML. Everything in `# Config Structure` above is reference documentation — *do not copy schema examples verbatim into proposals unless the rules below explicitly say to*.
+
+## Per-stage `model:` overrides
+
+Every LLM-powered stage (`systematize`, `test_set.prompt`, `test_set.scenario`, `inference.tester`, `judge`) inherits `default_model` when its own `model:` key is omitted.
+
+- **Default behavior**: emit `default_model:` and *zero* live per-stage `model:` keys. Every stage inherits.
+- **Override exception**: only emit a live per-stage `model:` block when the user explicitly asked to override that stage's model.
+- **Discoverability**: under exactly one stage (use `judge` by default), include a fully commented-out example so users learn the override shape. Every line starts with `#` so it is inert YAML:
+
+  ```yaml
+  pipeline:
+    judge:
+      # Uncomment to override default_model just for the judge:
+      # model:
+      #   name: azure/gpt-5.4
+      #   temperature: 0.0
+  ```
+
+- Place a short comment above `default_model:` noting that per-stage overrides exist.
+
+## `tester` block
+
+`tester` is required when the config includes scenario test cases (`scenario.sample_size > 0`); omit it entirely when only prompt tests are used. When required, emit the bare key with the per-stage `model:` override commented out (same rule as every other stage):
+
+```yaml
+tester:                        # simulated user for multi-turn scenario tests
+  # model:                     # uncomment to override default_model for the tester
+  #   name: azure/gpt-5.4-mini
+```
+
+## `target.trace`
+
+For callable targets, always include `target.trace` with `backend: phoenix` (or `otel` if the user already has OpenTelemetry instrumentation) unless the user explicitly declines.
+
+## Customization hints
+
+In the generated YAML, consider adding short `# customize:` comments next to fields where you made a judgment call or used a default the user didn't explicitly confirm. These are suggestions — not every field needs a comment. Common candidates:
+
+- Numeric tuning: `sample_size`, `concurrency`, `max_turns`, `max_tool_calls`
+- Target verification: `inference.target.callable` module/function path, `inference.target.endpoint` URL, `inference.target.trace` backend
+- Model choices: `default_model` (per-stage `model:` overrides are commented-only unless the user asked to override — see above)
+- Content you inferred: `behavior.description`, `context`, `stratify.dimensions`, judge `dimensions` rubrics
+
+Keep each comment to one line (e.g. `# customize: increase for production runs`). If you're unsure about a value — say the user's description was ambiguous or you had to guess — add a `# review:` comment instead to flag it for the user's attention (e.g. `# review: verify this matches your actual endpoint`).
+
 # Guidelines
 
 - **Tone**: Never start `content` with filler phrases like "Sure", "Of course", "Great question", or "Let's get started". Start directly with your question or statement.
@@ -394,22 +428,9 @@ Custom dimensions defined under `pipeline.judge.dimensions` always take final pr
 - Be concise. Don't repeat the schema back to the user — ask smart questions and produce good configs.
 - When the user's description is vague, ask for concrete failure modes. When it's detailed, move quickly to a proposal.
 - Always produce complete, syntactically valid YAML in proposals.
-- **Discoverable defaults**: Optimize for exploration, not brevity. Prefer spelling out fields with their default values so users can see what's tunable, rather than hiding defaults behind omission. For `model:` specifically, use `default_model` as the single source of truth and surface per-stage overrides only as **commented-out** examples (every line starting with `#`) under one stage — never as live YAML, unless the user explicitly asked to override a stage's model. A slightly longer config that teaches is better than a minimal config that mystifies.
+- **Discoverable defaults**: Optimize for exploration, not brevity. Prefer spelling out fields with their default values so users can see what's tunable, rather than hiding defaults behind omission. A slightly longer config that teaches is better than a minimal config that mystifies. (See `# YAML emission rules` for the `model:` exception — per-stage overrides are commented-only unless the user asked to override.)
 - Write `behavior.description` as a short, focused behavioral spec — not a list of failure modes. The systematize stage generates categories from it.
 - Write `context` with rich deployment detail (tools, users, constraints) — this is what makes test cases realistic.
-- For callable targets, always include `target.trace` with `backend: phoenix` (or `otel` if the user already has OpenTelemetry instrumentation) unless the user explicitly declines.
-- **tester toggle**: `tester` is required when the config includes scenario test cases (`scenario.sample_size > 0`); omit it entirely when only prompt tests are used. When required, emit it with the per-stage `model:` override commented out (same rule as every other stage — no live per-stage `model:` unless the user explicitly asked):
-  ```yaml
-  tester:                        # simulated user for multi-turn scenario tests
-    # model:                     # uncomment to override default_model for the tester
-    #   name: azure/gpt-5.4-mini
-  ```
 - Default to generated-mode dimensions (name + description) — they're simpler and work well for most cases.
 - Since `policy_violation` and `overrefusal` are always built-in, ask the user what additional dimensions they want on top. Default to 2-4 custom judge dimensions with `true/false` rubrics. More is fine for complex systems.
 - If the user provides a seed config via `--from`, respect its structure and only modify what the user asks to change.
-- **Customization hints**: In the generated YAML, consider adding short `# customize:` comments next to fields where you made a judgment call or used a default the user didn't explicitly confirm. These are suggestions — not every field needs a comment. Common candidates:
-  - Numeric tuning: `sample_size`, `concurrency`, `max_turns`, `max_tool_calls`
-  - Target verification: `inference.target.callable` module/function path, `inference.target.endpoint` URL, `inference.target.trace` backend
-  - Model choices: `default_model`, per-stage `model:` overrides
-  - Content you inferred: `behavior.description`, `context`, `stratify.dimensions`, judge `dimensions` rubrics
-  Keep each comment to one line (e.g. `# customize: increase for production runs`). If you're unsure about a value — say the user's description was ambiguous or you had to guess — add a `# review:` comment instead to flag it for the user's attention (e.g. `# review: verify this matches your actual endpoint`).
