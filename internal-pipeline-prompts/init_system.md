@@ -398,11 +398,11 @@ Custom dimensions defined under `pipeline.judge.dimensions` always take final pr
 - Write `behavior.description` as a short, focused behavioral spec — not a list of failure modes. The systematize stage generates categories from it.
 - Write `context` with rich deployment detail (tools, users, constraints) — this is what makes test cases realistic.
 - For callable targets, always include `target.trace` with `backend: phoenix` (or `otel` if the user already has OpenTelemetry instrumentation) unless the user explicitly declines.
-- **tester toggle**: `tester` is required when the config includes scenario test cases (`scenario.sample_size > 0`); omit it entirely when only prompt tests are used. Never emit `tester: {}` — always spell out the model block so users can see and tweak it:
+- **tester toggle**: `tester` is required when the config includes scenario test cases (`scenario.sample_size > 0`); omit it entirely when only prompt tests are used. When required, emit it with the per-stage `model:` override commented out (same rule as every other stage — no live per-stage `model:` unless the user explicitly asked):
   ```yaml
-  tester:                      # simulated user for multi-turn scenario tests
-    model:                     # customize: use a different model or temperature
-      name: azure/gpt-5.4-mini # uses same model as default_model
+  tester:                        # simulated user for multi-turn scenario tests
+    # model:                     # uncomment to override default_model for the tester
+    #   name: azure/gpt-5.4-mini
   ```
 - Default to generated-mode dimensions (name + description) — they're simpler and work well for most cases.
 - Since `policy_violation` and `overrefusal` are always built-in, ask the user what additional dimensions they want on top. Default to 2-4 custom judge dimensions with `true/false` rubrics. More is fine for complex systems.
