@@ -959,7 +959,7 @@ def _run_stages_inner(
             run_id = ctx.get('run_id', '')
             if suite_id and run_id:
                 log.info("Inspect results:")
-                log.info(f"  uv run assert-eval results status {suite_id} {run_id}")
+                log.info(f"  assert-eval results status {suite_id} {run_id}")
                 log.info("View in browser:")
                 log.info(f"  cd viewer && npm run dev    (then open http://localhost:5174/suite/{suite_id}/{run_id})")
     else:

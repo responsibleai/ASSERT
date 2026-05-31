@@ -77,7 +77,7 @@ def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
     missing = getattr(exc, "name", "") or "analysis extras"
     _error(
         f"Could not import '{missing}'. Install the analysis dependencies first, for example:\n"
-        "  uv sync --extra analysis"
+        "  python -m pip install -e \".[analysis]\""
     )
 
 
