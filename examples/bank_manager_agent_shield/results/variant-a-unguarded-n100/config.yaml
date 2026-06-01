@@ -22,7 +22,7 @@ run: variant-a-unguarded-n100
 #                                        new prompts.
 #
 # Run order on a fresh suite:
-#   1. p2m run --config examples/bank_manager_agent_shield/eval_unguarded_v2.yaml
+#   1. p2m run --config examples/bank_manager_agent_shield/eval_unguarded.yaml
 #   2. p2m run --config examples/bank_manager_agent_shield/eval_guarded_v2.yaml
 #
 # Note: the test_set cache fingerprint includes target.callable

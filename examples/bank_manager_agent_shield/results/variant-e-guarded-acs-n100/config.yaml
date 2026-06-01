@@ -7,7 +7,7 @@ run: variant-e-guarded-acs-n100
 #
 # Omits pipeline.systematize and pipeline.test_set; the inference stage
 # falls back to the suite-root test_set.jsonl produced by
-# eval_unguarded_v2.yaml.
+# eval_unguarded.yaml.
 #
 # Requires:
 #   - agent-control-specification Python SDK installed locally (built

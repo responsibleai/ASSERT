@@ -10,7 +10,7 @@ run: variant-a-unguarded-n100
 # 100 cases: 50 prompt (single-shot) + 50 scenario (multi-turn persona).
 #
 # Run order on a fresh suite:
-#   1. p2m run --config examples/bank_manager_agent_shield/eval_unguarded_v2.yaml
+#   1. p2m run --config examples/bank_manager_agent_shield/eval_unguarded.yaml
 #   2. p2m run --config examples/bank_manager_agent_shield/eval_guarded_v2.yaml
 #   3. p2m run --config examples/bank_manager_agent_shield/eval_guarded_v3.yaml
 

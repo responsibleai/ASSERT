@@ -30,7 +30,7 @@ ACS cuts safety failures by ~77% with no helpfulness cost vs the baseline.
   SSN regex on user input, sensitivity-scoped (ACC-1002 / ACC-1003)
   read + transfer gates, approval / admin-mode gates over host snapshot
   state, generic prompt-injection scrubber on tool results.
-- `eval_unguarded_v2.yaml` — baseline config; owns the full pipeline
+- `eval_unguarded.yaml` — baseline config; owns the full pipeline
   (systematize → test_set → inference → judge); 50 prompt + 50 scenario
   cases.
 - `eval_guarded_acs.yaml` — ACS variant config; reuses the baseline
@@ -103,7 +103,7 @@ Then from the repository root:
 
 ```bash
 # 1. Baseline (owns systematize + test_set + inference + judge)
-assert-eval run --config examples/bank_manager_agent_shield/eval_unguarded_v2.yaml
+assert-eval run --config examples/bank_manager_agent_shield/eval_unguarded.yaml
 
 # 2. ACS variant (reuses the baseline's test_set)
 assert-eval run --config examples/bank_manager_agent_shield/eval_guarded_acs.yaml
