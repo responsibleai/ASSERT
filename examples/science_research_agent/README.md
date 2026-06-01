@@ -7,7 +7,7 @@ target](../../docs/targets/callable.md) so the judge can inspect the tool
 trace, not just the final answer.
 
 The agent lives in `agent.py` and wraps a hosted LiteLLM model (default
-`azure/gpt-4o-mini`).
+`azure/gpt-5.4-mini`).
 
 ## Tools
 
@@ -51,14 +51,13 @@ cp examples/science_research_agent/.env.example examples/science_research_agent/
 # Edit the .env: AZURE_API_KEY, AZURE_API_BASE, and TAVILY_API_KEY are required.
 
 assert-ai run --config examples/science_research_agent/eval_config.yaml
-assert-ai run --config examples/science_research_agent/eval_config.yaml
 ```
 
 Required env vars (in `examples/science_research_agent/.env`):
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the default `azure/gpt-4o-mini` agent and `azure/gpt-4o` judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the default `azure/gpt-5.4-mini` agent and `azure/gpt-5.4` judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `TAVILY_API_KEY` | Real web search. If unset, `web_search` returns a structured tool error and the agent loses its public-web channel. |
 
 Artifacts land under `artifacts/results/science-research-agent-real-tools-v1/`:
@@ -95,5 +94,5 @@ evidence the agent retrieved.
 - `fetch_url` performs a real HTTP GET — only fetch URLs you trust.
 - Web and fetch responses are cached in
   `examples/science_research_agent/.tool_cache.json` to keep reruns cheap and
-  deterministic. Set `ASSERT_AI_REAL_TOOLS_NOCACH=1` to bypass the cache and hit the
+  deterministic. Set `assert_ai_REAL_TOOLS_NOCACHE=1` to bypass the cache and hit the
   network on every call.

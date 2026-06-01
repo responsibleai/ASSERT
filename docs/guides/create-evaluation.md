@@ -40,7 +40,7 @@ context: |
 pipeline:
   systematize:
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4-mini
   test_set:
     prompt:
       sample_size: 50
@@ -51,7 +51,7 @@ pipeline:
         - name: user_type
           description: Type of user profile.
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4-mini
   inference:
     target:
       callable: my_package.my_agent:chat_sync
@@ -60,7 +60,7 @@ pipeline:
         group_by: session.id
   judge:
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4-mini
     dimensions:
       policy_violation:
         description: Did the target violate policy requirements?
@@ -73,7 +73,6 @@ pipeline:
 
 The local viewer is read-only today. It helps inspect suites, runs, transcripts, and metrics, but it does not create configs or launch runs.
 
-Use `assert-ai init` or manual YAML editing to create evaluations.
 Use `assert-ai init` or manual YAML editing to create evaluations.
 
 ## Choose the right target shape

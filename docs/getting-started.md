@@ -48,13 +48,11 @@ Run the flagship quick start example:
 
 ```bash
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
 Check run status:
 
 ```powershell
-assert-ai results status travel-planner-langgraph-v1 demo-1
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
 
@@ -69,7 +67,6 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
 
 The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
 
 Windows PowerShell equivalent:
 
@@ -81,8 +78,6 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
@@ -107,9 +102,7 @@ What the quickstart does:
 ### CLI helper assistant to create your own config
 
 Don't want to write YAML by hand? `assert-ai init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config YAML file to use for your evaluations.
-Don't want to write YAML by hand? `assert-ai init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config YAML file to use for your evaluations.
 
-`assert-ai init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
 `assert-ai init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
 
 ```bash

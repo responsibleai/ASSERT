@@ -4,7 +4,6 @@ The canonical command is:
 
 ```bash
 assert-ai
-assert-ai
 ```
 
 Use CLI flows to create, run, inspect, and compare evaluations.
@@ -21,20 +20,17 @@ assert-ai init --model azure/gpt-5.4
 
 ```bash
 assert-ai run --config <path-to-eval_config.yaml>
-assert-ai run --config <path-to-eval_config.yaml>
 ```
 
 1. Inspect results:
 
 ```bash
 assert-ai results status <suite> <run>
-assert-ai results status <suite> <run>
 ```
 
 1. Compare runs:
 
 ```bash
-assert-ai results compare <suite> <run-a> <run-b>
 assert-ai results compare <suite> <run-a> <run-b>
 ```
 
