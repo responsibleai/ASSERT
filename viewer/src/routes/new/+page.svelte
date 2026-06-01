@@ -182,8 +182,8 @@
 				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
 					evaluationTarget = cfg.evaluationTarget;
 				}
-				// Default the test set size to the previous run's example count so a
-				// re-run reproduces the same number of test examples by default.
+				// Default the test set size to the previous run's test set size so a
+				// re-run reproduces the same number of test cases by default.
 				if (typeof cfg.testExampleCount === 'number' && cfg.testExampleCount > 0) {
 					promptTestCasesConfig = { ...promptTestCasesConfig, budget: cfg.testExampleCount };
 				}
@@ -1577,7 +1577,7 @@
 							<span class="min-w-0 break-words text-right font-medium text-text">{summaryTaxonomy}</span>
 						</div>
 						<div class="flex items-baseline justify-between gap-3">
-							<span class="shrink-0 text-text-muted">Test examples</span>
+							<span class="shrink-0 text-text-muted">Test set size</span>
 							<span class="min-w-0 break-words text-right font-medium text-text">{promptTestCasesConfig.budget}</span>
 						</div>
 						<div class="flex items-baseline justify-between gap-3">
