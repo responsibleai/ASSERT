@@ -61,7 +61,7 @@ Ask for the **default model** that ASSERT should use to run the eval pipeline (s
     - "this behavior is not allowed"
 
 ### 5. Test Set Generation
-- Ask how many samples they'd like to generate for single turn prompt seeds or multi-turn scenarios.
+- Ask how many samples they'd like to generate for single turn prompt test cases or multi-turn scenarios.
 
 #### Test Set Dimensions (`stratify.dimensions`)
 - Optionally ask users if they'd like to define variations or dimensions of the dataset they'd like to create datasets for such as:
