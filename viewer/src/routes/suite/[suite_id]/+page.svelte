@@ -122,6 +122,58 @@
 		}
 	}
 
+	// --- Per-seed (test prompt / scenario) editing ---
+	// Each prompt or scenario card can be edited inline. Only the seed's title
+	// and description are mutated; the row is persisted back to test_set.jsonl
+	// via PUT /api/seeds, keyed by its stable test_case_id.
+	let editingSeedId = $state<string | null>(null);
+	let seedSaving = $state(false);
+	let seedSaveError = $state<string | null>(null);
+	let seedDraftTitle = $state('');
+	let seedDraftDescription = $state('');
+
+	function startSeedEdit(seed: { id: string; title: string; description: string }) {
+		seedDraftTitle = seed.title ?? '';
+		seedDraftDescription = seed.description ?? '';
+		seedSaveError = null;
+		editingSeedId = seed.id;
+	}
+
+	function cancelSeedEdit() {
+		editingSeedId = null;
+		seedSaving = false;
+		seedSaveError = null;
+	}
+
+	async function saveSeedEdit() {
+		const testCaseId = editingSeedId;
+		if (seedSaving || !testCaseId) return;
+		seedSaving = true;
+		seedSaveError = null;
+		try {
+			const res = await fetch('/api/seeds', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					suite_id: data.suite_id,
+					test_case_id: testCaseId,
+					title: seedDraftTitle.trim(),
+					description: seedDraftDescription
+				})
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}) as { error?: string });
+				throw new Error(body.error ?? `Save failed (${res.status})`);
+			}
+			await invalidateAll();
+			editingSeedId = null;
+		} catch (err) {
+			seedSaveError = err instanceof Error ? err.message : String(err);
+		} finally {
+			seedSaving = false;
+		}
+	}
+
 	// --- Run evaluation ---
 	// Opens the New evaluation wizard pre-filled for this suite, landing on the
 	// Summary & submit step so the operator can review before submitting.
@@ -349,6 +401,7 @@
 
 	function selectBehavior(name: string) {
 		cancelCategoryEdit();
+		cancelSeedEdit();
 		if (selectedBehavior === name) {
 			selectedBehavior = null;
 			panelTab = 'definition';
@@ -359,11 +412,13 @@
 	}
 
 	function selectPanelTab(tab: 'definition' | 'seeds') {
+		cancelSeedEdit();
 		panelTab = tab;
 	}
 
 	function closeSidePanel() {
 		cancelCategoryEdit();
+		cancelSeedEdit();
 		selectedBehavior = null;
 		panelTab = 'definition';
 	}
@@ -925,8 +980,30 @@
 								<div class="space-y-2">
 									{#each selectedBehaviorPrompts as seed}
 										<div class="rounded-lg border border-border bg-bg p-3">
-											<div class="mb-1 text-sm font-medium text-text">{seed.title}</div>
-											{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{#if editingSeedId === seed.id}
+												{#if seedSaveError}
+													<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{seedSaveError}</div>
+												{/if}
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-title-{seed.id}">Title</label>
+												<input id="seed-title-{seed.id}" class="form-control mb-2 w-full text-sm" bind:value={seedDraftTitle} />
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-desc-{seed.id}">Prompt</label>
+												<textarea id="seed-desc-{seed.id}" class="form-control w-full text-sm leading-relaxed" rows="5" bind:value={seedDraftDescription}></textarea>
+												<div class="mt-2 flex items-center justify-end gap-2">
+													<button class="btn btn-small" onclick={cancelSeedEdit} disabled={seedSaving}>Cancel</button>
+													<button class="btn btn-primary btn-small" onclick={saveSeedEdit} disabled={seedSaving}>{seedSaving ? 'Saving…' : 'Save'}</button>
+												</div>
+											{:else}
+												<div class="mb-1 flex items-start gap-2">
+													<div class="text-sm font-medium text-text">{seed.title}</div>
+													{#if canEdit}
+														<button class="btn btn-small ml-auto shrink-0" onclick={() => startSeedEdit(seed)} style="display:inline-flex; align-items:center; gap:0.35rem;">
+															<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+															Edit
+														</button>
+													{/if}
+												</div>
+												{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{/if}
 										</div>
 									{/each}
 								</div>
@@ -943,8 +1020,30 @@
 								<div class="space-y-2">
 									{#each selectedBehaviorScenarios as seed}
 										<div class="rounded-lg border border-border bg-bg p-3">
-											<div class="mb-1 text-sm font-medium text-text">{seed.title}</div>
-											{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{#if editingSeedId === seed.id}
+												{#if seedSaveError}
+													<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{seedSaveError}</div>
+												{/if}
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-title-{seed.id}">Title</label>
+												<input id="seed-title-{seed.id}" class="form-control mb-2 w-full text-sm" bind:value={seedDraftTitle} />
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-desc-{seed.id}">Prompt</label>
+												<textarea id="seed-desc-{seed.id}" class="form-control w-full text-sm leading-relaxed" rows="5" bind:value={seedDraftDescription}></textarea>
+												<div class="mt-2 flex items-center justify-end gap-2">
+													<button class="btn btn-small" onclick={cancelSeedEdit} disabled={seedSaving}>Cancel</button>
+													<button class="btn btn-primary btn-small" onclick={saveSeedEdit} disabled={seedSaving}>{seedSaving ? 'Saving…' : 'Save'}</button>
+												</div>
+											{:else}
+												<div class="mb-1 flex items-start gap-2">
+													<div class="text-sm font-medium text-text">{seed.title}</div>
+													{#if canEdit}
+														<button class="btn btn-small ml-auto shrink-0" onclick={() => startSeedEdit(seed)} style="display:inline-flex; align-items:center; gap:0.35rem;">
+															<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+															Edit
+														</button>
+													{/if}
+												</div>
+												{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{/if}
 										</div>
 									{/each}
 								</div>
