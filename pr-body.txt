@@ -1,0 +1,15 @@
+Bundle D for public-preview readiness.
+
+**Added**:
+- `.github/ISSUE_TEMPLATE/bug_report.yml` — form-style template with required fields, version-info input, secret-redaction reminder
+- `.github/ISSUE_TEMPLATE/feature_request.yml` — problem / proposed solution / alternatives / context
+- `.github/ISSUE_TEMPLATE/config.yml` — disables blank issues, links to Discussions
+- `.github/PULL_REQUEST_TEMPLATE.md` — summary, motivation, testing, checklist (~30 lines)
+- `CODEOWNERS` — placeholder catch-all (`@responsibleai/assert-maintainers` — needs real team handle from Chang)
+- `README.md` — three badges at the top: CI build status (uses PR #182's `build.yml`), Python versions (3.11/3.12/3.13 matching the actual CI matrix), license. Replaced the prior hardcoded license/python badges in the same `<p align="center">` block.
+
+**Not included** (owned by parallel PRs):
+- `CHANGELOG.md` + README migration callout — see parallel changelog PR
+- PyPI badge — package not yet published; add when available
+
+**Action for Chang post-merge**: replace `@responsibleai/assert-maintainers` in `CODEOWNERS` with the real team handle (or expand to per-path owners).
