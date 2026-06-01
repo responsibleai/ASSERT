@@ -21,7 +21,7 @@
  *     -> writes eval_config.yaml (single-YAML authoring; behavior description
  *        lives inline in behavior.description)
  *
- *   spawnAssertEvalRun(...)
+ *   spawnAssertAiRun(...)
  *     -> spawns `assert-ai run --config <eval_config.yaml>` detached
  *     -> waits for the OS spawn/error event before resolving so a missing
  *        binary surfaces as HTTP 500 (not 200 then a forever-pending monitor)
@@ -677,7 +677,7 @@ function candidateVenvDirs(): string[] {
 	return dirs;
 }
 
-function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
+function resolveAssertAiCommand(configPath: string): ResolvedCommand {
 	const cliArgs = ['run', '--config', configPath];
 	// Module invocation is the reliable form: it works even when the `assert-ai`
 	// console script was never (re)generated for a venv — e.g. after the package
@@ -759,8 +759,8 @@ function commandExistsOnPath(command: string): boolean {
  * Only after we hear back do we resolve — that way a missing `assert-ai`
  * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
-export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveAssertEvalCommand(written.configPath);
+export function spawnAssertAiRun(written: WrittenRun): Promise<SpawnedRun> {
+	const resolved = resolveAssertAiCommand(written.configPath);
 
 	let logFd: number;
 	try {
