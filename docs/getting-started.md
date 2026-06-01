@@ -97,7 +97,7 @@ What the quickstart does:
 | 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
 | 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
 | 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `inference_set.jsonl` |
-| 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
+| 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl`; `metrics.json` (token-usage telemetry) is written by the runner |
 
 ### CLI helper assistant to create your own config
 

@@ -114,11 +114,11 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 
 Read artifacts in this order:
 
-1. `metrics.json`
-2. `scores.jsonl`
-3. `inference_set.jsonl`
-4. Phoenix/OpenInference traces, if configured
-5. `config.yaml`
+1. `scores.jsonl`
+2. `inference_set.jsonl`
+3. Phoenix/OpenInference traces, if configured
+4. `config.yaml`
+5. `metrics.json`
 
 Look for judge evidence, cited turns, tool calls, routing decisions, and trace references.
 

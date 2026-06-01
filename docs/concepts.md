@@ -56,10 +56,11 @@ Output:
 
 `pipeline.judge` scores each output with your dimensions and rubrics.
 
-Outputs:
+Output:
 
 - `scores.jsonl`
-- `metrics.json`
+
+`metrics.json` (pipeline token-usage telemetry) is written by the runner after all stages complete, not by the judge stage itself.
 
 ## Artifacts-first workflow
 

@@ -36,14 +36,14 @@ artifacts/results/<suite>/
 - `config.yaml`: frozen config snapshot used for this run
 - `inference_set.jsonl`: target outputs plus trace references/events
 - `scores.jsonl`: per-case judge verdicts, dimensions, and evidence
-- `metrics.json`: aggregate rates by dimension and category
+- `metrics.json`: pipeline token-usage telemetry (API calls, token counts, cache stats, timing)
 
 ## Fast inspection order
 
-1. `metrics.json`
-2. `scores.jsonl`
-3. `inference_set.jsonl`
-4. `config.yaml`
+1. `scores.jsonl`
+2. `inference_set.jsonl`
+3. `config.yaml`
+4. `metrics.json`
 
 ## Useful CLI commands
 
