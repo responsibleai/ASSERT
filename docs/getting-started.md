@@ -107,7 +107,6 @@ Don't want to write YAML by hand? `assert-ai init` starts a conversational LLM a
 
 ```bash
 assert-ai init --model azure/gpt-5.4
-# or skip the first question:
 assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
 assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
