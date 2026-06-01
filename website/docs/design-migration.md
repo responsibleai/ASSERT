@@ -74,14 +74,14 @@ Canonical references (mirror these surfaces):
 - Primer docs getting started (full three-column layout): https://primer.style/product/getting-started/
 - Any deeper page (for breadcrumb hierarchy): https://primer.style/product/components/action-list/
 
-Acceptance check: open any Agent Shield docs page next to the Primer reference
+Acceptance check: open any product docs page next to the Primer reference
 above. The breadcrumb, sidebar groups/rows, and right TOC should be visually
 indistinguishable in structure, density, and active-state treatment — only the
 content and accent color should differ.
 
 ### Section bar (top)
 - Sits directly under the top nav, sticky
-- One row of primary area tabs (e.g. `Getting started`, `Using Agent Shield`)
+- One row of primary area tabs (e.g. `Getting started`, `Using`)
 - Active tab uses an underline accent in `--accent`, bold weight
 - Inactive tabs use `--fg-muted` and a hover background tint
 - Search trigger lives on the right edge of this row

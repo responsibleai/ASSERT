@@ -2,7 +2,7 @@
 
 Runnable configs and sample agents for ASSERT.
 
-Start with the LangGraph travel planner. It is the customer-preview flagship because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
+Start with the LangGraph travel planner. It is the flagship example because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
 
 > **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) so the judge can score tool use and routing, not just the final response.
 
@@ -17,8 +17,8 @@ Copy-Item .env.example .env
 # Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
 # any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
 ```
 
 ## Create your own config
@@ -27,7 +27,7 @@ Use `assert-ai init` to design an eval config interactively instead of writing Y
 Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
 
 ```powershell
-assert-ai init --model azure/gpt-4o-mini
+assert-ai init --model azure/gpt-5.4-mini
 # or seed from an existing example:
 assert-ai init --model azure/gpt-4o-mini --from examples/travel_planner_langgraph/eval_config.yaml
 ```
@@ -40,7 +40,7 @@ See the [CLI reference](../docs/cli/commands.md#design-a-config-interactively) f
 |---|---|---|
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Flagship. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
 | Evaluate the same agent across multiple frameworks | `travel_planner_neurosan/eval_config.yaml` | Alternative travel-planner using the Neuro-SAN framework. Useful as a side-by-side with the LangGraph flagship. |
-| **See runtime + eval close the loop on a real workflow** | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint AgentShield + ASSERT example. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
+| **See runtime + eval close the loop on a real workflow** | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT example. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
 | Evaluate a change-control governance agent | `change_control_agent/eval_config.yaml` | Generic enterprise change-management pattern with deterministic tool simulation. Covers tool-misuse, doc-fabrication, and sequence-violation failure modes. |
 | Evaluate a multi-agent RAG over Azure docs | `azure_doc_qa/eval_config.yaml` | LangGraph multi-agent system with retrieval. Walks through eval-driven iteration in `IMPROVEMENT_JOURNEY.md`. |
 | Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |

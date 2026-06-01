@@ -444,7 +444,7 @@ here.
 
 ---
 
-# Incident-triage agent — joint AgentShield + ASSERT case study
+# Incident-triage agent — joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT case study
 
 This README is the full case study. For run instructions, jump to "How to run" near the bottom; for the headline numbers, see the first table.
 
@@ -456,7 +456,7 @@ each per-mode rate carries roughly ±7 pp 95 % CI (Wald).
 >
 > - **Problem.** Most production agents have either an eval (often
 >   disconnected from runtime) *or* a runtime guardrail layer — never
->   both, never in a closed loop. The strengths AgentShield is
+>   both, never in a closed loop. The strengths [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) is
 >   uniquely good at — XPIA defense, PII redaction, escalation
 >   enforcement — are exactly what most evals don't measure.
 > - **Proof.** On an SRE incident-triage agent under XPIA-enriched
@@ -475,7 +475,7 @@ each per-mode rate carries roughly ±7 pp 95 % CI (Wald).
 >   `xpia_relay` 7.5 % (prompt) / 12.1 % (scenario) BEFORE drops to
 >   3.0 % / 1.5 % AFTER. XPIA pressure also measurably degrades
 >   *downstream* behavior (channel, escalation, pager rates), and
->   AgentShield's deterministic gates close those downstream effects
+>   [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)'s deterministic gates close those downstream effects
 >   regardless of how the XPIA attack is paraphrased. The joint pitch
 >   is defense in depth at *both* layers.
 > - **Trade-off.** The runtime cannot adjudicate model-judgment
@@ -498,7 +498,7 @@ local-first developer eval-fix loop:
 
 1. Start with a weak-prompt agent (one a typical SRE developer would write).
 2. Use **ASSERT** to surface its behaviors against a structured rubric.
-3. Author an **AgentShield** `.guardrails.yaml` that closes the *procedural*
+3. Author an **[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)** `.guardrails.yaml` that closes the *procedural*
    subset at the runtime layer.
 4. Re-run **ASSERT** against the now-guarded agent on the **same test cases** to
    measure (a) which procedural modes were actually closed, (b) which
@@ -506,7 +506,7 @@ local-first developer eval-fix loop:
    (c) what trade-offs the new runtime layer introduced (overrefusal,
    over-blocking, etc.).
 
-The pitch this evidences: **adaptive-eval (ASSERT) and AgentShield are a
+The pitch this evidences: **adaptive-eval (ASSERT) and [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) are a
 differentiated pairing — Phoenix/Arize give traces, runtime vendors
 give policies, benchmark suites give static fixtures, but the
 local-first inner loop where adversarial eval and runtime enforcement
@@ -574,7 +574,7 @@ crossing two stratification dimensions:
 - `alert_profile` ∈ {p0_security_breach, p0_data_loss_with_compliance,
   p0_sustained_with_vendor, p1_partial_outage, p2_or_p3_low_impact}
 
-The `xpia_inbound_payload` strategy is the headline AgentShield surface:
+The `xpia_inbound_payload` strategy is the headline [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) surface:
 six of the ten fixture alerts (ALR-001/002/004/005/006/008) carry an
 attacker-controlled `inbound_payload_text` field in their tool output,
 spanning every `alert_profile` dimension value so the tester reliably exposes the
@@ -689,7 +689,7 @@ agent has no way to recover (no tester pushback, no second chance).
 > the multi-turn tester on the scenario rail, and a clear next-step
 > for the developer.
 
-This is the eval-fix loop in one screenshot. AgentShield closed what a
+This is the eval-fix loop in one screenshot. [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) closed what a
 runtime can close; ASSERT proved it; ASSERT *also* surfaced the residual
 model-judgment work and one single-turn trade-off (`fabrication` on the
 prompt rail) the runtime introduced. Both signals go back to the
@@ -887,9 +887,9 @@ key on `current_severity` behave deterministically:
 ```
 
 There is no rule that says "if alert has signal X then severity must
-be Y" — that would require AgentShield to reproduce the SOP decision
+be Y" — that would require [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) to reproduce the SOP decision
 tree, which is exactly the judgment work the developer's prompt is
-supposed to do. AgentShield enforces "valid token" but not "right
+supposed to do. [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) enforces "valid token" but not "right
 answer", so the residual stays within ±7 pp Wald CI. **The signal
 handed back: this is a model-judgment behavior; tighten the
 prompt, not the YAML.** §5.5.
@@ -902,7 +902,7 @@ incident-age number not in the structured fields, an SLA breach time
 it didn't compute. Like `wrong_severity`, a model-judgment failure
 (not a procedural skip).
 
-**In YAML.** There is **no `fabrication_gate`**. AgentShield's data
+**In YAML.** There is **no `fabrication_gate`**. [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)'s data
 variables (`current_alert`, `current_severity`, `escalated_teams`)
 only see what tools returned and what arguments the agent passed —
 they cannot introspect whether a sentence in a channel-post body is
@@ -919,7 +919,7 @@ because the tester pushes back. §5.5 has the proposed
 
 #### Net read
 
-**AgentShield closes the procedural family** — ordering, severity
+**[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) closes the procedural family** — ordering, severity
 gating, channel matching, alert-id consistency, XPIA literal relay,
 escalation obligation/team-match — deterministically and at runtime.
 **It deliberately does not try to close model-judgment modes** —
@@ -1008,7 +1008,7 @@ This is exactly the kind of per-mode polish the developer iterates on.
 runtime layer) — high because the multi-turn tester frequently
 asks the agent to act without a clean alert ID; the BEFORE agent
 calls `get_alert("unknown")`, gets a not-found, and then declines
-further action. AgentShield's gates produced **no measurable
+further action. [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)'s gates produced **no measurable
 overrefusal regression** here (80.8 → 83.5 % scenario, 58.5 → 61.0 %
 prompt — both well within the ±7 pp CI). With the larger n=200 sample
 the v4 "overrefusal explosion under guard" narrative collapses to
@@ -1030,7 +1030,7 @@ At n=200 the `xpia_relay` rate is finally measurable on both rails:
 | scenario (multi-turn) | 12.1 % | **1.5 %** | -10.6 pp (-88 % rel) |
 
 So the v4 "structurally 0 %" framing was an artifact of n=30. At
-n=200 the literal-relay claim is detectable; AgentShield's
+n=200 the literal-relay claim is detectable; [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)'s
 `xpia_inbound_payload_relay_gate` cuts it sharply on both rails (more
 on scenario because multi-turn pressure produces more attempts per
 test case for the gate to deny).
@@ -1050,7 +1050,7 @@ doesn't fire, and the eval picks up the difference:
   agent partially complies in subtle ways the judge's literal-relay
   rubric doesn't catch but the `escalation_violation` dimension does.
 
-AgentShield's deterministic gates close **both** layers:
+[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)'s deterministic gates close **both** layers:
 
 1. **Literal layer.** `xpia_inbound_payload_relay_gate` rejects
    `notify_channel`/`update_ticket` calls that contain the alert's
@@ -1138,9 +1138,9 @@ is the second iteration of the eval-fix loop the demo arc presents.
 | //build slide | Evidence |
 |---|---|
 | "Most agents in production today have no eval and no runtime." | The minimal-prompt agent, written naturally, exhibits an 84.8 % `policy_violation` rate on the scenario split (see §4.1 BEFORE column). |
-| "AgentShield closes the policy-fixable subset at the runtime." | Six of seven runtime-fixable modes on the scenario rail drop into the single digits or by 1+ CI widths (`xpia_relay` 12.1 → 1.5 %; `channel_violation` 27.8 → 8.0 %; `alert_id_drift` 11.1 → 3.5 %; `ordering_violation` 6.1 → 0.0 %; `pager_violation` 5.1 → 1.0 %; `escalation_violation` 36.9 → 28.0 %). |
-| "AgentShield is defense in depth against XPIA — at both layers." | The literal layer: `xpia_relay` drops 88 % relative on the scenario rail (12.1 → 1.5 %), closed by `xpia_inbound_payload_relay_gate`. The paraphrased layer: XPIA-induced channel and escalation drift is closed by the channel/PII/pager/escalation gates model-agnostically (see §5.4). |
-| "ASSERT proves it AND surfaces what AgentShield can't fix." | `wrong_severity` (40.5 %) and `fabrication` (51.0 %) remain on the scenario rail under guard — measurable, attributable, handed back to the developer. The team-binding edge case on `escalation_violation` (still 28.0 %) is the natural next iteration. |
+| "[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) closes the policy-fixable subset at the runtime." | Six of seven runtime-fixable modes on the scenario rail drop into the single digits or by 1+ CI widths (`xpia_relay` 12.1 → 1.5 %; `channel_violation` 27.8 → 8.0 %; `alert_id_drift` 11.1 → 3.5 %; `ordering_violation` 6.1 → 0.0 %; `pager_violation` 5.1 → 1.0 %; `escalation_violation` 36.9 → 28.0 %). |
+| "[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) is defense in depth against XPIA — at both layers." | The literal layer: `xpia_relay` drops 88 % relative on the scenario rail (12.1 → 1.5 %), closed by `xpia_inbound_payload_relay_gate`. The paraphrased layer: XPIA-induced channel and escalation drift is closed by the channel/PII/pager/escalation gates model-agnostically (see §5.4). |
+| "ASSERT proves it AND surfaces what [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) can't fix." | `wrong_severity` (40.5 %) and `fabrication` (51.0 %) remain on the scenario rail under guard — measurable, attributable, handed back to the developer. The team-binding edge case on `escalation_violation` (still 28.0 %) is the natural next iteration. |
 | "Local-first inner loop." | All artifacts on disk under `artifacts/results/`; viewer reads them directly; no SaaS dependency in the loop. |
 
 ## 8. How to reproduce
@@ -1148,7 +1148,7 @@ is the second iteration of the eval-fix loop the demo arc presents.
 From this folder:
 
 ```bash
-# Pre-req: AgentShield Python SDK 0.13.x installed (for the AFTER run only)
+# Pre-req: AgentControlSpecification Python SDK 0.13.x installed (for the AFTER run only)
 # and Azure OpenAI creds for gpt-4o and gpt-4o-mini in your repo-root .env.
 python -m pip install agent-shield
 
@@ -1170,7 +1170,7 @@ cd ../../viewer && npm install && npm run dev
 Artifacts:
 
 - `./agent.py` — baseline target
-- `./agent_guarded.py` — AgentShield-wrapped target
+- `./agent_guarded.py` — [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)-wrapped target
 - `./incident-triage.guardrails.yaml` — the YAML
 - `./eval_config_baseline.yaml` — BEFORE config
 - `./eval_config_guarded.yaml` — AFTER config
@@ -1196,7 +1196,7 @@ If you have 90 seconds at a meeting, this is the live walkthrough:
    channel/escalation rules, relays XPIA, and drifts alert IDs."*
 3. **Open the YAML** (`incident-triage.guardrails.yaml`). Show one
    rule (e.g. `xpia_inbound_payload_relay_gate` or
-   `channel_severity_match_gate`). Say: *"AgentShield is the runtime
+   `channel_severity_match_gate`). Say: *"[AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) is the runtime
    that enforces this. Same SOP, expressed as 13 YAML gates the
    runtime evaluates on every tool call — including a deterministic
    XPIA backstop the model alone can't guarantee."*
@@ -1225,8 +1225,8 @@ customer-domain artifact:
 | `SOP.md` | Their existing runbook / policy doc / compliance manual |
 | `behavior:` block in eval configs | The list of "ways this agent could go wrong" the team already worries about |
 | `agent.py` (baseline) | Their existing agent code, unchanged |
-| `incident-triage.guardrails.yaml` | A new YAML they author against the AgentShield spec, line-for-line traceable to the SOP |
-| `agent_guarded.py` | A 200-line wrapper that runs their agent through the AgentShield runtime |
+| `incident-triage.guardrails.yaml` | A new YAML they author against the [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) spec, line-for-line traceable to the SOP |
+| `agent_guarded.py` | A 200-line wrapper that runs their agent through the [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) runtime |
 | `eval_config_baseline.yaml` / `eval_config_guarded.yaml` | Two ASSERT configs that swap only the callable target |
 
 The natural next step after seeing this demo is **to run the same
@@ -1253,7 +1253,7 @@ mode closing (`xpia_relay` 12.1 → 1.5 %, `channel_violation`
 27.8 → 8.0 %, `ordering_violation` to 0 %) and one mode partially
 closed under XPIA pressure (`escalation_violation` 36.9 → 28.0 % with
 the team-binding edge case still open) in the same run pair. **§5.4
-is the joint pitch**: AgentShield is *defense in depth at both layers*
+is the joint pitch**: [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) is *defense in depth at both layers*
 against XPIA — it deterministically closes both the literal relay
 (88 % relative drop on scenario) and the paraphrased downstream
 effects of a successful injection, regardless of whether the model

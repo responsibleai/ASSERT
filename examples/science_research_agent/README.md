@@ -51,6 +51,7 @@ cp examples/science_research_agent/.env.example examples/science_research_agent/
 # Edit the .env: AZURE_API_KEY, AZURE_API_BASE, and TAVILY_API_KEY are required.
 
 assert-ai run --config examples/science_research_agent/eval_config.yaml
+assert-ai run --config examples/science_research_agent/eval_config.yaml
 ```
 
 Required env vars (in `examples/science_research_agent/.env`):
@@ -94,5 +95,5 @@ evidence the agent retrieved.
 - `fetch_url` performs a real HTTP GET — only fetch URLs you trust.
 - Web and fetch responses are cached in
   `examples/science_research_agent/.tool_cache.json` to keep reruns cheap and
-  deterministic. Set `ASSERT_AI_REAL_TOOLS_NOCACHE=1` to bypass the cache and hit the
+  deterministic. Set `ASSERT_AI_REAL_TOOLS_NOCACH=1` to bypass the cache and hit the
   network on every call.
