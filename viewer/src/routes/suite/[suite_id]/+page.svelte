@@ -24,7 +24,7 @@
 	let selectedBehavior = $state<string | null>(null);
 	let behaviorSearch = $state('');
 	let behaviorSort = $state<'permissible' | 'not_permissible'>('permissible');
-	let panelTab = $state<'definition' | 'seeds' | 'evaluations'>('definition');
+	let panelTab = $state<'definition' | 'seeds'>('definition');
 	let selectedCompareRuns = $state<Set<string>>(new Set());
 	let expandedRunIds = $state<Set<string>>(new Set());
 	let behaviorEvalSamples = $state<BehaviorEvalEntry[]>([]);
@@ -52,50 +52,45 @@
 		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
-	// --- Taxonomy editing ---
-	let editing = $state(false);
-	let saving = $state(false);
-	let saveError = $state<string | null>(null);
-	let draftConceptDef = $state('');
-	let draftSystematization = $state('');
-	let draftCategories = $state<Record<string, { definition: string; permissible: boolean }>>({});
+	// --- Per-category taxonomy editing ---
+	// Each behavior category is edited inline from its own side panel; there is
+	// no global edit mode. Only the selected category's definition and
+	// permissible flag are mutated, leaving examples/metadata/order untouched.
+	let editingCategory = $state<string | null>(null);
+	let catSaving = $state(false);
+	let catSaveError = $state<string | null>(null);
+	let catDraftDef = $state('');
+	let catDraftPermissible = $state(false);
 
-	function startEditing() {
-		if (activeStage !== 'taxonomy') setActiveStage('taxonomy');
-		draftConceptDef = conceptDef;
-		draftSystematization = systematizationText;
-		const map: Record<string, { definition: string; permissible: boolean }> = {};
-		for (const cat of sortedBehaviors) {
-			map[cat.name] = { definition: cat.definition ?? '', permissible: cat.permissible ?? false };
-		}
-		draftCategories = map;
-		saveError = null;
-		editing = true;
+	function startCategoryEdit() {
+		if (!selectedBehaviorData) return;
+		catDraftDef = selectedBehaviorData.definition ?? '';
+		catDraftPermissible = Boolean(selectedBehaviorData.permissible);
+		catSaveError = null;
+		editingCategory = selectedBehaviorData.name;
 	}
 
-	function cancelEditing() {
-		editing = false;
-		saving = false;
-		saveError = null;
+	function cancelCategoryEdit() {
+		editingCategory = null;
+		catSaving = false;
+		catSaveError = null;
 	}
 
-	async function saveEdits() {
-		if (saving) return;
-		saving = true;
-		saveError = null;
+	async function saveCategoryEdit() {
+		const categoryName = editingCategory;
+		if (catSaving || !categoryName) return;
+		catSaving = true;
+		catSaveError = null;
 		try {
-			// Deep-clone the full taxonomy and mutate only the edited fields so
+			// Deep-clone the full taxonomy and mutate only the edited category so
 			// examples, metadata, and node order are preserved exactly.
 			const taxonomy = JSON.parse(JSON.stringify(data.taxonomy ?? {}));
-			const concept = taxonomy.behavior ?? taxonomy.risk;
-			if (concept) concept.definition = draftConceptDef;
-			for (const cat of taxonomy.behavior_categories ?? []) {
-				const draft = draftCategories[cat.name];
-				if (draft) {
-					cat.definition = draft.definition;
-					cat.permissible = draft.permissible;
-				}
-			}
+			const target = (taxonomy.behavior_categories ?? []).find(
+				(cat: { name?: string }) => cat.name === categoryName
+			);
+			if (!target) throw new Error('Category not found in taxonomy.');
+			target.definition = catDraftDef;
+			target.permissible = catDraftPermissible;
 			const res = await fetch('/api/taxonomy', {
 				method: 'PUT',
 				headers: { 'content-type': 'application/json' },
@@ -105,26 +100,13 @@
 				const body = await res.json().catch(() => ({}) as { error?: string });
 				throw new Error(body.error ?? `Save failed (${res.status})`);
 			}
-
-			// Persist the free-text systematization (structure preserved server-side).
-			if (hasSystematization && draftSystematization !== systematizationText) {
-				const sres = await fetch('/api/systematization', {
-					method: 'PUT',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ suite_id: data.suite_id, systematization: draftSystematization })
-				});
-				if (!sres.ok) {
-					const body = await sres.json().catch(() => ({}) as { error?: string });
-					throw new Error(body.error ?? `Systematization save failed (${sres.status})`);
-				}
-			}
-
 			await invalidateAll();
-			editing = false;
+			// Keep the panel open on the same category; just exit edit mode.
+			editingCategory = null;
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : String(err);
+			catSaveError = err instanceof Error ? err.message : String(err);
 		} finally {
-			saving = false;
+			catSaving = false;
 		}
 	}
 
@@ -174,8 +156,8 @@
 	let canEdit = $derived(Boolean(data.editEnabled));
 	let canCompare = $derived(selectedCompareRuns.size >= 2);
 	const MAX_COMPARE_RUNS = 3;
-	const panelTabs = ['definition', 'seeds', 'evaluations'] as const;
-	const BEHAVIOR_TABLE_COLUMNS = 'minmax(0,1fr) 140px 92px 92px 92px 24px';
+	const panelTabs = ['definition', 'seeds'] as const;
+	const BEHAVIOR_TABLE_COLUMNS = 'minmax(0,1fr) 140px 92px 92px 24px';
 	const BEHAVIOR_SORT_OPTIONS = [
 		{ value: 'permissible', label: 'Permissible' },
 		{ value: 'not_permissible', label: 'Not Permissible' }
@@ -346,13 +328,8 @@
 		behaviorEvalLoadedFor = behavior;
 	}
 
-	$effect(() => {
-		if (heavyData && selectedBehavior && behaviorEvalLoadedFor !== selectedBehavior) {
-			loadBehaviorEvalResults(selectedBehavior);
-		}
-	});
-
 	function selectBehavior(name: string) {
+		cancelCategoryEdit();
 		if (selectedBehavior === name) {
 			selectedBehavior = null;
 			panelTab = 'definition';
@@ -360,20 +337,16 @@
 		}
 		selectedBehavior = name;
 		panelTab = 'definition';
-		loadBehaviorEvalResults(name);
 	}
 
-	function selectPanelTab(tab: 'definition' | 'seeds' | 'evaluations') {
+	function selectPanelTab(tab: 'definition' | 'seeds') {
 		panelTab = tab;
-		if (tab === 'evaluations' && selectedBehavior) loadBehaviorEvalResults(selectedBehavior);
 	}
 
 	function closeSidePanel() {
+		cancelCategoryEdit();
 		selectedBehavior = null;
 		panelTab = 'definition';
-		behaviorEvalSamples = [];
-		behaviorEvalError = null;
-		behaviorEvalLoadedFor = null;
 	}
 
 	function sampleComplianceStatus(sample: JudgedSample): 'flagged' | 'compliant' | 'error' | 'pending' {
@@ -461,9 +434,11 @@
 				<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
 					{promptSeedItems.length + scenarioSeedItems.length} evaluation test sets
 				</span>
-				<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
-					{allRuns.length} evaluation results
-				</span>
+				{#if activeStage === 'results'}
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
+						{allRuns.length} evaluation results
+					</span>
+				{/if}
 			</div>
 		</div>
 		{#if promptSeedItems.length + scenarioSeedItems.length > 0}
@@ -708,60 +683,26 @@
 <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
 	<div class="min-w-0">
 		<h2 class="text-lg font-semibold text-text">Taxonomy &amp; policy</h2>
-		<p class="mt-1 text-sm text-text-muted">Inspect and edit the systematization and behavior categories, then run an evaluation.</p>
+		<p class="mt-1 text-sm text-text-muted">Inspect and edit the behavior categories, then run an evaluation.</p>
 	</div>
 	<div class="flex shrink-0 items-center gap-2">
-		{#if editing}
-			<button class="btn btn-small" onclick={cancelEditing} disabled={saving}>Cancel</button>
-			<button class="btn btn-primary btn-small" onclick={saveEdits} disabled={saving}>
-				{saving ? 'Saving…' : 'Save changes'}
-			</button>
-		{:else}
-			{#if canEdit && sortedBehaviors.length > 0}
-				<button class="btn btn-small" onclick={startEditing}>
-					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-					Edit taxonomy
-				</button>
-			{/if}
-			<a
-				class="btn btn-primary btn-small no-underline"
-				href="/new?suite={encodeURIComponent(data.suite_id)}"
-				style="display:inline-flex; align-items:center; gap:0.4rem;"
-			>
-				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-5.197-3.027A1 1 0 008 9.027v5.946a1 1 0 001.555.832l5.197-3.027a1 1 0 000-1.638z"/></svg>
-				Run evaluation
-			</a>
-		{/if}
+		<a
+			class="btn btn-primary btn-small no-underline"
+			href="/new?suite={encodeURIComponent(data.suite_id)}"
+			style="display:inline-flex; align-items:center; gap:0.4rem;"
+		>
+			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-5.197-3.027A1 1 0 008 9.027v5.946a1 1 0 001.555.832l5.197-3.027a1 1 0 000-1.638z"/></svg>
+			Run evaluation
+		</a>
 	</div>
 </div>
-
-{#if saveError}
-	<div class="mb-4 rounded-lg border border-score-fail/40 bg-score-fail/10 px-4 py-2.5 text-sm text-score-fail">{saveError}</div>
-{/if}
-
-{#if editing}
-	<div class="mb-5 space-y-4 rounded-lg border border-interactive/30 bg-surface p-4">
-		<div>
-			<label class="mb-1 block text-xs font-medium text-text" for="edit-concept-def">Behavior description</label>
-			<textarea id="edit-concept-def" class="form-control w-full" rows="3" bind:value={draftConceptDef}></textarea>
-		</div>
-		{#if hasSystematization}
-			<div>
-				<label class="mb-1 block text-xs font-medium text-text" for="edit-systematization">Systematization</label>
-				<textarea id="edit-systematization" class="form-control w-full font-mono text-xs leading-relaxed" rows="8" bind:value={draftSystematization}></textarea>
-				<p class="mt-1 text-xs text-text-muted">Operational map used to generate behavior categories. Pattern summaries and metadata are preserved.</p>
-			</div>
-		{/if}
-		<p class="text-xs text-text-muted">Edit each category's definition and permissible flag from its panel below. Categories can't be added, removed, or reordered.</p>
-	</div>
-{/if}
 
 <div class="mb-4 border-b border-border pb-2">
 	<div class="flex items-center gap-3">
 		<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Behavior categories</h2>
 		<span class="shrink-0 text-xs text-text-muted">{visibleBehaviors.length} of {sortedBehaviors.length} categories</span>
 	</div>
-	<p class="mt-1 text-sm leading-5 text-text-muted">Browse behavior categories systematized for {conceptName}. Click to view definitions, test scenarios, and results.</p>
+	<p class="mt-1 text-sm leading-5 text-text-muted">Browse and edit behavior categories systematized for {conceptName}. Select a category to view or edit its definition and policy status.</p>
 </div>
 
 <div class="flex gap-5">
@@ -805,7 +746,6 @@
 					</span>
 					<span class="text-left text-xs font-medium text-text-muted">Prompts</span>
 					<span class="text-left text-xs font-medium text-text-muted">Scenarios</span>
-					<span class="text-left text-xs font-medium text-text-muted">Evaluations</span>
 					<span aria-hidden="true"></span>
 				</div>
 				{#if visibleBehaviors.length === 0}
@@ -830,13 +770,6 @@
 						</div>
 						<span class="text-left text-xs text-text-muted">{pCount}</span>
 						<span class="text-left text-xs text-text-muted">{sCount}</span>
-						<span class="text-left text-xs text-text-muted">
-							{#if showSkeleton}
-								<span class="inline-block h-3 w-6 animate-pulse rounded bg-surface-2 align-middle"></span>
-							{:else if heavyData}
-								{evalCountsByBehavior.get(behavior.name) ?? 0}
-							{/if}
-						</span>
 						<span class="flex justify-end text-text-muted">
 							<svg class="h-4 w-4 transition-transform {selectedBehavior === behavior.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
 						</span>
@@ -869,7 +802,7 @@
 							class="border-b-2 px-3 py-2 text-xs font-medium transition-colors {panelTab === tab ? 'border-interactive text-text' : 'border-transparent text-text-muted hover:border-border hover:text-text-secondary'}"
 							onclick={() => selectPanelTab(tab)}
 						>
-							{tab === 'definition' ? 'Definition' : tab === 'seeds' ? `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}` : `Evaluations${behaviorEvalSamples.length > 0 ? ` ${behaviorEvalSamples.length}` : ''}`}
+							{tab === 'definition' ? 'Definition' : `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}`}
 						</button>
 					{/each}
 				</div>
@@ -879,16 +812,34 @@
 				{#if panelTab === 'definition'}
 					<div class="space-y-5">
 						<div>
-							<h4 class="mb-2 text-xs font-medium text-text">Definition</h4>
-							{#if editing && selectedBehavior && draftCategories[selectedBehavior]}
+							<div class="mb-2 flex items-center justify-between gap-2">
+								<h4 class="text-xs font-medium text-text">Definition</h4>
+								{#if canEdit}
+									{#if editingCategory === selectedBehavior}
+										<div class="flex shrink-0 items-center gap-2">
+											<button class="btn btn-small" onclick={cancelCategoryEdit} disabled={catSaving}>Cancel</button>
+											<button class="btn btn-primary btn-small" onclick={saveCategoryEdit} disabled={catSaving}>{catSaving ? 'Saving…' : 'Save'}</button>
+										</div>
+									{:else}
+										<button class="btn btn-small shrink-0" onclick={startCategoryEdit} style="display:inline-flex; align-items:center; gap:0.35rem;">
+											<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+											Edit
+										</button>
+									{/if}
+								{/if}
+							</div>
+							{#if editingCategory === selectedBehavior}
+								{#if catSaveError}
+									<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{catSaveError}</div>
+								{/if}
 								<textarea
 									class="form-control w-full text-sm leading-relaxed"
 									rows="6"
 									aria-label="Behavior category definition"
-									bind:value={draftCategories[selectedBehavior].definition}
+									bind:value={catDraftDef}
 								></textarea>
 								<label class="mt-3 flex items-center gap-2 text-sm text-text-secondary">
-									<input type="checkbox" bind:checked={draftCategories[selectedBehavior].permissible} />
+									<input type="checkbox" bind:checked={catDraftPermissible} />
 									Permissible (target may engage without a policy violation)
 								</label>
 							{:else}
