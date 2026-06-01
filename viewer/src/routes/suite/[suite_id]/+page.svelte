@@ -66,9 +66,25 @@
 	let requiredBaseMetrics = $derived(
 		getRequiredBaseMetricNames((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)
 	);
-	let metricNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
+	// Union of (a) globally-declared dim defs and (b) dim names actually present in run metrics.
+	// (b) covers custom per-suite dims declared inline in eval.yaml judge.dimensions which never
+	// reach loadDimensions() (that only reads BUILT_IN_DIMENSIONS + the global
+	// examples/eval-definitions/judge_dimensions.yaml file). Mirrors the compare view's
+	// loadComparePageData which derives data.allMetrics from Object.keys(summary.dimensions).
+	let allDimNames = $derived.by(() => {
+		const names = new Set<string>();
+		for (const name of Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)) {
+			names.add(name);
+		}
+		for (const r of allRuns) {
+			for (const name of Object.keys(r.prompt?.metrics?.dimensions ?? {})) names.add(name);
+			for (const name of Object.keys(r.audit?.metrics?.dimensions ?? {})) names.add(name);
+		}
+		return Array.from(names);
+	});
+	let metricNames = $derived(allDimNames);
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
-	let dimNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
+	let dimNames = $derived(allDimNames);
 	function dimColumnLabel(name: string): string {
 		const spaced = name.replace(/_/g, ' ');
 		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
