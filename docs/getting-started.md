@@ -1,0 +1,120 @@
+# Getting Started
+
+This guide covers installation and your first end-to-end evaluation run.
+
+## Prerequisites
+
+- Python 3.11+
+- pip
+- Model credentials in environment variables (for example `AZURE_API_KEY` and `AZURE_API_BASE` for Azure OpenAI)
+
+## Install with a quickstart example: LangGraph travel planner
+
+The flagship example evaluates a multi-tool LangGraph travel planner. The target is reached through `target.callable` — the same integration boundary you would use for any agent or multi-agent system — and Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge can cite tool calls and routing decisions. This is the recommended integration shape for any non-trivial agent.
+
+### Recommended install path
+
+Bash:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel,langgraph]"
+cp .env.example .env
+```
+
+Edit `.env` with credentials for your provider. Defaults match the example's `azure/...` model. Any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, and others) works.
+
+PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel,langgraph]"
+Copy-Item .env.example .env
+```
+
+### Run your first evaluation
+
+Optional: run Phoenix locally if you want to browse traces.
+
+```bash
+phoenix serve
+```
+
+Run the flagship quick start example:
+
+```bash
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+```
+
+Check run status:
+
+```powershell
+assert-eval results status travel-planner-langgraph-v1 demo-1
+```
+
+Artifacts are written under:
+
+```text
+artifacts/results/travel-planner-langgraph-v1/demo-1/
+```
+
+### Codespaces / VS Code Dev Containers
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
+
+The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-eval run` command.
+
+Windows PowerShell equivalent:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel,langgraph]"
+Copy-Item .env.example .env
+
+phoenix serve
+assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-eval results status travel-planner-langgraph-v1 demo-1
+```
+
+## What just happened
+
+1. `systematize` expanded the behavior spec into behavior categories.
+2. `test_set` generated prompt and scenario test cases.
+3. `inference` executed the target for each case.
+4. `judge` produced verdicts, evidence, and aggregate metrics.
+
+What the quickstart does:
+
+| Step | Developer behavior | Current YAML / artifact |
+|---|---|---|
+| 1 | **Eval spec**: plain-English behavior requirements | `behavior.name` and `behavior.description` live inline in `eval_config.yaml` |
+| 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
+| 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
+| 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `inference_set.jsonl` |
+| 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
+
+### CLI helper assistant to create your own config
+
+Don't want to write YAML by hand? `assert-eval init` starts a conversational LLM assistant that asks about your agent, eval goals, and constraints, then proposes a complete config YAML file to use for your evaluations.
+
+`assert-eval init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
+
+```bash
+assert-eval init --model azure/gpt-5.4
+# or skip the first question:
+assert-eval init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+# or edit/extend an existing config:
+assert-eval init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+```
+
+See [`docs/cli/commands.md`](docs/cli/commands.md) for the full option reference.
+
+- To learn the config format, see `docs/config/overview.md`.
+- To inspect outputs in detail, see `docs/guides/results.md`.
+- To use the local web viewer, see `docs/guides/local-viewer.md`.
