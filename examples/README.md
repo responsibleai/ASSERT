@@ -40,6 +40,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 |---|---|---|
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Flagship. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
 | **See runtime + eval close the loop on a real workflow** | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint AgentShield + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md) and [`docs/case-study-incident-triage-joint.md`](../docs/case-study-incident-triage-joint.md). |
+| **Compare an unguarded agent against an ACS-guarded variant** | `bank_manager_agent_shield/eval_unguarded_v2.yaml` + `eval_guarded_acs.yaml` | Self-contained ASSERT example that compares an unguarded LangGraph bank-manager agent against the same agent guarded by [Agent Control Specification (ACS)](https://github.com/responsibleai/AgentControlSpecification) on a 100-case eval suite. Ships frozen results so the viewer renders the comparison without re-running the suite. Headline: ACS cuts safety failures from 39% → 9% with no helpfulness cost. See [`bank_manager_agent_shield/README.md`](bank_manager_agent_shield/README.md). |
 | Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |
 | Run a simple hosted-model eval | `pipes/health_assistant.yaml` | Good smoke test for a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `pipes/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
@@ -51,6 +52,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
+├── bank_manager_agent_shield/  ACS-vs-unguarded comparison demo with frozen n=100 results
 ├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── pipes/                      simple hosted-model and Prompt Agent configs
