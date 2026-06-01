@@ -888,6 +888,13 @@ h3 {
   padding: 120px 48px 96px;
 }
 
+.product-subsection#partners {
+  border-top: 1px solid var(--borderColor-default);
+  margin-left: -48px;
+  margin-right: -48px;
+  padding: 120px 48px 48px;
+}
+
 /* Collapse the gap between the framework-agnostic logo strip and
    the "How it works" subsection. Internal breathing room above the
    "How it works" title is provided by .hiw-left's padding-top. */
@@ -4291,4 +4298,185 @@ h3 {
   .docs-lede { font-size: 16px; }
   .docs-index-list { grid-template-columns: 1fr; }
   .brand-sep, .brand-context { display: none; }
+}
+
+/* ============================================================
+ * Partner quotes (Trusted by AI framework partners) — marquee
+ * ============================================================ */
+.quotes-section {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 24px 0;
+}
+.quotes-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto 8px;
+}
+.quotes-lede {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #8b949e;
+  margin: 0;
+}
+
+/* Stack of two opposing-direction marquee rows */
+.quotes-marquee-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  /* Bleed slightly past the section padding for a wider scroll feel */
+  margin-left: -48px;
+  margin-right: -48px;
+  /* Edge fade so cards appear/disappear softly */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 80px,
+    #000 calc(100% - 80px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 80px,
+    #000 calc(100% - 80px),
+    transparent 100%
+  );
+}
+.quotes-marquee {
+  overflow: hidden;
+  width: 100%;
+}
+.quotes-marquee-track {
+  display: flex;
+  gap: 36px;
+  width: max-content;
+  animation: quotes-scroll 60s linear infinite;
+  will-change: transform;
+}
+.quotes-marquee[data-reverse="true"] .quotes-marquee-track {
+  animation-direction: reverse;
+}
+.quotes-marquee:hover .quotes-marquee-track {
+  animation-play-state: paused;
+}
+@keyframes quotes-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .quotes-marquee-track { animation: none; }
+}
+
+.quote-card {
+  flex: 0 0 380px;
+  width: 380px;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  background: rgba(22, 27, 34, 0.5);
+  transition: border-color 200ms ease, background-color 200ms ease, transform 200ms ease;
+}
+.quote-card:hover {
+  border-color: rgba(175, 134, 245, 0.45);
+  background: rgba(22, 27, 34, 0.85);
+}
+.quote-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.quote-card-logo {
+  height: 22px;
+  width: auto;
+  max-width: 120px;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+/* LiteLLM and Arize logos have black text — invert for readability on dark cards.
+   `hue-rotate(180deg)` after invert preserves colored marks (LiteLLM emoji,
+   Arize pink "A") while flipping the black text to white. */
+.quote-card-logo--litellm,
+.quote-card-logo--arize {
+  filter: invert(1) hue-rotate(180deg);
+}
+.quote-card-logo-fallback {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  flex-shrink: 0;
+  opacity: 0.9;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.quote-card-logo-fallback-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+.quote-card-logo-fallback--litellm {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.quote-card-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+.quote-card-brand {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.quote-card-tag {
+  font-size: 11px;
+  color: #8b949e;
+  margin-top: 2px;
+}
+.quote-card-body {
+  margin: 0 0 14px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #8b949e;
+  /* Clamp very long quotes so card heights stay even in the marquee */
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quote-card-author {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8b949e;
+  border-top: 1px solid #21262d;
+  padding-top: 12px;
+}
+.quote-card-author-name {
+  color: #e6edf3;
+  font-weight: 500;
+}
+.quote-card-author-role {
+  margin-top: 2px;
+  color: #8b949e;
+}
+
+@media (max-width: 700px) {
+  .quotes-marquee-stack { margin-left: -16px; margin-right: -16px; }
+  .quote-card { flex: 0 0 300px; width: 300px; padding: 16px; }
 }

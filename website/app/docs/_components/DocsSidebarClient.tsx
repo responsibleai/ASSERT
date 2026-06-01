@@ -59,27 +59,26 @@ export default function DocsSidebar({
 					/>
 				</div>
 
-				<div className="docs-sidebar-group">
-					<ul className="docs-sidebar-list">
-						<li>
-							<Link
-								href="/docs"
-								className={`docs-sidebar-link${
-									activeHref === "/docs" ? " is-active" : ""
-								}`}
-							>
-								Overview
-							</Link>
-						</li>
-					</ul>
-				</div>
-
 				{filtered.map((group, gi) => (
 					<div key={group.group ?? `g-${gi}`} className="docs-sidebar-group">
 						{group.group && (
 							<div className="docs-sidebar-group-title">{group.group}</div>
 						)}
 						<ul className="docs-sidebar-list">
+							{/* Place Overview at the top of the first untitled group so it
+							    shares the same row rhythm as the other top-level items. */}
+							{gi === 0 && !group.group && !query.trim() && (
+								<li>
+									<Link
+										href="/docs"
+										className={`docs-sidebar-link${
+											activeHref === "/docs" ? " is-active" : ""
+										}`}
+									>
+										Overview
+									</Link>
+								</li>
+							)}
 							{group.items.map((item) => (
 								<li key={item.href}>
 									<Link
