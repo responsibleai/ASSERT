@@ -7,6 +7,13 @@
   interface DropdownOption {
     value: string;
     label: string;
+    // When true, the option is rendered with reduced opacity and an optional
+    // inline `secondaryLabel` hint. Click handlers still fire so callers can
+    // implement swap-style behavior (discoverability over prevention).
+    disabled?: boolean;
+    // Optional muted, smaller-font hint shown next to the main label. Useful
+    // for explaining why an option is in a disabled visual state.
+    secondaryLabel?: string;
   }
 
   interface Props {
@@ -144,16 +151,16 @@
       tabindex={-1}
     >
       {#each options as option, idx}
-        <li class="ActionList-item" role="option" aria-selected={selected === option.value}>
+        <li class="ActionList-item" role="option" aria-selected={selected === option.value} aria-disabled={option.disabled || undefined}>
           <button
             type="button"
-            class="ActionList-content w-full text-left {selected === option.value ? 'ActionList-content--selected' : ''} {highlightedIndex === idx ? 'ActionList-content--highlighted' : ''}"
+            class="ActionList-content w-full text-left {selected === option.value ? 'ActionList-content--selected' : ''} {highlightedIndex === idx ? 'ActionList-content--highlighted' : ''} {option.disabled ? 'ActionList-content--disabled' : ''}"
             onclick={() => handleSelect(option.value)}
             onmouseenter={() => (highlightedIndex = idx)}
             onmouseleave={() => (highlightedIndex = -1)}
           >
             <span class="ActionList-content-text">
-              {option.label}
+              {option.label}{#if option.secondaryLabel}<span class="ActionList-content-secondary">{option.secondaryLabel}</span>{/if}
             </span>
           </button>
         </li>
@@ -295,6 +302,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  :global(.ActionList-content--disabled) {
+    opacity: 0.5;
+  }
+
+  :global(.ActionList-content-secondary) {
+    margin-left: 0.5rem;
+    color: var(--fgColor-muted, #59636e);
+    font-size: 0.75rem;
+    font-weight: 400;
   }
 
   :global(html[data-color-mode="dark"] .ActionMenu-button) {
