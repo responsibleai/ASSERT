@@ -15,10 +15,20 @@ import { json } from '@sveltejs/kit';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { isSafeArtifactId, suiteDirPath } from '$lib/server/artifacts.js';
+import { isSafeArtifactId, suiteDirPath, SUITE_TEST_SET_FILE } from '$lib/server/artifacts.js';
 import type { RequestHandler } from './$types.js';
 
 const RUN_EVAL_CONFIG_FILE = 'eval_config.yaml';
+
+/** Count of test examples (non-empty rows) in the suite's test_set.jsonl. */
+function countTestExamples(suiteDir: string): number {
+	try {
+		const raw = fs.readFileSync(path.join(suiteDir, SUITE_TEST_SET_FILE), 'utf-8');
+		return raw.split('\n').filter((line) => line.trim().length > 0).length;
+	} catch {
+		return 0;
+	}
+}
 
 /** Most recently modified run dir under `suiteDir` that has an eval_config.yaml. */
 function findLatestRunConfig(suiteDir: string): string | null {
@@ -95,6 +105,7 @@ export const GET: RequestHandler = async ({ params }) => {
 
 	const existingRunIds = listRunIds(suiteDir);
 	const suggestedRunId = nextRunId(existingRunIds);
+	const testExampleCount = countTestExamples(suiteDir);
 
 	const empty = {
 		suiteId,
@@ -103,7 +114,8 @@ export const GET: RequestHandler = async ({ params }) => {
 		systemPrompt: '',
 		evaluationTarget: 'model' as 'model' | 'agent',
 		existingRunIds,
-		nextRunId: suggestedRunId
+		nextRunId: suggestedRunId,
+		testExampleCount
 	};
 
 	const configPath = findLatestRunConfig(suiteDir);
@@ -134,6 +146,7 @@ export const GET: RequestHandler = async ({ params }) => {
 		systemPrompt,
 		evaluationTarget,
 		existingRunIds,
-		nextRunId: suggestedRunId
+		nextRunId: suggestedRunId,
+		testExampleCount
 	});
 };
