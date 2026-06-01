@@ -62,7 +62,7 @@ This script consolidates all runs in one suite into flat review tables under `ar
 
 ```bash
 python scripts/export_suite_results.py \
-  --suite relationship-entanglement-v1 \
+  --suite <your-suite-name> \
   --format csv \
   --format excel \
   --format html
@@ -76,7 +76,7 @@ This script compares two tester inference runs on the same suite by matching sce
 python scripts/tester_pairwise_eval.py \
   --run-a artifacts/results/<suite>/<run-a> \
   --run-b artifacts/results/<suite>/<run-b> \
-  --judge-model azure/gpt-5.4
+  --judge-model azure/gpt-4o
 ```
 
 ## `scenario_failure_prediction.py`
@@ -85,13 +85,13 @@ This script predicts taxonomy violations from scenario metadata before running c
 
 ```bash
 python scripts/scenario_failure_prediction.py \
-  --suite relationship-entanglement-v1 \
-  --model gpt-5.4-mini
+  --suite <your-suite-name> \
+  --model gpt-4o-mini
 ```
 
 ## `run_pairwise_expansion.sh`
 
-Shell script that runs `tester_pairwise_eval.py` for new tester comparisons (GPT-5.4-mini and GPT-5.4-nano) against GPT-5.4 and GPT-5-railfree, across all 9 judge models. Skips comparisons whose output directory already exists. Requires all four tester runs to be complete (checks for `metrics.json`).
+Shell script that runs `tester_pairwise_eval.py` for new tester comparisons against a fixed reference tester, across all configured judge models. Skips comparisons whose output directory already exists. Requires all tester runs to be complete (checks for `metrics.json`).
 
 ```bash
 bash scripts/run_pairwise_expansion.sh
@@ -99,7 +99,7 @@ bash scripts/run_pairwise_expansion.sh
 
 ## `aggregate_pairwise_results.py`
 
-Scans all `pairwise_metrics.json` files under `artifacts/tmp/relationship-entanglement-v1/pairwise/`, deduplicates by (comparison, judge), excludes GPT-5-nano, and writes a CSV table to stdout. The output has one row per (comparison, judge) with realism and effectiveness consistency rates and win counts.
+Scans all `pairwise_metrics.json` files under `artifacts/tmp/<your-suite-name>/pairwise/`, deduplicates by (comparison, judge), excludes gpt-4o-mini, and writes a CSV table to stdout. The output has one row per (comparison, judge) with realism and effectiveness consistency rates and win counts.
 
 ```bash
 python scripts/aggregate_pairwise_results.py > pairwise_table.csv

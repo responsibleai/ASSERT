@@ -55,7 +55,7 @@ langgraph = [
   "langgraph>=1.1.8",
 ]
 dspy = [
-  # Pinned for the incident-triage and bank-manager 4-axis demos'
+  # Pinned for the incident-triage demo'
   # optimize_with_gepa.ipynb notebooks, which use dspy.GEPA (Agrawal et al.,
   # arXiv:2507.19457). GEPA landed in DSPy ~2.7; cap at <3 until the API
   # stabilizes. The four eval configs themselves do NOT import DSPy at
