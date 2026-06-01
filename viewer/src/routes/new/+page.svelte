@@ -138,7 +138,11 @@
 
 	// ── Data loading ────────────────────────────────────────────────
 	onMount(() => {
-		void loadCatalogs();
+		const presetSuite = new URLSearchParams(window.location.search).get('suite');
+		void (async () => {
+			await loadCatalogs();
+			if (presetSuite) await prefillFromSuite(presetSuite);
+		})();
 
 		const handler = (e: BeforeUnloadEvent) => {
 			if (isDirty) {
@@ -149,6 +153,47 @@
 		window.addEventListener('beforeunload', handler);
 		return () => window.removeEventListener('beforeunload', handler);
 	});
+
+	/**
+	 * Pre-fill the wizard for an existing suite (launched from a suite's
+	 * "Run evaluation" button) and jump straight to the Summary & submit step so
+	 * the operator can review before submitting. Uses the suite's catalog entry
+	 * plus /api/suites/<id>/config for the authored context/system prompt/target.
+	 */
+	async function prefillFromSuite(suite: string) {
+		const knownSuite = knownSuites.find((s) => s.suite_id === suite) ?? null;
+		if (!knownSuite) return; // Unknown suite — leave the wizard at step 1.
+		const knownBehavior = knownBehaviors.find((b) => b.suiteId === suite) ?? null;
+
+		try {
+			const res = await fetch(`/api/suites/${encodeURIComponent(suite)}/config`);
+			if (res.ok) {
+				const cfg = (await res.json()) as {
+					context?: string;
+					systemPrompt?: string;
+					evaluationTarget?: 'model' | 'agent';
+				};
+				if (typeof cfg.context === 'string' && cfg.context) applicationContext = cfg.context;
+				if (typeof cfg.systemPrompt === 'string' && cfg.systemPrompt) systemPrompt = cfg.systemPrompt;
+				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
+					evaluationTarget = cfg.evaluationTarget;
+				}
+			}
+		} catch {
+			// Best-effort prefill; the operator can fill any gaps before submitting.
+		}
+
+		if (knownBehavior) {
+			step1Mode = 'select';
+			selectedBehavior = knownBehavior;
+			behaviorSearch = knownBehavior.name;
+		}
+		step2Source = 'existing';
+		selectedSuite = knownSuite;
+		suiteSearch = knownSuite.suite_id;
+		step1Touched = true;
+		currentStep = 3;
+	}
 
 	async function loadCatalogs() {
 		try {
