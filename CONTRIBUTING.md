@@ -1,6 +1,6 @@
-# Contributing to Adaptive Eval
+# Contributing to ASSERT
 
-Thank you for your interest in contributing to Adaptive Eval. This project is in customer preview, so the fastest way to help is to keep changes small, reviewable, and tied to a specific issue or customer-facing problem.
+Thank you for your interest in contributing to ASSERT. This project is in customer preview, so the fastest way to help is to keep changes small, reviewable, and tied to a specific issue or customer-facing problem.
 
 ## Before you start
 
@@ -11,7 +11,7 @@ Thank you for your interest in contributing to Adaptive Eval. This project is in
 
 ## Development setup
 
-Adaptive Eval requires Python 3.11 or later. Node.js is needed only for viewer work and tests that exercise viewer assets.
+ASSERT requires Python 3.11 or later. Node.js is needed only for viewer work and tests that exercise viewer assets.
 
 ```bash
 git clone https://github.com/responsibleai/ASSERT.git
@@ -67,7 +67,7 @@ Before opening a pull request:
 
 - Match the existing project style and terminology.
 - Prefer clear user-facing errors over provider-specific stack traces.
-- Keep preview-language honest. Do not imply that Adaptive Eval certifies safety, compliance, or production readiness.
+- Keep preview-language honest. Do not imply that ASSERT certifies safety, compliance, or production readiness.
 - For docs, distinguish current YAML keys from intended developer-facing terminology when both matter.
 - For examples, use synthetic data only.
 

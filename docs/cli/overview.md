@@ -13,7 +13,7 @@ Use CLI flows to create, run, inspect, and compare evaluations.
 1. Design config:
 
 ```bash
-assert-ai init --model azure/gpt-5.4
+assert-ai init --model azure/gpt-4o
 ```
 
 1. Run pipeline:

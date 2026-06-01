@@ -66,7 +66,7 @@ assert-ai run --config examples/azure_doc_qa/eval_config.yaml
 |----------|----------|-------------|
 | `AZURE_API_BASE` | Yes | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | Yes | Azure OpenAI API key |
-| `ASSERT_AZURE_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.4-mini`) |
+| `ASSERT_AZURE_DEPLOYMENT` | No | Model deployment name (default: `gpt-4o-mini`) |
 | `USE_MOCK_TOOLS` | No | Set to `1` for offline mock mode |
 | `FOUNDRY_IQ_MCP_ENDPOINT` | Real mode | Foundry IQ SSE endpoint |
 | `FOUNDRY_IQ_TOKEN` | Real mode | Foundry IQ bearer token |

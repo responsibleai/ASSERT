@@ -24,27 +24,47 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SELF_REL_PATH = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
 
-# Match "p2m" as a whole word, case-insensitive. The word boundaries make
-# substrings inside larger identifiers (e.g., "snap2map") safe.
-_P2M_PATTERN = re.compile(r"\bp2m\b", re.IGNORECASE)
+# Match "p2m" anywhere, case-insensitive. We intentionally do NOT use ``\b``
+# word boundaries — Python's ``re`` treats ``_`` as a word character, so
+# ``\bp2m\b`` silently misses things like ``P2M_AZURE_DEPLOYMENT``. The risk
+# of false positives is low because "p2m" is not a substring of common
+# English words; if a real false positive ever shows up (e.g., the literal
+# ``snap2map``), add the file to ``_ALLOWED_PATH_PREFIXES`` rather than
+# loosening the pattern.
+_P2M_PATTERN = re.compile(r"p2m", re.IGNORECASE)
 
 # Path prefixes (forward-slash, relative to REPO_ROOT) where the legacy name is
 # intentionally preserved.
 #
-# Historical artifact snapshots under examples/**/artifacts/results/** are
-# frozen records of what was run at the time. Rewriting them would falsify the
-# historical record, so they remain untouched.
+# - Historical artifact snapshots under examples/**/artifacts/results/** are
+#   frozen records of what was run at the time. Rewriting them would falsify
+#   the historical record, so they remain untouched.
+# - README.md and CHANGELOG.md document the package rename and intentionally
+#   reference the pre-rename `P2M_*` env var aliases so users upgrading from
+#   earlier previews can recognize the names from their existing .env files.
 _ALLOWED_PATH_PREFIXES: tuple[str, ...] = (
     "examples/incident_triage_agent/artifacts/results/",
+    "README.md",
+    "CHANGELOG.md",
 )
 
 # File extensions that are binary or otherwise not useful to scan as text.
 _SKIP_EXTS: frozenset[str] = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".pdf",
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".pdf", ".svg",
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz",
     ".mp3", ".mp4", ".mov", ".webm", ".wav",
     ".pyc", ".pyo",
+})
+
+# Specific filenames to skip — lockfiles contain hash strings that may
+# coincidentally include the substring "p2m" (base64-encoded SHA hashes).
+_SKIP_FILENAMES: frozenset[str] = frozenset({
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "uv.lock",
+    "poetry.lock",
 })
 
 
@@ -78,6 +98,8 @@ class NoLegacyP2MReferencesTest(unittest.TestCase):
             ext = Path(rel).suffix.lower()
             if ext in _SKIP_EXTS:
                 continue
+            if Path(rel).name in _SKIP_FILENAMES:
+                continue
             abs_path = REPO_ROOT / rel
             if not abs_path.is_file():
                 continue
@@ -103,3 +125,14 @@ class NoLegacyP2MReferencesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class P2MGuardPatternTest(unittest.TestCase):
+    """Sanity check: the guard regex must catch identifier-style references."""
+
+    def test_pattern_matches_env_var_form(self) -> None:
+        self.assertIsNotNone(_P2M_PATTERN.search("P2M_AZURE_DEPLOYMENT"))
+        self.assertIsNotNone(_P2M_PATTERN.search("set P2M_TARGET_MODEL"))
+        self.assertIsNotNone(_P2M_PATTERN.search("from p2m import x"))
+        # Case-insensitive
+        self.assertIsNotNone(_P2M_PATTERN.search("P2m"))

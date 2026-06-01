@@ -54,6 +54,14 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 
 ## Get started
 
+### Quick install
+
+```bash
+pip install -e ".[otel,langgraph]"       # from a clone during preview
+cp .env.example .env                     # add your provider key
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+```
+
 <table align="center" style="width: 100%; border: 1px solid #d0d7de; border-collapse: collapse;">
         <tr>
                 <th style="border: 1px solid #d0d7de; padding: 10px; text-align: left;">🌐 Project website ↗</th>

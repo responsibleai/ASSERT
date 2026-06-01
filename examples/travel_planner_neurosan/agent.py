@@ -45,7 +45,7 @@ if not isinstance(_existing, TracerProvider):
 
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
-_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
 
 
 # ── Agent functions (each manually instrumented) ──────────────

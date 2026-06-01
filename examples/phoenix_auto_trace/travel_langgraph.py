@@ -27,7 +27,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_MODEL_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_MODEL_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """\
 You are a travel planning assistant with access to tools for searching flights,

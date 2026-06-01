@@ -1,6 +1,6 @@
 # Improving an Agent with Eval-Driven Development
 
-This document walks through how we used **ASSERT** (Adaptive Eval) to iteratively
+This document walks through how we used **ASSERT** to iteratively
 improve a multi-agent RAG system from a **~20% pass rate to 82%** over 7 rounds
 of targeted fixes. It demonstrates the **eval → diagnose → fix → re-eval** loop
 that makes agent development systematic rather than guesswork.

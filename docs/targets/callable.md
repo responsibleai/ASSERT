@@ -97,7 +97,7 @@ For real agents this is **not recommended** — the visibility table above shows
 import litellm
 
 def chat(message: str, history: list[dict[str, str]]) -> "litellm.ModelResponse":
-    return litellm.completion(model="azure/gpt-5.4-mini", messages=history)
+    return litellm.completion(model="azure/gpt-4o-mini", messages=history)
 ```
 
 The judge then sees final tool calls, token usage, and model name — still narrower than OTel (no intermediate routing or sub-agent decisions).
@@ -120,7 +120,7 @@ To round-trip directly into LiteLLM, pass `history` as `messages` — do **not**
 import litellm
 
 def chat(message: str, history: list[dict[str, str]]) -> str:
-    response = litellm.completion(model="azure/gpt-5.4-mini", messages=history)
+    response = litellm.completion(model="azure/gpt-4o-mini", messages=history)
     return response.choices[0].message.content
 ```
 

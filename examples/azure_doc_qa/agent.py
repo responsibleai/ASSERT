@@ -44,7 +44,7 @@ from examples.azure_doc_qa.mock_tools import (
     verify_caller_identity,
 )
 
-_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 _USE_MOCK = os.environ.get("USE_MOCK_TOOLS", "").strip() == "1"
 
 

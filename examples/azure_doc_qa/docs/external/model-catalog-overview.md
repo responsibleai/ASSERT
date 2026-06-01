@@ -12,8 +12,8 @@ available for deployment as managed endpoints or serverless APIs.
 |-------|-------------|----------------|
 | GPT-5 | Multimodal flagship model | 1M tokens |
 | GPT-5 mini | Fast, affordable small model | 1M tokens |
-| GPT-5.4 | Latest-generation reasoning model | 1M tokens |
-| GPT-5.4 mini | Efficient reasoning model | 1M tokens |
+| GPT-4o | Latest-generation reasoning model | 1M tokens |
+| GPT-4o mini | Efficient reasoning model | 1M tokens |
 | o3 | Advanced reasoning with chain-of-thought | 200K tokens |
 | o3-mini | Fast reasoning model | 200K tokens |
 

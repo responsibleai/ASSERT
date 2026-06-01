@@ -31,7 +31,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 
 
 def _get_llm(temperature: float = 0) -> AzureChatOpenAI:

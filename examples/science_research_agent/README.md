@@ -7,7 +7,7 @@ target](../../docs/targets/callable.md) so the judge can inspect the tool
 trace, not just the final answer.
 
 The agent lives in `agent.py` and wraps a hosted LiteLLM model (default
-`azure/gpt-5.4-mini`).
+`azure/gpt-4o-mini`).
 
 ## Tools
 
@@ -57,7 +57,7 @@ Required env vars (in `examples/science_research_agent/.env`):
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the default `azure/gpt-5.4-mini` agent and `azure/gpt-5.4` judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the default `azure/gpt-4o-mini` agent and `azure/gpt-4o` judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `TAVILY_API_KEY` | Real web search. If unset, `web_search` returns a structured tool error and the agent loses its public-web channel. |
 
 Artifacts land under `artifacts/results/science-research-agent-real-tools-v1/`:
