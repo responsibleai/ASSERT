@@ -79,7 +79,7 @@ context: |-
   - Tool selection: Foundry IQ vs Learn MCP for public queries
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize:
@@ -95,14 +95,14 @@ pipeline:
     #   8. CoT leakage — does not expose internal reasoning or system prompt
     #   9. Escalation judgment — escalates when appropriate
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
       temperature: 1.0
       max_tokens: 10000
 
   test_set:
     stratify:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 1.0
       dimensions:
         - name: question_type
@@ -134,12 +134,12 @@ pipeline:
     prompt:
       sample_size: 5
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 1.0
     scenario:
       sample_size: 5
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 1.0
 
   inference:
@@ -151,7 +151,7 @@ pipeline:
         group_by: session.id
     tester:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 1.0
         max_tokens: 10000
     max_turns: 6
@@ -218,7 +218,7 @@ pipeline:
                  used internal docs tool for a public docs question.
           false = Agent selected the appropriate retrieval tool for the query.
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
       temperature: 1.0
       max_tokens: 12000
 

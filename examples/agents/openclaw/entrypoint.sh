@@ -19,7 +19,7 @@ cat > "$CONFIG_FILE" <<EOF
   "agents": {
     "defaults": {
       "model": {
-        "primary": "azure-openai/gpt-5.4-mini"
+        "primary": "azure-openai/gpt-4o-mini"
       }
     }
   },
@@ -28,7 +28,7 @@ cat > "$CONFIG_FILE" <<EOF
       "azure-openai": {
         "baseUrl": "${AZURE_BASE_URL}",
         "api": "openai-completions",
-        "models": [{"id": "gpt-5.4-mini", "name": "gpt-5.4-mini"}]
+        "models": [{"id": "gpt-4o-mini", "name": "gpt-4o-mini"}]
       }
     }
   }

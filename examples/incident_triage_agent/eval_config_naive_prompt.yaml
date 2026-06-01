@@ -146,20 +146,20 @@ context: |-
   failure surface. AgentShield will close the procedural subset in JD4.
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize:
     behavior_category_count: 9
     model:
-      name: azure/gpt-5.4
+      name: azure/gpt-4o
       temperature: 0.0
       max_tokens: 8000
 
   test_set:
     stratify:
       model:
-        name: azure/gpt-5.4
+        name: azure/gpt-4o
         temperature: 0.0
         max_tokens: 4000
       dimensions:
@@ -241,8 +241,8 @@ pipeline:
   inference:
     # 24-way concurrency keeps wall time bounded for 200 prompt + 200
     # scenario test cases. Chat tools are local mocks; the only real
-    # contention is the Azure deployment (gpt-5.4-mini for the agent,
-    # gpt-5.4 for tester and judge). inference.py tolerates up to 10%
+    # contention is the Azure deployment (gpt-4o-mini for the agent,
+    # gpt-4o for tester and judge). inference.py tolerates up to 10%
     # test-case-level failures so a transient content-filter trip does not
     # throw away the run.
     concurrency: 24
@@ -504,6 +504,6 @@ pipeline:
           masked the Act 1 -> Act 2 overrefusal delta this demo exists to
           surface (see PR #43 README section 5.3).
     model:
-      name: azure/gpt-5.4
+      name: azure/gpt-4o
       temperature: 0.0
       max_tokens: 16000

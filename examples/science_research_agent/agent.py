@@ -70,7 +70,7 @@ except ModuleNotFoundError:
 
 _tracer = trace.get_tracer("research_agent")
 
-AGENT_MODEL = os.environ.get("RESEARCH_AGENT_MODEL", "azure/gpt-5.4-mini")
+AGENT_MODEL = os.environ.get("RESEARCH_AGENT_MODEL", "azure/gpt-4o-mini")
 MAX_STEPS = int(os.environ.get("RESEARCH_AGENT_MAX_STEPS", "6"))
 MAX_TOOL_CALLS = int(os.environ.get("RESEARCH_AGENT_MAX_TOOL_CALLS", "6"))
 

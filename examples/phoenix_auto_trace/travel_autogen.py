@@ -26,7 +26,7 @@ from autogen_ext.models.openai import AzureOpenAIChatCompletionClient, OpenAICha
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-4o-mini")
 
 
 _MODEL_INFO = {

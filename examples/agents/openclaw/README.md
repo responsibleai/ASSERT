@@ -18,4 +18,4 @@ If you want to validate the Docker assets without running the full pipeline, bui
 docker compose -f examples/agents/openclaw/docker-compose.yml build
 ```
 
-The container currently writes an OpenClaw config that targets `azure-openai/gpt-5.4-mini`. If you need a different provider or model, update [entrypoint.sh](entrypoint.sh) and keep the environment contract in [docker-compose.yml](docker-compose.yml) aligned with that change.
+The container currently writes an OpenClaw config that targets `azure-openai/gpt-4o-mini`. If you need a different provider or model, update [entrypoint.sh](entrypoint.sh) and keep the environment contract in [docker-compose.yml](docker-compose.yml) aligned with that change.

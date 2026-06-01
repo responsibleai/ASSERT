@@ -7,7 +7,7 @@ Use this guide to create `eval_config.yaml` for your agent.
 Generate a config interactively:
 
 ```bash
-assert-ai init --model azure/gpt-5.4
+assert-ai init --model azure/gpt-4o
 ```
 
 Helpful options:
@@ -40,7 +40,7 @@ context: |
 pipeline:
   systematize:
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
   test_set:
     prompt:
       sample_size: 50
@@ -51,7 +51,7 @@ pipeline:
         - name: user_type
           description: Type of user profile.
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
   inference:
     target:
       callable: my_package.my_agent:chat_sync
@@ -60,7 +60,7 @@ pipeline:
         group_by: session.id
   judge:
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
     dimensions:
       policy_violation:
         description: Did the target violate policy requirements?

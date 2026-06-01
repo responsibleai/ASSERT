@@ -31,7 +31,7 @@ Options:
 - `--behavior <name>` optional
 - `--judge-preset <name>` optional
 - `--dimensions <csv>` optional
-- `--model <litellm-model>` optional, default `azure/gpt-5.4-mini`
+- `--model <litellm-model>` optional, default `azure/gpt-4o-mini`
 - `--env-file <path>` optional, default `.env`
 - `--non-interactive` optional flag
 - `--max-turns <int>` optional, default `20`
