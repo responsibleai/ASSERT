@@ -6,7 +6,7 @@ import { getActiveRuns } from '$lib/server/runner.js';
 import {
 	normalizeWizardPayload,
 	writeRunConfigFiles,
-	spawnAssertEvalRun,
+	spawnAssertAiRun,
 	runDirExists,
 	WizardValidationError,
 	RunConflictError,
@@ -105,7 +105,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	let spawned;
 	try {
-		spawned = await spawnAssertEvalRun(written);
+		spawned = await spawnAssertAiRun(written);
 	} catch (err) {
 		const message = err instanceof SpawnError ? err.message : (err as Error).message ?? String(err);
 		return json(
