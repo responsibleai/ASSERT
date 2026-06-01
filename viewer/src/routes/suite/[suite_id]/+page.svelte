@@ -12,6 +12,8 @@
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
 	import type { SuiteHeavyData } from '$lib/server/data.js';
 	import { fade } from 'svelte/transition';
+	import { page } from '$app/state';
+	import { goto, invalidateAll } from '$app/navigation';
 
 	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
 
@@ -22,7 +24,7 @@
 	let selectedBehavior = $state<string | null>(null);
 	let behaviorSearch = $state('');
 	let behaviorSort = $state<'permissible' | 'not_permissible'>('permissible');
-	let panelTab = $state<'definition' | 'seeds' | 'evaluations'>('definition');
+	let panelTab = $state<'definition' | 'seeds'>('definition');
 	let selectedCompareRuns = $state<Set<string>>(new Set());
 	let expandedRunIds = $state<Set<string>>(new Set());
 	let behaviorEvalSamples = $state<BehaviorEvalEntry[]>([]);
@@ -36,6 +38,148 @@
 	let heavyError = $state<string | null>(null);
 	let heavyPending = $derived(heavyData === null && heavyError === null);
 	let showSkeleton = $state(false);
+
+	// --- Stage tabs: taxonomy (edit) vs results ---
+	let activeStage = $derived(
+		(page.url.searchParams.get('stage') === 'results' ? 'results' : 'taxonomy') as 'taxonomy' | 'results'
+	);
+
+	function setActiveStage(stage: 'taxonomy' | 'results') {
+		if (stage === activeStage) return;
+		const url = new URL(page.url);
+		if (stage === 'results') url.searchParams.set('stage', 'results');
+		else url.searchParams.delete('stage');
+		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+	}
+
+	// --- Per-category taxonomy editing ---
+	// Each behavior category is edited inline from its own side panel; there is
+	// no global edit mode. Only the selected category's definition and
+	// permissible flag are mutated, leaving examples/metadata/order untouched.
+	let editingCategory = $state<string | null>(null);
+	let catSaving = $state(false);
+	let catSaveError = $state<string | null>(null);
+	let catDraftDef = $state('');
+	let catDraftPermissible = $state(false);
+	let catDraftExamples = $state<string[]>([]);
+
+	function startCategoryEdit() {
+		if (!selectedBehaviorData) return;
+		catDraftDef = selectedBehaviorData.definition ?? '';
+		catDraftPermissible = Boolean(selectedBehaviorData.permissible);
+		catDraftExamples = [...(selectedBehaviorData.examples ?? [])];
+		catSaveError = null;
+		editingCategory = selectedBehaviorData.name;
+	}
+
+	function addDraftExample() {
+		catDraftExamples = [...catDraftExamples, ''];
+	}
+
+	function removeDraftExample(index: number) {
+		catDraftExamples = catDraftExamples.filter((_, i) => i !== index);
+	}
+
+	function cancelCategoryEdit() {
+		editingCategory = null;
+		catSaving = false;
+		catSaveError = null;
+	}
+
+	async function saveCategoryEdit() {
+		const categoryName = editingCategory;
+		if (catSaving || !categoryName) return;
+		catSaving = true;
+		catSaveError = null;
+		try {
+			// Deep-clone the full taxonomy and mutate only the edited category so
+			// metadata and node order are preserved exactly.
+			const taxonomy = JSON.parse(JSON.stringify(data.taxonomy ?? {}));
+			const target = (taxonomy.behavior_categories ?? []).find(
+				(cat: { name?: string }) => cat.name === categoryName
+			);
+			if (!target) throw new Error('Category not found in taxonomy.');
+			target.definition = catDraftDef;
+			target.permissible = catDraftPermissible;
+			// Drop blank examples so empty rows aren't persisted.
+			target.examples = catDraftExamples.map((ex) => ex.trim()).filter((ex) => ex.length > 0);
+			const res = await fetch('/api/taxonomy', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ suite_id: data.suite_id, taxonomy })
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}) as { error?: string });
+				throw new Error(body.error ?? `Save failed (${res.status})`);
+			}
+			await invalidateAll();
+			// Keep the panel open on the same category; just exit edit mode.
+			editingCategory = null;
+		} catch (err) {
+			catSaveError = err instanceof Error ? err.message : String(err);
+		} finally {
+			catSaving = false;
+		}
+	}
+
+	// --- Per-seed (test prompt / scenario) editing ---
+	// Each prompt or scenario card can be edited inline. Only the seed's title
+	// and description are mutated; the row is persisted back to test_set.jsonl
+	// via PUT /api/seeds, keyed by its stable test_case_id.
+	let editingSeedId = $state<string | null>(null);
+	let seedSaving = $state(false);
+	let seedSaveError = $state<string | null>(null);
+	let seedDraftTitle = $state('');
+	let seedDraftDescription = $state('');
+
+	function startSeedEdit(seed: { id: string; title: string; description: string }) {
+		seedDraftTitle = seed.title ?? '';
+		seedDraftDescription = seed.description ?? '';
+		seedSaveError = null;
+		editingSeedId = seed.id;
+	}
+
+	function cancelSeedEdit() {
+		editingSeedId = null;
+		seedSaving = false;
+		seedSaveError = null;
+	}
+
+	async function saveSeedEdit() {
+		const testCaseId = editingSeedId;
+		if (seedSaving || !testCaseId) return;
+		seedSaving = true;
+		seedSaveError = null;
+		try {
+			const res = await fetch('/api/seeds', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					suite_id: data.suite_id,
+					test_case_id: testCaseId,
+					title: seedDraftTitle.trim(),
+					description: seedDraftDescription
+				})
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}) as { error?: string });
+				throw new Error(body.error ?? `Save failed (${res.status})`);
+			}
+			await invalidateAll();
+			editingSeedId = null;
+		} catch (err) {
+			seedSaveError = err instanceof Error ? err.message : String(err);
+		} finally {
+			seedSaving = false;
+		}
+	}
+
+	// --- Run evaluation ---
+	// Opens the New evaluation wizard pre-filled for this suite, landing on the
+	// Summary & submit step so the operator can review before submitting.
+	function runEvaluation() {
+		void goto(`/new?suite=${encodeURIComponent(data.suite_id)}`);
+	}
 
 	$effect(() => {
 		const promise = data.streamed?.heavy;
@@ -77,10 +221,14 @@
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
 	let systematizationMode = $derived(systematizationModeFor(data.systematization));
 	let hasSystematization = $derived(Boolean(data.systematization));
+	let systematizationText = $derived(
+		typeof data.systematization?.systematization === 'string' ? data.systematization.systematization : ''
+	);
+	let canEdit = $derived(Boolean(data.editEnabled));
 	let canCompare = $derived(selectedCompareRuns.size >= 2);
 	const MAX_COMPARE_RUNS = 3;
-	const panelTabs = ['definition', 'seeds', 'evaluations'] as const;
-	const BEHAVIOR_TABLE_COLUMNS = 'minmax(0,1fr) 140px 92px 92px 92px 24px';
+	const panelTabs = ['definition', 'seeds'] as const;
+	const BEHAVIOR_TABLE_COLUMNS = 'minmax(0,1fr) 140px 92px 92px 24px';
 	const BEHAVIOR_SORT_OPTIONS = [
 		{ value: 'permissible', label: 'Permissible' },
 		{ value: 'not_permissible', label: 'Not Permissible' }
@@ -251,13 +399,9 @@
 		behaviorEvalLoadedFor = behavior;
 	}
 
-	$effect(() => {
-		if (heavyData && selectedBehavior && behaviorEvalLoadedFor !== selectedBehavior) {
-			loadBehaviorEvalResults(selectedBehavior);
-		}
-	});
-
 	function selectBehavior(name: string) {
+		cancelCategoryEdit();
+		cancelSeedEdit();
 		if (selectedBehavior === name) {
 			selectedBehavior = null;
 			panelTab = 'definition';
@@ -265,20 +409,18 @@
 		}
 		selectedBehavior = name;
 		panelTab = 'definition';
-		loadBehaviorEvalResults(name);
 	}
 
-	function selectPanelTab(tab: 'definition' | 'seeds' | 'evaluations') {
+	function selectPanelTab(tab: 'definition' | 'seeds') {
+		cancelSeedEdit();
 		panelTab = tab;
-		if (tab === 'evaluations' && selectedBehavior) loadBehaviorEvalResults(selectedBehavior);
 	}
 
 	function closeSidePanel() {
+		cancelCategoryEdit();
+		cancelSeedEdit();
 		selectedBehavior = null;
 		panelTab = 'definition';
-		behaviorEvalSamples = [];
-		behaviorEvalError = null;
-		behaviorEvalLoadedFor = null;
 	}
 
 	function sampleComplianceStatus(sample: JudgedSample): 'flagged' | 'compliant' | 'error' | 'pending' {
@@ -366,9 +508,11 @@
 				<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
 					{promptSeedItems.length + scenarioSeedItems.length} evaluation test sets
 				</span>
-				<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
-					{allRuns.length} evaluation results
-				</span>
+				{#if activeStage === 'results'}
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
+						{allRuns.length} evaluation results
+					</span>
+				{/if}
 			</div>
 		</div>
 		{#if promptSeedItems.length + scenarioSeedItems.length > 0}
@@ -396,6 +540,33 @@
 	{/if}
 </div>
 
+<!-- Stage tabs: separate the taxonomy/systematization stage from the results stage -->
+<div class="mb-5 border-b border-border">
+	<div class="SegmentedControl" role="tablist" aria-label="Suite stage">
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeStage === 'taxonomy'}
+			class="SegmentedControl-item"
+			class:SegmentedControl-item--selected={activeStage === 'taxonomy'}
+			onclick={() => setActiveStage('taxonomy')}
+		>
+			<span class="SegmentedControl-content">Taxonomy &amp; policy</span>
+		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeStage === 'results'}
+			class="SegmentedControl-item"
+			class:SegmentedControl-item--selected={activeStage === 'results'}
+			onclick={() => setActiveStage('results')}
+		>
+			<span class="SegmentedControl-content">Results</span>
+		</button>
+	</div>
+</div>
+
+{#if activeStage === 'results'}
 <div class="mb-6">
 	<div class="mb-4 border-b border-border pb-2">
 		<div class="flex items-center gap-3">
@@ -580,13 +751,33 @@
 		</div>
 	{/if}
 </div>
+{/if}
+
+{#if activeStage === 'taxonomy'}
+<div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+	<div class="min-w-0">
+		<h2 class="text-lg font-semibold text-text">Taxonomy &amp; policy</h2>
+		<p class="mt-1 text-sm text-text-muted">Inspect and edit the behavior categories, then run an evaluation.</p>
+	</div>
+	<div class="flex shrink-0 items-center gap-2">
+		<button
+			type="button"
+			class="btn btn-primary btn-small"
+			onclick={runEvaluation}
+			style="display:inline-flex; align-items:center; gap:0.4rem;"
+		>
+			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-5.197-3.027A1 1 0 008 9.027v5.946a1 1 0 001.555.832l5.197-3.027a1 1 0 000-1.638z"/></svg>
+			Run evaluation
+		</button>
+	</div>
+</div>
 
 <div class="mb-4 border-b border-border pb-2">
 	<div class="flex items-center gap-3">
 		<h2 class="min-w-0 flex-1 text-lg font-semibold text-text">Behavior categories</h2>
 		<span class="shrink-0 text-xs text-text-muted">{visibleBehaviors.length} of {sortedBehaviors.length} categories</span>
 	</div>
-	<p class="mt-1 text-sm leading-5 text-text-muted">Browse behavior categories systematized for {conceptName}. Click to view definitions, test scenarios, and results.</p>
+	<p class="mt-1 text-sm leading-5 text-text-muted">Browse and edit behavior categories systematized for {conceptName}. Select a category to view or edit its definition and policy status.</p>
 </div>
 
 <div class="flex gap-5">
@@ -630,7 +821,6 @@
 					</span>
 					<span class="text-left text-xs font-medium text-text-muted">Prompts</span>
 					<span class="text-left text-xs font-medium text-text-muted">Scenarios</span>
-					<span class="text-left text-xs font-medium text-text-muted">Evaluations</span>
 					<span aria-hidden="true"></span>
 				</div>
 				{#if visibleBehaviors.length === 0}
@@ -655,13 +845,6 @@
 						</div>
 						<span class="text-left text-xs text-text-muted">{pCount}</span>
 						<span class="text-left text-xs text-text-muted">{sCount}</span>
-						<span class="text-left text-xs text-text-muted">
-							{#if showSkeleton}
-								<span class="inline-block h-3 w-6 animate-pulse rounded bg-surface-2 align-middle"></span>
-							{:else if heavyData}
-								{evalCountsByBehavior.get(behavior.name) ?? 0}
-							{/if}
-						</span>
 						<span class="flex justify-end text-text-muted">
 							<svg class="h-4 w-4 transition-transform {selectedBehavior === behavior.name ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
 						</span>
@@ -694,7 +877,7 @@
 							class="border-b-2 px-3 py-2 text-xs font-medium transition-colors {panelTab === tab ? 'border-interactive text-text' : 'border-transparent text-text-muted hover:border-border hover:text-text-secondary'}"
 							onclick={() => selectPanelTab(tab)}
 						>
-							{tab === 'definition' ? 'Definition' : tab === 'seeds' ? `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}` : `Evaluations${behaviorEvalSamples.length > 0 ? ` ${behaviorEvalSamples.length}` : ''}`}
+							{tab === 'definition' ? 'Definition' : `Prompts ${selectedBehaviorData.promptCount} · Scenarios ${selectedBehaviorData.scenarioCount}`}
 						</button>
 					{/each}
 				</div>
@@ -704,10 +887,76 @@
 				{#if panelTab === 'definition'}
 					<div class="space-y-5">
 						<div>
-							<h4 class="mb-2 text-xs font-medium text-text">Definition</h4>
-							<div class="prose text-sm leading-relaxed text-text-secondary">{@html renderMarkdown(selectedBehaviorData.definition)}</div>
+							<div class="mb-2 flex items-center justify-between gap-2">
+								<h4 class="text-xs font-medium text-text">Definition</h4>
+								{#if canEdit}
+									{#if editingCategory === selectedBehavior}
+										<div class="flex shrink-0 items-center gap-2">
+											<button class="btn btn-small" onclick={cancelCategoryEdit} disabled={catSaving}>Cancel</button>
+											<button class="btn btn-primary btn-small" onclick={saveCategoryEdit} disabled={catSaving}>{catSaving ? 'Saving…' : 'Save'}</button>
+										</div>
+									{:else}
+										<button class="btn btn-small shrink-0" onclick={startCategoryEdit} style="display:inline-flex; align-items:center; gap:0.35rem;">
+											<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+											Edit
+										</button>
+									{/if}
+								{/if}
+							</div>
+							{#if editingCategory === selectedBehavior}
+								{#if catSaveError}
+									<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{catSaveError}</div>
+								{/if}
+								<textarea
+									class="form-control w-full text-sm leading-relaxed"
+									rows="6"
+									aria-label="Behavior category definition"
+									bind:value={catDraftDef}
+								></textarea>
+								<label class="mt-3 flex items-center gap-2 text-sm text-text-secondary">
+									<input type="checkbox" bind:checked={catDraftPermissible} />
+									Permissible (target may engage without a policy violation)
+								</label>
+							{:else}
+								<div class="prose text-sm leading-relaxed text-text-secondary">{@html renderMarkdown(selectedBehaviorData.definition)}</div>
+							{/if}
 						</div>
-						{#if selectedBehaviorData.examples?.length > 0}
+						{#if editingCategory === selectedBehavior}
+							<div>
+								<div class="mb-2 flex items-center justify-between gap-2">
+									<h4 class="text-xs font-medium text-text">Examples</h4>
+									<button class="btn btn-small shrink-0" onclick={addDraftExample} disabled={catSaving} style="display:inline-flex; align-items:center; gap:0.35rem;">
+										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+										Add example
+									</button>
+								</div>
+								{#if catDraftExamples.length === 0}
+									<p class="text-sm text-text-muted">No examples. Use “Add example” to create one.</p>
+								{:else}
+									<div class="space-y-2">
+										{#each catDraftExamples as _, i}
+											<div class="flex items-start gap-2">
+												<textarea
+													class="form-control w-full text-sm leading-relaxed"
+													rows="2"
+													aria-label="Example {i + 1}"
+													bind:value={catDraftExamples[i]}
+												></textarea>
+												<button
+													class="mt-1 shrink-0 rounded p-1 text-text-muted transition-colors hover:bg-surface-2 hover:text-score-fail"
+													onclick={() => removeDraftExample(i)}
+													disabled={catSaving}
+													title="Remove example"
+													aria-label="Remove example {i + 1}"
+												>
+													<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+												</button>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{:else if selectedBehaviorData.examples?.length > 0}
 							<div>
 								<h4 class="mb-2 text-xs font-medium text-text">Examples</h4>
 								<div class="space-y-1.5">
@@ -731,8 +980,30 @@
 								<div class="space-y-2">
 									{#each selectedBehaviorPrompts as seed}
 										<div class="rounded-lg border border-border bg-bg p-3">
-											<div class="mb-1 text-sm font-medium text-text">{seed.title}</div>
-											{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{#if editingSeedId === seed.id}
+												{#if seedSaveError}
+													<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{seedSaveError}</div>
+												{/if}
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-title-{seed.id}">Title</label>
+												<input id="seed-title-{seed.id}" class="form-control mb-2 w-full text-sm" bind:value={seedDraftTitle} />
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-desc-{seed.id}">Prompt</label>
+												<textarea id="seed-desc-{seed.id}" class="form-control w-full text-sm leading-relaxed" rows="5" bind:value={seedDraftDescription}></textarea>
+												<div class="mt-2 flex items-center justify-end gap-2">
+													<button class="btn btn-small" onclick={cancelSeedEdit} disabled={seedSaving}>Cancel</button>
+													<button class="btn btn-primary btn-small" onclick={saveSeedEdit} disabled={seedSaving}>{seedSaving ? 'Saving…' : 'Save'}</button>
+												</div>
+											{:else}
+												<div class="mb-1 flex items-start gap-2">
+													<div class="text-sm font-medium text-text">{seed.title}</div>
+													{#if canEdit}
+														<button class="btn btn-small ml-auto shrink-0" onclick={() => startSeedEdit(seed)} style="display:inline-flex; align-items:center; gap:0.35rem;">
+															<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+															Edit
+														</button>
+													{/if}
+												</div>
+												{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{/if}
 										</div>
 									{/each}
 								</div>
@@ -749,8 +1020,30 @@
 								<div class="space-y-2">
 									{#each selectedBehaviorScenarios as seed}
 										<div class="rounded-lg border border-border bg-bg p-3">
-											<div class="mb-1 text-sm font-medium text-text">{seed.title}</div>
-											{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{#if editingSeedId === seed.id}
+												{#if seedSaveError}
+													<div class="mb-2 rounded-lg border border-score-fail/40 bg-score-fail/10 px-3 py-2 text-xs text-score-fail">{seedSaveError}</div>
+												{/if}
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-title-{seed.id}">Title</label>
+												<input id="seed-title-{seed.id}" class="form-control mb-2 w-full text-sm" bind:value={seedDraftTitle} />
+												<label class="mb-1 block text-xs font-medium text-text-muted" for="seed-desc-{seed.id}">Prompt</label>
+												<textarea id="seed-desc-{seed.id}" class="form-control w-full text-sm leading-relaxed" rows="5" bind:value={seedDraftDescription}></textarea>
+												<div class="mt-2 flex items-center justify-end gap-2">
+													<button class="btn btn-small" onclick={cancelSeedEdit} disabled={seedSaving}>Cancel</button>
+													<button class="btn btn-primary btn-small" onclick={saveSeedEdit} disabled={seedSaving}>{seedSaving ? 'Saving…' : 'Save'}</button>
+												</div>
+											{:else}
+												<div class="mb-1 flex items-start gap-2">
+													<div class="text-sm font-medium text-text">{seed.title}</div>
+													{#if canEdit}
+														<button class="btn btn-small ml-auto shrink-0" onclick={() => startSeedEdit(seed)} style="display:inline-flex; align-items:center; gap:0.35rem;">
+															<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+															Edit
+														</button>
+													{/if}
+												</div>
+												{#if seed.description}<ExpandableText text={seed.description} class="text-xs leading-relaxed text-text-muted" />{/if}
+											{/if}
 										</div>
 									{/each}
 								</div>
@@ -803,6 +1096,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 {#if drawerLoading}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

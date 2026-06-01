@@ -138,7 +138,11 @@
 
 	// ── Data loading ────────────────────────────────────────────────
 	onMount(() => {
-		void loadCatalogs();
+		const presetSuite = new URLSearchParams(window.location.search).get('suite');
+		void (async () => {
+			await loadCatalogs();
+			if (presetSuite) await prefillFromSuite(presetSuite);
+		})();
 
 		const handler = (e: BeforeUnloadEvent) => {
 			if (isDirty) {
@@ -149,6 +153,72 @@
 		window.addEventListener('beforeunload', handler);
 		return () => window.removeEventListener('beforeunload', handler);
 	});
+
+	/**
+	 * Pre-fill the wizard for an existing suite (launched from a suite's
+	 * "Run evaluation" button) and jump straight to the Summary & submit step so
+	 * the operator can review before submitting. Uses the suite's catalog entry
+	 * plus /api/suites/<id>/config for the authored context/system prompt/target.
+	 */
+	async function prefillFromSuite(suite: string) {
+		const knownSuite = knownSuites.find((s) => s.suite_id === suite) ?? null;
+		if (!knownSuite) return; // Unknown suite — leave the wizard at step 1.
+
+		let behaviorName = '';
+		try {
+			const res = await fetch(`/api/suites/${encodeURIComponent(suite)}/config`);
+			if (res.ok) {
+				const cfg = (await res.json()) as {
+					behaviorName?: string;
+					context?: string;
+					systemPrompt?: string;
+					evaluationTarget?: 'model' | 'agent';
+					nextRunId?: string;
+					testExampleCount?: number;
+				};
+				if (typeof cfg.behaviorName === 'string') behaviorName = cfg.behaviorName;
+				if (typeof cfg.context === 'string' && cfg.context) applicationContext = cfg.context;
+				if (typeof cfg.systemPrompt === 'string' && cfg.systemPrompt) systemPrompt = cfg.systemPrompt;
+				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
+					evaluationTarget = cfg.evaluationTarget;
+				}
+				// Default the test set size to the previous run's test set size so a
+				// re-run reproduces the same number of test cases by default.
+				if (typeof cfg.testExampleCount === 'number' && cfg.testExampleCount > 0) {
+					promptTestCasesConfig = { ...promptTestCasesConfig, budget: cfg.testExampleCount };
+				}
+				// Auto-increment past the suite's latest run so the prefilled run id
+				// doesn't collide with an existing run dir (v1 -> v2).
+				if (typeof cfg.nextRunId === 'string' && cfg.nextRunId) runId = cfg.nextRunId;
+			}
+		} catch {
+			// Best-effort prefill; the operator can fill any gaps before submitting.
+		}
+
+		// Resolve the behavior. /api/behaviors dedupes by name and exposes only one
+		// suiteId per behavior, so matching by suiteId misses suites that aren't the
+		// canonical one. Resolve the name from the suite's own config/catalog and
+		// always anchor suiteId to the suite being re-run.
+		const resolvedName = behaviorName || knownSuite.behavior_name;
+		const catalogMatch =
+			knownBehaviors.find((b) => b.name === resolvedName) ??
+			knownBehaviors.find((b) => b.suiteId === suite) ??
+			null;
+		if (resolvedName) {
+			step1Mode = 'select';
+			selectedBehavior = {
+				name: resolvedName,
+				definition: catalogMatch?.definition ?? '',
+				suiteId: suite
+			};
+			behaviorSearch = resolvedName;
+		}
+		step2Source = 'existing';
+		selectedSuite = knownSuite;
+		suiteSearch = knownSuite.suite_id;
+		step1Touched = true;
+		currentStep = 3;
+	}
 
 	async function loadCatalogs() {
 		try {
@@ -1505,6 +1575,10 @@
 						<div class="flex items-baseline justify-between gap-3">
 							<span class="shrink-0 text-text-muted">Behavior categories</span>
 							<span class="min-w-0 break-words text-right font-medium text-text">{summaryTaxonomy}</span>
+						</div>
+						<div class="flex items-baseline justify-between gap-3">
+							<span class="shrink-0 text-text-muted">Test set size</span>
+							<span class="min-w-0 break-words text-right font-medium text-text">{promptTestCasesConfig.budget}</span>
 						</div>
 						<div class="flex items-baseline justify-between gap-3">
 							<span class="shrink-0 text-text-muted">Measurement suite</span>
