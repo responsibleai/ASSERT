@@ -143,10 +143,10 @@ export function getDocsNav(): { group: string | null; items: DocMeta[] }[] {
 	}));
 }
 
-export type Heading = { id: string; text: string; level: 2 | 3 };
+export type Heading = { id: string; text: string; level: 2 };
 
 /**
- * Extract H2/H3 headings for a page's "On this page" TOC. Uses the same slug
+ * Extract H2 headings for a page's "On this page" TOC. Uses the same slug
  * algorithm (github-slugger) that rehype-slug uses, so IDs match the rendered DOM.
  */
 export function getHeadings(content: string): Heading[] {
@@ -160,9 +160,9 @@ export function getHeadings(content: string): Heading[] {
 			continue;
 		}
 		if (inFence) continue;
-		const m = line.match(/^(#{2,3})\s+(.+?)\s*$/);
+		const m = line.match(/^(#{2})\s+(.+?)\s*$/);
 		if (!m) continue;
-		const level = m[1].length as 2 | 3;
+		const level = 2 as const;
 		// Strip markdown emphasis / inline code / links from the heading text.
 		const text = m[2]
 			.replace(/`([^`]+)`/g, "$1")
