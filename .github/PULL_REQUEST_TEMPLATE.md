@@ -16,7 +16,7 @@
 
 ## Testing
 
-<!-- How did you verify? E.g., `pytest`, `npm run check`, manual viewer testing, `assert-eval run --config ...`. -->
+<!-- How did you verify? E.g., `pytest`, `npm run check`, manual viewer testing, `assert-ai run --config ...`. -->
 
 ## Checklist
 

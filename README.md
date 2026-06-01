@@ -27,13 +27,6 @@
         <img src="assets/assert-ai-framework-diagram.png" alt="Diagram of the ASSERT evaluation framework" width="100%">
 </p>
 
-> [!IMPORTANT]
-> **Migration note (May 2026):** The Python package was renamed `assert_eval` → `assert_ai`,
-> the CLI was renamed `assert-eval` → `assert-ai`, and environment variables were renamed
-> `ASSERT_EVAL_*` → `ASSERT_AI_*` (the pre-rename `P2M_*` aliases are also gone). If you
-> installed an earlier preview, update your imports, CLI invocations, and `.env` files. See
-> [CHANGELOG.md](./CHANGELOG.md) for details.
-
 ## Why ASSERT?
 
 Most AI systems start with a specification: product requirements, policies, system prompts, or launch criteria describing what the system should and should not do.
@@ -51,6 +44,7 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 - **Test any agent or multi-agent system** via integrations with [OpenInference](https://github.com/Arize-ai/openinference/). Evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the evaluation orchestration pipeline.
 - **Agent trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.
 - **Portable artifacts** - every stage writes JSON/JSONL files locally for inspection, CI, and sharing.
+- **Bundled local viewer** - browse runs side-by-side, pin a baseline, drill into per-behavior dimension breakdowns, and read judge justifications cited against the captured traces.
 
 ## Get started
 

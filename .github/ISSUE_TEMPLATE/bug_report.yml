@@ -16,7 +16,7 @@ body:
     attributes:
       label: What happened?
       description: A clear and concise description of the bug.
-      placeholder: When I run `assert-eval run ...`, the CLI crashes with ...
+      placeholder: When I run `assert-ai run ...`, the CLI crashes with ...
     validations:
       required: true
 
