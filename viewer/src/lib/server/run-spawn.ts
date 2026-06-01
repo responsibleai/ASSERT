@@ -21,8 +21,8 @@
  *     -> writes eval_config.yaml (single-YAML authoring; behavior description
  *        lives inline in behavior.description)
  *
- *   spawnAssertEvalRun(...)
- *     -> spawns `assert-eval run --config <eval_config.yaml>` detached
+ *   spawnAssertAiRun(...)
+ *     -> spawns `assert-ai run --config <eval_config.yaml>` detached
  *     -> waits for the OS spawn/error event before resolving so a missing
  *        binary surfaces as HTTP 500 (not 200 then a forever-pending monitor)
  *
@@ -677,21 +677,21 @@ function candidateVenvDirs(): string[] {
 	return dirs;
 }
 
-function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
+function resolveAssertAiCommand(configPath: string): ResolvedCommand {
 	const cliArgs = ['run', '--config', configPath];
-	// Module invocation is the reliable form: it works even when the `assert-eval`
+	// Module invocation is the reliable form: it works even when the `assert-ai`
 	// console script was never (re)generated for a venv — e.g. after the package
 	// was renamed and only an older console script remains on disk.
-	const moduleArgs = ['-m', 'assert_eval.cli', ...cliArgs];
+	const moduleArgs = ['-m', 'assert_ai.cli', ...cliArgs];
 
 	// 1. Explicit override always wins.
-	const override = process.env.ASSERT_EVAL_COMMAND;
+	const override = process.env.ASSERT_AI_COMMAND;
 	if (override && override.trim()) {
 		const parts = override.trim().split(/\s+/);
 		return {
 			command: parts[0],
 			args: [...parts.slice(1), ...cliArgs],
-			source: 'ASSERT_EVAL_COMMAND override'
+			source: 'ASSERT_AI_COMMAND override'
 		};
 	}
 
@@ -699,7 +699,7 @@ function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 	//    the CLI as a module through the venv's Python so a missing/renamed
 	//    console script doesn't block the run.
 	for (const venv of candidateVenvDirs()) {
-		const script = venvBin(venv, 'assert-eval');
+		const script = venvBin(venv, 'assert-ai');
 		if (script) {
 			return { command: script, args: cliArgs, source: `venv script (${script})` };
 		}
@@ -711,21 +711,21 @@ function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 
 	// 3. PATH console script. On Windows, .exe is resolved automatically by spawn
 	//    when shell:false because Node uses CreateProcess search behavior.
-	const pathScript = os.platform() === 'win32' ? 'assert-eval.exe' : 'assert-eval';
-	if (commandExistsOnPath(pathScript) || commandExistsOnPath('assert-eval')) {
-		return { command: 'assert-eval', args: cliArgs, source: 'PATH (assert-eval)' };
+	const pathScript = os.platform() === 'win32' ? 'assert-ai.exe' : 'assert-ai';
+	if (commandExistsOnPath(pathScript) || commandExistsOnPath('assert-ai')) {
+		return { command: 'assert-ai', args: cliArgs, source: 'PATH (assert-ai)' };
 	}
 
 	// 4. Last resort: a Python on PATH running the CLI as a module.
 	const pathPython = os.platform() === 'win32' ? 'python.exe' : 'python3';
 	if (commandExistsOnPath(pathPython) || commandExistsOnPath('python')) {
 		const python = commandExistsOnPath(pathPython) ? pathPython : 'python';
-		return { command: python, args: moduleArgs, source: `PATH (${python} -m assert_eval.cli)` };
+		return { command: python, args: moduleArgs, source: `PATH (${python} -m assert_ai.cli)` };
 	}
 
 	// Nothing discoverable — fall back to the bare console script so the spawn
 	// failure surfaces a clear ENOENT with the guidance in SpawnError.
-	return { command: 'assert-eval', args: cliArgs, source: 'PATH (fallback)' };
+	return { command: 'assert-ai', args: cliArgs, source: 'PATH (fallback)' };
 }
 
 /**
@@ -755,12 +755,12 @@ function commandExistsOnPath(command: string): boolean {
 }
 
 /**
- * Spawn assert-eval detached, wait for the OS to confirm the spawn (or fail).
- * Only after we hear back do we resolve — that way a missing `assert-eval`
+ * Spawn assert-ai detached, wait for the OS to confirm the spawn (or fail).
+ * Only after we hear back do we resolve — that way a missing `assert-ai`
  * binary surfaces as a 500 instead of a 200 followed by a forever-pending monitor.
  */
-export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
-	const resolved = resolveAssertEvalCommand(written.configPath);
+export function spawnAssertAiRun(written: WrittenRun): Promise<SpawnedRun> {
+	const resolved = resolveAssertAiCommand(written.configPath);
 
 	let logFd: number;
 	try {
@@ -770,7 +770,7 @@ export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
 	}
 
 	const preamble =
-		`# assert-eval run launched by viewer at ${new Date().toISOString()}\n` +
+		`# assert-ai run launched by viewer at ${new Date().toISOString()}\n` +
 		`# command: ${resolved.command} ${resolved.args.join(' ')}\n` +
 		`# resolved from: ${resolved.source}\n` +
 		`# cwd: ${MEASUREMENTS_ROOT}\n` +
@@ -799,7 +799,7 @@ export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
 			}
 			reject(
 				new SpawnError(
-					`Failed to spawn assert-eval runner via ${resolved.source}: ${(err as Error).message ?? String(err)}`,
+					`Failed to spawn assert-ai runner via ${resolved.source}: ${(err as Error).message ?? String(err)}`,
 					err
 				)
 			);
@@ -841,9 +841,9 @@ export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
 			}
 			reject(
 				new SpawnError(
-					`assert-eval runner failed to start via ${resolved.source}: ${err?.message ?? String(err)}. ` +
+					`assert-ai runner failed to start via ${resolved.source}: ${err?.message ?? String(err)}. ` +
 						`Ensure the viewer was started in a shell with the project venv activated, ` +
-						`or set ASSERT_EVAL_COMMAND to a working invocation (e.g. "assert-eval").`,
+						`or set ASSERT_AI_COMMAND to a working invocation (e.g. "assert-ai").`,
 					err
 				)
 			);

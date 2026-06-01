@@ -6,7 +6,7 @@ import { getActiveRuns } from '$lib/server/runner.js';
 import {
 	normalizeWizardPayload,
 	writeRunConfigFiles,
-	spawnAssertEvalRun,
+	spawnAssertAiRun,
 	runDirExists,
 	WizardValidationError,
 	RunConflictError,
@@ -42,7 +42,7 @@ export const GET: RequestHandler = async () => {
  *   2. Refuse with 409 if a run with the same suite/run already exists.
  *   3. mkdir the run directory atomically; write eval_config.yaml (behavior
  *      spec lives inline in behavior.description — no separate spec file).
- *   4. Spawn `assert-eval run` detached; wait for the OS to acknowledge the spawn
+ *   4. Spawn `assert-ai run` detached; wait for the OS to acknowledge the spawn
  *      so a missing binary surfaces as 500 (not 200 + forever-pending monitor).
  *   5. Return { suiteId, runId, pid, warnings } so the wizard can navigate
  *      to /suite/<suiteId>/<runId>/monitor and start polling status.
@@ -105,12 +105,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	let spawned;
 	try {
-		spawned = await spawnAssertEvalRun(written);
+		spawned = await spawnAssertAiRun(written);
 	} catch (err) {
 		const message = err instanceof SpawnError ? err.message : (err as Error).message ?? String(err);
 		return json(
 			{
-				error: 'Failed to start the assert-eval runner.',
+				error: 'Failed to start the assert-ai runner.',
 				details: [message],
 				// Surface the partially-written run dir so the user can inspect or clean up.
 				runDir: written.runDir

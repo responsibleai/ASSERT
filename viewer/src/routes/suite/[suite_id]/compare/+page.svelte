@@ -36,6 +36,16 @@ function metricLabel(m: string): string {
 	return m.replace(/_/g, ' ');
 }
 
+// Short label for a run's target. Callable targets ("module.path:function_name")
+// reduce to "function_name"; provider/model strings ("provider/model-name")
+// reduce to "model-name". Avoids overflowing column headers and per-run cards.
+function runLabel(model: string | null | undefined): string {
+	const m = model ?? '';
+	if (m.includes(':')) return m.split(':').pop() || m;
+	if (m.includes('/')) return m.split('/').pop() || m;
+	return m;
+}
+
 // Re-sort comparisons by active metric's delta
 let sortedComparisons = $derived.by(() => {
 	return [...data.comparisons].sort((a, b) =>
@@ -208,7 +218,7 @@ function capitalize(s: string): string {
 					</div>
 
 					<!-- Model name -->
-					<div class="mt-1 font-mono text-xs text-text-muted truncate">{run.model}</div>
+					<div class="mt-1 font-mono text-xs text-text-muted truncate" title={run.model}>{runLabel(run.model)}</div>
 
 					<!-- Big number -->
 					<div class="mt-3 flex items-baseline gap-1.5">
@@ -298,7 +308,7 @@ function capitalize(s: string): string {
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
 					{#each data.runs as run, i}
-						<span class="text-center font-mono font-medium" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
+						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
 					{/each}
 				</div>
 
@@ -373,7 +383,7 @@ function capitalize(s: string): string {
 														<div class="flex items-center justify-between">
 															<div class="flex items-center gap-1.5 min-w-0">
 																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
-																<span class="text-xs font-mono truncate" style="color: {RUN_COLORS[i]}">{run.model.split('/').pop()}</span>
+																<span class="text-xs font-mono truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
 															</div>
 															{#if sample}
 																{@const sampleScore = getRecordFlag(sample, activeMetric)}

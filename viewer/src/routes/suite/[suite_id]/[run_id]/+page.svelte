@@ -914,7 +914,7 @@
 			</div>
 		{/if}
 		<p class="mt-4 font-mono text-xs text-text-muted">
-			uv run assert-eval run --config &lt;config&gt;
+			uv run assert-ai run --config &lt;config&gt;
 		</p>
 	</div>
 {:else}
