@@ -173,6 +173,7 @@
 					context?: string;
 					systemPrompt?: string;
 					evaluationTarget?: 'model' | 'agent';
+					nextRunId?: string;
 				};
 				if (typeof cfg.behaviorName === 'string') behaviorName = cfg.behaviorName;
 				if (typeof cfg.context === 'string' && cfg.context) applicationContext = cfg.context;
@@ -180,6 +181,9 @@
 				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
 					evaluationTarget = cfg.evaluationTarget;
 				}
+				// Auto-increment past the suite's latest run so the prefilled run id
+				// doesn't collide with an existing run dir (v1 -> v2).
+				if (typeof cfg.nextRunId === 'string' && cfg.nextRunId) runId = cfg.nextRunId;
 			}
 		} catch {
 			// Best-effort prefill; the operator can fill any gaps before submitting.

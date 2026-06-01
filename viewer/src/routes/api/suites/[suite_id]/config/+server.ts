@@ -47,6 +47,33 @@ function findLatestRunConfig(suiteDir: string): string | null {
 	return best ? best.path : null;
 }
 
+/** Run dir names under `suiteDir` (excludes the shared `artifacts` cache dir). */
+function listRunIds(suiteDir: string): string[] {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(suiteDir, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	return entries
+		.filter((e) => e.isDirectory() && e.name !== 'artifacts' && isSafeArtifactId(e.name))
+		.map((e) => e.name);
+}
+
+/**
+ * Next free `v<N>` run id given the existing run ids. Re-running an existing
+ * suite should not collide with a prior run, so we auto-increment past the
+ * highest existing `v`-numbered run (v1 -> v2). Suites with no v-style runs
+ * start at v1.
+ */
+function nextRunId(existingRunIds: string[]): string {
+	const vNums = existingRunIds
+		.map((id) => /^v(\d+)$/.exec(id))
+		.filter((m): m is RegExpExecArray => m !== null)
+		.map((m) => Number(m[1]));
+	return vNums.length > 0 ? `v${Math.max(...vNums) + 1}` : 'v1';
+}
+
 function asString(value: unknown): string {
 	return typeof value === 'string' ? value : '';
 }
@@ -66,12 +93,17 @@ export const GET: RequestHandler = async ({ params }) => {
 		return json({ error: `Suite "${suiteId}" was not found.` }, { status: 404 });
 	}
 
+	const existingRunIds = listRunIds(suiteDir);
+	const suggestedRunId = nextRunId(existingRunIds);
+
 	const empty = {
 		suiteId,
 		behaviorName: null as string | null,
 		context: '',
 		systemPrompt: '',
-		evaluationTarget: 'model' as 'model' | 'agent'
+		evaluationTarget: 'model' as 'model' | 'agent',
+		existingRunIds,
+		nextRunId: suggestedRunId
 	};
 
 	const configPath = findLatestRunConfig(suiteDir);
@@ -95,5 +127,13 @@ export const GET: RequestHandler = async ({ params }) => {
 	// is treated as an agent target by the wizard.
 	const evaluationTarget: 'model' | 'agent' = target.model ? 'model' : target.agent || target.callable ? 'agent' : 'model';
 
-	return json({ suiteId, behaviorName, context, systemPrompt, evaluationTarget });
+	return json({
+		suiteId,
+		behaviorName,
+		context,
+		systemPrompt,
+		evaluationTarget,
+		existingRunIds,
+		nextRunId: suggestedRunId
+	});
 };
