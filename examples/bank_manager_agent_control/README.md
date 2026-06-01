@@ -75,7 +75,7 @@ Open the suite `bank-manager-agent-control` and drill into either
 ### Path B — re-run end-to-end
 
 ```bash
-# 0. assert-eval install (Python 3.11+)
+# 0. assert-ai install (Python 3.11+)
 python -m venv .venv
 source .venv/bin/activate           # Windows: .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -109,10 +109,10 @@ Then from the repository root:
 
 ```bash
 # 1. Baseline (owns systematize + test_set + inference + judge)
-assert-eval run --config examples/bank_manager_agent_control/eval_unguarded.yaml
+assert-ai run --config examples/bank_manager_agent_control/eval_unguarded.yaml
 
 # 2. ACS variant (reuses the baseline's test_set)
-assert-eval run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
+assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 ```
 
 If `agent_control_specification` is not importable, only step 1 runs;
