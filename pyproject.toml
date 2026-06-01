@@ -1,6 +1,6 @@
 [project]
 name = "assert-ai"
-version = "0.1.0"
+version = "0.1.0.dev1"
 description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages"
 readme = "README.md"
 requires-python = ">=3.11"
