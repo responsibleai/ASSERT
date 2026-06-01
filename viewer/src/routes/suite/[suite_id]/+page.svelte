@@ -471,11 +471,6 @@
 								<InfoTooltip direction="se" label="Direct prompts are single-turn requests. Multi-turn scenarios simulate longer user conversations against the target." />
 							</span>
 						</th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">
-							<span class="inline-flex items-center gap-1">Target
-								<InfoTooltip direction="se" label="The model or agent under evaluation — typically the deployment or model name that produced the responses for this run." />
-							</span>
-						</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
 						{#each visibleDimNames as dimName (dimName)}
@@ -511,19 +506,21 @@
 								</button>
 							</td>
 							<td class="px-3 py-2">
-								<div class="flex items-center gap-1.5">
+								<div class="flex items-start gap-1.5">
 									{#if hasChildren}
-										<button class="flex h-4 w-4 items-center justify-center rounded text-text-muted transition-colors hover:text-text" onclick={() => toggleRunExpanded(run.run_id)} aria-expanded={isExpanded} aria-label={isExpanded ? 'Collapse run details' : 'Expand run details'}>
+										<button class="mt-0.5 flex h-4 w-4 items-center justify-center rounded text-text-muted transition-colors hover:text-text" onclick={() => toggleRunExpanded(run.run_id)} aria-expanded={isExpanded} aria-label={isExpanded ? 'Collapse run details' : 'Expand run details'}>
 											<svg class="h-3 w-3 transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 										</button>
 									{/if}
-									<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+									<div class="min-w-0 flex flex-col">
+										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+										<span class="font-mono text-[10px] text-text-muted truncate" title={runTarget(run)}>{runTarget(run)}</span>
+									</div>
 								</div>
 							</td>
 							<td class="px-3 py-2 text-xs text-text-muted">
 								{#if !hasChildren}{qRun ? 'Single-turn prompts' : 'Multi-turn scenarios'}{:else}<span>{[qRun ? 'Prompts' : '', aRun ? 'Scenarios' : ''].filter(Boolean).join(' + ')}</span>{/if}
 							</td>
-							<td class="px-3 py-2 font-mono text-xs text-text-muted">{runTarget(run)}</td>
 							<td class="px-3 py-2 text-xs text-text-muted">{runStartedAt ? new Date(runStartedAt).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '—'}</td>
 							<td class="px-3 py-2">
 								<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {runStatusClass}">{runStatusLabel}</span>
@@ -545,7 +542,6 @@
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2 pl-7"><a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.run_id}?tab=prompts" class="text-xs text-text-secondary hover:text-interactive hover:underline">Prompts</a></td>
 								<td class="px-3 py-2 text-xs text-text-muted">Single-turn prompts</td>
-								<td class="px-3 py-2 font-mono text-xs text-text-muted">{qRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
 								{#each visibleDimNames as dimName (dimName)}
@@ -560,7 +556,6 @@
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2 pl-7"><a href="/suite/{data.suite_id}/{run.audit_run_id ?? run.run_id}?tab=audit" class="text-xs text-text-secondary hover:text-interactive hover:underline">Scenarios</a></td>
 								<td class="px-3 py-2 text-xs text-text-muted">Multi-turn scenarios</td>
-								<td class="px-3 py-2 font-mono text-xs text-text-muted">{aRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
 								{#each visibleDimNames as dimName (dimName)}
