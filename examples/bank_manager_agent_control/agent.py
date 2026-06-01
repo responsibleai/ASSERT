@@ -15,6 +15,13 @@ ACS spec and SDKs.
 """
 from __future__ import annotations
 
+# 2 lines to instrument, then run the agent unchanged. Phoenix auto-discovers
+# LangChain, CrewAI, OpenAI, and MCP tool calls.
+try:
+    from phoenix.otel import register; register(auto_instrument=True)
+except ImportError:
+    pass  # phoenix-otel + openinference-* not installed; skip auto-trace
+
 import asyncio
 import os
 import sys
