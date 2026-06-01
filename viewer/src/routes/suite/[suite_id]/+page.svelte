@@ -525,21 +525,21 @@
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
 						{#each selectedMetricCols as colDim, colIdx (colIdx)}
 							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap">
-								<label class="sr-only" for="metric-col-{colIdx}">Metric column {colIdx + 1}</label>
-								<select
-									id="metric-col-{colIdx}"
-									class="w-full bg-transparent text-xs font-medium text-text-muted hover:text-text focus:outline-none focus:ring-1 focus:ring-interactive/40 rounded px-1 py-0.5 cursor-pointer truncate"
-									value={colDim ?? ''}
-									onchange={(e) => setMetricCol(colIdx, (e.currentTarget as HTMLSelectElement).value)}
-									title={colDim ? dimColumnLabel(colDim) : ''}
-								>
-									{#each visibleDimNames as optDim (optDim)}
-										<option
-											value={optDim}
-											disabled={selectedMetricCols.some((n, i) => n === optDim && i !== colIdx)}
-										>{dimColumnLabel(optDim)}</option>
-									{/each}
-								</select>
+								<PrimerDropdown
+									ariaLabel={`Metric column ${colIdx + 1}`}
+									selected={colDim ?? ''}
+									options={visibleDimNames.map((optDim) => {
+										const usedColIdx = selectedMetricCols.findIndex((n, i) => n === optDim && i !== colIdx);
+										const isUsedElsewhere = usedColIdx >= 0;
+										return {
+											value: optDim,
+											label: dimColumnLabel(optDim),
+											disabled: isUsedElsewhere,
+											secondaryLabel: isUsedElsewhere ? `in column ${usedColIdx + 1}` : undefined
+										};
+									})}
+									onSelect={(value) => setMetricCol(colIdx, value)}
+								/>
 							</th>
 						{/each}
 						<th class="px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
