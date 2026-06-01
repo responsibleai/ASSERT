@@ -5,9 +5,8 @@ description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-# TODO: add a public team contact email once a team alias is available.
 authors = [
-  { name = "Microsoft Responsible AI" },
+  { name = "ASSERT contributors" },
 ]
 keywords = [
   "safety",
