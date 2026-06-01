@@ -122,6 +122,38 @@
 		}
 	}
 
+	// --- Run evaluation (re-run current suite) ---
+	// Reuses the suite's latest run config (and edited taxonomy) instead of
+	// sending the user to the blank /new wizard.
+	let rerunStarting = $state(false);
+	let rerunError = $state<string | null>(null);
+
+	async function runEvaluation() {
+		if (rerunStarting) return;
+		rerunStarting = true;
+		rerunError = null;
+		try {
+			const res = await fetch('/api/runs/rerun', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ suiteId: data.suite_id })
+			});
+			const body = (await res.json().catch(() => ({}))) as {
+				runId?: string;
+				error?: string;
+			};
+			if (!res.ok || !body.runId) {
+				throw new Error(body.error ?? `Failed to start evaluation (${res.status})`);
+			}
+			void goto(
+				`/suite/${encodeURIComponent(data.suite_id)}/${encodeURIComponent(body.runId)}/monitor`
+			);
+		} catch (err) {
+			rerunError = err instanceof Error ? err.message : String(err);
+			rerunStarting = false;
+		}
+	}
+
 	$effect(() => {
 		const promise = data.streamed?.heavy;
 		if (!promise) return;
@@ -697,15 +729,20 @@
 		<h2 class="text-lg font-semibold text-text">Taxonomy &amp; policy</h2>
 		<p class="mt-1 text-sm text-text-muted">Inspect and edit the behavior categories, then run an evaluation.</p>
 	</div>
-	<div class="flex shrink-0 items-center gap-2">
-		<a
-			class="btn btn-primary btn-small no-underline"
-			href="/new?suite={encodeURIComponent(data.suite_id)}"
+	<div class="flex shrink-0 flex-col items-end gap-1">
+		<button
+			type="button"
+			class="btn btn-primary btn-small"
+			onclick={runEvaluation}
+			disabled={rerunStarting}
 			style="display:inline-flex; align-items:center; gap:0.4rem;"
 		>
 			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-5.197-3.027A1 1 0 008 9.027v5.946a1 1 0 001.555.832l5.197-3.027a1 1 0 000-1.638z"/></svg>
-			Run evaluation
-		</a>
+			{rerunStarting ? 'Starting…' : 'Run evaluation'}
+		</button>
+		{#if rerunError}
+			<span class="text-xs text-danger" role="alert">{rerunError}</span>
+		{/if}
 	</div>
 </div>
 
