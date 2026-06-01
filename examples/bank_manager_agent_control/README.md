@@ -5,6 +5,17 @@ bank-manager agent against the **same agent guarded by [Agent Control
 Specification (ACS)](https://github.com/responsibleai/AgentControlSpecification)**
 on a 100-case eval suite.
 
+## Variants
+
+Three variants of the same LangGraph ReAct agent, all scored against the
+same frozen test set:
+
+| Variant | Intervention |
+|---|---|
+| `variant-a-unguarded-n100` | Raw agent, no policy gates, no defensive prompt (baseline) |
+| `variant-c-unguarded-prompted-n100` | Same raw agent, defensive directives appended to the system prompt (prompt-engineering intervention) |
+| `variant-e-guarded-acs-n100` | Same raw agent wrapped with ACS runtime + Rego policy (tool-call gating) |
+
 ## Headline result (same test set)
 
 | variant | safety_violation | unjustified_refusal |
@@ -13,6 +24,8 @@ on a 100-case eval suite.
 | **ACS-guarded (n=100)** | **9%** | **2%** |
 
 ACS cuts safety failures by ~79% with no helpfulness cost vs the baseline.
+See PR #197 for the full 3-way comparison including the prompt-engineering
+variant.
 
 Note: the unguarded denominator is 96 because 4 scenario rows
 (`test_case_000053`, `_000063`, `_000065`, `_000090`) failed with a
@@ -22,9 +35,10 @@ don't pollute the headline. The ACS-guarded variant ran clean at n=100.
 
 ## What's here
 
-- `agent.py` — two ASSERT callable targets: `chat_unguarded` and
-  `chat_guarded_acs`, both over the same LangGraph ReAct agent talking
-  to a mock MCP banking server.
+- `agent.py` — three ASSERT callable targets: `chat_unguarded`,
+  `chat_unguarded_prompted` (defensive directives appended to the system
+  prompt), and `chat_guarded_acs`, all over the same LangGraph ReAct
+  agent talking to a mock MCP banking server.
 - `mcp_server.py` — mock banking MCP server (`read_account`,
   `read_transaction_history`, `prepare_transfer`,
   `request_customer_approval`, `create_transfer`, `freeze_account`,
@@ -39,10 +53,13 @@ don't pollute the headline. The ACS-guarded variant ran clean at n=100.
 - `eval_unguarded.yaml` — baseline config; owns the full pipeline
   (systematize → test_set → inference → judge); 50 prompt + 50 scenario
   cases.
+- `eval_unguarded_prompted.yaml` — prompt-engineering variant config;
+  reuses the baseline suite-root test_set with the
+  `chat_unguarded_prompted` callable.
 - `eval_guarded_acs.yaml` — ACS variant config; reuses the baseline
-  suite-root test_set so both variants are scored against identical
+  suite-root test_set so all variants are scored against identical
   cases.
-- `results/` — frozen n=100 artifacts for both variants so the viewer
+- `results/` — frozen n=100 artifacts for all variants so the viewer
   renders the comparison without re-running the suite.
 
 ## Two ways to use this demo
@@ -69,8 +86,9 @@ cp -r examples/bank_manager_agent_control/results \
 cd viewer && npm install && npm run dev
 ```
 
-Open the suite `bank-manager-agent-control` and drill into either
-`variant-a-unguarded-n100` or `variant-e-guarded-acs-n100`.
+Open the suite `bank-manager-agent-control` and drill into
+`variant-a-unguarded-n100`, `variant-c-unguarded-prompted-n100`, or
+`variant-e-guarded-acs-n100`.
 
 ### Path B — re-run end-to-end
 
@@ -111,12 +129,15 @@ Then from the repository root:
 # 1. Baseline (owns systematize + test_set + inference + judge)
 assert-ai run --config examples/bank_manager_agent_control/eval_unguarded.yaml
 
-# 2. ACS variant (reuses the baseline's test_set)
+# 2. Prompt-engineering variant (reuses the baseline's test_set)
+assert-ai run --config examples/bank_manager_agent_control/eval_unguarded_prompted.yaml
+
+# 3. ACS variant (reuses the baseline's test_set)
 assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 ```
 
-If `agent_control_specification` is not importable, only step 1 runs;
-step 2 raises a clear install message at call time.
+If `agent_control_specification` is not importable, steps 1 and 2 still
+run; step 3 raises a clear install message at call time.
 
 ## How the ACS integration works
 
