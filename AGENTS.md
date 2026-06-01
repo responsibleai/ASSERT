@@ -1,10 +1,10 @@
-# Adaptive Eval Agent Orientation
+# ASSERT Agent Orientation
 
 This file is for coding assistants such as GitHub Copilot, Claude Code, Cursor, and similar tools. It gives a short, customer-safe map of this preview repository.
 
 ## What this repo is
 
-Adaptive Eval is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting inference outputs (conversations or agent actions) against the spec.
+ASSERT is a local-first, spec-driven evaluation harness for AI agents. A developer writes an eval spec, the pipeline generates targeted test cases, runs them against a target, and judges the resulting inference outputs (conversations or agent actions) against the spec.
 
 Use this mental model:
 
@@ -24,7 +24,7 @@ eval spec -> behavior categories -> test cases -> execute target -> judge -> art
 Start with these files:
 
 - `README.md` - customer-facing overview and quickstart.
-- `docs/quickstart.md` - LangGraph travel planner walkthrough.
+- `docs/getting-started.md` - LangGraph travel planner walkthrough.
 - `docs/targets/README.md` - target decision tree (rendered by default when browsing `docs/targets/`).
 - `docs/targets/callable.md` - Python callable target for any agent or multi-agent system, with OpenTelemetry trace capture as the recommended integration path.
 - `docs/targets/model-and-tools.md` - Prompt Agent target (hosted model + system prompt + optional tool schema; runtime owns the tool-call loop).
@@ -77,7 +77,7 @@ python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env
 
 # Create a config interactively, or use an existing one
-assert-ai init --model azure/gpt-5.4
+assert-ai init --model azure/gpt-4o
 # or run the flagship example directly
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
@@ -92,7 +92,7 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 # Create a config interactively, or use an existing one
-assert-ai init --model azure/gpt-5.4
+assert-ai init --model azure/gpt-4o
 # or run the flagship example directly
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
@@ -127,10 +127,10 @@ Look for judge evidence, cited turns, tool calls, routing decisions, and trace r
 Keep docs customer-safe. Prefer improving:
 
 - `README.md`
-- `docs/quickstart.md`
+- `docs/getting-started.md`
 - `docs/targets/*.md`
-- `docs/writing-eval-specs.md`
-- `docs/reading-results.md`
+- `docs/guides/create-evaluation.md`
+- `docs/guides/results.md`
 - `examples/README.md`
 
 Do not reintroduce internal-only planning docs into this customer-preview distribution.
@@ -142,7 +142,7 @@ End users can paste the following block into their AI assistant to get the same 
 ```text
 You are helping me with the ASSERT repo (https://github.com/responsibleai/ASSERT).
 
-Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. The mental model:
+ASSERT is a local-first, spec-driven evaluation pipeline for AI agents. The mental model:
 
   eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
 
@@ -151,7 +151,7 @@ Key facts:
 - For any agent or multi-agent system with a Python entry function, use `target.callable` with `target.trace`.
   OpenTelemetry trace capture (Phoenix/OpenInference for 33+ frameworks, or your own OTel SDK spans) is the recommended integration path so the judge can score tool calls and routing, not just final text.
 - For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.
-- Read `README.md`, `docs/quickstart.md`, `docs/targets/README.md`, `docs/targets/callable.md`, and
+- Read `README.md`, `docs/getting-started.md`, `docs/targets/README.md`, `docs/targets/callable.md`, and
   `docs/config/schema.md` before suggesting changes to YAML schema.
 - Never read or print values from `.env`. Use placeholder names like AZURE_API_KEY and AZURE_API_BASE.
 - Keep all suggestions customer-safe.
