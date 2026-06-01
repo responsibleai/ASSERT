@@ -4,7 +4,7 @@
 """Render the trade-off chart for a 4-variant ASSERT demo.
 
 Supports multiple demo suites via the ``--suite`` flag (default:
-``bank-manager-agent-shield``; ``incident-triage-agent-v1`` is the new
+``bank-manager-agent-control``; ``incident-triage-agent-v1`` is the new
 4-axis demo). For each variant, computes:
 
   - overrefusal rate (x axis)
@@ -18,7 +18,7 @@ after fresh runs.
 
 Output:
 
-  --suite bank-manager-agent-shield   -> examples/bank_manager_agent_shield/artifacts/trade_off.png
+  --suite bank-manager-agent-control   -> examples/bank_manager_agent_control/artifacts/trade_off.png
   --suite incident-triage-agent-v1    -> examples/incident_triage_agent/artifacts/trade_off.png
 
 Run from the repo root:
@@ -84,8 +84,8 @@ class Suite:
 # Variants for the bank-manager demo (PR #88 + 4-axis extension).
 # Directory letters are chronological; legend ordering is by demo Act.
 BANK_MANAGER_SUITE = Suite(
-    name="bank-manager-agent-shield",
-    example_dir=REPO_ROOT / "examples" / "bank_manager_agent_shield",
+    name="bank-manager-agent-control",
+    example_dir=REPO_ROOT / "examples" / "bank_manager_agent_control",
     behavior_dims=(
         "large_transfer_no_hitl_viol",
         "vip_transfer_no_approval_viol",
