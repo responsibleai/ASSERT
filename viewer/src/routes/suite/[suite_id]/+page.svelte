@@ -12,6 +12,8 @@
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
 	import type { SuiteHeavyData } from '$lib/server/data.js';
 	import { fade } from 'svelte/transition';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 
 	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
 
@@ -66,8 +68,82 @@
 	let requiredBaseMetrics = $derived(
 		getRequiredBaseMetricNames((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)
 	);
-	let metricNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
+	// Union of (a) globally-declared dim defs and (b) dim names actually present in run metrics.
+	// (b) covers custom per-suite dims declared inline in eval.yaml judge.dimensions which never
+	// reach loadDimensions() (that only reads BUILT_IN_DIMENSIONS + the global
+	// examples/eval-definitions/judge_dimensions.yaml file). Mirrors the compare view's
+	// loadComparePageData which derives data.allMetrics from Object.keys(summary.dimensions).
+	let allDimNames = $derived.by(() => {
+		const names = new Set<string>();
+		for (const name of Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)) {
+			names.add(name);
+		}
+		for (const r of allRuns) {
+			for (const name of Object.keys(r.prompt?.metrics?.dimensions ?? {})) names.add(name);
+			for (const name of Object.keys(r.audit?.metrics?.dimensions ?? {})) names.add(name);
+		}
+		return Array.from(names);
+	});
+	let metricNames = $derived(allDimNames);
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
+	let dimNames = $derived(allDimNames);
+	function dimColumnLabel(name: string): string {
+		const spaced = name.replace(/_/g, ' ');
+		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+	}
+	let visibleDimNames = $derived(
+		dimNames.filter((name) =>
+			allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+		)
+	);
+
+	// Per-column dim selection for the evaluation-results table. Each of the
+	// MAX_METRIC_COLS slots holds either a dim name (must currently be populated)
+	// or null when the user hasn't picked a dim for that slot. State is sourced
+	// from the URL search param ``metrics`` so links are shareable and reloads
+	// preserve the user's column choice. Default = first MAX_METRIC_COLS entries
+	// of visibleDimNames, preserving the existing ordering.
+	const MAX_METRIC_COLS = 3;
+	let selectedMetricCols = $derived.by<(string | null)[]>(() => {
+		const populated = visibleDimNames;
+		const numCols = Math.min(MAX_METRIC_COLS, populated.length);
+		if (numCols === 0) return [];
+		const raw = page.url.searchParams.get('metrics');
+		const result: (string | null)[] = new Array(numCols).fill(null);
+		const used = new Set<string>();
+		if (raw) {
+			const parts = raw.split(',').map((s) => s.trim());
+			for (let i = 0; i < numCols && i < parts.length; i++) {
+				const name = parts[i];
+				if (name && populated.includes(name) && !used.has(name)) {
+					result[i] = name;
+					used.add(name);
+				}
+			}
+		}
+		// Fill empty slots with the first unused populated dim (preserves default ordering).
+		for (let i = 0; i < numCols; i++) {
+			if (result[i] !== null) continue;
+			const fallback = populated.find((n) => !used.has(n));
+			if (!fallback) break;
+			result[i] = fallback;
+			used.add(fallback);
+		}
+		return result;
+	});
+
+	function setMetricCol(colIdx: number, dimName: string) {
+		const next = [...selectedMetricCols];
+		if (colIdx < 0 || colIdx >= next.length) return;
+		// If the chosen dim is already used in another slot, swap them so we never
+		// end up with the same dim in two columns.
+		const existingIdx = next.findIndex((n, i) => n === dimName && i !== colIdx);
+		if (existingIdx >= 0) next[existingIdx] = next[colIdx];
+		next[colIdx] = dimName;
+		const url = new URL(page.url);
+		url.searchParams.set('metrics', next.filter((n): n is string => Boolean(n)).join(','));
+		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+	}
 	let sortedBehaviors = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
@@ -445,16 +521,27 @@
 								<InfoTooltip direction="se" label="Direct prompts are single-turn requests. Multi-turn scenarios simulate longer user conversations against the target." />
 							</span>
 						</th>
-						<th class="px-3 py-2 text-xs font-medium text-text-muted">
-							<span class="inline-flex items-center gap-1">Target
-								<InfoTooltip direction="se" label="The model or agent under evaluation — typically the deployment or model name that produced the responses for this run." />
-							</span>
-						</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Policy violation</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Overrefusal</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Harm actionability</th>
+						{#each selectedMetricCols as colDim, colIdx (colIdx)}
+							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap">
+								<PrimerDropdown
+									ariaLabel={`Metric column ${colIdx + 1}`}
+									selected={colDim ?? ''}
+									options={visibleDimNames.map((optDim) => {
+										const usedColIdx = selectedMetricCols.findIndex((n, i) => n === optDim && i !== colIdx);
+										const isUsedElsewhere = usedColIdx >= 0;
+										return {
+											value: optDim,
+											label: dimColumnLabel(optDim),
+											disabled: isUsedElsewhere,
+											secondaryLabel: isUsedElsewhere ? `in column ${usedColIdx + 1}` : undefined
+										};
+									})}
+									onSelect={(value) => setMetricCol(colIdx, value)}
+								/>
+							</th>
+						{/each}
 						<th class="px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
 					</tr>
 				</thead>
@@ -466,9 +553,6 @@
 						{@const isCompareSelected = Boolean(run.compare_run_id && selectedCompareRuns.has(run.compare_run_id))}
 						{@const isCompareDisabled = !run.compare_run_id || (!isCompareSelected && selectedCompareRuns.size >= MAX_COMPARE_RUNS)}
 						{@const isExpanded = expandedRunIds.has(run.run_id)}
-						{@const violationRate = aggregateRunViolationRate(run)}
-						{@const overrefusalRate = aggregateRunOverrefusalRate(run)}
-						{@const harmRate = aggregateRunDimensionRate(run, 'harm_actionability')}
 						{@const runStartedAt = qRun?.manifest?.started_at ?? aRun?.manifest?.started_at ?? null}
 						{@const runStatus = qRun?.manifest?.status ?? aRun?.manifest?.status ?? null}
 						{@const runStatusLabel = runStatus === 'completed' ? 'complete' : runStatus === 'failed' ? 'failed' : runStatus === 'running' ? 'running' : 'incomplete'}
@@ -488,44 +572,35 @@
 								</button>
 							</td>
 							<td class="px-3 py-2">
-								<div class="flex items-center gap-1.5">
+								<div class="flex items-start gap-1.5">
 									{#if hasChildren}
-										<button class="flex h-4 w-4 items-center justify-center rounded text-text-muted transition-colors hover:text-text" onclick={() => toggleRunExpanded(run.run_id)} aria-expanded={isExpanded} aria-label={isExpanded ? 'Collapse run details' : 'Expand run details'}>
+										<button class="mt-0.5 flex h-4 w-4 items-center justify-center rounded text-text-muted transition-colors hover:text-text" onclick={() => toggleRunExpanded(run.run_id)} aria-expanded={isExpanded} aria-label={isExpanded ? 'Collapse run details' : 'Expand run details'}>
 											<svg class="h-3 w-3 transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 										</button>
 									{/if}
-									<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+									<div class="min-w-0 flex flex-col">
+										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+										<span class="font-mono text-[10px] text-text-muted truncate" title={runTarget(run)}>{runTarget(run)}</span>
+									</div>
 								</div>
 							</td>
 							<td class="px-3 py-2 text-xs text-text-muted">
 								{#if !hasChildren}{qRun ? 'Single-turn prompts' : 'Multi-turn scenarios'}{:else}<span>{[qRun ? 'Prompts' : '', aRun ? 'Scenarios' : ''].filter(Boolean).join(' + ')}</span>{/if}
 							</td>
-							<td class="px-3 py-2 font-mono text-xs text-text-muted">{runTarget(run)}</td>
 							<td class="px-3 py-2 text-xs text-text-muted">{runStartedAt ? new Date(runStartedAt).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '—'}</td>
 							<td class="px-3 py-2">
 								<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {runStatusClass}">{runStatusLabel}</span>
 							</td>
-							<td class="px-3 py-2 text-left">
-								{#if violationRate !== null}
-									<span class="text-xs font-semibold">{(violationRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
-							<td class="px-3 py-2 text-left">
-								{#if overrefusalRate !== null}
-									<span class="text-xs font-semibold">{(overrefusalRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
-							<td class="px-3 py-2 text-left">
-								{#if harmRate !== null}
-									<span class="text-xs font-semibold">{(harmRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
+							{#each selectedMetricCols as colDim, colIdx (colIdx)}
+								{@const dimRate = colDim ? aggregateRunDimensionRate(run, colDim) : null}
+								<td class="px-3 py-2 text-left">
+									{#if dimRate !== null}
+										<span class="text-xs font-semibold">{(dimRate * 100).toFixed(0)}%</span>
+									{:else}
+										<span class="text-xs text-text-muted">—</span>
+									{/if}
+								</td>
+							{/each}
 							<td class="px-3 py-2 text-left text-xs text-text-muted">{runTotal(run) || '—'}</td>
 						</tr>
 						{#if hasChildren && isExpanded && qRun}
@@ -533,12 +608,12 @@
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2 pl-7"><a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.run_id}?tab=prompts" class="text-xs text-text-secondary hover:text-interactive hover:underline">Prompts</a></td>
 								<td class="px-3 py-2 text-xs text-text-muted">Single-turn prompts</td>
-								<td class="px-3 py-2 font-mono text-xs text-text-muted">{qRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics}<span class="text-xs font-semibold">{(qRun.metrics.policy_violation_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics}<span class="text-xs font-semibold">{(qRun.metrics.overrefusal_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics?.dimensions?.harm_actionability}<span class="text-xs font-semibold">{(qRun.metrics.dimensions.harm_actionability.rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{#each selectedMetricCols as colDim, colIdx (colIdx)}
+									{@const childDimRate = colDim ? (qRun.metrics?.dimensions?.[colDim]?.rate ?? null) : null}
+									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{qRun.metrics?.total ?? '—'}</td>
 							</tr>
 						{/if}
@@ -547,12 +622,12 @@
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2 pl-7"><a href="/suite/{data.suite_id}/{run.audit_run_id ?? run.run_id}?tab=audit" class="text-xs text-text-secondary hover:text-interactive hover:underline">Scenarios</a></td>
 								<td class="px-3 py-2 text-xs text-text-muted">Multi-turn scenarios</td>
-								<td class="px-3 py-2 font-mono text-xs text-text-muted">{aRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics}<span class="text-xs font-semibold">{(aRun.metrics.policy_violation_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics}<span class="text-xs font-semibold">{(aRun.metrics.overrefusal_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics?.dimensions?.harm_actionability}<span class="text-xs font-semibold">{(aRun.metrics.dimensions.harm_actionability.rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{#each selectedMetricCols as colDim, colIdx (colIdx)}
+									{@const childDimRate = colDim ? (aRun.metrics?.dimensions?.[colDim]?.rate ?? null) : null}
+									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{aRun.metrics?.total ?? '—'}</td>
 							</tr>
 						{/if}
