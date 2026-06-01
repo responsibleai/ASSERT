@@ -1,8 +1,8 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 import DocsSidebar from "../_components/DocsSidebar";
 import MarkdownContent from "../_components/MarkdownContent";
 import OnThisPage from "../_components/OnThisPage";
-import { getAllDocs, getDocBySlug, getDocGroupLabel, getHeadings } from "../_lib/docs";
+import { getAllDocs, getDocBySlug, getHeadings } from "../_lib/docs";
 
 type Params = { slug: string[] };
 
@@ -22,32 +22,18 @@ export async function generateMetadata({ params }: { params: Promise<Params> }) 
 
 export default async function DocPage({ params }: { params: Promise<Params> }) {
 	const { slug } = await params;
+	// Legacy URL: README is now the docs index.
+	if (slug.length === 1 && slug[0].toLowerCase() === "readme") {
+		redirect("/docs");
+	}
 	const doc = getDocBySlug(slug);
 	if (!doc) return null;
-	const groupLabel = getDocGroupLabel(doc);
 	const headings = getHeadings(doc.content);
 	return (
 		<div className="docs-layout has-toc">
 			<DocsSidebar activeHref={doc.href} />
 			<main className="docs-main">
 				<article className="docs-article">
-					<nav className="docs-breadcrumbs" aria-label="Breadcrumb">
-						<ol>
-							<li>
-								<Link href="/docs">Docs</Link>
-							</li>
-							{groupLabel && (
-								<li>
-									<span className="docs-breadcrumbs-sep" aria-hidden="true">/</span>
-									<span>{groupLabel}</span>
-								</li>
-							)}
-							<li>
-								<span className="docs-breadcrumbs-sep" aria-hidden="true">/</span>
-								<span className="is-current">{doc.title}</span>
-							</li>
-						</ol>
-					</nav>
 					<header className="docs-article-header">
 						<h1 className="docs-title">{doc.title}</h1>
 						{doc.description && <p className="docs-lede">{doc.description}</p>}

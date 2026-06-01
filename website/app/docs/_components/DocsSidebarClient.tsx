@@ -75,7 +75,7 @@ export default function DocsSidebar({
 											activeHref === "/docs" ? " is-active" : ""
 										}`}
 									>
-										Overview
+										ASSERT Documentation
 									</Link>
 								</li>
 							)}

@@ -1,45 +1,31 @@
-import Link from "next/link";
 import DocsSidebar from "./_components/DocsSidebar";
-import { getDocsNav } from "./_lib/docs";
+import MarkdownContent from "./_components/MarkdownContent";
+import OnThisPage from "./_components/OnThisPage";
+import { getDocsIndex, getHeadings } from "./_lib/docs";
 
 export const metadata = {
-	title: "Documentation · ASSERT",
+	title: "ASSERT Documentation · ASSERT Docs",
 };
 
 export default function DocsIndex() {
-	const groups = getDocsNav();
+	const index = getDocsIndex();
+	const title = index?.title ?? "ASSERT Documentation";
+	const description = index?.description;
+	const content = index?.content ?? "";
+	const headings = getHeadings(content);
 	return (
-		<div className="docs-layout">
+		<div className="docs-layout has-toc">
 			<DocsSidebar activeHref="/docs" />
 			<main className="docs-main">
-				<header className="docs-header">
-					<h1 className="docs-title">ASSERT Documentation</h1>
-					<p className="docs-lede">
-						Guides, references, and examples for using ASSERT to evaluate AI systems.
-					</p>
-				</header>
-
-				<div className="docs-index-grid">
-					{groups.map((group, gi) => (
-						<section key={group.group ?? `g-${gi}`} className="docs-index-group">
-							{group.group && <h2 className="docs-index-group-title">{group.group}</h2>}
-							<ul className="docs-index-list">
-								{group.items.map((item) => (
-									<li key={item.href}>
-										<Link href={item.href} className="docs-index-card">
-											<span className="docs-index-card-title">{item.title}</span>
-											{item.description && (
-												<span className="docs-index-card-desc">{item.description}</span>
-											)}
-											<span className="docs-index-card-cta">Learn more &rarr;</span>
-										</Link>
-									</li>
-								))}
-							</ul>
-						</section>
-					))}
-				</div>
+				<article className="docs-article">
+					<header className="docs-article-header">
+						<h1 className="docs-title">{title}</h1>
+						{description && <p className="docs-lede">{description}</p>}
+					</header>
+					<MarkdownContent source={content} />
+				</article>
 			</main>
+			<OnThisPage headings={headings} />
 		</div>
 	);
 }

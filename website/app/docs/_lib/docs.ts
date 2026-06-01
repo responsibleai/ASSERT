@@ -24,6 +24,10 @@ function isMarkdownFile(filename: string): boolean {
 	return filename.toLowerCase().endsWith(".md") || filename.toLowerCase().endsWith(".mdx");
 }
 
+// Files (relative path, lowercased) that should NOT appear as their own doc
+// page. README is rendered as the docs index instead.
+const EXCLUDED_FILES = new Set(["readme.md", "readme.mdx"]);
+
 function walk(dir: string, base: string = dir): string[] {
 	if (!fs.existsSync(dir)) return [];
 	const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -33,7 +37,9 @@ function walk(dir: string, base: string = dir): string[] {
 		if (entry.isDirectory()) {
 			files.push(...walk(full, base));
 		} else if (entry.isFile() && isMarkdownFile(entry.name)) {
-			files.push(path.relative(base, full));
+			const rel = path.relative(base, full);
+			if (EXCLUDED_FILES.has(rel.toLowerCase())) continue;
+			files.push(rel);
 		}
 	}
 	return files;
@@ -53,11 +59,17 @@ function titleFromContent(content: string, fallback: string): string {
 	return fallback;
 }
 
+const ACRONYMS = new Set(["cli", "api", "ui", "url", "sdk", "id", "ai", "llm"]);
+
 function humanize(slug: string): string {
 	return slug
 		.split(/[-_\s]+/)
 		.filter(Boolean)
-		.map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+		.map((w) => {
+			if (ACRONYMS.has(w.toLowerCase())) return w.toUpperCase();
+			if (w.length <= 2) return w.toUpperCase();
+			return w[0].toUpperCase() + w.slice(1);
+		})
 		.join(" ");
 }
 
@@ -85,11 +97,20 @@ export function getAllDocs(): Doc[] {
 			content: stripped,
 		});
 	}
-	// Sort: top-level files first (by title), then nested by path
+	// Sort: top-level files first (by priority then title), then nested by path
+	const TOP_LEVEL_PRIORITY: Record<string, number> = {
+		"getting-started": 0,
+		"concepts": 1,
+	};
 	docs.sort((a, b) => {
 		const ad = a.slug.length;
 		const bd = b.slug.length;
 		if (ad !== bd) return ad - bd;
+		if (ad === 1) {
+			const ap = TOP_LEVEL_PRIORITY[a.slug[0]] ?? 100;
+			const bp = TOP_LEVEL_PRIORITY[b.slug[0]] ?? 100;
+			if (ap !== bp) return ap - bp;
+		}
 		return a.slug.join("/").localeCompare(b.slug.join("/"));
 	});
 	return docs;
@@ -159,4 +180,25 @@ export function getHeadings(content: string): Heading[] {
  */
 export function getDocGroupLabel(doc: DocMeta): string | null {
 	return doc.slug.length > 1 ? humanize(doc.slug[0]) : null;
+}
+
+/**
+ * Returns the parsed README.md from the docs root, used to render the /docs
+ * landing page. Returns null if README.md does not exist.
+ */
+export function getDocsIndex(): { title: string; description?: string; content: string } | null {
+	const candidates = ["README.md", "readme.md", "README.mdx", "readme.mdx"];
+	for (const name of candidates) {
+		const full = path.join(DOCS_DIR, name);
+		if (!fs.existsSync(full)) continue;
+		const raw = fs.readFileSync(full, "utf8");
+		const { data, content } = matter(raw);
+		const title =
+			(typeof data.title === "string" && data.title.trim()) ||
+			titleFromContent(content, "ASSERT Documentation");
+		const description = typeof data.description === "string" ? data.description : undefined;
+		const stripped = content.replace(/^\s*#\s+.+\r?\n+/, "");
+		return { title, description, content: stripped };
+	}
+	return null;
 }
