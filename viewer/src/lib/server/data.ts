@@ -182,8 +182,12 @@ function readRowBehavior(row: { behavior?: unknown; dimensions?: unknown } | und
 
 function behaviorDefinition(taxonomy: Taxonomy | null, behavior: string): string {
 	const entry = taxonomy?.behavior_categories?.find((item) => item.name === behavior);
-	if (!entry) throw new Error(`behavior '${behavior}' is missing from taxonomy.behavior_categories`);
-	return entry.definition;
+	// A seed can reference a behavior that is no longer present in the current
+	// taxonomy — e.g. after the taxonomy is edited or a re-run regenerates the
+	// test set from a different (cached) taxonomy version. Degrade gracefully so
+	// the suite page still renders instead of throwing a 500; the seed simply
+	// has no resolved definition.
+	return entry?.definition ?? '';
 }
 
 
