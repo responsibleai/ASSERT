@@ -101,4 +101,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["assert_ai*", "examples*"]
+include = ["assert_ai*"]
