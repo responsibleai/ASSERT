@@ -685,13 +685,13 @@ function resolveAssertEvalCommand(configPath: string): ResolvedCommand {
 	const moduleArgs = ['-m', 'assert_ai.cli', ...cliArgs];
 
 	// 1. Explicit override always wins.
-	const override = process.env.ASSERT_EVAL_COMMAND;
+	const override = process.env.ASSERT_AI_COMMAND;
 	if (override && override.trim()) {
 		const parts = override.trim().split(/\s+/);
 		return {
 			command: parts[0],
 			args: [...parts.slice(1), ...cliArgs],
-			source: 'ASSERT_EVAL_COMMAND override'
+			source: 'ASSERT_AI_COMMAND override'
 		};
 	}
 
@@ -843,7 +843,7 @@ export function spawnAssertEvalRun(written: WrittenRun): Promise<SpawnedRun> {
 				new SpawnError(
 					`assert-ai runner failed to start via ${resolved.source}: ${err?.message ?? String(err)}. ` +
 						`Ensure the viewer was started in a shell with the project venv activated, ` +
-						`or set ASSERT_EVAL_COMMAND to a working invocation (e.g. "assert-ai").`,
+						`or set ASSERT_AI_COMMAND to a working invocation (e.g. "assert-ai").`,
 					err
 				)
 			);

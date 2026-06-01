@@ -32,7 +32,7 @@ DEFAULT_RESULTS_DIR = ROOT / "artifacts" / "results"
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
     "max_content_width": 100,
-    "auto_envvar_prefix": "ASSERT_EVAL",
+    "auto_envvar_prefix": "ASSERT_AI",
 }
 
 DEFAULT_COMPARE_METRIC = "policy_violation"

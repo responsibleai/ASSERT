@@ -4,6 +4,32 @@ version = "0.1.0"
 description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+# TODO: add a public team contact email once a team alias is available.
+authors = [
+  { name = "Microsoft Responsible AI" },
+]
+keywords = [
+  "safety",
+  "evaluation",
+  "llm",
+  "agent",
+  "responsible-ai",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+]
 dependencies = [
   "click>=8.0",
   "litellm>=1.79.1",
@@ -90,9 +116,21 @@ dev = [
 [project.scripts]
 assert-ai = "assert_ai.cli:cli"
 
+[project.urls]
+Homepage = "https://github.com/responsibleai/ASSERT"
+Repository = "https://github.com/responsibleai/ASSERT"
+Issues = "https://github.com/responsibleai/ASSERT/issues"
+Documentation = "https://github.com/responsibleai/ASSERT#readme"
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"assert_ai.internal_pipeline_prompts" = ["*.md"]
 
 [dependency-groups]
 dev = [
@@ -101,4 +139,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["assert_ai*", "examples*"]
+include = ["assert_ai*"]

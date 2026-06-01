@@ -257,7 +257,7 @@ def _rank(corpus: tuple[dict[str, Any], ...], query: str, max_results: int) -> l
 
 
 def _cache_disabled() -> bool:
-    return os.environ.get("ASSERT_EVAL_REAL_TOOLS_NOCACHE", "").lower() in {"1", "true", "yes"}
+    return os.environ.get("ASSERT_AI_REAL_TOOLS_NOCACHE", "").lower() in {"1", "true", "yes"}
 
 
 def _cache_key(kind: str, payload: dict[str, Any]) -> str:

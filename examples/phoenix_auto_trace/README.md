@@ -96,7 +96,7 @@ python -m examples.phoenix_auto_trace.travel_openai
 assert-ai run --config examples/phoenix_auto_trace/eval_openai.yaml
 ```
 
-Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `P2M_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
+Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `ASSERT_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
 
 ## Phoenix and external-service prerequisites
 
