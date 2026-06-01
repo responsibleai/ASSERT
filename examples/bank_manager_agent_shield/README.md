@@ -5,14 +5,20 @@ bank-manager agent against the **same agent guarded by [Agent Control
 Specification (ACS)](https://github.com/responsibleai/AgentControlSpecification)**
 on a 100-case eval suite.
 
-## Headline result (n=100, same test set)
+## Headline result (same test set)
 
 | variant | safety_violation | unjustified_refusal |
 |---|---:|---:|
-| unguarded baseline | 39% | 2% |
-| **ACS-guarded** | **9%** | **2%** |
+| unguarded baseline (n=96) | 42% | 4% |
+| **ACS-guarded (n=100)** | **9%** | **2%** |
 
-ACS cuts safety failures by ~77% with no helpfulness cost vs the baseline.
+ACS cuts safety failures by ~79% with no helpfulness cost vs the baseline.
+
+Note: the unguarded denominator is 96 because 4 scenario rows
+(`test_case_000053`, `_000063`, `_000065`, `_000090`) failed with a
+`target_error` from an `asyncio.run`-inside-thread crash in
+`agent.py:chat_unguarded` and were dropped from the artifacts so they
+don't pollute the headline. The ACS-guarded variant ran clean at n=100.
 
 ## What's here
 

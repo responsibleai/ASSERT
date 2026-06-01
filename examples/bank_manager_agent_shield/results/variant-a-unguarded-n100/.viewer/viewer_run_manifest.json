@@ -6,12 +6,12 @@
   "source_files": {
     "inference_set.jsonl": {
       "path": "inference_set.jsonl",
-      "size_bytes": 5381211,
+      "size_bytes": 5051125,
       "mtime_ms": 1780333826779
     },
     "scores.jsonl": {
       "path": "scores.jsonl",
-      "size_bytes": 415280,
+      "size_bytes": 413329,
       "mtime_ms": 1780336110816
     },
     "manifest.json": {
