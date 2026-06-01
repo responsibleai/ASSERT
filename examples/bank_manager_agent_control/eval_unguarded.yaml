@@ -3,16 +3,14 @@ run: variant-a-unguarded-n100
 
 # Baseline (unguarded) config. Owns the full pipeline:
 # systematize → test_set → inference → judge. The produced taxonomy and
-# test_set are written to the suite root and reused by the guarded
-# comparison configs (eval_guarded_v2.yaml, eval_guarded_v3.yaml) via
-# the default suite-root fallback in p2m/stages/inference.py.
+# test_set are written to the suite root and reused by eval_guarded_acs.yaml
+# via the default suite-root fallback in assert_ai/stages/inference.py.
 #
 # 100 cases: 50 prompt (single-shot) + 50 scenario (multi-turn persona).
 #
 # Run order on a fresh suite:
-#   1. p2m run --config examples/bank_manager_agent_control/eval_unguarded.yaml
-#   2. p2m run --config examples/bank_manager_agent_control/eval_guarded_v2.yaml
-#   3. p2m run --config examples/bank_manager_agent_control/eval_guarded_v3.yaml
+#   1. assert-ai run --config examples/bank_manager_agent_control/eval_unguarded.yaml
+#   2. assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 
 behavior:
   name: bank_manager_agent_control

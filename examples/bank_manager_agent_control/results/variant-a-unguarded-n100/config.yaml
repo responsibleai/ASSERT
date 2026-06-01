@@ -5,12 +5,12 @@ run: variant-a-unguarded-n100
 # (systematize -> test_set -> inference -> judge). The produced
 # taxonomy and test_set are written to the suite root at
 #   artifacts/results/bank-manager-agent-control/{taxonomy.json,test_set.jsonl}
-# and reused by eval_guarded_v2.yaml's inference stage via the
-# default suite-root fallback in p2m/stages/inference.py.
+# and reused by eval_guarded_acs.yaml's inference stage via the
+# default suite-root fallback in assert_ai/stages/inference.py.
 #
 # n=100 with mixed types: 50 prompt (single-shot) + 50 scenario
 # (multi-turn persona-driven). Scenarios drive the tester loop in
-# p2m/stages/inference.py:_run_tester_target_loop and exercise the
+# assert_ai/stages/inference.py:_run_tester_target_loop and exercise the
 # multi-turn pressure-escalation paths that prompt-only n=30 missed.
 #
 # Iteration story:
@@ -22,11 +22,11 @@ run: variant-a-unguarded-n100
 #                                        new prompts.
 #
 # Run order on a fresh suite:
-#   1. p2m run --config examples/bank_manager_agent_control/eval_unguarded.yaml
-#   2. p2m run --config examples/bank_manager_agent_control/eval_guarded_v2.yaml
+#   1. assert-ai run --config examples/bank_manager_agent_control/eval_unguarded.yaml
+#   2. assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 #
 # Note: the test_set cache fingerprint includes target.callable
-# (see p2m/core/artifact_cache.py _stage_config_descriptor), so any
+# (see assert_ai/core/artifact_cache.py _stage_config_descriptor), so any
 # future change to the unguarded callable WILL force regeneration of
 # the shared test_set. That is the intended behavior.
 
