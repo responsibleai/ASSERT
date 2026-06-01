@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/responsibleai/ASSERT/discussions
+    about: Ask questions, share use cases, or discuss design ideas with the community.
+  - name: Documentation and setup help
+    url: https://github.com/responsibleai/ASSERT/blob/main/README.md
+    about: Start with the README and the docs/ directory for installation, quickstart, and CLI/config reference.
