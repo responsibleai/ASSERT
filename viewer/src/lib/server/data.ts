@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { env } from '$env/dynamic/private';
 import { ARTIFACTS_ROOT } from './config.js';
 import { loadDimensions } from './dimensions.js';
 import {
@@ -1232,6 +1233,7 @@ export function loadSuitePageData(suiteId: string) {
 		scenarioSeeds,
 		dimensionDefs: loadDimensions(),
 		systematization: snapshot.systematization,
+		editEnabled: env.VIEWER_EDIT_MODE === '1',
 		streamed: {
 			heavy: loadSuiteHeavyData(suiteId, snapshot)
 		}

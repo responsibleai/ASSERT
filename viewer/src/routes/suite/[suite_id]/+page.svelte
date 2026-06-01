@@ -12,6 +12,8 @@
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
 	import type { SuiteHeavyData } from '$lib/server/data.js';
 	import { fade } from 'svelte/transition';
+	import { page } from '$app/state';
+	import { goto, invalidateAll } from '$app/navigation';
 
 	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
 
@@ -36,6 +38,95 @@
 	let heavyError = $state<string | null>(null);
 	let heavyPending = $derived(heavyData === null && heavyError === null);
 	let showSkeleton = $state(false);
+
+	// --- Stage tabs: taxonomy (edit) vs results ---
+	let activeStage = $derived(
+		(page.url.searchParams.get('stage') === 'results' ? 'results' : 'taxonomy') as 'taxonomy' | 'results'
+	);
+
+	function setActiveStage(stage: 'taxonomy' | 'results') {
+		if (stage === activeStage) return;
+		const url = new URL(page.url);
+		if (stage === 'results') url.searchParams.set('stage', 'results');
+		else url.searchParams.delete('stage');
+		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+	}
+
+	// --- Taxonomy editing ---
+	let editing = $state(false);
+	let saving = $state(false);
+	let saveError = $state<string | null>(null);
+	let draftConceptDef = $state('');
+	let draftSystematization = $state('');
+	let draftCategories = $state<Record<string, { definition: string; permissible: boolean }>>({});
+
+	function startEditing() {
+		if (activeStage !== 'taxonomy') setActiveStage('taxonomy');
+		draftConceptDef = conceptDef;
+		draftSystematization = systematizationText;
+		const map: Record<string, { definition: string; permissible: boolean }> = {};
+		for (const cat of sortedBehaviors) {
+			map[cat.name] = { definition: cat.definition ?? '', permissible: cat.permissible ?? false };
+		}
+		draftCategories = map;
+		saveError = null;
+		editing = true;
+	}
+
+	function cancelEditing() {
+		editing = false;
+		saving = false;
+		saveError = null;
+	}
+
+	async function saveEdits() {
+		if (saving) return;
+		saving = true;
+		saveError = null;
+		try {
+			// Deep-clone the full taxonomy and mutate only the edited fields so
+			// examples, metadata, and node order are preserved exactly.
+			const taxonomy = JSON.parse(JSON.stringify(data.taxonomy ?? {}));
+			const concept = taxonomy.behavior ?? taxonomy.risk;
+			if (concept) concept.definition = draftConceptDef;
+			for (const cat of taxonomy.behavior_categories ?? []) {
+				const draft = draftCategories[cat.name];
+				if (draft) {
+					cat.definition = draft.definition;
+					cat.permissible = draft.permissible;
+				}
+			}
+			const res = await fetch('/api/taxonomy', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ suite_id: data.suite_id, taxonomy })
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}) as { error?: string });
+				throw new Error(body.error ?? `Save failed (${res.status})`);
+			}
+
+			// Persist the free-text systematization (structure preserved server-side).
+			if (hasSystematization && draftSystematization !== systematizationText) {
+				const sres = await fetch('/api/systematization', {
+					method: 'PUT',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ suite_id: data.suite_id, systematization: draftSystematization })
+				});
+				if (!sres.ok) {
+					const body = await sres.json().catch(() => ({}) as { error?: string });
+					throw new Error(body.error ?? `Systematization save failed (${sres.status})`);
+				}
+			}
+
+			await invalidateAll();
+			editing = false;
+		} catch (err) {
+			saveError = err instanceof Error ? err.message : String(err);
+		} finally {
+			saving = false;
+		}
+	}
 
 	$effect(() => {
 		const promise = data.streamed?.heavy;
@@ -77,6 +168,10 @@
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
 	let systematizationMode = $derived(systematizationModeFor(data.systematization));
 	let hasSystematization = $derived(Boolean(data.systematization));
+	let systematizationText = $derived(
+		typeof data.systematization?.systematization === 'string' ? data.systematization.systematization : ''
+	);
+	let canEdit = $derived(Boolean(data.editEnabled));
 	let canCompare = $derived(selectedCompareRuns.size >= 2);
 	const MAX_COMPARE_RUNS = 3;
 	const panelTabs = ['definition', 'seeds', 'evaluations'] as const;
@@ -396,6 +491,33 @@
 	{/if}
 </div>
 
+<!-- Stage tabs: separate the taxonomy/systematization stage from the results stage -->
+<div class="mb-5 border-b border-border">
+	<div class="SegmentedControl" role="tablist" aria-label="Suite stage">
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeStage === 'taxonomy'}
+			class="SegmentedControl-item"
+			class:SegmentedControl-item--selected={activeStage === 'taxonomy'}
+			onclick={() => setActiveStage('taxonomy')}
+		>
+			<span class="SegmentedControl-content">Taxonomy &amp; policy</span>
+		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeStage === 'results'}
+			class="SegmentedControl-item"
+			class:SegmentedControl-item--selected={activeStage === 'results'}
+			onclick={() => setActiveStage('results')}
+		>
+			<span class="SegmentedControl-content">Results</span>
+		</button>
+	</div>
+</div>
+
+{#if activeStage === 'results'}
 <div class="mb-6">
 	<div class="mb-4 border-b border-border pb-2">
 		<div class="flex items-center gap-3">
@@ -580,6 +702,59 @@
 		</div>
 	{/if}
 </div>
+{/if}
+
+{#if activeStage === 'taxonomy'}
+<div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+	<div class="min-w-0">
+		<h2 class="text-lg font-semibold text-text">Taxonomy &amp; policy</h2>
+		<p class="mt-1 text-sm text-text-muted">Inspect and edit the systematization and behavior categories, then run an evaluation.</p>
+	</div>
+	<div class="flex shrink-0 items-center gap-2">
+		{#if editing}
+			<button class="btn btn-small" onclick={cancelEditing} disabled={saving}>Cancel</button>
+			<button class="btn btn-primary btn-small" onclick={saveEdits} disabled={saving}>
+				{saving ? 'Saving…' : 'Save changes'}
+			</button>
+		{:else}
+			{#if canEdit && sortedBehaviors.length > 0}
+				<button class="btn btn-small" onclick={startEditing}>
+					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+					Edit taxonomy
+				</button>
+			{/if}
+			<a
+				class="btn btn-primary btn-small no-underline"
+				href="/new?suite={encodeURIComponent(data.suite_id)}"
+				style="display:inline-flex; align-items:center; gap:0.4rem;"
+			>
+				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-5.197-3.027A1 1 0 008 9.027v5.946a1 1 0 001.555.832l5.197-3.027a1 1 0 000-1.638z"/></svg>
+				Run evaluation
+			</a>
+		{/if}
+	</div>
+</div>
+
+{#if saveError}
+	<div class="mb-4 rounded-lg border border-score-fail/40 bg-score-fail/10 px-4 py-2.5 text-sm text-score-fail">{saveError}</div>
+{/if}
+
+{#if editing}
+	<div class="mb-5 space-y-4 rounded-lg border border-interactive/30 bg-surface p-4">
+		<div>
+			<label class="mb-1 block text-xs font-medium text-text" for="edit-concept-def">Behavior description</label>
+			<textarea id="edit-concept-def" class="form-control w-full" rows="3" bind:value={draftConceptDef}></textarea>
+		</div>
+		{#if hasSystematization}
+			<div>
+				<label class="mb-1 block text-xs font-medium text-text" for="edit-systematization">Systematization</label>
+				<textarea id="edit-systematization" class="form-control w-full font-mono text-xs leading-relaxed" rows="8" bind:value={draftSystematization}></textarea>
+				<p class="mt-1 text-xs text-text-muted">Operational map used to generate behavior categories. Pattern summaries and metadata are preserved.</p>
+			</div>
+		{/if}
+		<p class="text-xs text-text-muted">Edit each category's definition and permissible flag from its panel below. Categories can't be added, removed, or reordered.</p>
+	</div>
+{/if}
 
 <div class="mb-4 border-b border-border pb-2">
 	<div class="flex items-center gap-3">
@@ -705,7 +880,20 @@
 					<div class="space-y-5">
 						<div>
 							<h4 class="mb-2 text-xs font-medium text-text">Definition</h4>
-							<div class="prose text-sm leading-relaxed text-text-secondary">{@html renderMarkdown(selectedBehaviorData.definition)}</div>
+							{#if editing && selectedBehavior && draftCategories[selectedBehavior]}
+								<textarea
+									class="form-control w-full text-sm leading-relaxed"
+									rows="6"
+									aria-label="Behavior category definition"
+									bind:value={draftCategories[selectedBehavior].definition}
+								></textarea>
+								<label class="mt-3 flex items-center gap-2 text-sm text-text-secondary">
+									<input type="checkbox" bind:checked={draftCategories[selectedBehavior].permissible} />
+									Permissible (target may engage without a policy violation)
+								</label>
+							{:else}
+								<div class="prose text-sm leading-relaxed text-text-secondary">{@html renderMarkdown(selectedBehaviorData.definition)}</div>
+							{/if}
 						</div>
 						{#if selectedBehaviorData.examples?.length > 0}
 							<div>
@@ -803,6 +991,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 {#if drawerLoading}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
