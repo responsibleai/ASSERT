@@ -14,23 +14,31 @@ export function buildMatchedSampleRows(
 	runIds: string[],
 	metric: string,
 	disagreementsOnly: boolean,
-	baselineRunId?: string
+	baselineRunId?: string,
+	// Optional: customize the key used to match samples across runs. Defaults to
+	// matching by `sample.prompt`, which is appropriate for single-turn prompts
+	// comparisons. Scenario comparisons pass `(s) => s.test_case_id ?? s.prompt`
+	// so multi-turn conversations are paired by the shared test_case_id even
+	// though the assistant responses diverge after the seed turn.
+	keyFn?: (sample: JudgedSample) => string
 ): MatchedSampleRow[] {
-	const promptMap = new Map<string, Record<string, JudgedSample | null>>();
+	const keyOf = keyFn ?? ((sample: JudgedSample) => sample.prompt);
+	const grouped = new Map<string, { prompt: string; samples: Record<string, JudgedSample | null> }>();
 
 	for (const runId of runIds) {
 		for (const sample of samplesByRunId[runId] ?? []) {
-			if (!promptMap.has(sample.prompt)) {
-				promptMap.set(
-					sample.prompt,
-					Object.fromEntries(runIds.map((id) => [id, null])) as Record<string, JudgedSample | null>
-				);
+			const key = keyOf(sample);
+			if (!grouped.has(key)) {
+				grouped.set(key, {
+					prompt: sample.prompt,
+					samples: Object.fromEntries(runIds.map((id) => [id, null])) as Record<string, JudgedSample | null>
+				});
 			}
-			promptMap.get(sample.prompt)![runId] = sample;
+			grouped.get(key)!.samples[runId] = sample;
 		}
 	}
 
-	let rows = Array.from(promptMap.entries()).map(([prompt, samples]) => ({ prompt, samples }));
+	let rows = Array.from(grouped.values());
 	if (disagreementsOnly) {
 		rows = rows.filter((row) => {
 			const scores = Object.values(row.samples)

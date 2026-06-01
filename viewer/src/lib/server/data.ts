@@ -1490,16 +1490,23 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 	);
 }
 
-export function loadComparePageData(suiteId: string, runIds: string[]) {
+export function loadComparePageData(
+	suiteId: string,
+	runIds: string[],
+	kind: 'prompts' | 'scenarios' = 'prompts'
+) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
 	const taxonomy = normalizePolicy(suiteSnapshot?.taxonomy);
 
 	const runSummaries: CompareRunSummary[] = [];
 	const metricNames = new Set<string>();
 
+	const buildSamples =
+		kind === 'scenarios' ? buildJudgedScenariosFromSnapshot : buildJudgedPromptsFromSnapshot;
+
 	for (const runId of runIds) {
 		const runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows);
-		const samples = buildJudgedPromptsFromSnapshot(runSnapshot);
+		const samples = buildSamples(runSnapshot);
 		if (samples.length === 0) return null;
 
 		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples);
@@ -1512,6 +1519,7 @@ export function loadComparePageData(suiteId: string, runIds: string[]) {
 
 	return {
 		suite_id: suiteId,
+		kind,
 		taxonomy,
 		runs: runSummaries.map(({ samples, ...summary }) => summary),
 		comparisons,
