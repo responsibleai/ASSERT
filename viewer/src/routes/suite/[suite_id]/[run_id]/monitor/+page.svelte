@@ -154,7 +154,7 @@ Exit code: {exitCode}
 <div class="mt-3 flex flex-wrap items-center gap-3">
 <div class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-lg">{status === 'failed' ? '✗' : status === 'completed' ? '✓' : '→'}</div>
 <div class="min-w-0">
-<div class="truncate text-lg font-semibold tracking-tight">{currentStageLabel ?? 'Preparing run'}</div>
+<div class="truncate text-lg font-semibold tracking-tight">{status === 'completed' ? 'Run completed' : status === 'failed' ? 'Run failed' : (currentStageLabel ?? 'Preparing run')}</div>
 <div class="mt-1 text-sm text-white/65">
 {#if status === 'running'}
 Watching manifest updates from the artifacts directory
