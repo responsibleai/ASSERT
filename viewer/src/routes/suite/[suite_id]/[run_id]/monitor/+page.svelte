@@ -57,13 +57,6 @@ status === 'completed'
 : 'bg-[radial-gradient(circle_at_top_left,rgba(58,130,246,0.16),transparent_52%),linear-gradient(135deg,rgba(15,23,42,0.9),rgba(15,23,42,0.72))]'
 );
 
-let focusCardBorder = $derived(
-status === 'completed'
-? 'rgba(35,134,54,0.45)'
-: status === 'failed'
-? 'rgba(207,34,46,0.45)'
-: 'rgba(58,130,246,0.28)'
-);
 
 let focusIconClass = $derived(
 status === 'completed'
@@ -173,7 +166,7 @@ Exit code: {exitCode}
 
 {#if currentStageLabel || startedAt}
 <div class="mb-6 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
-<div class="rounded-[1.25rem] border {focusCardClass} p-5 text-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]" style="border-color: {focusCardBorder} !important">
+<div class="rounded-[1.25rem] border border-border {focusCardClass} p-5 text-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
 <div class="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/55">Current focus</div>
 <div class="mt-3 flex flex-wrap items-center gap-3">
 <div class="inline-flex h-10 w-10 items-center justify-center rounded-2xl {focusIconClass} text-lg">{status === 'failed' ? '✗' : status === 'completed' ? '✓' : '→'}</div>
