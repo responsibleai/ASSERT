@@ -68,6 +68,16 @@
 	);
 	let metricNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
+	let dimNames = $derived(Object.keys((data.dimensionDefs ?? {}) as Record<string, DimensionDef>));
+	function dimColumnLabel(name: string): string {
+		const spaced = name.replace(/_/g, ' ');
+		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+	}
+	let visibleDimNames = $derived(
+		dimNames.filter((name) =>
+			allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+		)
+	);
 	let sortedBehaviors = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
@@ -452,9 +462,9 @@
 						</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Policy violation</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Overrefusal</th>
-						<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">Harm actionability</th>
+						{#each visibleDimNames as dimName (dimName)}
+							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">{dimColumnLabel(dimName)}</th>
+						{/each}
 						<th class="px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
 					</tr>
 				</thead>
@@ -466,9 +476,6 @@
 						{@const isCompareSelected = Boolean(run.compare_run_id && selectedCompareRuns.has(run.compare_run_id))}
 						{@const isCompareDisabled = !run.compare_run_id || (!isCompareSelected && selectedCompareRuns.size >= MAX_COMPARE_RUNS)}
 						{@const isExpanded = expandedRunIds.has(run.run_id)}
-						{@const violationRate = aggregateRunViolationRate(run)}
-						{@const overrefusalRate = aggregateRunOverrefusalRate(run)}
-						{@const harmRate = aggregateRunDimensionRate(run, 'harm_actionability')}
 						{@const runStartedAt = qRun?.manifest?.started_at ?? aRun?.manifest?.started_at ?? null}
 						{@const runStatus = qRun?.manifest?.status ?? aRun?.manifest?.status ?? null}
 						{@const runStatusLabel = runStatus === 'completed' ? 'complete' : runStatus === 'failed' ? 'failed' : runStatus === 'running' ? 'running' : 'incomplete'}
@@ -505,27 +512,16 @@
 							<td class="px-3 py-2">
 								<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {runStatusClass}">{runStatusLabel}</span>
 							</td>
-							<td class="px-3 py-2 text-left">
-								{#if violationRate !== null}
-									<span class="text-xs font-semibold">{(violationRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
-							<td class="px-3 py-2 text-left">
-								{#if overrefusalRate !== null}
-									<span class="text-xs font-semibold">{(overrefusalRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
-							<td class="px-3 py-2 text-left">
-								{#if harmRate !== null}
-									<span class="text-xs font-semibold">{(harmRate * 100).toFixed(0)}%</span>
-								{:else}
-									<span class="text-xs text-text-muted">—</span>
-								{/if}
-							</td>
+							{#each visibleDimNames as dimName (dimName)}
+								{@const dimRate = aggregateRunDimensionRate(run, dimName)}
+								<td class="px-3 py-2 text-left">
+									{#if dimRate !== null}
+										<span class="text-xs font-semibold">{(dimRate * 100).toFixed(0)}%</span>
+									{:else}
+										<span class="text-xs text-text-muted">—</span>
+									{/if}
+								</td>
+							{/each}
 							<td class="px-3 py-2 text-left text-xs text-text-muted">{runTotal(run) || '—'}</td>
 						</tr>
 						{#if hasChildren && isExpanded && qRun}
@@ -536,9 +532,10 @@
 								<td class="px-3 py-2 font-mono text-xs text-text-muted">{qRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics}<span class="text-xs font-semibold">{(qRun.metrics.policy_violation_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics}<span class="text-xs font-semibold">{(qRun.metrics.overrefusal_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if qRun.metrics?.dimensions?.harm_actionability}<span class="text-xs font-semibold">{(qRun.metrics.dimensions.harm_actionability.rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{#each visibleDimNames as dimName (dimName)}
+									{@const childDimRate = qRun.metrics?.dimensions?.[dimName]?.rate ?? null}
+									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{qRun.metrics?.total ?? '—'}</td>
 							</tr>
 						{/if}
@@ -550,9 +547,10 @@
 								<td class="px-3 py-2 font-mono text-xs text-text-muted">{aRun.metrics?.target ?? '—'}</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics}<span class="text-xs font-semibold">{(aRun.metrics.policy_violation_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics}<span class="text-xs font-semibold">{(aRun.metrics.overrefusal_rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
-								<td class="px-3 py-2 text-left">{#if aRun.metrics?.dimensions?.harm_actionability}<span class="text-xs font-semibold">{(aRun.metrics.dimensions.harm_actionability.rate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{#each visibleDimNames as dimName (dimName)}
+									{@const childDimRate = aRun.metrics?.dimensions?.[dimName]?.rate ?? null}
+									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
+								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{aRun.metrics?.total ?? '—'}</td>
 							</tr>
 						{/if}
