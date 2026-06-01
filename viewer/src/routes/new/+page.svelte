@@ -163,16 +163,18 @@
 	async function prefillFromSuite(suite: string) {
 		const knownSuite = knownSuites.find((s) => s.suite_id === suite) ?? null;
 		if (!knownSuite) return; // Unknown suite — leave the wizard at step 1.
-		const knownBehavior = knownBehaviors.find((b) => b.suiteId === suite) ?? null;
 
+		let behaviorName = '';
 		try {
 			const res = await fetch(`/api/suites/${encodeURIComponent(suite)}/config`);
 			if (res.ok) {
 				const cfg = (await res.json()) as {
+					behaviorName?: string;
 					context?: string;
 					systemPrompt?: string;
 					evaluationTarget?: 'model' | 'agent';
 				};
+				if (typeof cfg.behaviorName === 'string') behaviorName = cfg.behaviorName;
 				if (typeof cfg.context === 'string' && cfg.context) applicationContext = cfg.context;
 				if (typeof cfg.systemPrompt === 'string' && cfg.systemPrompt) systemPrompt = cfg.systemPrompt;
 				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
@@ -183,10 +185,23 @@
 			// Best-effort prefill; the operator can fill any gaps before submitting.
 		}
 
-		if (knownBehavior) {
+		// Resolve the behavior. /api/behaviors dedupes by name and exposes only one
+		// suiteId per behavior, so matching by suiteId misses suites that aren't the
+		// canonical one. Resolve the name from the suite's own config/catalog and
+		// always anchor suiteId to the suite being re-run.
+		const resolvedName = behaviorName || knownSuite.behavior_name;
+		const catalogMatch =
+			knownBehaviors.find((b) => b.name === resolvedName) ??
+			knownBehaviors.find((b) => b.suiteId === suite) ??
+			null;
+		if (resolvedName) {
 			step1Mode = 'select';
-			selectedBehavior = knownBehavior;
-			behaviorSearch = knownBehavior.name;
+			selectedBehavior = {
+				name: resolvedName,
+				definition: catalogMatch?.definition ?? '',
+				suiteId: suite
+			};
+			behaviorSearch = resolvedName;
 		}
 		step2Source = 'existing';
 		selectedSuite = knownSuite;
