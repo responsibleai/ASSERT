@@ -95,12 +95,28 @@ function deltaArrow(d: number): string {
 
 let runIds = $derived(data.runs.map((run) => run.run_id));
 
+// Issue 1: baseline-first display order + run-id-keyed colors so a run keeps its color across pages
+let orderedRuns = $derived([
+	data.runs[baselineIdx],
+	...data.runs.filter((_, i) => i !== baselineIdx)
+]);
+let runColor = $derived(
+	Object.fromEntries(data.runs.map((r, i) => [r.run_id, RUN_COLORS[i]])) as Record<string, string>
+);
+function baselineDeltaFor(run: { run_id: string; policyViolationRate: number; dimensions: Record<string, { rate: number }> }) {
+	const baseline = data.runs[baselineIdx];
+	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? 0);
+	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? 0);
+	return { avg, baselineAvg, delta: run.run_id === baseline.run_id ? 0 : avg - baselineAvg };
+}
+
 function getMatchedSamples(behavior: string) {
 	return buildMatchedSampleRows(
 		data.samplesByBehavior[behavior] ?? {},
 		runIds,
 		activeMetric,
-		disagreementsOnly
+		disagreementsOnly,
+		data.runs[baselineIdx]?.run_id
 	);
 }
 
@@ -196,11 +212,11 @@ function capitalize(s: string): string {
 		</div>
 
 		<div class="grid gap-4" style="grid-template-columns: {summaryGridTemplate()};">
-			{#each data.runs as run, i}
-				{@const baseline = data.runs[baselineIdx]}
-				{@const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? 0)}
-				{@const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? 0)}
-				{@const delta = i !== baselineIdx ? avg - baselineAvg : 0}
+			{#each orderedRuns as run (run.run_id)}
+				{@const isBaseline = run.run_id === data.runs[baselineIdx].run_id}
+				{@const dInfo = baselineDeltaFor(run)}
+				{@const avg = dInfo.avg}
+				{@const delta = dInfo.delta}
 				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
 				{@const pct = pctBar(runScores)}
 				{@const totalSamples = runScores[0] + runScores[1]}
@@ -208,9 +224,9 @@ function capitalize(s: string): string {
 					<!-- Header: run name + sample count -->
 					<div class="flex items-start justify-between gap-3">
 						<div class="flex items-center gap-2 min-w-0">
-							<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
+							<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
 							<span class="text-sm font-medium text-text truncate">{run.display_name}</span>
-							{#if i === baselineIdx}
+							{#if isBaseline}
 								<span class="inline-flex items-center rounded-full bg-interactive/15 px-2 py-0.5 text-[10px] font-semibold text-interactive ring-1 ring-interactive/40">Baseline</span>
 							{/if}
 						</div>
@@ -224,7 +240,7 @@ function capitalize(s: string): string {
 					<div class="mt-3 flex items-baseline gap-1.5">
 						<span class="text-3xl font-bold tabular-nums text-text">{(avg * 100).toFixed(0)}%</span>
 						<span class="text-sm text-text-muted">Flagged</span>
-						{#if i !== baselineIdx && Math.abs(delta) >= 0.005}
+						{#if !isBaseline && Math.abs(delta) >= 0.005}
 							<span class="ml-1 text-sm font-semibold tabular-nums {deltaClass(delta)}">
 								{deltaText(delta)} {deltaArrow(delta)}
 							</span>
@@ -307,8 +323,8 @@ function capitalize(s: string): string {
 				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-xs font-semibold text-text-muted border-b border-border"
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
-					{#each data.runs as run, i}
-						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
+					{#each orderedRuns as run (run.run_id)}
+						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
 					{/each}
 				</div>
 
@@ -336,7 +352,7 @@ function capitalize(s: string): string {
 						</div>
 
 						<!-- Score cells -->
-						{#each data.runs as run, i}
+						{#each orderedRuns as run (run.run_id)}
 							{@const cell = row.metrics[activeMetric]?.[run.run_id]}
 							{@const hasFlagged = cell && cell.counts[1] > 0}
 							{@const cellColor = hasFlagged ? 'var(--color-score-fail, #cf222e)' : 'var(--color-score-pass, #1a7f37)'}
@@ -376,14 +392,14 @@ function capitalize(s: string): string {
 														class="grid divide-x divide-border"
 														style="grid-template-columns: {sampleGridTemplate(data.runs.length)}; min-width: {sampleGridMinWidth(data.runs.length)};"
 													>
-														{#each data.runs as run, i}
+														{#each orderedRuns as run (run.run_id)}
 															{@const sample = pair.samples[run.run_id]}
 															<div class="p-3 space-y-2">
 														<!-- Model + score -->
 														<div class="flex items-center justify-between">
 															<div class="flex items-center gap-1.5 min-w-0">
-																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
-																<span class="text-xs font-mono truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
+																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
+																<span class="text-xs font-mono truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
 															</div>
 															{#if sample}
 																{@const sampleScore = getRecordFlag(sample, activeMetric)}
