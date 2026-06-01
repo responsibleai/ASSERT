@@ -24,6 +24,13 @@
         <img src="assets/assert-ai-framework-diagram.png" alt="Diagram of the ASSERT evaluation framework" width="100%">
 </p>
 
+> [!IMPORTANT]
+> **Migration note (May 2026):** The Python package was renamed `assert_eval` → `assert_ai`,
+> the CLI was renamed `assert-eval` → `assert-ai`, and environment variables were renamed
+> `ASSERT_EVAL_*` → `ASSERT_AI_*` (the pre-rename `P2M_*` aliases are also gone). If you
+> installed an earlier preview, update your imports, CLI invocations, and `.env` files. See
+> [CHANGELOG.md](./CHANGELOG.md) for details.
+
 ## Why ASSERT?
 
 Most AI systems start with a specification: product requirements, policies, system prompts, or launch criteria describing what the system should and should not do.
