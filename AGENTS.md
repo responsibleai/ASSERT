@@ -140,7 +140,7 @@ Do not reintroduce internal-only planning docs into this customer-preview distri
 End users can paste the following block into their AI assistant to get the same orientation this file gives you:
 
 ```text
-You are helping me with the Adaptive Eval repo (https://github.com/microsoft/adaptive-eval).
+You are helping me with the ASSERT repo (https://github.com/responsibleai/ASSERT).
 
 Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. The mental model:
 

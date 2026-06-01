@@ -14,8 +14,8 @@ Thank you for your interest in contributing to Adaptive Eval. This project is in
 Adaptive Eval requires Python 3.11 or later. Node.js is needed only for viewer work and tests that exercise viewer assets.
 
 ```bash
-git clone https://github.com/microsoft/adaptive-eval.git
-cd adaptive-eval
+git clone https://github.com/responsibleai/ASSERT.git
+cd ASSERT
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -26,8 +26,8 @@ cp .env.example .env
 Windows PowerShell equivalent:
 
 ```powershell
-git clone https://github.com/microsoft/adaptive-eval.git
-cd adaptive-eval
+git clone https://github.com/responsibleai/ASSERT.git
+cd ASSERT
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
