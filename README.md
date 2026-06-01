@@ -13,11 +13,14 @@
         <a href="examples/README.md">🧪 Examples</a>
 </p>
 <p align="center">
-        <a href="LICENSE">
-                <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
+        <a href="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml">
+                <img src="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml/badge.svg" alt="Build status">
         </a>
         <a href="https://www.python.org/downloads/" target="_blank">
-                <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+                <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python 3.11 | 3.12 | 3.13">
+        </a>
+        <a href="LICENSE">
+                <img src="https://img.shields.io/github/license/responsibleai/ASSERT" alt="License">
         </a>
 </p>
 <p align="center">
