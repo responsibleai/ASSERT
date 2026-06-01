@@ -61,13 +61,23 @@
 	let catSaveError = $state<string | null>(null);
 	let catDraftDef = $state('');
 	let catDraftPermissible = $state(false);
+	let catDraftExamples = $state<string[]>([]);
 
 	function startCategoryEdit() {
 		if (!selectedBehaviorData) return;
 		catDraftDef = selectedBehaviorData.definition ?? '';
 		catDraftPermissible = Boolean(selectedBehaviorData.permissible);
+		catDraftExamples = [...(selectedBehaviorData.examples ?? [])];
 		catSaveError = null;
 		editingCategory = selectedBehaviorData.name;
+	}
+
+	function addDraftExample() {
+		catDraftExamples = [...catDraftExamples, ''];
+	}
+
+	function removeDraftExample(index: number) {
+		catDraftExamples = catDraftExamples.filter((_, i) => i !== index);
 	}
 
 	function cancelCategoryEdit() {
@@ -83,7 +93,7 @@
 		catSaveError = null;
 		try {
 			// Deep-clone the full taxonomy and mutate only the edited category so
-			// examples, metadata, and node order are preserved exactly.
+			// metadata and node order are preserved exactly.
 			const taxonomy = JSON.parse(JSON.stringify(data.taxonomy ?? {}));
 			const target = (taxonomy.behavior_categories ?? []).find(
 				(cat: { name?: string }) => cat.name === categoryName
@@ -91,6 +101,8 @@
 			if (!target) throw new Error('Category not found in taxonomy.');
 			target.definition = catDraftDef;
 			target.permissible = catDraftPermissible;
+			// Drop blank examples so empty rows aren't persisted.
+			target.examples = catDraftExamples.map((ex) => ex.trim()).filter((ex) => ex.length > 0);
 			const res = await fetch('/api/taxonomy', {
 				method: 'PUT',
 				headers: { 'content-type': 'application/json' },
@@ -846,7 +858,42 @@
 								<div class="prose text-sm leading-relaxed text-text-secondary">{@html renderMarkdown(selectedBehaviorData.definition)}</div>
 							{/if}
 						</div>
-						{#if selectedBehaviorData.examples?.length > 0}
+						{#if editingCategory === selectedBehavior}
+							<div>
+								<div class="mb-2 flex items-center justify-between gap-2">
+									<h4 class="text-xs font-medium text-text">Examples</h4>
+									<button class="btn btn-small shrink-0" onclick={addDraftExample} disabled={catSaving} style="display:inline-flex; align-items:center; gap:0.35rem;">
+										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+										Add example
+									</button>
+								</div>
+								{#if catDraftExamples.length === 0}
+									<p class="text-sm text-text-muted">No examples. Use “Add example” to create one.</p>
+								{:else}
+									<div class="space-y-2">
+										{#each catDraftExamples as _, i}
+											<div class="flex items-start gap-2">
+												<textarea
+													class="form-control w-full text-sm leading-relaxed"
+													rows="2"
+													aria-label="Example {i + 1}"
+													bind:value={catDraftExamples[i]}
+												></textarea>
+												<button
+													class="mt-1 shrink-0 rounded p-1 text-text-muted transition-colors hover:bg-surface-2 hover:text-score-fail"
+													onclick={() => removeDraftExample(i)}
+													disabled={catSaving}
+													title="Remove example"
+													aria-label="Remove example {i + 1}"
+												>
+													<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+												</button>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{:else if selectedBehaviorData.examples?.length > 0}
 							<div>
 								<h4 class="mb-2 text-xs font-medium text-text">Examples</h4>
 								<div class="space-y-1.5">
