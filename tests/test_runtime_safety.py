@@ -186,6 +186,7 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
     If the dual-detach is correct, the subprocess exits within the
     timeout. If not, ``subprocess.run`` raises ``TimeoutExpired``.
     """
+    import os
     import subprocess
     import sys
     import textwrap
@@ -218,12 +219,27 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
     script_path = tmp_path / "leaked_worker_subprocess_probe.py"
     script_path.write_text(script, encoding="utf-8")
 
+    # Propagate the parent interpreter's import paths to the subprocess.
+    # pytest's rootdir hook puts the repo root on sys.path of the test
+    # runner, but a fresh `sys.executable` subprocess only sees its own
+    # site-packages — so without ``pip install -e .``, ``import assert_ai``
+    # would ModuleNotFoundError even though sys.executable is correct.
+    # Merging sys.path into PYTHONPATH makes the test pass regardless of
+    # whether the package is editable-installed or discovered via pytest.
+    env = os.environ.copy()
+    extra_paths = [p for p in sys.path if p]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        extra_paths.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(extra_paths)
+
     try:
         proc = subprocess.run(
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
             timeout=15.0,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout if isinstance(exc.stdout, str) else (
