@@ -1,25 +1,20 @@
-# Incident-triage agent — ACS efficacy demo (A → C demo path)
+# Incident-triage agent
 
-This example builds on the [microsoft/AgentShield](https://github.com/microsoft/AgentShield)
-incident-triage reference shape and turns it into a **4-variant ASSERT eval**
-that measures ACS efficacy on a second vertical (the canonical bank-manager
-demo lives in [PR #88](https://github.com/microsoft/ASSERT/pull/88)).
+This example evaluates an **incident-triage agent** — a tool-calling LLM
+that classifies pages, picks severities, picks responder channels, and
+optionally calls an escalation tool. It comes with four eval variants
+that compare a weak baseline against runtime-enforced policy gates, so
+you can see what kinds of failures a policy layer suppresses and what
+new costs (e.g., overrefusal) it introduces.
 
-> **Demo path: A → C.** The live demo is a **two-step pair**: variant **A**
-> (`baseline-weak-prompt`, the broken baseline) → variant **C**
-> (`guarded-with-shield`, ACS gates on). The procedural / tool-misuse axis
-> collapses to ACS floor; the **+18.6 pp overrefusal cost is surfaced, not
-> hidden** — that trade-off is the honest part of the story.
->
-> Variants **B** (`naive-prompt`) and **D** (`guarded-with-shield-gepa`) are
-> runnable experiments whose original predictions did not land cleanly at
-> n=200. They are documented in **Appendix B** below for transparency, and
-> their configs / artifacts remain in this directory.
-
-> ACS is the policy spec; `agent_shield` is the reference Python runtime that
-> loads ACS YAML and enforces it at agent execution time. Throughout this doc,
-> "ACS" refers to the policy layer in general; `agent_shield` refers to the
-> specific runtime imported as the `agent_shield` Python package.
+The example is set up around the
+[microsoft/AgentShield](https://github.com/microsoft/AgentShield) policy
+runtime: ACS is the policy spec; `agent_shield` is the reference Python
+runtime that loads ACS YAML and enforces it at agent execution time.
+Throughout this doc, "ACS" refers to the policy layer in general;
+`agent_shield` refers to the runtime imported as the `agent_shield`
+Python package. You can swap in any other policy runtime by editing
+`agent.py` — ASSERT only cares about the resulting traces and outputs.
 
 **Source commit for the vendored ACS PII detector**: [`microsoft/AgentShield@1cfc6ee`](https://github.com/microsoft/AgentShield/commit/1cfc6ee6c82661f21d951a423caa141dade4ad41)
 (see `prompts/cross/pii_detection.md` for the adaptation header).
@@ -29,30 +24,31 @@ demo lives in [PR #88](https://github.com/microsoft/ASSERT/pull/88)).
 ## TL;DR
 
 All four variants ran end-to-end (n=200 prompt + n=200 scenario, judge
-`azure/gpt-5.4`). The **demo path** is the A → C row pair; B and D are
-documented experiments — see Appendix B for why their original predictions
-didn't land at this rubric.
+`azure/gpt-4o`). Variants A and C are the headline comparison
+(baseline vs. policy-gated); B and D are documented experiments — see
+Appendix B for why their original predictions didn't land at this
+rubric.
 
-| Demo? | Variant `run:` | Role | Headline (n=200 prompt + n=200 scenario) |
-|---|---|---|---|
-| **A · demo step 1** | `baseline-weak-prompt` | The broken baseline — live demo lead | `policy_violation` 89.6%; `escalation_violation` 78.4%; `wrong_severity` 60.7%; `fabrication` 46.4%; `channel_violation` 20.6%; `xpia_relay` 12.9%; `overrefusal` 23.4% |
-| experiment (B) | `naive-prompt` | DO-NOT-block hypothesis — **did not land** (see Appendix B.1) | `policy_violation` 91.4%; `overrefusal` flat at 24.5% (predicted to crater); tool-misuse axes drift up (`ordering_violation` 5.3→15.4%, `pager_violation` 2.0→6.6%, `alert_id_drift` 3.8→12.9%) |
-| **C · demo step 2** | `guarded-with-shield` | ACS gates on — live demo close | Tool-misuse axis collapses to ACS floor (`ordering_violation` 0.0%, `pager_violation` 0.3%, `channel_violation` 1.9%, `alert_id_drift` 0.8%, `pii_leak` 0.0%); `xpia_relay` halves (12.9→6.7%); semantic axes unchanged or worse (`fabrication` 46.4→60.7%, `wrong_severity` 60.7→55.6%, `escalation_violation` 78.4→80.7%); **`overrefusal` 23.4→42.0% (+18.6 pp ACS cost — surfaced, not hidden)** |
-| experiment (D) | `guarded-with-shield-gepa` | GEPA-placeholder hypothesis — **did not land** (see Appendix B.2) | `xpia_relay` 0.5% (XPIA-as-data sentence works); but `overrefusal` regresses 42.0→50.9% (predicted to drop under 10%) and `wrong_severity` rises 55.6→69.4% |
+| Variant `run:` | Role | Headline (n=200 prompt + n=200 scenario) |
+|---|---|---|
+| `baseline-weak-prompt` (A) | The broken baseline | `policy_violation` 89.6%; `escalation_violation` 78.4%; `wrong_severity` 60.7%; `fabrication` 46.4%; `channel_violation` 20.6%; `xpia_relay` 12.9%; `overrefusal` 23.4% |
+| `naive-prompt` (B) | DO-NOT-block hypothesis — **did not land** (see Appendix B.1) | `policy_violation` 91.4%; `overrefusal` flat at 24.5% (predicted to crater); tool-misuse axes drift up (`ordering_violation` 5.3→15.4%, `pager_violation` 2.0→6.6%, `alert_id_drift` 3.8→12.9%) |
+| `guarded-with-shield` (C) | ACS gates on | Tool-misuse axis collapses to ACS floor (`ordering_violation` 0.0%, `pager_violation` 0.3%, `channel_violation` 1.9%, `alert_id_drift` 0.8%, `pii_leak` 0.0%); `xpia_relay` halves (12.9→6.7%); semantic axes unchanged or worse (`fabrication` 46.4→60.7%, `wrong_severity` 60.7→55.6%, `escalation_violation` 78.4→80.7%); **`overrefusal` 23.4→42.0% (+18.6 pp ACS cost — surfaced, not hidden)** |
+| `guarded-with-shield-gepa` (D) | GEPA-placeholder hypothesis — **did not land** (see Appendix B.2) | `xpia_relay` 0.5% (XPIA-as-data sentence works); but `overrefusal` regresses 42.0→50.9% (predicted to drop under 10%) and `wrong_severity` rises 55.6→69.4% |
 
 Trade-off chart:
 
-![Trade-off: max behavior rate vs overrefusal across the 4 variants — demo path A → C in solid; B and D shown faded as experiments](artifacts/trade_off.png)
+![Trade-off: max behavior rate vs overrefusal across the 4 variants](artifacts/trade_off.png)
 
-> **Read the chart**: the **demo path is A → C** (red → blue, solid markers,
-> connected by an arrow). The procedural axis collapses; overrefusal rises
-> ~+18 pp. **B** (`naive-prompt`) and **D** (`guarded-with-shield-gepa`)
-> are shown with faded markers — their original predictions did not land
-> at n=200 and they live in Appendix B.
+> **Read the chart**: variants A → C are the headline comparison
+> (baseline → policy-gated). The procedural axis collapses; overrefusal
+> rises ~+18 pp. **B** (`naive-prompt`) and **D**
+> (`guarded-with-shield-gepa`) are shown with faded markers — their
+> original predictions did not land at n=200 and they live in Appendix B.
 
 > **Number provenance.** All four points on the chart and every cell in the
-> tables below come from this PR's n=200 prompt + n=200 scenario run per
-> variant. Judge model: `azure/gpt-5.4`. Judge failures per variant: 6 / 4 /
+> tables below come from an n=200 prompt + n=200 scenario run per
+> variant. Judge model: `azure/gpt-4o`. Judge failures per variant: 6 / 4 /
 > 26 / 15 out of 400 (mostly content-filter refusals; treated as "not
 > scored" by the rate math). Per-mode rates carry roughly ±5 pp 95% CI
 > (Wald, n≈380). The committed snapshot lives under
@@ -241,7 +237,7 @@ still produces a sensible chart.
   invalidates the PR #43 cache, so the first run after this PR lands
   regenerates the suite test set.
 - **Agent model pin**: set `INCIDENT_TRIAGE_MODEL` in `.env` to pin the
-  SUT model (default `azure/gpt-5.4-mini`). ACS LLM stages route
+  SUT model (default `azure/gpt-4o-mini`). ACS LLM stages route
   through the runtime's default LiteLLM caller, which uses the same
   Azure deployment.
 
@@ -253,7 +249,7 @@ All four variants are reported in full for transparency. The
 **demo path is the A and C columns**; the B and D columns are the
 experiments documented in Appendix B. All numbers below are **pooled
 prompt + scenario rails** at n=200 + n=200 per variant (judge model
-`azure/gpt-5.4`). Cells with a `↓` arrow are ACS-floor (deterministic
+`azure/gpt-4o`). Cells with a `↓` arrow are ACS-floor (deterministic
 Stage 2/3 fully closes the axis); cells with a `↑` rose vs the variant A
 baseline. Sample-size denominators reflect judge successes: 394 / 396 /
 374 / 385.
@@ -547,7 +543,7 @@ Ten fixture alerts (`ALR-001` … `ALR-010`) cover every branch of the tree.
 ## 2. The eval rubric (11 dimensions)
 
 `./eval_config_baseline.yaml` defines a
-behavior-first rubric, evaluated by `azure/gpt-5.4`:
+behavior-first rubric, evaluated by `azure/gpt-4o`:
 
 | Dimension | What it measures | Class |
 |---|---|---|
@@ -1128,7 +1124,7 @@ is the second iteration of the eval-fix loop the demo arc presents.
   shows the agent occasionally fabricating a justification when a
   Stage 3 gate denies its first action. The closure path is on the
   baseline agent's recovery loop, not the YAML. See §5.5.
-- **Judge is one model.** All scoring is `azure/gpt-5.4` at
+- **Judge is one model.** All scoring is `azure/gpt-4o` at
   temperature 0; consider a second-judge sanity pass before publishing
   external numbers.
 - **Azure content-filter rejections under XPIA pressure.** ~2-6 % of
@@ -1153,7 +1149,7 @@ From this folder:
 
 ```bash
 # Pre-req: AgentShield Python SDK 0.13.x installed (for the AFTER run only)
-# and Azure OpenAI creds for gpt-5.4 and gpt-5.4-mini in your repo-root .env.
+# and Azure OpenAI creds for gpt-4o and gpt-4o-mini in your repo-root .env.
 python -m pip install agent-shield
 
 # 1. BEFORE — minimal-prompt baseline.
