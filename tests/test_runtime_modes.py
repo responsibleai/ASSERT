@@ -6,12 +6,12 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from assert_eval.config import load_runtime_context, parse_pipeline_config
-from assert_eval.core.tool_backend import inspect_tool_module
-from assert_eval.core.model_client import Message
-from assert_eval.core.model_client import GenerateOptions
-from assert_eval.core.session import ExternalSession
-from assert_eval.stages.inference import _build_hosted_session as build_hosted_session
+from assert_ai.config import load_runtime_context, parse_pipeline_config
+from assert_ai.core.tool_backend import inspect_tool_module
+from assert_ai.core.model_client import Message
+from assert_ai.core.model_client import GenerateOptions
+from assert_ai.core.session import ExternalSession
+from assert_ai.stages.inference import _build_hosted_session as build_hosted_session
 
 
 class ConfigAndHandlerFoundationTest(unittest.TestCase):
@@ -166,7 +166,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertEqual(parsed.target.system_prompt, str(prompt_path))
 
     def test_eval_stage_normalize_revalidates_target_relationships(self) -> None:
-        from assert_eval.core.config_model import PipelineConfig, TargetConfig, ToolsConfig
+        from assert_ai.core.config_model import PipelineConfig, TargetConfig, ToolsConfig
 
         with self.assertRaisesRegex(ValueError, "external target must not define target.tools"):
             PipelineConfig(
@@ -307,25 +307,25 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in tools], ["lookup"])
 
     def test_model_config_accepts_valid_reasoning_effort(self) -> None:
-        from assert_eval.core.config_model import ModelConfig
+        from assert_ai.core.config_model import ModelConfig
         for value in ("low", "medium", "high", "xhigh"):
             cfg = ModelConfig(name="m", reasoning_effort=value)
             self.assertEqual(cfg.reasoning_effort, value)
 
     def test_model_config_rejects_empty_reasoning_effort(self) -> None:
-        from assert_eval.core.config_model import ModelConfig
+        from assert_ai.core.config_model import ModelConfig
         with self.assertRaisesRegex(ValueError, "reasoning_effort"):
             ModelConfig(name="m", reasoning_effort="")
         with self.assertRaisesRegex(ValueError, "reasoning_effort"):
             ModelConfig(name="m", reasoning_effort="   ")
 
     def test_model_config_rejects_blank_name(self) -> None:
-        from assert_eval.core.config_model import ModelConfig
+        from assert_ai.core.config_model import ModelConfig
         with self.assertRaisesRegex(ValueError, "model.name is required"):
             ModelConfig(name="   ")
 
     def test_target_config_normalizes_blank_optional_fields(self) -> None:
-        from assert_eval.core.config_model import TargetConfig
+        from assert_ai.core.config_model import TargetConfig
         cfg = TargetConfig(model=" azure/gpt-5.4 ", system_prompt="   ", connector=" ")
         self.assertEqual(cfg.model.name, "azure/gpt-5.4")
         self.assertIsNone(cfg.system_prompt)
@@ -333,12 +333,12 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertFalse(cfg.is_external)
 
     def test_tools_config_rejects_blank_module_after_normalization(self) -> None:
-        from assert_eval.core.config_model import ToolsConfig
+        from assert_ai.core.config_model import ToolsConfig
         with self.assertRaisesRegex(ValueError, "target.tools must define module or toolset\\+simulator"):
             ToolsConfig(module="   ")
 
     def test_parse_model_config_passes_reasoning_effort(self) -> None:
-        from assert_eval.config import parse_model_config
+        from assert_ai.config import parse_model_config
         cfg = parse_model_config(
             {"name": "m", "reasoning_effort": "high"},
             field_name="test",
@@ -346,17 +346,17 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertEqual(cfg.reasoning_effort, "high")
 
     def test_parse_model_config_rejects_blank_reasoning_effort(self) -> None:
-        from assert_eval.config import parse_model_config
+        from assert_ai.config import parse_model_config
         with self.assertRaisesRegex(ValueError, "reasoning_effort"):
             parse_model_config({"name": "m", "reasoning_effort": "   "}, field_name="test")
 
     def test_parse_model_config_allows_none_reasoning_effort(self) -> None:
-        from assert_eval.config import parse_model_config
+        from assert_ai.config import parse_model_config
         cfg = parse_model_config({"name": "m"}, field_name="test")
         self.assertIsNone(cfg.reasoning_effort)
 
     def test_parse_model_config_rejects_unknown_keys_still(self) -> None:
-        from assert_eval.config import parse_model_config
+        from assert_ai.config import parse_model_config
         with self.assertRaisesRegex(ValueError, "unsupported field"):
             parse_model_config({"name": "m", "bogus": 1}, field_name="test")
 
@@ -391,7 +391,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
 
 
     def test_transcript_metadata_reasoning_effort_round_trips(self) -> None:
-        from assert_eval.core.transcript import Transcript, TranscriptMetadata, _metadata_from_dict
+        from assert_ai.core.transcript import Transcript, TranscriptMetadata, _metadata_from_dict
         transcript = Transcript(
             metadata=TranscriptMetadata(
                 kind="prompt",
@@ -412,7 +412,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertIsNone(meta.tester_reasoning_effort)
 
     def test_transcript_metadata_defaults_missing_reasoning_fields_to_none(self) -> None:
-        from assert_eval.core.transcript import _metadata_from_dict
+        from assert_ai.core.transcript import _metadata_from_dict
         old_data = {
             "type": "prompt", "test_case_id": "s1", "behavior": "r",
             "dimensions": {"behavior": "sr"},
@@ -473,7 +473,7 @@ class ExternalSessionTest(unittest.IsolatedAsyncioTestCase):
             (root / "demo_connector.py").write_text(
                 "\n".join(
                     [
-                        "from assert_eval.core.session import ConnectorResponse",
+                        "from assert_ai.core.session import ConnectorResponse",
                         "",
                         "class Adapter:",
                         "    def __init__(self, scenario: dict) -> None:",

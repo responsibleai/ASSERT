@@ -10,8 +10,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from assert_eval.core.model_client import ModelResponse
-from assert_eval.stages.stratification import DEFAULT_LEVEL_COUNT, SCOPE, SUITE_OUTPUT
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.stages.stratification import DEFAULT_LEVEL_COUNT, SCOPE, SUITE_OUTPUT
 
 
 class StratificationStageRegistrationTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class StratificationStageRegistrationTest(unittest.TestCase):
 
 class StratificationStageOrderingTest(unittest.TestCase):
     def test_stratification_is_internal_to_test_set(self):
-        from assert_eval.config import PIPELINE_STAGE_ORDER
+        from assert_ai.config import PIPELINE_STAGE_ORDER
 
         self.assertEqual(PIPELINE_STAGE_ORDER, ("systematize", "test_set", "inference", "judge"))
         self.assertNotIn("stratification", PIPELINE_STAGE_ORDER)
@@ -35,14 +35,14 @@ class StratificationStageOrderingTest(unittest.TestCase):
 
 class StratificationStageRegisteredTest(unittest.TestCase):
     def test_stratification_not_registered_as_pipeline_stage(self):
-        from assert_eval.stages import STAGES
+        from assert_ai.stages import STAGES
 
         self.assertNotIn("stratification", STAGES)
 
 
 class StratificationStageConfigValidationTest(unittest.TestCase):
     def test_run_rejects_missing_model_when_factors_need_generation(self):
-        from assert_eval.stages.stratification import run
+        from assert_ai.stages.stratification import run
 
         ctx = {
             "suite_root": Path("/tmp/test_suite"),
@@ -56,7 +56,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
         self.assertIn("stratification.model is required", str(cm.exception))
 
     def test_run_rejects_invalid_levels(self):
-        from assert_eval.stages.stratification import run
+        from assert_ai.stages.stratification import run
 
         ctx = {
             "suite_root": "/tmp/test_suite",
@@ -73,7 +73,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
         self.assertIn("positive integer", str(cm.exception))
 
     def test_run_allows_missing_model_when_levels_are_preprovided(self):
-        from assert_eval.stages.stratification import run
+        from assert_ai.stages.stratification import run
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -101,7 +101,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
                 self.assertIsNone(model)
                 return {"stratification_path": str(Path(kwargs["out_dir"]) / "stratification.json")}
 
-            with patch("assert_eval.stages.stratification.run_stratification", new=fake_run_stratification):
+            with patch("assert_ai.stages.stratification.run_stratification", new=fake_run_stratification):
                 result = asyncio.run(run(ctx, {}))
 
         self.assertEqual(
@@ -110,7 +110,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
         )
 
     def test_run_resolves_save_dir_under_artifacts_root(self):
-        from assert_eval.stages.stratification import run
+        from assert_ai.stages.stratification import run
 
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -144,7 +144,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
                 self.assertEqual(dimensions[0]["name"], "tone")
                 return {"stratification_path": str(Path(out_dir) / "stratification.json")}
 
-            with patch("assert_eval.stages.stratification.run_stratification", new=fake_run_stratification):
+            with patch("assert_ai.stages.stratification.run_stratification", new=fake_run_stratification):
                 result = asyncio.run(
                     run(
                         ctx,
@@ -163,7 +163,7 @@ class StratificationStageConfigValidationTest(unittest.TestCase):
 
 class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_stratification_skips_llm_for_behavior_only(self) -> None:
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -178,7 +178,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             generate_mock = AsyncMock()
-            with patch("assert_eval.stages.stratification.generate_structured", generate_mock):
+            with patch("assert_ai.stages.stratification.generate_structured", generate_mock):
                 result = await run_stratification(
                     taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
@@ -197,7 +197,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
         generate_mock.assert_not_awaited()
 
     async def test_run_stratification_merges_provided_and_generated_levels(self) -> None:
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -227,7 +227,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
             taxonomy_path = root / "taxonomy.json"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("assert_eval.stages.stratification.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.stratification.generate_structured", new=fake_generate_structured):
                 result = await run_stratification(
                     taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
@@ -256,7 +256,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_stratification_explicit_levels_without_description(self) -> None:
         """Dimensions with explicit levels should not require description."""
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -271,7 +271,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             generate_mock = AsyncMock()
-            with patch("assert_eval.stages.stratification.generate_structured", generate_mock):
+            with patch("assert_ai.stages.stratification.generate_structured", generate_mock):
                 result = await run_stratification(
                     taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),
@@ -294,7 +294,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_stratification_rejects_generated_factor_without_description(self) -> None:
         """Dimensions without levels must provide a description."""
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -320,7 +320,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_stratification_rejects_empty_levels(self) -> None:
         """Dimensions with levels: [] should be rejected."""
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -345,7 +345,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_stratification_mixed_explicit_no_desc_and_generated(self) -> None:
         """Mixed: one dimension with explicit levels (no description), one generated."""
-        from assert_eval.stages.stratification import run_stratification
+        from assert_ai.stages.stratification import run_stratification
 
         taxonomy_payload = {
             "behavior": {"name": "Risk"},
@@ -371,7 +371,7 @@ class RunStratificationTest(unittest.IsolatedAsyncioTestCase):
             taxonomy_path = root / "taxonomy.json"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("assert_eval.stages.stratification.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.stratification.generate_structured", new=fake_generate_structured):
                 result = await run_stratification(
                     taxonomy_path=str(taxonomy_path),
                     out_dir=str(root),

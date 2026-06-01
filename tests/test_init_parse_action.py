@@ -1,11 +1,11 @@
-"""Tests for the JSON action parser in ``assert-eval init``."""
+"""Tests for the JSON action parser in ``assert-ai init``."""
 
 from __future__ import annotations
 
 import json
 import unittest
 
-from assert_eval.init._design_agent import ParsedAction, ParseError, _parse_action, _strip_fences
+from assert_ai.init._design_agent import ParsedAction, ParseError, _parse_action, _strip_fences
 
 
 class StripFencesTest(unittest.TestCase):

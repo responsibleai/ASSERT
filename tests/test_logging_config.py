@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Tests for assert_eval.logging_config."""
+"""Tests for assert_ai.logging_config."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from assert_eval.logging_config import configure_logging
+from assert_ai.logging_config import configure_logging
 
 
 class ConfigureLoggingTest(unittest.TestCase):

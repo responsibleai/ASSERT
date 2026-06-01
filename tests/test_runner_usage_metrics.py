@@ -9,8 +9,8 @@ lines and aggregate it into ``metrics.json`` at the end of a pipeline run.
 
 import unittest
 
-from assert_eval.core.model_client import UsageAccumulator, UsageStats
-from assert_eval.runner import (
+from assert_ai.core.model_client import UsageAccumulator, UsageStats
+from assert_ai.runner import (
     _build_run_metrics,
     _format_token_count,
     _format_usage_line,

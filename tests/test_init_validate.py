@@ -1,11 +1,11 @@
-"""Tests for the validation bridge in ``assert-eval init``."""
+"""Tests for the validation bridge in ``assert-ai init``."""
 
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
 
-from assert_eval.init._validate import validate_proposed_yaml, validate_raw_config
+from assert_ai.init._validate import validate_proposed_yaml, validate_raw_config
 
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"

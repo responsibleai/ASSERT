@@ -19,9 +19,9 @@ from pathlib import Path
 import yaml
 from click.testing import CliRunner
 
-from assert_eval.cli import cli
-from assert_eval.config import load_runtime_context
-from assert_eval.library.loader import (
+from assert_ai.cli import cli
+from assert_ai.config import load_runtime_context
+from assert_ai.library.loader import (
     KIND_TO_SUBDIR,
     LIBRARY_ROOT,
     VALID_KINDS,
@@ -29,7 +29,7 @@ from assert_eval.library.loader import (
     load_preset,
     resolve_preset,
 )
-from assert_eval.stages import STAGES
+from assert_ai.stages import STAGES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -177,7 +177,7 @@ class JudgeYamlSchemaTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryListTest(unittest.TestCase):
-    """Test the ``assert-eval library list`` CLI command end-to-end."""
+    """Test the ``assert-ai library list`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()
@@ -246,7 +246,7 @@ class CliLibraryListTest(unittest.TestCase):
 # ===================================================================
 
 class CliLibraryShowTest(unittest.TestCase):
-    """Test the ``assert-eval library show`` CLI command end-to-end."""
+    """Test the ``assert-ai library show`` CLI command end-to-end."""
 
     def setUp(self):
         self.runner = CliRunner()

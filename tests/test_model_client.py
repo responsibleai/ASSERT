@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from assert_eval.core import model_client
+from assert_ai.core import model_client
 
 
 class ModelClientTest(unittest.IsolatedAsyncioTestCase):
@@ -1020,13 +1020,13 @@ class NormalizeUsageZeroTokenDiagnosticsTest(unittest.TestCase):
     '1 call · 0 in / 0 out' rows can be traced back to provider responses."""
 
     def test_zero_token_usage_emits_debug_log(self) -> None:
-        with self.assertLogs("assert_eval.core.model_client", level="DEBUG") as cm:
+        with self.assertLogs("assert_ai.core.model_client", level="DEBUG") as cm:
             stats = model_client._normalize_usage({"prompt_tokens": 0, "completion_tokens": 0})
         self.assertIsNotNone(stats)
         self.assertTrue(any("zero/None tokens" in msg for msg in cm.output))
 
     def test_real_usage_does_not_emit_zero_token_log(self) -> None:
-        with self.assertLogs("assert_eval.core.model_client", level="DEBUG") as cm:
+        with self.assertLogs("assert_ai.core.model_client", level="DEBUG") as cm:
             # Need at least one log so assertLogs doesn't fail; emit a manual one.
             model_client.log.debug("sentinel")
             model_client._normalize_usage({"prompt_tokens": 100, "completion_tokens": 50})

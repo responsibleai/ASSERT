@@ -1,4 +1,4 @@
-"""Tests for the ``assert-eval init`` CLI command."""
+"""Tests for the ``assert-ai init`` CLI command."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from assert_eval.cli import cli
-from assert_eval.init._context import build_system_message
+from assert_ai.cli import cli
+from assert_ai.init._context import build_system_message
 
 
 _MINIMAL_VALID_YAML = (
@@ -37,8 +37,8 @@ def _done_response(yaml_str: str = _MINIMAL_VALID_YAML) -> str:
 
 
 class InitCommandTest(unittest.TestCase):
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_non_interactive_generates_file(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
@@ -57,8 +57,8 @@ class InitCommandTest(unittest.TestCase):
         result = runner.invoke(cli, ["init", "--non-interactive"])
         self.assertNotEqual(result.exit_code, 0)
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_dry_run_does_not_write(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
@@ -72,8 +72,8 @@ class InitCommandTest(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertFalse(Path("eval_config.yaml").exists())
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_force_overwrites(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
@@ -116,8 +116,8 @@ class InitPromptContentTest(unittest.TestCase):
         self.assertIn("Pipeline default_model Hint (from --default-model)", prompt)
         self.assertIn("azure/gpt-5.4", prompt)
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="sys")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_design_agent_surfaces_model_hint_to_llm(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()

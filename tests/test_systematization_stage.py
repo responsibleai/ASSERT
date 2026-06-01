@@ -8,9 +8,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_eval.core.config_model import ModelConfig
-from assert_eval.core.model_client import ModelResponse
-from assert_eval.stages.systematization import run_systematization
+from assert_ai.core.config_model import ModelConfig
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.stages.systematization import run_systematization
 
 
 FINAL_SYSTEMATIZATION = """# Systematization
@@ -128,7 +128,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
-            with patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured):
                 written_path = await run_systematization(
                     behavior="harmful advice",
                     behavior_text="Harmful advice",
@@ -172,7 +172,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
-            with patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured):
                 await run_systematization(
                     behavior="harmful advice",
                     behavior_text="Risk body",
@@ -256,7 +256,7 @@ Avoid over-flagging educational content.
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "Variables"),
             ):
                 await run_systematization(
@@ -289,7 +289,7 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "truncated.*max_output_tokens.*max_tokens=8000"),
             ):
                 await run_systematization(
@@ -311,7 +311,7 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "truncated.*length"),
             ):
                 await run_systematization(
@@ -335,7 +335,7 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "unparseable output"),
             ):
                 await run_systematization(
@@ -363,7 +363,7 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("assert_eval.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaises(ValueError),
             ):
                 await run_systematization(

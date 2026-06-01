@@ -1,10 +1,10 @@
-"""Tests for the context builder in ``assert-eval init``."""
+"""Tests for the context builder in ``assert-ai init``."""
 
 from __future__ import annotations
 
 import unittest
 
-from assert_eval.init._context import (
+from assert_ai.init._context import (
     _context_window_for,
     _estimate_tokens,
     build_system_message,

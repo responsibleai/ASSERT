@@ -3,8 +3,8 @@
 
 """Guard against re-introduction of the legacy ``p2m`` name.
 
-The Python package was renamed from ``p2m`` to ``assert_eval`` and the CLI from
-``p2m`` to ``assert-eval``. This test walks every tracked source file in the
+The Python package was renamed from ``p2m`` to ``assert_ai`` and the CLI from
+``p2m`` to ``assert-ai``. This test walks every tracked source file in the
 repo and fails if the legacy name appears outside the small allowlist of
 historical artifact snapshots and this test file itself.
 
@@ -93,7 +93,7 @@ class NoLegacyP2MReferencesTest(unittest.TestCase):
             joined = "\n  ".join(violations)
             self.fail(
                 "The legacy 'p2m' name leaked back into the codebase. Use "
-                "'assert_eval' (Python import) or 'assert-eval' (CLI) instead. "
+                "'assert_ai' (Python import) or 'assert-ai' (CLI) instead. "
                 "If a reference is intentional historical context, add its "
                 "path to _ALLOWED_PATH_PREFIXES in "
                 "tests/test_no_p2m_references.py.\n\n"
