@@ -12,6 +12,8 @@
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
 	import type { SuiteHeavyData } from '$lib/server/data.js';
 	import { fade } from 'svelte/transition';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 
 	type BehaviorEvalEntry = { kind: 'prompt' | 'scenario'; sample: JudgedSample };
 
@@ -94,6 +96,54 @@
 			allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
 		)
 	);
+
+	// Per-column dim selection for the evaluation-results table. Each of the
+	// MAX_METRIC_COLS slots holds either a dim name (must currently be populated)
+	// or null when the user hasn't picked a dim for that slot. State is sourced
+	// from the URL search param ``metrics`` so links are shareable and reloads
+	// preserve the user's column choice. Default = first MAX_METRIC_COLS entries
+	// of visibleDimNames, preserving the existing ordering.
+	const MAX_METRIC_COLS = 3;
+	let selectedMetricCols = $derived.by<(string | null)[]>(() => {
+		const populated = visibleDimNames;
+		const numCols = Math.min(MAX_METRIC_COLS, populated.length);
+		if (numCols === 0) return [];
+		const raw = page.url.searchParams.get('metrics');
+		const result: (string | null)[] = new Array(numCols).fill(null);
+		const used = new Set<string>();
+		if (raw) {
+			const parts = raw.split(',').map((s) => s.trim());
+			for (let i = 0; i < numCols && i < parts.length; i++) {
+				const name = parts[i];
+				if (name && populated.includes(name) && !used.has(name)) {
+					result[i] = name;
+					used.add(name);
+				}
+			}
+		}
+		// Fill empty slots with the first unused populated dim (preserves default ordering).
+		for (let i = 0; i < numCols; i++) {
+			if (result[i] !== null) continue;
+			const fallback = populated.find((n) => !used.has(n));
+			if (!fallback) break;
+			result[i] = fallback;
+			used.add(fallback);
+		}
+		return result;
+	});
+
+	function setMetricCol(colIdx: number, dimName: string) {
+		const next = [...selectedMetricCols];
+		if (colIdx < 0 || colIdx >= next.length) return;
+		// If the chosen dim is already used in another slot, swap them so we never
+		// end up with the same dim in two columns.
+		const existingIdx = next.findIndex((n, i) => n === dimName && i !== colIdx);
+		if (existingIdx >= 0) next[existingIdx] = next[colIdx];
+		next[colIdx] = dimName;
+		const url = new URL(page.url);
+		url.searchParams.set('metrics', next.filter((n): n is string => Boolean(n)).join(','));
+		goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+	}
 	let sortedBehaviors = $derived(data.taxonomy?.behavior_categories ?? []);
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
@@ -473,8 +523,24 @@
 						</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
-						{#each visibleDimNames as dimName (dimName)}
-							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap truncate">{dimColumnLabel(dimName)}</th>
+						{#each selectedMetricCols as colDim, colIdx (colIdx)}
+							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap">
+								<label class="sr-only" for="metric-col-{colIdx}">Metric column {colIdx + 1}</label>
+								<select
+									id="metric-col-{colIdx}"
+									class="w-full bg-transparent text-xs font-medium text-text-muted hover:text-text focus:outline-none focus:ring-1 focus:ring-interactive/40 rounded px-1 py-0.5 cursor-pointer truncate"
+									value={colDim ?? ''}
+									onchange={(e) => setMetricCol(colIdx, (e.currentTarget as HTMLSelectElement).value)}
+									title={colDim ? dimColumnLabel(colDim) : ''}
+								>
+									{#each visibleDimNames as optDim (optDim)}
+										<option
+											value={optDim}
+											disabled={selectedMetricCols.some((n, i) => n === optDim && i !== colIdx)}
+										>{dimColumnLabel(optDim)}</option>
+									{/each}
+								</select>
+							</th>
 						{/each}
 						<th class="px-3 py-2 text-left text-xs font-medium text-text-muted">Total</th>
 					</tr>
@@ -525,8 +591,8 @@
 							<td class="px-3 py-2">
 								<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {runStatusClass}">{runStatusLabel}</span>
 							</td>
-							{#each visibleDimNames as dimName (dimName)}
-								{@const dimRate = aggregateRunDimensionRate(run, dimName)}
+							{#each selectedMetricCols as colDim, colIdx (colIdx)}
+								{@const dimRate = colDim ? aggregateRunDimensionRate(run, colDim) : null}
 								<td class="px-3 py-2 text-left">
 									{#if dimRate !== null}
 										<span class="text-xs font-semibold">{(dimRate * 100).toFixed(0)}%</span>
@@ -544,8 +610,8 @@
 								<td class="px-3 py-2 text-xs text-text-muted">Single-turn prompts</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								{#each visibleDimNames as dimName (dimName)}
-									{@const childDimRate = qRun.metrics?.dimensions?.[dimName]?.rate ?? null}
+								{#each selectedMetricCols as colDim, colIdx (colIdx)}
+									{@const childDimRate = colDim ? (qRun.metrics?.dimensions?.[colDim]?.rate ?? null) : null}
 									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
 								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{qRun.metrics?.total ?? '—'}</td>
@@ -558,8 +624,8 @@
 								<td class="px-3 py-2 text-xs text-text-muted">Multi-turn scenarios</td>
 								<td class="px-3 py-2"></td>
 								<td class="px-3 py-2"></td>
-								{#each visibleDimNames as dimName (dimName)}
-									{@const childDimRate = aRun.metrics?.dimensions?.[dimName]?.rate ?? null}
+								{#each selectedMetricCols as colDim, colIdx (colIdx)}
+									{@const childDimRate = colDim ? (aRun.metrics?.dimensions?.[colDim]?.rate ?? null) : null}
 									<td class="px-3 py-2 text-left">{#if childDimRate !== null && childDimRate !== undefined}<span class="text-xs font-semibold">{(childDimRate * 100).toFixed(0)}%</span>{:else}<span class="text-xs text-text-muted">—</span>{/if}</td>
 								{/each}
 								<td class="px-3 py-2 text-left text-xs text-text-muted">{aRun.metrics?.total ?? '—'}</td>
