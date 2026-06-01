@@ -771,7 +771,7 @@ def _prompt_descriptor(stage_name: str) -> dict[str, str]:
     prompts: dict[str, str] = {}
     for filename in _PROMPT_FILES.get(stage_name, ()):
         path = PROMPTS_DIR / filename
-        prompts[filename] = file_sha256(path) if path.exists() else ""
+        prompts[filename] = file_sha256(path) if path.is_file() else ""
     return prompts
 
 

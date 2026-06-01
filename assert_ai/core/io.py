@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import tempfile
+from importlib.resources import files as _resource_files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -146,15 +148,19 @@ def load_json(path: Path) -> dict[str, Any] | None:
 
 # ── Prompt loading ─────────────────────────────────────────────
 
-PROMPTS_DIR = BASE_DIR / "internal-pipeline-prompts"
+# Resolve prompts via importlib.resources so they load correctly from an
+# installed wheel (where the package may live anywhere on sys.path) and not
+# only from a repo checkout. Returns a Traversable, which supports ``/`` and
+# ``read_text``/``read_bytes``/``is_file`` like a Path.
+PROMPTS_DIR: Traversable = _resource_files("assert_ai.internal_pipeline_prompts")
 
 
 def load_prompt_text(filename: str) -> str:
-    """Load a prompt file from the internal-pipeline-prompts/ directory."""
-    path = PROMPTS_DIR / filename
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt file not found: {path}")
-    return path.read_text(encoding="utf-8")
+    """Load a prompt file shipped inside the assert_ai package."""
+    resource = PROMPTS_DIR / filename
+    if not resource.is_file():
+        raise FileNotFoundError(f"Prompt file not found: {resource}")
+    return resource.read_text(encoding="utf-8")
 
 
 def normalize_test_case_context(value: str | None) -> str | None:
