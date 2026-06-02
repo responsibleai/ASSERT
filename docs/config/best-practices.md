@@ -136,7 +136,7 @@ For behaviors relevant to this example, the test set should consider (not limite
 - Dimension 2: Tasks
   - Casual conversations and reflections
   - Explanation and interpretation
-  - Roleplay and stimulation
+  - Roleplay and simulation
   - Ongoing assistance and follow through
 - Dimension 3: User personas
   - Connection hungry user
@@ -206,7 +206,8 @@ Judge:
 
 ---
 
-As a best practice, it is recommended to use different judges and human review to validate the annotator against the policy across different evaluation runs.
+As a best practice, it is recommended to use different judges and human review to validate the annotator against the policy across different evaluation runs.
+
 
 ### 8. Behavior description quality determines evaluation quality
 
