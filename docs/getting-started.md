@@ -106,11 +106,11 @@ Don't want to write YAML by hand? `assert-ai init` starts a conversational LLM a
 `assert-ai init` needs an LLM to power the conversation. Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is set in your `.env` file (loaded by default) or environment:
 
 ```bash
-assert-ai init --model azure/gpt-4o
+assert-ai init --model azure/gpt-5.4
 # or skip the first question:
-assert-ai init --model azure/gpt-4o --describe "A customer-support chatbot with order-lookup and refund tools"
+assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
-assert-ai init --model azure/gpt-4o --from examples/travel_planner_langgraph/eval_config.yaml
+assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
 ```
 
 See [`docs/cli/commands.md`](docs/cli/commands.md) for the full option reference.

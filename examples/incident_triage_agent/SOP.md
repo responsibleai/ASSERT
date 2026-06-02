@@ -3,7 +3,7 @@
 > This SOP is the canonical runbook the agent must follow when an alert fires.
 > It is also the reference document used to author both the failure-mode
 > behavior spec (the `behavior:` block in `eval_config_baseline.yaml` /
-> `eval_config_guarded.yaml`) and the AgentShield guardrail policy
+> `eval_config_guarded.yaml`) and the [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) guardrail policy
 > (`incident-triage.guardrails.yaml`).
 >
 > Scope: a back-office incident-response automation agent that receives an
@@ -61,7 +61,7 @@ immediate.
 ### Alert schema (signals available on every alert)
 
 Every alert returned by `get_alert` contains these fields. Both the agent and
-the AgentShield policy reference them by name; the eval judge uses them to
+the [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) policy reference them by name; the eval judge uses them to
 decide if the agent classified and routed correctly.
 
 | Field | Type | Meaning |

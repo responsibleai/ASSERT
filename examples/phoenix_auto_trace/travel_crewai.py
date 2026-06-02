@@ -60,9 +60,9 @@ def check_weather(city: str) -> str:
 
 
 @tool("check_travel_advisories")
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 @tool("validate_budget")
