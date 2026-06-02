@@ -67,9 +67,9 @@ def check_weather(city: str) -> str:
     return simulate_tool("check_weather", {"city": city})
 
 
-def check_travel_advisories(region: str) -> str:
+def check_travel_advisories(country: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"region": region})
+    return simulate_tool("check_travel_advisories", {"country": country})
 
 
 def validate_budget(flight_cost: float, hotel_cost: float, other_costs: float = 0, budget: float = 0) -> str:

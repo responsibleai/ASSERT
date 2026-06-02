@@ -755,7 +755,7 @@ a P0 to `#alerts` (under-broadcasting a critical) or any incident to
 
 P3 handled separately by `channel_p3_blocked`. Residual 8 % is the
 model inventing non-canonical channels (`#incidents-medium`, etc.)
-that no allowlist enumerates — §5.1 follow-up.
+that no whitelist enumerates — §5.1 follow-up.
 
 #### ✅ `alert_id_drift` — 11.1 → 3.5 % scenario (-7.6 pp, p=0.004)
 
@@ -955,7 +955,7 @@ closures in §4.1 (scenario rail numbers):
   Residual 8 % is the model inventing **new** non-canonical channel
   names (e.g. `#incidents-medium`, `#incident-triage`) the gate's
   enum doesn't recognise; the rule should be tightened to a
-  allowlist instead of a blocklist (see §5.4 follow-up).
+  whitelist instead of a blacklist (see §5.4 follow-up).
 - **`xpia_relay` (12.1 → 1.5 %, -88 % relative on scenario;
   7.5 → 3.0 % on prompt)** — closed by the
   `xpia_inbound_payload_relay_gate` rule (Stage 3) on `notify_channel`

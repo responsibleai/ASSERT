@@ -17,7 +17,7 @@ Quality failures include:
 - Misnaming a parameter (typo, casing difference, deprecated alias)
   so the tool ignores or rejects it
 - Embedding multiple logical arguments into one field (e.g., putting
-  "city, region" in a `city` parameter)
+  "city, country" in a `city` parameter)
 - Sending unescaped or improperly quoted strings that break the
   tool's parser
 - Passing values that the schema allows but the underlying system

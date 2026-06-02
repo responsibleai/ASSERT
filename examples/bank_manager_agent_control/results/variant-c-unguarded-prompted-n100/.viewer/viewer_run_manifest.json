@@ -1,0 +1,55 @@
+{
+  "schema_version": 4,
+  "generator_version": "viewer-read-model-v3",
+  "suite_id": "bank-manager-agent-control",
+  "run_id": "variant-c-unguarded-prompted-n100",
+  "source_files": {
+    "inference_set.jsonl": {
+      "path": "inference_set.jsonl",
+      "size_bytes": 11632630,
+      "mtime_ms": 1780359081112
+    },
+    "scores.jsonl": {
+      "path": "scores.jsonl",
+      "size_bytes": 474370,
+      "mtime_ms": 1780359081000
+    },
+    "test_set.jsonl": {
+      "path": "..\\test_set.jsonl",
+      "size_bytes": 96076,
+      "mtime_ms": 1780353412865
+    },
+    "manifest.json": {
+      "path": "manifest.json",
+      "size_bytes": 673,
+      "mtime_ms": 1780358838137
+    },
+    "config.yaml": {
+      "path": "config.yaml",
+      "size_bytes": 6413,
+      "mtime_ms": 1780353187694
+    }
+  },
+  "derived_files": {
+    "viewer_prompt_rows.json": {
+      "path": ".viewer\\viewer_prompt_rows.json",
+      "size_bytes": 77648,
+      "mtime_ms": 1780358959385
+    },
+    "viewer_audit_rows.json": {
+      "path": ".viewer\\viewer_audit_rows.json",
+      "size_bytes": 72842,
+      "mtime_ms": 1780358959488
+    },
+    "viewer_transcript_index.json": {
+      "path": ".viewer\\viewer_transcript_index.json",
+      "size_bytes": 15964,
+      "mtime_ms": 1780359081348
+    },
+    "viewer_score_index.json": {
+      "path": ".viewer\\viewer_score_index.json",
+      "size_bytes": 15729,
+      "mtime_ms": 1780359081163
+    }
+  }
+}
