@@ -15,14 +15,10 @@
 	import { AUDIT_GROUP_AXES, PROMPT_GROUP_AXES, buildFactorAxes, groupByAxis } from '$lib/grouping.js';
 	import ResultDrawer from '$lib/ResultDrawer.svelte';
 	import RateForestPlot from '$lib/RateForestPlot.svelte';
+	import { buildOutcomeOptions, buildOutcomePlotRows } from '$lib/outcome-plot.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
-	import {
-		buildOutcomeOptions,
-		buildOutcomePlotRows
-	} from '$lib/outcome-plot.js';
-	import { judgeDimensionLabel, titleCaseJudgeDimensionLabel } from '$lib/labels.js';
 	import {
 		normalizePromptResult,
 		stopReasonChipClass,
@@ -84,7 +80,6 @@
 	let promptGroupBy = $state('none');
 	let promptSortMetric = $state('policy_violation');
 	let promptSearchQuery = $state('');
-	let promptOutcomePanelOpen = $state(false);
 
 	// --- Audit eval state ---
 	let expandedAuditBehavior = $state<string | null>(null);
@@ -93,23 +88,11 @@
 	let auditGroupBy = $state('none');
 	let auditSortMetric = $state('policy_violation');
 	let auditSearchQuery = $state('');
-	let auditOutcomePanelOpen = $state(false);
 	let runMetaOpen = $state(false);
 
 	// --- Multi-judge state ---
 	let mjFilter = $state<'all' | 'disagreements'>('all');
 	let auditMjFilter = $state<'all' | 'disagreements'>('all');
-
-	let runCsvMenuOpen = $state(false);
-	let runCsvExportItems = $derived([
-		...(data.samples.length > 0 ? [{ label: 'Prompt results', type: 'results' }] : []),
-		...(data.auditScores.length > 0 ? [{ label: 'Scenario results', type: 'scenario_results' }] : [])
-	]);
-
-	function downloadRunCsv(type: string) {
-		runCsvMenuOpen = false;
-		window.open(`/api/csv/${data.suite_id}/${data.run_id}?type=${type}`, '_blank');
-	}
 
 	// Totals for judge failures banner
 	let promptTotal = $derived(data.samples.length);
@@ -162,7 +145,7 @@
 	let auditErroredCount = $derived(countSkippedStopReasonKind('error'));
 
 	function metricLabel(metric: string): string {
-		return judgeDimensionLabel(metric);
+		return metric.replace(/_/g, ' ');
 	}
 
 	function metricOutcomeText(flag: boolean | null): string {
@@ -212,11 +195,8 @@
 	}
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		systematize: 'Behavior Categories',
-		test_set: 'Test Set',
-		seeds: 'Test Set',
+		seeds: 'Seed Generation',
 		inference: 'Inference',
-		rollout: 'Inference',
 		judge: 'Scoring',
 	};
 
@@ -252,19 +232,26 @@
 	let dimensionNames = $derived(Object.keys(data.metrics.dimensions ?? {}));
 	let metricNames = $derived(dimensionNames);
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
+
+	// --- Prompt outcome (forest) plot ---
+	let promptOutcomePanelOpen = $state(false);
 	let promptOutcomeId = $state('');
 	let promptOutcomeOptions = $derived(
 		buildOutcomeOptions(data.samples, data.taxonomy?.behavior_categories ?? [])
 	);
-	let promptOutcomeGroups = $derived([...new Set(promptOutcomeOptions.map((option) => option.groupLabel))]);
+	let promptOutcomeGroups = $derived([
+		...new Set(promptOutcomeOptions.map((option) => option.groupLabel))
+	]);
 	let activePromptOutcome = $derived(
-		promptOutcomeOptions.find((option) => option.id === promptOutcomeId) ?? promptOutcomeOptions[0] ?? null
+		promptOutcomeOptions.find((option) => option.id === promptOutcomeId) ??
+			promptOutcomeOptions[0] ??
+			null
 	);
 	let promptOutcomeRows = $derived(
 		activePromptOutcome ? buildOutcomePlotRows(data.samples, activePromptOutcome) : []
 	);
 
-	// Lookup map: behavior name -> permissible boolean (from taxonomy)
+	// Lookup map: behavior name -> permissible boolean (from policy)
 	let behaviorPermissibleMap = $derived.by(() => {
 		const map: Record<string, boolean> = {};
 		for (const b of data.taxonomy?.behavior_categories ?? []) {
@@ -333,13 +320,20 @@
 
 	let auditMetricNames = $derived(auditDimNames);
 	let primaryAuditMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
+
+	// --- Audit outcome (forest) plot ---
+	let auditOutcomePanelOpen = $state(false);
 	let auditOutcomeId = $state('');
 	let auditOutcomeOptions = $derived(
 		buildOutcomeOptions(data.auditScores, data.taxonomy?.behavior_categories ?? [])
 	);
-	let auditOutcomeGroups = $derived([...new Set(auditOutcomeOptions.map((option) => option.groupLabel))]);
+	let auditOutcomeGroups = $derived([
+		...new Set(auditOutcomeOptions.map((option) => option.groupLabel))
+	]);
 	let activeAuditOutcome = $derived(
-		auditOutcomeOptions.find((option) => option.id === auditOutcomeId) ?? auditOutcomeOptions[0] ?? null
+		auditOutcomeOptions.find((option) => option.id === auditOutcomeId) ??
+			auditOutcomeOptions[0] ??
+			null
 	);
 	let auditOutcomeRows = $derived(
 		activeAuditOutcome ? buildOutcomePlotRows(data.auditScores, activeAuditOutcome) : []
@@ -684,9 +678,6 @@
 		auditSortMetric = 'policy_violation';
 		promptSearchQuery = '';
 		auditSearchQuery = '';
-		promptOutcomePanelOpen = false;
-		auditOutcomePanelOpen = false;
-		runCsvMenuOpen = false;
 		runMetaOpen = false;
 		mjFilter = 'all';
 		auditMjFilter = 'all';
@@ -706,26 +697,6 @@
 		previewDrawerItem = null;
 		auditNavIdx = -1;
 		previewNavIdx = -1;
-	});
-
-	$effect(() => {
-		if (promptOutcomeOptions.length === 0) {
-			promptOutcomeId = '';
-			return;
-		}
-		if (!promptOutcomeOptions.some((option) => option.id === promptOutcomeId)) {
-			promptOutcomeId = promptOutcomeOptions[0].id;
-		}
-	});
-
-	$effect(() => {
-		if (auditOutcomeOptions.length === 0) {
-			auditOutcomeId = '';
-			return;
-		}
-		if (!auditOutcomeOptions.some((option) => option.id === auditOutcomeId)) {
-			auditOutcomeId = auditOutcomeOptions[0].id;
-		}
 	});
 
 	$effect(() => {
@@ -838,8 +809,6 @@
 	});
 </script>
 
-<svelte:window onclick={() => { runCsvMenuOpen = false; }} />
-
 <!-- Header -->
 <div class="mb-8">
 	<nav aria-label="Breadcrumb">
@@ -931,75 +900,36 @@
 				{/if}
 			{/if}
 		</div>
-		{#if hasPromptEval || hasAuditContent || runCsvExportItems.length > 0}
-			<div class="flex shrink-0 flex-col items-stretch gap-2 self-start" style="margin-top:2px;">
-				<div class="flex items-center justify-end gap-2">
-					{#if runCsvExportItems.length > 0}
-						<div class="relative">
-							<button
-								type="button"
-								class="btn btn-small"
-								onclick={(event) => { event.stopPropagation(); runCsvMenuOpen = !runCsvMenuOpen; }}
-								title="Download CSV"
-							>
-								CSV
-							</button>
-							{#if runCsvMenuOpen}
-								<div class="absolute right-0 top-full z-20 mt-1 min-w-[12rem] rounded-lg border border-border bg-surface py-1 shadow-lg">
-									{#each runCsvExportItems as item}
-										<button
-											type="button"
-											class="block w-full px-3 py-1.5 text-left text-xs text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
-											onclick={() => downloadRunCsv(item.type)}
-										>
-											{item.label}
-										</button>
-									{/each}
-								</div>
-							{/if}
-						</div>
-					{/if}
-					{#if hasPromptEval || hasAuditEval}
-						<a
-							class="btn btn-small no-underline"
-							href="/suite/{data.suite_id}/{data.run_id}/export"
-							target="_blank"
-							rel="noreferrer"
-						>
-							Export HTML
-						</a>
-					{/if}
+		{#if hasPromptEval && hasAuditContent}
+			<div class="shrink-0 self-start" style="margin-top:2px;">
+				<div class="SegmentedControl" role="tablist" aria-label="Result type">
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTab === 'prompts'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeTab === 'prompts'}
+						onclick={() => setActiveTab('prompts')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Prompts</span>
+							<span class="Counter">{data.promptCount ?? data.samples.length}</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTab === 'audit'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeTab === 'audit'}
+						onclick={() => setActiveTab('audit')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Scenarios</span>
+							<span class="Counter">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span>
+						</span>
+					</button>
 				</div>
-				{#if hasPromptEval && hasAuditContent}
-					<div class="SegmentedControl" role="tablist" aria-label="Result type">
-						<button
-							type="button"
-							role="tab"
-							aria-selected={activeTab === 'prompts'}
-							class="SegmentedControl-item"
-							class:SegmentedControl-item--selected={activeTab === 'prompts'}
-							onclick={() => setActiveTab('prompts')}
-						>
-							<span class="SegmentedControl-content">
-								<span>Prompts</span>
-								<span class="Counter">{data.promptCount ?? data.samples.length}</span>
-							</span>
-						</button>
-						<button
-							type="button"
-							role="tab"
-							aria-selected={activeTab === 'audit'}
-							class="SegmentedControl-item"
-							class:SegmentedControl-item--selected={activeTab === 'audit'}
-							onclick={() => setActiveTab('audit')}
-						>
-							<span class="SegmentedControl-content">
-								<span>Scenarios</span>
-								<span class="Counter">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span>
-							</span>
-						</button>
-					</div>
-				{/if}
 			</div>
 		{/if}
 	</div>
@@ -1011,7 +941,7 @@
 		<svg class="mx-auto mb-4 h-10 w-10 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 			<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
 		</svg>
-		<p class="text-sm text-text-secondary">No results yet.</p>
+		<p class="text-sm text-text-secondary">No measurement results yet.</p>
 		{#if data.manifest?.stages}
 			<div class="mt-4 flex flex-wrap justify-center gap-2">
 				{#each Object.entries(data.manifest.stages) as [stage, info]}
@@ -1033,7 +963,11 @@
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
 				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
-				<span class="shrink-0 text-xs text-text-muted">{allMetrics.length} test set dimensions</span>
+				<div class="flex shrink-0 items-center gap-2">
+					<span class="text-xs text-text-muted">{allMetrics.length} test set dimensions</span>
+					<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/api/csv/{data.suite_id}/{data.run_id}?type=results" title="Download prompt results as CSV">CSV</a>
+					<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/suite/{data.suite_id}/{data.run_id}/export" target="_blank" rel="noopener" title="Open standalone HTML export">Export HTML</a>
+				</div>
 			</div>
 			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
@@ -1116,33 +1050,32 @@
 			{/if}
 		{/if}
 
-		{#if activePromptOutcome}
+		<!-- Outcome forest plot -->
+		{#if promptOutcomeOptions.length > 0}
 			<section class="mb-8">
 				<button
 					type="button"
-					class="mb-3 flex w-full flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-interactive/40"
+					class="flex w-full items-center justify-between gap-3 border-b border-border pb-2 text-left"
 					aria-expanded={promptOutcomePanelOpen}
-					onclick={() => promptOutcomePanelOpen = !promptOutcomePanelOpen}
+					onclick={() => (promptOutcomePanelOpen = !promptOutcomePanelOpen)}
 				>
 					<div>
-						<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Outcome rates by variation</h2>
-						<p class="mt-1 text-sm text-text-muted">Compare a judge dimension or behavior category across the test set dimensions.</p>
+						<h2 class="text-lg font-semibold text-text">Average score by dimension</h2>
+						<p class="mt-1 text-sm leading-5 text-text-muted">Flagged rate for the selected outcome across each test set dimension level, with 95% confidence intervals.</p>
 					</div>
-					<span class="inline-flex items-center gap-1.5 text-xs text-text-muted">
+					<span class="inline-flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
 						{promptOutcomePanelOpen ? 'Hide' : 'Show'}
-						<svg class="h-3 w-3 transition-transform {promptOutcomePanelOpen ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-							<path d="M9 5l7 7-7 7" />
-						</svg>
+						<svg class="h-3 w-3 transition-transform {promptOutcomePanelOpen ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg>
 					</span>
 				</button>
-				{#if promptOutcomePanelOpen}
-					<div class="mb-3 flex flex-wrap items-center justify-end gap-3">
+				{#if promptOutcomePanelOpen && activePromptOutcome}
+					<div class="mt-3 mb-3 flex flex-wrap items-center justify-end gap-3">
 						<label class="flex w-full flex-col items-stretch gap-1 text-[10px] uppercase tracking-wider text-text-muted sm:w-auto sm:flex-row sm:items-center sm:gap-2">
 							Outcome
 							<select
 								class="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs normal-case tracking-normal text-text outline-none focus:border-interactive sm:min-w-64"
-								value={promptOutcomeId}
-								onchange={(event) => promptOutcomeId = event.currentTarget.value}
+								value={activePromptOutcome.id}
+								onchange={(event) => (promptOutcomeId = event.currentTarget.value)}
 							>
 								{#each promptOutcomeGroups as group}
 									<optgroup label={group}>
@@ -1211,7 +1144,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={metricNames.map(m => ({ value: m, label: titleCaseJudgeDimensionLabel(m) }))}
+						options={metricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
 						selected={promptSortMetric}
 						onSelect={(v) => promptSortMetric = v}
 					/>
@@ -1223,7 +1156,7 @@
 			<div class="overflow-hidden rounded-lg border border-border">
 				<div class="grid items-center gap-3 border-b border-border bg-surface-2/60 px-4 py-2 text-left text-xs font-medium text-text-muted" style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;">
 					<span class="text-left">Behavior category</span>
-					<span class="text-left">Behavior status</span>
+					<span class="text-left">Policy status</span>
 					<span class="text-left">Metrics</span>
 					<span class="sr-only">Count</span>
 					<span class="sr-only">Expand</span>
@@ -1381,7 +1314,11 @@
 		<div class="mb-4 border-b border-border pb-2">
 			<div class="flex items-center gap-3">
 				<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
-				<span class="shrink-0 text-xs text-text-muted">{auditAllMetrics.length} test set dimensions</span>
+				<div class="flex shrink-0 items-center gap-2">
+					<span class="text-xs text-text-muted">{auditAllMetrics.length} test set dimensions</span>
+					<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/api/csv/{data.suite_id}/{data.run_id}?type=audit_scores" title="Download scenario scores as CSV">CSV</a>
+					<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/suite/{data.suite_id}/{data.run_id}/export" target="_blank" rel="noopener" title="Open standalone HTML export">Export HTML</a>
+				</div>
 			</div>
 			<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Pass and Flagged rates across every judge dimension in this run.</p>
 		</div>
@@ -1474,33 +1411,32 @@
 			{/if}
 		{/if}
 
-		{#if activeAuditOutcome}
+		<!-- Outcome forest plot -->
+		{#if auditOutcomeOptions.length > 0}
 			<section class="mb-8">
 				<button
 					type="button"
-					class="mb-3 flex w-full flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-interactive/40"
+					class="flex w-full items-center justify-between gap-3 border-b border-border pb-2 text-left"
 					aria-expanded={auditOutcomePanelOpen}
-					onclick={() => auditOutcomePanelOpen = !auditOutcomePanelOpen}
+					onclick={() => (auditOutcomePanelOpen = !auditOutcomePanelOpen)}
 				>
 					<div>
-						<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Outcome rates by variation</h2>
-						<p class="mt-1 text-sm text-text-muted">Compare a judge dimension or behavior category across the scenario test set dimensions.</p>
+						<h2 class="text-lg font-semibold text-text">Average score by dimension</h2>
+						<p class="mt-1 text-sm leading-5 text-text-muted">Flagged rate for the selected outcome across each test set dimension level, with 95% confidence intervals.</p>
 					</div>
-					<span class="inline-flex items-center gap-1.5 text-xs text-text-muted">
+					<span class="inline-flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
 						{auditOutcomePanelOpen ? 'Hide' : 'Show'}
-						<svg class="h-3 w-3 transition-transform {auditOutcomePanelOpen ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-							<path d="M9 5l7 7-7 7" />
-						</svg>
+						<svg class="h-3 w-3 transition-transform {auditOutcomePanelOpen ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg>
 					</span>
 				</button>
-				{#if auditOutcomePanelOpen}
-					<div class="mb-3 flex flex-wrap items-center justify-end gap-3">
+				{#if auditOutcomePanelOpen && activeAuditOutcome}
+					<div class="mt-3 mb-3 flex flex-wrap items-center justify-end gap-3">
 						<label class="flex w-full flex-col items-stretch gap-1 text-[10px] uppercase tracking-wider text-text-muted sm:w-auto sm:flex-row sm:items-center sm:gap-2">
 							Outcome
 							<select
 								class="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs normal-case tracking-normal text-text outline-none focus:border-interactive sm:min-w-64"
-								value={auditOutcomeId}
-								onchange={(event) => auditOutcomeId = event.currentTarget.value}
+								value={activeAuditOutcome.id}
+								onchange={(event) => (auditOutcomeId = event.currentTarget.value)}
 							>
 								{#each auditOutcomeGroups as group}
 									<optgroup label={group}>
@@ -1522,9 +1458,9 @@
 			<div class="mb-4 border-b border-border pb-2">
 				<div class="flex items-baseline gap-3">
 					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : `Results by ${activeAuditAxis.label.toLowerCase()}`}</h2>
-					<span class="shrink-0 text-xs text-text-muted">{data.auditScores.length} results{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
+					<span class="shrink-0 text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
 				</div>
-				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn results.</p>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
 			</div>
 
 			<!-- Controls row: search + filter -->
@@ -1569,7 +1505,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={auditMetricNames.map(m => ({ value: m, label: titleCaseJudgeDimensionLabel(m) }))}
+						options={auditMetricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
 						selected={auditSortMetric}
 						onSelect={(v) => auditSortMetric = v}
 					/>
@@ -1580,7 +1516,7 @@
 			<div class="overflow-hidden rounded-lg border border-border">
 				<div class="grid items-center gap-3 border-b border-border bg-surface-2/60 px-4 py-2 text-left text-xs font-medium text-text-muted" style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;">
 					<span class="text-left">Behavior category</span>
-					<span class="text-left">Behavior status</span>
+					<span class="text-left">Policy status</span>
 					<span class="text-left">Metrics</span>
 					<span class="sr-only">Count</span>
 					<span class="sr-only">Expand</span>
@@ -1739,17 +1675,17 @@
 
 	{#if activeTab === 'audit' && !hasAuditEval && hasAuditPreview}
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
-			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Inference set</div>
+			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Rollout Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} results are available. Judgments will appear after inference completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after rollout completes.
 			</p>
 		</div>
 
 		<section class="mb-8">
 			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Inference set</h2>
+				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} results</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
@@ -1812,8 +1748,8 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerLoadingSeedId}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Loading result</div>
-			<p class="mt-2 text-sm text-text-secondary">Fetching the result for {scenarioDrawerLoadingSeedId}.</p>
+			<div class="text-sm font-semibold text-text">Loading conversation</div>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {scenarioDrawerLoadingSeedId}.</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Cancel
 			</button>
@@ -1824,7 +1760,7 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerError}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Could not load result</div>
+			<div class="text-sm font-semibold text-text">Could not load conversation</div>
 			<p class="mt-2 text-sm text-text-secondary">{scenarioDrawerError}</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Close

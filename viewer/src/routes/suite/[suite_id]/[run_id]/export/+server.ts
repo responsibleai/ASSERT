@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { error } from '@sveltejs/kit';
 import { render } from 'svelte/server';
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
@@ -7,7 +10,7 @@ import ExportPage from '$lib/export/ExportPage.svelte';
 import type { ViewerResultItem } from '$lib/types.js';
 import type { RequestHandler } from './$types.js';
 
-export const GET: RequestHandler = async ({ params, fetch, url }) => {
+export const GET: RequestHandler = async ({ params, fetch }) => {
 	if (!isSafeArtifactId(params.suite_id)) throw error(400, 'Invalid suite ID');
 	if (!isSafeArtifactId(params.run_id)) throw error(400, 'Invalid run ID');
 
@@ -44,7 +47,7 @@ export const GET: RequestHandler = async ({ params, fetch, url }) => {
 		}
 	}
 
-	const css = await loadInlineCss(fetch, url.origin);
+	const css = await loadInlineCss(fetch);
 
 	const merged = {
 		...(promptPayload ?? auditPayload!),
@@ -55,8 +58,6 @@ export const GET: RequestHandler = async ({ params, fetch, url }) => {
 		hasAuditContent: (auditPayload?.hasAuditContent ?? false) || auditScores.length > 0,
 		metrics: promptPayload?.metrics ?? null,
 		auditMetrics: auditPayload?.auditMetrics ?? null,
-		multiJudgeStats: promptPayload?.multiJudgeStats ?? auditPayload?.multiJudgeStats ?? null,
-		auditMultiJudgeStats: auditPayload?.multiJudgeStats ?? null,
 		// loadRunPageData's uncompleted-judge path only populates scenarioSeedMap when
 		// activeTab='audit', so the prompts call returns {}. Merge both so audit row
 		// titles still resolve to scenario descriptions.
@@ -84,8 +85,8 @@ export const GET: RequestHandler = async ({ params, fetch, url }) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="generator" content="adaptive-eval-viewer export" />
-<title>${escapeHtml(params.suite_id)} / ${escapeHtml(params.run_id)} — Adaptive Eval export</title>
+<meta name="generator" content="assert-ai-viewer export" />
+<title>${escapeHtml(params.suite_id)} / ${escapeHtml(params.run_id)} — assert-ai export</title>
 <style>${css.replace(/<\/style/gi, '<\\/style')}</style>
 ${rendered.head ?? ''}
 </head>

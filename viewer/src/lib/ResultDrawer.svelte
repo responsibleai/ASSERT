@@ -1015,6 +1015,14 @@
 						</p>
 					</div>
 				{/if}
+				{#if activeDegradedCitationWarnings.length > 0}
+					<div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+						<div class="text-xs font-semibold uppercase tracking-wider text-sky-400">Evidence degraded</div>
+						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
+							The judgment was kept, but some cited evidence could not be grounded cleanly. Citation links or transcript highlights may be incomplete for: {activeDegradedCitationWarningLabels.join(', ')}.
+						</p>
+					</div>
+				{/if}
 				{#if hasPerJudgeInspection}
 					<div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
 						<div class="flex flex-wrap gap-1 border-b border-zinc-800 p-1.5">

@@ -1,3 +1,7 @@
+<!--
+  Copyright (c) Microsoft Corporation.
+  Licensed under the MIT License.
+-->
 <script lang="ts">
 	import type {
 		AuditCitation,
@@ -5,18 +9,15 @@
 		MultiJudge,
 		NodeJudgment,
 		SeedTool,
-		TrajectoryStep,
 		Verdict,
 		ViewerResultItem
 	} from '$lib/types.js';
 	import { renderMarkdown } from '$lib/markdown.js';
 	import {
 		getJudgeError,
-		getRecordFlag,
 		getVerdictFlag,
 		multiJudgeDimensionAgreementLabel
 	} from '$lib/judgment.js';
-	import { judgeDimensionLabel } from '$lib/labels.js';
 
 	let {
 		item,
@@ -28,13 +29,13 @@
 		primaryMetric: string;
 	} = $props();
 
-	let verdict = $derived((item.verdict as Verdict | null | undefined) ?? null);
-	let judgeError = $derived(getJudgeError(item));
-	let isJudgeFailed = $derived(item.judge_status === 'judge_failed');
-	let multiJudge = $derived(item.multi_judge as MultiJudge | undefined);
+	const verdict = $derived((item.verdict as Verdict | null | undefined) ?? null);
+	const judgeError = $derived(getJudgeError(item));
+	const isJudgeFailed = $derived(item.judge_status === 'judge_failed');
+	const multiJudge = $derived(item.multi_judge as MultiJudge | undefined);
 
 	function metricLabel(metric: string): string {
-		return judgeDimensionLabel(metric);
+		return metric.replace(/_/g, ' ');
 	}
 	function metricOutcomeText(flag: boolean | null): string {
 		if (flag === null) return 'n/a';
@@ -48,7 +49,7 @@
 		return `${(rate * 100).toFixed(0)}%`;
 	}
 	function metricDotColor(flag: boolean): string {
-		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
+		return flag ? 'var(--color-score-fail)' : 'var(--color-score-pass)';
 	}
 	function getDimensionJustification(v: Verdict | null | undefined, metric: string): string | null {
 		if (!v || typeof v !== 'object') return null;
@@ -59,7 +60,7 @@
 		}
 		return null;
 	}
-	function behaviorCategoryName(node: NodeJudgment): string | null {
+	function policyNodeName(node: NodeJudgment): string | null {
 		const name = typeof node.node_name === 'string' ? node.node_name.trim() : '';
 		return name || null;
 	}
@@ -67,68 +68,8 @@
 		const relevant = nodes.filter((n) => n.relevant);
 		return relevant.length > 0 ? relevant : nodes;
 	}
-	function resultTurnCount(messages: InteractionMessage[]): number {
+	function conversationTurnCount(messages: InteractionMessage[]): number {
 		return messages.filter((m) => m.role !== 'system').length;
-	}
-	function trajectoryStepBadgeLabel(step: TrajectoryStep): string {
-		const t = step.type ?? '';
-		if (t === 'tool_call') return 'CALL';
-		if (t === 'tool_result') return 'RESULT';
-		if (t === 'llm_call') return 'LLM';
-		if (t === 'command') return 'CMD';
-		if (t === 'guardrail') return 'GUARD';
-		if (t === 'error') return 'ERROR';
-		if (t === 'system') return 'SYSTEM';
-		if (t === 'reasoning') return 'REASON';
-		return t.toUpperCase().slice(0, 8) || 'STEP';
-	}
-	function trajectoryStepCardClass(step: TrajectoryStep): string {
-		const t = step.type ?? '';
-		if (t === 'tool_call') return 'border-blue-500/25 border-l-4 border-l-blue-400 bg-blue-500/5';
-		if (t === 'tool_result') return 'border-emerald-500/25 border-l-4 border-l-emerald-400 bg-emerald-500/5';
-		if (t === 'llm_call') return 'border-sky-500/25 border-l-4 border-l-sky-400 bg-sky-500/5';
-		if (t === 'command') return 'border-orange-500/25 border-l-4 border-l-orange-400 bg-orange-500/5';
-		if (t === 'guardrail') return 'border-amber-500/25 border-l-4 border-l-amber-400 bg-amber-500/5';
-		if (t === 'error') return 'border-score-fail/30 border-l-4 border-l-score-fail bg-score-fail/5';
-		if (t === 'system') return 'border-yellow-500/25 border-l-4 border-l-yellow-400 bg-yellow-500/5';
-		if (t === 'reasoning') return 'border-violet-500/25 border-l-4 border-l-violet-400 bg-violet-500/5';
-		return 'border-border bg-surface/30';
-	}
-	function trajectoryStepBadgeClass(step: TrajectoryStep): string {
-		const t = step.type ?? '';
-		if (t === 'tool_call') return 'border-blue-400/30 bg-blue-500/15 text-blue-300';
-		if (t === 'tool_result') return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-300';
-		if (t === 'llm_call') return 'border-sky-400/30 bg-sky-500/15 text-sky-300';
-		if (t === 'command') return 'border-orange-400/30 bg-orange-500/15 text-orange-300';
-		if (t === 'guardrail') return 'border-amber-400/30 bg-amber-500/15 text-amber-300';
-		if (t === 'error') return 'border-score-fail/35 bg-score-fail/15 text-score-fail';
-		if (t === 'system') return 'border-yellow-400/30 bg-yellow-500/15 text-yellow-300';
-		if (t === 'reasoning') return 'border-violet-400/30 bg-violet-500/15 text-violet-300';
-		return 'border-border bg-surface text-text-muted';
-	}
-	function trajectoryStepTitle(step: TrajectoryStep): string {
-		if (step.name) return step.name;
-		if (step.role) return `${step.role}`;
-		return step.type ?? 'step';
-	}
-	function trajectoryStepBody(step: TrajectoryStep): string | null {
-		if (typeof step.content === 'string' && step.content.trim()) return step.content;
-		if (typeof step.result_preview === 'string' && step.result_preview.trim()) return step.result_preview;
-		if (step.result !== undefined && step.result !== null) {
-			try {
-				return typeof step.result === 'string' ? step.result : JSON.stringify(step.result, null, 2);
-			} catch {
-				return null;
-			}
-		}
-		if (step.args && Object.keys(step.args).length > 0) {
-			try {
-				return JSON.stringify(step.args, null, 2);
-			} catch {
-				return null;
-			}
-		}
-		return null;
 	}
 
 	type JudgeView = {
@@ -145,12 +86,12 @@
 		}
 		return views;
 	}
-	let judgeViews = $derived(buildJudgeViews());
-	let hasMultipleJudges = $derived((multiJudge?.verdicts?.length ?? 0) > 1);
+	const judgeViews = $derived(buildJudgeViews());
+	const hasMultipleJudges = $derived((multiJudge?.verdicts?.length ?? 0) > 1);
 
-	let verdictCitations: AuditCitation[] = $derived(Array.isArray(verdict?.citations)
-		? (verdict?.citations as AuditCitation[])
-		: []);
+	const verdictCitations: AuditCitation[] = $derived(
+		Array.isArray(verdict?.citations) ? (verdict?.citations as AuditCitation[]) : []
+	);
 </script>
 
 <div class="grid gap-5 lg:grid-cols-5">
@@ -218,7 +159,7 @@
 						<div class="flex items-center gap-1.5 border-b border-border/50 px-3 py-2">
 							<span
 								class="inline-block size-[6px] rounded-full"
-								style={vote === null ? 'background: transparent; box-shadow: inset 0 0 0 1.5px var(--theme-text-muted);' : `background: ${metricDotColor(vote)}`}
+								style={vote === null ? 'background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-text-muted);' : `background: ${metricDotColor(vote)}`}
 							></span>
 							<span class="text-xs font-semibold text-text-secondary">{judgeView.label}</span>
 							<span class="text-[10px] text-text-muted">· {metricOutcomeText(vote)}</span>
@@ -230,7 +171,7 @@
 
 					{#if v.narrative}
 						<div class="border-b border-border/30 px-4 py-3">
-							<div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Result summary</div>
+							<div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Conversation summary</div>
 							<p class="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">{v.narrative}</p>
 						</div>
 					{/if}
@@ -270,8 +211,8 @@
 												<div class="rounded-md px-3 py-2 {violated ? 'bg-score-fail/5' : violated === null ? 'bg-surface-2/50' : 'bg-score-pass/5'}">
 													<div class="flex items-start justify-between gap-2">
 														<div class="min-w-0 flex-1">
-															<div class="text-xs font-semibold text-text" title={behaviorCategoryName(node) ?? 'Unnamed behavior category'}>
-																{behaviorCategoryName(node) ?? 'Unnamed behavior category'}
+															<div class="text-xs font-semibold text-text" title={policyNodeName(node) ?? 'Unnamed policy node'}>
+																{policyNodeName(node) ?? 'Unnamed policy node'}
 															</div>
 														</div>
 														<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -321,12 +262,12 @@
 		{/each}
 	</div>
 
-	<!-- Right column: result transcript -->
+	<!-- Right column: conversation -->
 	<div class="lg:col-span-3 space-y-3">
 		<h3 class="text-xs font-semibold uppercase tracking-widest text-text-muted">
-			Result · {resultTurnCount(item.messages)} turns
+			Conversation · {conversationTurnCount(item.messages)} turns
 		</h3>
-		{#each item.messages as message, mi}
+		{#each item.messages as message}
 			{@const isSystem = message.role === 'system'}
 			{@const isUser = message.role === 'user'}
 			{@const isToolResult = message.role === 'tool' || message.type === 'tool_call'}
@@ -387,37 +328,5 @@
 				</div>
 			{/if}
 		{/each}
-
-		{#if item.trajectory && item.trajectory.steps?.length}
-			<details class="rounded-lg border border-border bg-surface/40">
-				<summary class="cursor-pointer list-none px-4 py-2.5">
-					<div class="flex items-center gap-2">
-						<svg class="h-3 w-3 text-text-muted/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-						<span class="text-xs font-semibold uppercase tracking-widest text-text-muted">Agent trace ({item.trajectory.steps.length} steps)</span>
-						{#if item.trajectory.stop_reason}
-							<span class="ml-auto text-[10px] text-text-muted">stop: {item.trajectory.stop_reason}</span>
-						{/if}
-					</div>
-				</summary>
-				<div class="space-y-2 border-t border-border/40 px-4 py-3">
-					{#each item.trajectory.steps as step, si}
-						{@const body = trajectoryStepBody(step)}
-						<div class="rounded-lg border {trajectoryStepCardClass(step)}">
-							<div class="flex flex-wrap items-center gap-2 px-3 py-2">
-								<span class="font-mono text-[10px] text-text-muted">{step.step_id ?? `#${si}`}</span>
-								<span class="inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold tracking-wide {trajectoryStepBadgeClass(step)}">{trajectoryStepBadgeLabel(step)}</span>
-								<span class="text-xs font-semibold text-text">{trajectoryStepTitle(step)}</span>
-								{#if step.status}
-									<span class="rounded bg-bg/60 px-1.5 py-0.5 text-[10px] text-text-muted">{step.status}</span>
-								{/if}
-							</div>
-							{#if body}
-								<pre class="max-h-44 overflow-y-auto whitespace-pre-wrap break-words border-t border-border/40 px-3 py-2 text-xs text-text-secondary">{body}</pre>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</details>
-		{/if}
 	</div>
 </div>

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Resolve the viewer's compiled CSS so we can inline it in the standalone
  * export HTML. Works in both `vite dev` and `vite build` because we just
@@ -11,19 +14,19 @@
 const CACHE = new Map<string, { css: string; loadedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function loadInlineCss(fetch: typeof globalThis.fetch, origin?: string): Promise<string> {
+export async function loadInlineCss(fetch: typeof globalThis.fetch): Promise<string> {
 	const cacheKey = 'root';
 	const cached = CACHE.get(cacheKey);
 	if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
 		return cached.css;
 	}
 
-	const css = await resolveCss(fetch, origin);
+	const css = await resolveCss(fetch);
 	CACHE.set(cacheKey, { css, loadedAt: Date.now() });
 	return css;
 }
 
-async function resolveCss(fetch: typeof globalThis.fetch, origin?: string): Promise<string> {
+async function resolveCss(fetch: typeof globalThis.fetch): Promise<string> {
 	let pageHtml: string;
 	try {
 		const res = await fetch('/');
@@ -41,33 +44,20 @@ async function resolveCss(fetch: typeof globalThis.fetch, origin?: string): Prom
 	const inlineStyles = extractInlineStyles(pageHtml);
 
 	const fetched: string[] = [];
-	for (const href of styleHrefs.map(normalizeStylesheetHref)) {
-		const fetchUrl = toFetchUrl(href, origin);
-		const fetchAsset = origin ? globalThis.fetch : fetch;
+	for (const href of styleHrefs) {
 		try {
-			const res = await fetchAsset(fetchUrl);
+			const res = await fetch(href);
 			if (!res.ok) {
-				console.warn(`[export-css] stylesheet ${fetchUrl} returned ${res.status}`);
+				console.warn(`[export-css] stylesheet ${href} returned ${res.status}`);
 				continue;
 			}
 			fetched.push(`/* ${href} */\n${await res.text()}`);
 		} catch (err) {
-			console.warn(`[export-css] failed to fetch stylesheet ${fetchUrl}:`, err);
+			console.warn(`[export-css] failed to fetch stylesheet ${href}:`, err);
 		}
 	}
 
 	return [...fetched, ...inlineStyles].join('\n\n');
-}
-
-function normalizeStylesheetHref(href: string): string {
-	if (href.startsWith('./')) return `/${href.slice(2)}`;
-	if (href.startsWith('_app/')) return `/${href}`;
-	return href;
-}
-
-function toFetchUrl(href: string, origin?: string): string {
-	if (!origin || !href.startsWith('/')) return href;
-	return new URL(href, origin).toString();
 }
 
 function extractStylesheetHrefs(html: string): string[] {

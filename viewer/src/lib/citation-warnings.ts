@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 const NON_DEGRADED_WARNING_REASONS = new Set(['overscoped_citation_part']);
 
 const WARNING_LABELS: Record<string, string> = {

@@ -149,6 +149,21 @@
 	let promptSeedItems = $derived(normalizePromptSeeds(data.promptSeeds));
 	let scenarioSeedItems = $derived(normalizeScenarioSeeds(data.scenarioSeeds));
 	let allRuns = $derived(mergeRunLists(heavyData?.runs ?? [], heavyData?.auditRuns ?? []));
+
+	// Suite-level CSV export menu
+	let csvMenuOpen = $state(false);
+	let csvExportItems = $derived([
+		...(sortedBehaviors.length > 0 ? [{ label: 'Taxonomy', type: 'taxonomy' }] : []),
+		...(promptSeedItems.length > 0 ? [{ label: 'Test set', type: 'test_set' }] : []),
+		...(scenarioSeedItems.length > 0 ? [{ label: 'Scenario test set', type: 'scenario_test_set' }] : []),
+		...(allRuns.some((r) => r.prompt?.has_judged) ? [{ label: 'All results', type: 'all_results' }] : []),
+		...(allRuns.some((r) => r.audit?.has_scores) ? [{ label: 'All scenario scores', type: 'all_audit_scores' }] : [])
+	]);
+
+	function downloadCsv(type: string) {
+		csvMenuOpen = false;
+		window.open(`/api/csv/${encodeURIComponent(data.suite_id)}?type=${type}`, '_blank');
+	}
 	let conceptName = $derived(data.taxonomy?.behavior?.name ?? data.taxonomy?.risk?.name ?? data.suite_id);
 	let conceptDef = $derived(data.taxonomy?.behavior?.definition ?? data.taxonomy?.risk?.definition ?? '');
 	let summaryItemCount = $derived(Array.isArray(data.systematization?.summary_items) ? data.systematization.summary_items.length : 0);
@@ -458,6 +473,36 @@
 				<svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
 				<span>Export evaluation set</span>
 			</a>
+		{/if}
+		{#if csvExportItems.length > 0}
+			<div class="relative shrink-0">
+				<button
+					type="button"
+					class="btn whitespace-nowrap"
+					style="display:inline-flex; align-items:center; gap:0.5rem;"
+					aria-haspopup="menu"
+					aria-expanded={csvMenuOpen}
+					onclick={() => (csvMenuOpen = !csvMenuOpen)}
+					title="Export CSV"
+				>
+					<svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+					<span>Export CSV</span>
+					<svg class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+				</button>
+				{#if csvMenuOpen}
+					<button type="button" class="fixed inset-0 z-10 cursor-default" aria-label="Close export menu" onclick={() => (csvMenuOpen = false)}></button>
+					<div class="absolute right-0 top-full z-20 mt-1 min-w-[180px] rounded-lg border border-border bg-surface py-1 shadow-lg" role="menu">
+						{#each csvExportItems as csvItem}
+							<button
+								type="button"
+								role="menuitem"
+								class="block w-full px-3 py-1.5 text-left text-xs text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
+								onclick={() => downloadCsv(csvItem.type)}
+							>{csvItem.label}</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 	{#if metaOpen && hasSystematization}

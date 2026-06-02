@@ -1,8 +1,13 @@
+<!--
+  Copyright (c) Microsoft Corporation.
+  Licensed under the MIT License.
+-->
 <script lang="ts">
 	import type {
 		AuditScore,
 		BinaryCounts,
 		DimensionDef,
+		DimensionMetrics,
 		JudgedSample,
 		MultiJudge,
 		ViewerResultItem
@@ -12,10 +17,12 @@
 		getRequiredBaseMetricNames,
 		inferJudgeStatus,
 		multiJudgeDimensionAgreementLabel,
-		multiJudgeHasDisagreement
+		multiJudgeHasDisagreement,
+		multiJudgeMeanAgreement
 	} from '$lib/judgment.js';
-	import { judgeDimensionLabel } from '$lib/labels.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
+
+	type MetricSummary = DimensionMetrics;
 
 	type ExportPageData = {
 		suite_id: string;
@@ -35,27 +42,15 @@
 		dimensionDefs?: Record<string, DimensionDef> | null;
 		metrics: { dimensions?: Record<string, MetricSummary> } | null;
 		auditMetrics: { dimensions?: Record<string, MetricSummary> } | null;
-		multiJudgeStats?: MultiJudgeStats | null;
-		auditMultiJudgeStats?: MultiJudgeStats | null;
 		promptSeedTitleMap?: Record<string, string>;
 		scenarioSeedMap?: Record<string, { description?: string | null }>;
 	};
 
-	type MetricSummary = {
-		count?: number;
-		clear_count?: number;
-		flagged_count?: number;
-		rate?: number;
-		counts?: BinaryCounts;
-	};
-
 	type MultiJudgeStats = {
-		total: number;
-		judgeN: number;
+		judgeSamples: number;
 		meanAgreement: number;
-		unanimous: number;
-		split: number;
-		highVariance: number;
+		disagreements: number;
+		failedSamples: number;
 	};
 
 	let {
@@ -71,17 +66,14 @@
 	} = $props();
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		systematize: 'Behavior Categories',
-		test_set: 'Test Set',
+		seeds: 'Seed Generation',
 		inference: 'Inference',
-		seeds: 'Test Set',
-		rollout: 'Inference',
 		judge: 'Scoring'
 	};
 
-	let requiredBaseMetrics = $derived(getRequiredBaseMetricNames(
-		(data.dimensionDefs ?? {}) as Record<string, DimensionDef>
-	));
+	const requiredBaseMetrics = $derived(
+		getRequiredBaseMetricNames((data.dimensionDefs ?? {}) as Record<string, DimensionDef>)
+	);
 
 	function judgeStatus(record: {
 		verdict?: Record<string, unknown> | null;
@@ -95,7 +87,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		return judgeDimensionLabel(metric);
+		return metric.replace(/_/g, ' ');
 	}
 	function metricOutcomeText(flag: boolean | null): string {
 		if (flag === null) return 'n/a';
@@ -120,36 +112,61 @@
 		return { clear: ((counts[0] ?? 0) / total) * 100, flagged: ((counts[1] ?? 0) / total) * 100 };
 	}
 	function metricDotColor(flag: boolean): string {
-		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
+		return flag ? 'var(--color-score-fail)' : 'var(--color-score-pass)';
 	}
 
-	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
-	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
+	function sectionMultiJudgeStats(
+		records: Array<{ multi_judge?: MultiJudge }>,
+		metricNames: string[]
+	): MultiJudgeStats | null {
+		const withMj = records.filter((r) => r.multi_judge);
+		if (withMj.length === 0) return null;
+		const agreements = withMj.map((r) => {
+			const value = multiJudgeMeanAgreement(r.multi_judge, metricNames);
+			return value == null ? 1 : value;
+		});
+		const meanAgreement = agreements.reduce((sum, value) => sum + value, 0) / agreements.length;
+		const disagreements = withMj.filter((r) =>
+			multiJudgeHasDisagreement(r.multi_judge, metricNames)
+		).length;
+		const failedSamples = withMj.filter((r) => (r.multi_judge?.n_failed ?? 0) > 0).length;
+		return { judgeSamples: withMj.length, meanAgreement, disagreements, failedSamples };
+	}
 
-	let promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
-	let auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
-	let promptMetricNames = $derived(promptDimensionNames);
-	let auditMetricNames = $derived(auditDimensionNames);
-	let promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
-	let auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
+	const hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
+	const hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
 
-	let promptScored = $derived(data.samples.filter((s) => judgeStatus(s) === 'ok').length);
-	let promptJudgeFailures = $derived(data.samples.length - promptScored);
-	let auditScored = $derived(data.auditScores.filter((s) => judgeStatus(s) === 'ok').length);
-	let auditJudgeFailures = $derived(data.auditScores.length - auditScored);
+	const promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
+	const auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
+	const promptMetricNames = $derived(promptDimensionNames);
+	const auditMetricNames = $derived(auditDimensionNames);
+	const promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
+	const auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
-	let promptMetricCards = $derived(promptMetricNames.map((dim) => ({
-		key: dim,
-		name: metricLabel(dim),
-		summary: data.metrics?.dimensions?.[dim],
-		description: data.dimensionDefs?.[dim]?.description ?? ''
-	})));
-	let auditMetricCards = $derived(auditMetricNames.map((dim) => ({
-		key: dim,
-		name: metricLabel(dim),
-		summary: data.auditMetrics?.dimensions?.[dim],
-		description: data.dimensionDefs?.[dim]?.description ?? ''
-	})));
+	const promptMultiJudgeStats = $derived(sectionMultiJudgeStats(data.samples, promptMetricNames));
+	const auditMultiJudgeStats = $derived(sectionMultiJudgeStats(data.auditScores, auditMetricNames));
+
+	const promptScored = $derived(data.samples.filter((s) => judgeStatus(s) === 'ok').length);
+	const promptJudgeFailures = $derived(data.samples.length - promptScored);
+	const auditScored = $derived(data.auditScores.filter((s) => judgeStatus(s) === 'ok').length);
+	const auditJudgeFailures = $derived(data.auditScores.length - auditScored);
+
+	const promptMetricCards = $derived(
+		promptMetricNames.map((dim) => ({
+			key: dim,
+			name: metricLabel(dim),
+			summary: data.metrics?.dimensions?.[dim],
+			description: data.dimensionDefs?.[dim]?.description ?? ''
+		}))
+	);
+	const auditMetricCards = $derived(
+		auditMetricNames.map((dim) => ({
+			key: dim,
+			name: metricLabel(dim),
+			summary: data.auditMetrics?.dimensions?.[dim],
+			description: data.dimensionDefs?.[dim]?.description ?? ''
+		}))
+	);
 
 	function durationLabel(start?: string | null, end?: string | null): string | null {
 		if (!start || !end) return null;
@@ -158,7 +175,7 @@
 		const secs = ms / 1000;
 		return `${Math.round(secs / 60)}m ${Math.round(secs % 60)}s`;
 	}
-	let runDuration = $derived(durationLabel(data.manifest?.started_at, data.manifest?.ended_at));
+	const runDuration = $derived(durationLabel(data.manifest?.started_at, data.manifest?.ended_at));
 </script>
 
 <!-- Header -->
@@ -196,7 +213,7 @@
 
 	{#if data.manifest?.stages}
 		<div class="mt-3 max-w-2xl rounded-lg border border-border bg-surface p-4">
-			<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted">Run Pipeline</h3>
+			<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted">Evaluation pipeline</h3>
 			<div class="grid gap-2">
 				{#each Object.entries(data.manifest.stages) as [stage, info]}
 					<div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border bg-background px-3 py-2">
@@ -214,7 +231,7 @@
 
 {#if !hasPromptEval && !hasAuditEval}
 	<div class="rounded-lg border border-border bg-surface px-6 py-12 text-center">
-		<p class="text-sm text-text-secondary">No results in this run.</p>
+		<p class="text-sm text-text-secondary">No measurement results in this run.</p>
 	</div>
 {/if}
 
@@ -224,7 +241,7 @@
 		<div class="mb-4 flex items-center gap-3">
 			<h2 class="text-sm font-semibold uppercase tracking-widest text-text-muted">Prompts</h2>
 			<div class="h-px flex-1 bg-border"></div>
-			<span class="text-xs text-text-muted">{data.samples.length} results</span>
+			<span class="text-xs text-text-muted">{data.samples.length} samples</span>
 		</div>
 
 		<!-- Metric cards -->
@@ -255,28 +272,27 @@
 							<span>{m.summary?.count ?? 0} total</span>
 						</div>
 					{/if}
-					{#if data.multiJudgeStats}
+					{#if promptMultiJudgeStats}
 						<div class="mt-2 text-[9px] text-text-muted">aggregate uses majority judge vote</div>
 					{/if}
 				</div>
 			{/each}
 		</div>
 
-		{#if data.multiJudgeStats}
+		{#if promptMultiJudgeStats}
 			<div class="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-[10px] text-text-muted">
-				<span class="font-semibold text-text-secondary">{data.multiJudgeStats.total} multi-judge results</span>
-				<span>{data.multiJudgeStats.judgeN} judges</span>
-				<span>{(data.multiJudgeStats.meanAgreement * 100).toFixed(0)}% mean agreement</span>
-				<span>{data.multiJudgeStats.split + data.multiJudgeStats.highVariance} disagreement{data.multiJudgeStats.split + data.multiJudgeStats.highVariance === 1 ? '' : 's'}</span>
-				{#if data.multiJudgeStats.highVariance > 0}
-					<span class="text-amber-400">{data.multiJudgeStats.highVariance} high-variance result{data.multiJudgeStats.highVariance === 1 ? '' : 's'}</span>
+				<span class="font-semibold text-text-secondary">{promptMultiJudgeStats.judgeSamples} judge samples</span>
+				<span>{(promptMultiJudgeStats.meanAgreement * 100).toFixed(0)}% mean agreement</span>
+				<span>{promptMultiJudgeStats.disagreements} disagreement{promptMultiJudgeStats.disagreements === 1 ? '' : 's'}</span>
+				{#if promptMultiJudgeStats.failedSamples > 0}
+					<span class="text-amber-400">{promptMultiJudgeStats.failedSamples} failed sample{promptMultiJudgeStats.failedSamples === 1 ? '' : 's'}</span>
 				{/if}
 			</div>
 		{/if}
 
 		{#if promptJudgeFailures > 0}
 			<p class="mb-4 text-xs text-amber-400">
-				Scored {promptScored} of {data.samples.length} prompt results. {promptJudgeFailures} judge failures were excluded from the rates.
+				Scored {promptScored} of {data.samples.length} prompts. {promptJudgeFailures} judge failures were excluded from the rates.
 			</p>
 		{/if}
 
@@ -338,9 +354,9 @@
 {#if hasAuditEval}
 	<section class="mb-12">
 		<div class="mb-4 flex items-center gap-3">
-		<h2 class="text-sm font-semibold uppercase tracking-widest text-text-muted">Scenario results</h2>
+			<h2 class="text-sm font-semibold uppercase tracking-widest text-text-muted">Scenarios</h2>
 			<div class="h-px flex-1 bg-border"></div>
-		<span class="text-xs text-text-muted">{data.auditScores.length} results</span>
+			<span class="text-xs text-text-muted">{data.auditScores.length} scenarios</span>
 		</div>
 
 		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(auditMetricCards.length, 4)}, minmax(0, 1fr))">
@@ -370,21 +386,20 @@
 			{/each}
 		</div>
 
-		{#if data.auditMultiJudgeStats}
+		{#if auditMultiJudgeStats}
 			<div class="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-[10px] text-text-muted">
-				<span class="font-semibold text-text-secondary">{data.auditMultiJudgeStats.total} multi-judge results</span>
-				<span>{data.auditMultiJudgeStats.judgeN} judges</span>
-				<span>{(data.auditMultiJudgeStats.meanAgreement * 100).toFixed(0)}% mean agreement</span>
-				<span>{data.auditMultiJudgeStats.split + data.auditMultiJudgeStats.highVariance} disagreement{data.auditMultiJudgeStats.split + data.auditMultiJudgeStats.highVariance === 1 ? '' : 's'}</span>
-				{#if data.auditMultiJudgeStats.highVariance > 0}
-					<span class="text-amber-400">{data.auditMultiJudgeStats.highVariance} high-variance result{data.auditMultiJudgeStats.highVariance === 1 ? '' : 's'}</span>
+				<span class="font-semibold text-text-secondary">{auditMultiJudgeStats.judgeSamples} judge samples</span>
+				<span>{(auditMultiJudgeStats.meanAgreement * 100).toFixed(0)}% mean agreement</span>
+				<span>{auditMultiJudgeStats.disagreements} disagreement{auditMultiJudgeStats.disagreements === 1 ? '' : 's'}</span>
+				{#if auditMultiJudgeStats.failedSamples > 0}
+					<span class="text-amber-400">{auditMultiJudgeStats.failedSamples} failed sample{auditMultiJudgeStats.failedSamples === 1 ? '' : 's'}</span>
 				{/if}
 			</div>
 		{/if}
 
 		{#if auditJudgeFailures > 0}
 			<p class="mb-4 text-xs text-amber-400">
-				Scored {auditScored} of {data.auditScores.length} scenario results. {auditJudgeFailures} judge failures were excluded.
+				Scored {auditScored} of {data.auditScores.length} scenarios. {auditJudgeFailures} judge failures were excluded.
 			</p>
 		{/if}
 
@@ -443,5 +458,5 @@
 {/if}
 
 <footer class="mt-12 border-t border-border pt-6 text-center text-[10px] text-text-muted">
-	Generated by Adaptive Eval viewer · {new Date(generatedAt).toLocaleString()}
+	Generated by assert-ai viewer · {new Date(generatedAt).toLocaleString()}
 </footer>
