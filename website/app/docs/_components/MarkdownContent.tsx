@@ -12,8 +12,8 @@ import "highlight.js/styles/github-dark.css";
 const BASE_PATH = "/ASSERT";
 
 function rewriteAssetPaths(source: string): string {
-	return source
-		.replace(/(["'(])\.\.\/assets\//g, `$1${BASE_PATH}/assets/`)
+	// Matches `./assets/` or any depth of `../assets/` after a quote or paren
+	return source.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${BASE_PATH}/assets/`)
 		.replace(/(["'(])\.\/assets\//g, `$1${BASE_PATH}/assets/`);
 }
 
