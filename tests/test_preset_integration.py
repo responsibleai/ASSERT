@@ -5,8 +5,8 @@
 import unittest
 from pathlib import Path
 
-from assert_eval.config import load_runtime_context
-from assert_eval.stages import STAGES
+from assert_ai.config import load_runtime_context
+from assert_ai.stages import STAGES
 
 
 def _base_config(**overrides):

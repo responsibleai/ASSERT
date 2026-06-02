@@ -9,7 +9,7 @@ Architecture:
                                    → safety_advisor → itinerary_optimizer
 
 Usage:
-    uv run assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+    assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 
 
 def _get_llm(temperature: float = 0) -> AzureChatOpenAI:

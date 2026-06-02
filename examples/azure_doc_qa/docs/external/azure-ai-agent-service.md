@@ -60,7 +60,7 @@ run = client.agents.create_run(
 ## Supported Models
 
 - GPT-5 and GPT-5 mini
-- GPT-5.4 and GPT-5.4 mini
+- GPT-4o and GPT-4o mini
 - o3 and o3-mini
 - Custom fine-tuned models deployed to Azure AI Foundry
 

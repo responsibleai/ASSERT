@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import yaml
 
-from assert_eval.core.transcript import (
+from assert_ai.core.transcript import (
     AddMessageEdit,
     Message,
     SetSystemMessageEdit,

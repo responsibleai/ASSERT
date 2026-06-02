@@ -93,10 +93,10 @@ phoenix serve  # http://localhost:6006
 python -m examples.phoenix_auto_trace.travel_openai
 
 # Run the matching eval
-assert-eval run --config examples/phoenix_auto_trace/eval_openai.yaml
+assert-ai run --config examples/phoenix_auto_trace/eval_openai.yaml
 ```
 
-Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `P2M_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
+Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `ASSERT_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
 
 ## Phoenix and external-service prerequisites
 
@@ -127,7 +127,7 @@ Starter YAMLs: `eval_openai.yaml`, `eval_litellm.yaml`, `eval_langchain.yaml`, `
 
 ## What the judge sees from traces
 
-Final-text-only judging can see the itinerary but not whether the agent skipped budget validation, ignored an advisory, or used the wrong tool. With `target.trace`, Phoenix spans expose tool names, arguments, model calls, routing, and per-step latency. `assert-eval` can use that evidence when scoring generated `behavior_categories`.
+Final-text-only judging can see the itinerary but not whether the agent skipped budget validation, ignored an advisory, or used the wrong tool. With `target.trace`, Phoenix spans expose tool names, arguments, model calls, routing, and per-step latency. `assert-ai` can use that evidence when scoring generated `behavior_categories`.
 
 ## Behavior violation rate results
 

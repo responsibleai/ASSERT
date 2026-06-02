@@ -1,0 +1,79 @@
+name: Bug report
+description: Report a bug or unexpected behavior in ASSERT
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Before submitting, please:
+        - Search existing issues to avoid duplicates.
+        - Redact any secrets, customer data, or other sensitive content from configs, logs, and traces.
+        - Include a minimal reproduction so we can investigate quickly.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I run `assert-ai run ...`, the CLI crashes with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: A clear and concise description of the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps and minimal eval config
+      description: |
+        Step-by-step instructions to reproduce, plus the smallest eval config that triggers the issue.
+        Please redact secrets and customer data.
+      value: |
+        1.
+        2.
+        3.
+
+        ```yaml
+        # minimal eval_config.yaml
+        ```
+    validations:
+      required: true
+
+  - type: input
+    id: version-info
+    attributes:
+      label: Version info (assert_ai version, Python version, OS)
+      description: |
+        Run `pip show assert_ai | grep Version` (or `pip show assert_ai | Select-String Version` on Windows),
+        plus `python --version` and your OS (e.g., Windows 11, macOS 14.5, Ubuntu 22.04).
+      placeholder: "assert_ai 0.x.y, Python 3.12.3, Ubuntu 22.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or traceback
+      description: Paste any console output, stack traces, or judge artifacts that help explain the issue.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I redacted secrets, credentials, and customer data from my report.
+          required: true
+        - label: I included a minimal reproduction.
+          required: true

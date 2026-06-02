@@ -5,7 +5,7 @@ This page lists command signatures and key options.
 ## Base command
 
 ```bash
-assert-eval [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
+assert-ai [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
 ```
 
 Global options:
@@ -20,7 +20,7 @@ Global options:
 Design an eval config with an LLM assistant.
 
 ```bash
-assert-eval init [OPTIONS]
+assert-ai init [OPTIONS]
 ```
 
 Options:
@@ -31,7 +31,7 @@ Options:
 - `--behavior <name>` optional
 - `--judge-preset <name>` optional
 - `--dimensions <csv>` optional
-- `--model <litellm-model>` optional, default `azure/gpt-5.4-mini`
+- `--model <litellm-model>` optional, default `azure/gpt-4o-mini`
 - `--env-file <path>` optional, default `.env`
 - `--non-interactive` optional flag
 - `--max-turns <int>` optional, default `20`
@@ -44,7 +44,7 @@ Options:
 Run the pipeline from config.
 
 ```bash
-assert-eval run --config <path> [OPTIONS]
+assert-ai run --config <path> [OPTIONS]
 ```
 
 Required:
@@ -66,7 +66,7 @@ Optional:
 List suites or list runs for one suite.
 
 ```bash
-assert-eval results list [OPTIONS]
+assert-ai results list [OPTIONS]
 ```
 
 Options:
@@ -81,7 +81,7 @@ Options:
 Show suite summary or run details.
 
 ```bash
-assert-eval results status <suite> [run] [OPTIONS]
+assert-ai results status <suite> [run] [OPTIONS]
 ```
 
 Args:
@@ -100,8 +100,8 @@ Options:
 Compare runs in the same suite or across suites.
 
 ```bash
-assert-eval results compare <suite> <run1> <run2> [run3 ...] [OPTIONS]
-assert-eval results compare <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPTIONS]
+assert-ai results compare <suite> <run1> <run2> [run3 ...] [OPTIONS]
+assert-ai results compare <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPTIONS]
 ```
 
 Options:
@@ -117,7 +117,7 @@ Options:
 Compare named runs across different suites.
 
 ```bash
-assert-eval results compare-suites <suite1>/<run1> <suite2>/<run2> [OPTIONS]
+assert-ai results compare-suites <suite1>/<run1> <suite2>/<run2> [OPTIONS]
 ```
 
 Options:
@@ -132,7 +132,7 @@ Options:
 Compute test-set coverage/diversity metrics.
 
 ```bash
-assert-eval analysis test-set-metrics --taxonomy <path> --test_set <path> [OPTIONS]
+assert-ai analysis test-set-metrics --taxonomy <path> --test_set <path> [OPTIONS]
 ```
 
 Required:
@@ -155,7 +155,7 @@ Optional:
 Judge pre-collected OTel traces without running inference.
 
 ```bash
-assert-eval judge-traces --traces <path> --config <path> [OPTIONS]
+assert-ai judge-traces --traces <path> --config <path> [OPTIONS]
 ```
 
 Required:
@@ -173,7 +173,7 @@ Optional:
 List available built-in presets.
 
 ```bash
-assert-eval library list [OPTIONS]
+assert-ai library list [OPTIONS]
 ```
 
 Options:
@@ -187,7 +187,7 @@ Options:
 Show one preset.
 
 ```bash
-assert-eval library show <name> [OPTIONS]
+assert-ai library show <name> [OPTIONS]
 ```
 
 Options:

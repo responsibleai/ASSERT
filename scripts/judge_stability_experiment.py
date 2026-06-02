@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from assert_eval.core.io import (
+from assert_ai.core.io import (
     load_jsonl,
     permissible_by_behavior,
     policy_permissible,
@@ -19,9 +19,9 @@ from assert_eval.core.io import (
     row_behavior,
     row_factors,
 )
-from assert_eval.core.judge import build_judge_contract, run_transcript_judge
-from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
-from assert_eval.stages.judge import JUDGE_SYSTEM_PROMPT
+from assert_ai.core.judge import build_judge_contract, run_transcript_judge
+from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.stages.judge import JUDGE_SYSTEM_PROMPT
 
 
 def transcript_from_row(row: dict) -> Transcript:
@@ -63,30 +63,30 @@ RUN_DIRS = [
 
 JUDGE_DIMENSIONS = ["harm_actionability", "overrefusal"]
 
-# Q1: intra-judge stability (GPT-5.4)
+# Q1: intra-judge stability (GPT-4o)
 Q1_CONFIGS = [
-    JudgeRunConfig(name="gpt54_temp0_run1", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp0_run2", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp0_run3", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp0_run4", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp0_run5", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp03_run1", judge_model="azure/gpt-5.4", temperature=0.3, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp03_run2", judge_model="azure/gpt-5.4", temperature=0.3, judge_n=1),
-    JudgeRunConfig(name="gpt54_temp03_run3", judge_model="azure/gpt-5.4", temperature=0.3, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp0_run1", judge_model="azure/gpt-4o", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp0_run2", judge_model="azure/gpt-4o", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp0_run3", judge_model="azure/gpt-4o", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp0_run4", judge_model="azure/gpt-4o", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp0_run5", judge_model="azure/gpt-4o", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp03_run1", judge_model="azure/gpt-4o", temperature=0.3, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp03_run2", judge_model="azure/gpt-4o", temperature=0.3, judge_n=1),
+    JudgeRunConfig(name="gpt54_temp03_run3", judge_model="azure/gpt-4o", temperature=0.3, judge_n=1),
 ]
 
 # Q2: inter-judge agreement
 Q2_CONFIGS = [
-    JudgeRunConfig(name="gpt54mini_run1", judge_model="azure/gpt-5.4-mini", temperature=0.0, judge_n=1),
+    JudgeRunConfig(name="gpt54mini_run1", judge_model="azure/gpt-4o-mini", temperature=0.0, judge_n=1),
     JudgeRunConfig(name="deepseek_run1", judge_model="azure/DeepSeek-V3.2", temperature=0.0, judge_n=1),
 ]
 
 # Q6: multi-judge ensembling
 Q6_CONFIGS = [
-    JudgeRunConfig(name="gpt54_n3_run1", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=3),
-    JudgeRunConfig(name="gpt54_n3_run2", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=3),
-    JudgeRunConfig(name="gpt54_n5_run1", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=5),
-    JudgeRunConfig(name="gpt54_n5_run2", judge_model="azure/gpt-5.4", temperature=0.0, judge_n=5),
+    JudgeRunConfig(name="gpt54_n3_run1", judge_model="azure/gpt-4o", temperature=0.0, judge_n=3),
+    JudgeRunConfig(name="gpt54_n3_run2", judge_model="azure/gpt-4o", temperature=0.0, judge_n=3),
+    JudgeRunConfig(name="gpt54_n5_run1", judge_model="azure/gpt-4o", temperature=0.0, judge_n=5),
+    JudgeRunConfig(name="gpt54_n5_run2", judge_model="azure/gpt-4o", temperature=0.0, judge_n=5),
 ]
 
 ALL_CONFIGS = Q1_CONFIGS + Q2_CONFIGS + Q6_CONFIGS

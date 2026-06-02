@@ -45,7 +45,7 @@ pipeline:
     target:
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
-        simulator: azure/gpt-5.4
+        simulator: azure/gpt-4o
 ```
 
 The `health_assistant.py` module requires Docker locally. On first use, Docker may need to pull `python:3.11-bookworm`. The config still uses the same `tools.module` dotted path.

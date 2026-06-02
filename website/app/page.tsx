@@ -15,6 +15,7 @@ import SystematizationExample from "./SystematizationExample";
 import Plasma from "./Plasma";
 import { Lens } from "./Lens";
 import HowItWorks from "./HowItWorks";
+import PartnerQuotes from "./PartnerQuotes";
 
 const BASE_PATH = "/ASSERT";
 
@@ -73,6 +74,9 @@ const frameworkLogos: { src: string; alt: string }[] = [
 	{ src: "DSPy logo.png", alt: "DSPy" },
 	{ src: "llamalndexlogo.png", alt: "LlamaIndex" },
 	{ src: "autogen logo.png", alt: "AutoGen / MAF" },
+	{ src: "anthropic-logo.svg", alt: "Anthropic" },
+	{ src: "nvidia-logo.webp", alt: "NVIDIA" },
+	{ src: "vertex-ai-logo.png", alt: "Vertex AI" },
 	// Add more logos here — drop the file into public/icons/ and add an entry.
 ];
 
@@ -356,7 +360,7 @@ export default function Home() {
 							</div>
 							<div className="run-eval-terminal">
 								<Terminal title="Terminal">
-									<TypingAnimation>assert_eval run --config eval_config.yaml</TypingAnimation>
+									<TypingAnimation>assert-ai run --config eval_config.yaml</TypingAnimation>
 									<AnimatedSpan className="terminal-line--ok">
 										<span className="terminal-check">✓</span> Generated 12 behavior categories
 									</AnimatedSpan>
@@ -703,6 +707,10 @@ export default function Home() {
 							</div>
 						</div>
 
+					</div>
+
+					<div className="product-subsection" id="partners" data-reveal>
+						<PartnerQuotes />
 					</div>
 
 					<div className="product-subsection" id="resources" data-reveal>

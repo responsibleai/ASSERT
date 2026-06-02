@@ -12,8 +12,8 @@ Runs four analysis stages:
 Plus two robustness checks: within-behavior discrimination and tester transfer.
 
 Example:
-  uv run python scripts/scenario_failure_prediction.py \\
-      --suite relationship-entanglement-v1
+    python scripts/scenario_failure_prediction.py \\
+      --suite <your-suite-name>
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from assert_eval.core.io import (
+from assert_ai.core.io import (
     definitions_by_behavior,
     load_json,
     load_jsonl,
@@ -52,7 +52,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--suite", required=True, help="Suite directory name under results root.")
     p.add_argument("--results-root", default="artifacts/results", help="Root for suite results.")
     p.add_argument("--out-dir", default=None, help="Output directory (default: artifacts/tmp/failure_prediction).")
-    p.add_argument("--model", default="gpt-5.4-mini", help="Azure deployment name for the forecaster.")
+    p.add_argument("--model", default="gpt-4o-mini", help="Azure deployment name for the forecaster.")
     p.add_argument("--embedding-model", default="text-embedding-3-small", help="Embedding model for baselines.")
     p.add_argument("--primary-tester", default=None, help="Tester label for primary analysis. If unset, uses the most common tester across runs.")
     p.add_argument("--concurrency", type=int, default=10, help="Max concurrent API calls.")

@@ -15,8 +15,8 @@ from typing import Any
 
 import yaml
 
-from assert_eval.core.async_utils import gather_limited
-from assert_eval.core.io import (
+from assert_ai.core.async_utils import gather_limited
+from assert_ai.core.io import (
     load_jsonl,
     permissible_by_behavior,
     policy_permissible,
@@ -27,9 +27,9 @@ from assert_eval.core.io import (
     row_behavior,
     row_factors,
 )
-from assert_eval.core.judge import get_verdict_dimension, is_valid_event_flag
-from assert_eval.core.model_client import GenerateOptions, ModelResponse, generate, generate_structured
-from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.core.judge import get_verdict_dimension, is_valid_event_flag
+from assert_ai.core.model_client import GenerateOptions, ModelResponse, generate, generate_structured
+from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
 PAIRWISE_SCORES_FILE = "pairwise_scores.jsonl"
 PAIRWISE_METRICS_FILE = "pairwise_metrics.json"

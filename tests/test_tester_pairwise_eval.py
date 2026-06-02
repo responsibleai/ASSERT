@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import yaml
 
-from assert_eval.core.model_client import ModelResponse
-from assert_eval.core.io import row_behavior
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.core.io import row_behavior
 
 
 ROOT = Path(__file__).resolve().parents[1]

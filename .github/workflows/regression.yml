@@ -14,7 +14,7 @@ name: Regression Test
 on:
   pull_request:
     paths:
-      - 'assert_eval/**'
+      - 'assert_ai/**'
       - 'prompts/**'
       - 'scripts/regression_*.py'
       - 'tests/regression/**'
@@ -59,8 +59,7 @@ jobs:
         # CI install set has to include the demo's optional extras even though
         # core ASSERT doesn't need them.
         run: |
-          pip install uv
-          uv pip install --system -e ".[dev,otel]"
+          python -m pip install -e ".[dev,otel]"
 
       - name: Install viewer npm dependencies
         # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
@@ -93,9 +92,8 @@ jobs:
         # sets aligned avoids "passes Tier 1, mysteriously fails Tier 4"
         # surprises in the future.
         run: |
-          pip install uv
-          uv pip install --system -e ".[dev,otel]"
-          uv pip install --system scipy
+          python -m pip install -e ".[dev,otel]"
+          python -m pip install scipy
 
       - name: Detect seed count from labels
         id: test_set

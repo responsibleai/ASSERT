@@ -7,9 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_eval.config import ConfigError, load_runtime_context
-from assert_eval.runner import run_pipeline
-from assert_eval.stages import STAGES
+from assert_ai.config import ConfigError, load_runtime_context
+from assert_ai.runner import run_pipeline
+from assert_ai.stages import STAGES
 
 
 class RuntimeContextTest(unittest.TestCase):
@@ -216,7 +216,7 @@ class RunnerManifestTest(unittest.TestCase):
                     "scores_path": str(scores),
                 }
 
-            with patch("assert_eval.stages.judge.run_judge", new=fake_run_judge):
+            with patch("assert_ai.stages.judge.run_judge", new=fake_run_judge):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 0)
@@ -280,7 +280,7 @@ class RunnerManifestTest(unittest.TestCase):
                 scores.write_text("", encoding="utf-8")
                 return {"scores_path": str(scores)}
 
-            with patch("assert_eval.stages.judge.run_judge", new=fake_run_judge):
+            with patch("assert_ai.stages.judge.run_judge", new=fake_run_judge):
                 rc = run_pipeline(config=str(cfg_path))
 
             self.assertEqual(rc, 0)

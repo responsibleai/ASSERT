@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from assert_eval.cli import cli
+from assert_ai.cli import cli
 
 
 class CliTest(unittest.TestCase):
@@ -51,7 +51,7 @@ class CliTest(unittest.TestCase):
             config.write_text("suite: test\nstages: []\n", encoding="utf-8")
             resolved_config = str(config.resolve())
 
-            with patch("assert_eval.runner.run_pipeline", return_value=0) as run_pipeline:
+            with patch("assert_ai.runner.run_pipeline", return_value=0) as run_pipeline:
                 result = self.runner.invoke(
                     cli,
                     [
@@ -88,7 +88,7 @@ class CliTest(unittest.TestCase):
 
             mock_runner = unittest.mock.MagicMock()
             mock_runner.run_pipeline.return_value = 0
-            with patch("assert_eval.cli._load_runner_module", return_value=mock_runner):
+            with patch("assert_ai.cli._load_runner_module", return_value=mock_runner):
                 result = self.runner.invoke(
                     cli,
                     ["run", "--config", str(config), "--concurrency", "5"],

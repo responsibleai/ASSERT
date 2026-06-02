@@ -79,6 +79,12 @@ export function computePolicyViolationByPermissibility(
 	if (permissibilityIndex.size === 0) {
 		return { permissible: null, not_permissible: null };
 	}
+	// Suppress the split when all behaviors fall on the same side — the cards
+	// would render an empty "no relevant judgments" bucket that's misleading.
+	const distinctSides = new Set(permissibilityIndex.values());
+	if (distinctSides.size < 2) {
+		return { permissible: null, not_permissible: null };
+	}
 
 	const permissible = emptyDimensionAggregate();
 	const notPermissible = emptyDimensionAggregate();

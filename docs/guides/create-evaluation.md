@@ -7,7 +7,7 @@ Use this guide to create `eval_config.yaml` for your agent.
 Generate a config interactively:
 
 ```bash
-assert-eval init --model azure/gpt-5.4
+assert-ai init --model azure/gpt-5.4
 ```
 
 Helpful options:
@@ -21,7 +21,7 @@ Helpful options:
 Then run:
 
 ```bash
-assert-eval run --config <path-to-eval_config.yaml>
+assert-ai run --config <path-to-eval_config.yaml>
 ```
 
 ## Option B: Author YAML manually
@@ -73,7 +73,7 @@ pipeline:
 
 The local viewer is read-only today. It helps inspect suites, runs, transcripts, and metrics, but it does not create configs or launch runs.
 
-Use `assert-eval init` or manual YAML editing to create evaluations.
+Use `assert-ai init` or manual YAML editing to create evaluations.
 
 ## Choose the right target shape
 

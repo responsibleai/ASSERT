@@ -17,14 +17,14 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 0.0
       system_prompt: |
         You are a helpful assistant. Follow the product taxonomy and ask clarifying
         questions when user constraints are missing.
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
-        simulator: azure/gpt-5.4-mini
+        simulator: azure/gpt-4o-mini
 ```
 
 The eval runs end-to-end: taxonomy → test cases → inference (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
@@ -38,7 +38,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
       tools:
         module: examples.agents.health_assistant
 ```
@@ -54,7 +54,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 0.0
         max_tokens: 8000
       system_prompt: |

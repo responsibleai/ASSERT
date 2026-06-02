@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from assert_eval.core.io import (
+from assert_ai.core.io import (
     get_permissible_flag,
     load_json,
     load_jsonl,
@@ -25,8 +25,8 @@ from assert_eval.core.io import (
     row_behavior,
     row_factors,
 )
-from assert_eval.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
-from assert_eval.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
 EXPORT_DIR_NAME = "exports"
 CSV_FORMAT = "csv"
@@ -806,7 +806,7 @@ def write_excel_export(
         from openpyxl.utils import get_column_letter
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
-            "Excel export requires openpyxl. Install it with `uv sync --extra analysis`."
+            "Excel export requires openpyxl. Install it with `python -m pip install openpyxl`."
         ) from exc
 
     workbook = Workbook()

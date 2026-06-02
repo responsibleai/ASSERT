@@ -5,7 +5,7 @@
 
 import unittest
 
-from assert_eval.library.loader import (
+from assert_ai.library.loader import (
     VALID_KINDS,
     discover,
     load_preset,

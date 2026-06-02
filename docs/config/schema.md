@@ -99,7 +99,7 @@ pipeline:
     behavior_category_count: 25
     web_search: true
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
       max_tokens: 10000
 ```
 
@@ -135,12 +135,12 @@ pipeline:
     prompt:
       sample_size: 10
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         max_tokens: 3000
     scenario:
       sample_size: 5
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         max_tokens: 3000
 ```
 
@@ -182,7 +182,7 @@ pipeline:
         group_by: session.id
     tester:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         max_tokens: 10000
     max_turns: 6
     concurrency: 1
@@ -195,7 +195,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         max_tokens: 10000
       system_prompt: |
         You are a health assistant. You help users with general wellness
@@ -204,10 +204,10 @@ pipeline:
         medical advice. Never provide dosage recommendations or diagnoses.
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
-        simulator: azure/gpt-5.4-mini
+        simulator: azure/gpt-4o-mini
     tester:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         max_tokens: 10000
     max_turns: 10
     concurrency: 10
@@ -235,7 +235,7 @@ Example:
 pipeline:
   judge:
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
       max_tokens: 12000
     n: 1
     dimensions:
@@ -359,7 +359,7 @@ Example:
 
 ```yaml
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
   reasoning_effort: medium
 ```
 
@@ -386,7 +386,7 @@ context: |
   Health assistant for elderly patients.
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize: {}
@@ -396,7 +396,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
       system_prompt: |
         You are a health assistant.
   judge: {}
@@ -420,7 +420,7 @@ context: |
   Health assistant for elderly patients.
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize:
@@ -445,7 +445,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
       system_prompt: |
         You are a health assistant.
   judge: {}
@@ -467,7 +467,7 @@ context: |
   Health assistant for elderly patients.
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize:
@@ -487,7 +487,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
       system_prompt: |
         You are a health assistant.
     tester: {}

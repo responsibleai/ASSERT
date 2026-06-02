@@ -12,7 +12,7 @@ Architecture:
                                    → safety_advisor → itinerary_optimizer
 
 Each "agent" is a plain Python function wrapped in a manual OTel span.
-The spans follow OpenInference semantic conventions so assert_eval/core/otel.py
+The spans follow OpenInference semantic conventions so assert_ai/core/otel.py
 can parse them into transcript events for the judge.
 """
 
@@ -45,7 +45,7 @@ if not isinstance(_existing, TracerProvider):
 
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
-_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
 
 
 # ── Agent functions (each manually instrumented) ──────────────

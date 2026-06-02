@@ -1,4 +1,4 @@
-"""Tests for the design agent loop in ``assert-eval init``."""
+"""Tests for the design agent loop in ``assert-ai init``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-from assert_eval.init._design_agent import run_design_loop
+from assert_ai.init._design_agent import run_design_loop
 
 
 _MINIMAL_VALID_YAML = (
@@ -39,8 +39,8 @@ def _quiet_console() -> Console:
 class DesignAgentDoneTest(unittest.TestCase):
     """LLM immediately responds with done and valid YAML."""
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="system prompt")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="system prompt")
     def test_non_interactive_done(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _make_response(
             "done", "Here is your config", yaml_str=_MINIMAL_VALID_YAML
@@ -65,8 +65,8 @@ class DesignAgentDoneTest(unittest.TestCase):
 class DesignAgentSelfCorrectionTest(unittest.TestCase):
     """LLM produces invalid JSON first, then valid response."""
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="system prompt")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="system prompt")
     def test_recovers_from_parse_error(self, _mock_sys, mock_llm) -> None:
         mock_llm.side_effect = [
             "This is not JSON",  # first call: parse error
@@ -91,8 +91,8 @@ class DesignAgentSelfCorrectionTest(unittest.TestCase):
 class DesignAgentValidationRetryTest(unittest.TestCase):
     """LLM proposes invalid config, then fixes it."""
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="system prompt")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="system prompt")
     def test_validation_failure_triggers_retry(self, _mock_sys, mock_llm) -> None:
         bad_yaml = "suite: test\nbehavior: not_a_dict\n"
         mock_llm.side_effect = [
@@ -118,8 +118,8 @@ class DesignAgentValidationRetryTest(unittest.TestCase):
 class DesignAgentBudgetExhaustionTest(unittest.TestCase):
     """LLM never produces valid output and exhausts the turn budget."""
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="system prompt")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="system prompt")
     def test_returns_none_on_budget_exhaustion(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = "Not JSON"  # always fails parse
         result = run_design_loop(
@@ -141,10 +141,10 @@ class DesignAgentBudgetExhaustionTest(unittest.TestCase):
 class DesignAgentLLMErrorTest(unittest.TestCase):
     """LLM raises an auth error — loop should exit gracefully."""
 
-    @patch("assert_eval.init._design_agent.chat_completion")
-    @patch("assert_eval.init._design_agent.build_system_message", return_value="system prompt")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="system prompt")
     def test_auth_error_returns_none(self, _mock_sys, mock_llm) -> None:
-        from assert_eval.core.model_client import LLMAuthError
+        from assert_ai.core.model_client import LLMAuthError
 
         mock_llm.side_effect = LLMAuthError("bad key")
         result = run_design_loop(

@@ -10,7 +10,7 @@ This is the recommended starting point for evaluating any agent or multi-agent s
 generated test case
       |
       v
-assert-eval inference loop
+assert-ai inference loop
       |
       v
 auto_trace.register(auto_instrument=True) -> chat_sync(message)
@@ -67,16 +67,16 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
-# Optional: set P2M_AZURE_DEPLOYMENT; default is gpt-5.4-mini.
+# Optional: set ASSERT_AZURE_DEPLOYMENT; default is gpt-5.4-mini.
 phoenix serve  # optional trace UI
-assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
 | Variable | Required | Notes |
 |---|---|---|
 | `AZURE_API_BASE` | Yes | Azure OpenAI endpoint URL for the shipped `azure/...` model config. |
 | `AZURE_API_KEY` | Yes | Azure OpenAI API key. |
-| `P2M_AZURE_DEPLOYMENT` | No | Overrides the deployment used by `agent.py`. |
+| `ASSERT_AZURE_DEPLOYMENT` | No | Overrides the deployment used by `agent.py`. |
 
 ## How to use
 

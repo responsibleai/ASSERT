@@ -7,7 +7,7 @@ The viewer reads from the filesystem on each request. There is no database or ru
 ## Prerequisites
 
 - Node.js 18+
-- Evaluation artifacts in `artifacts/results/` (from `assert-eval run`)
+- Evaluation artifacts in `artifacts/results/` (from `assert-ai run`)
 
 ## Run in development
 
@@ -95,7 +95,7 @@ Completed judged runs are served from run-level viewer read-model files, not by 
 If `viewer_run_manifest.json` is missing or stale, rebuild by re-running judge for that run:
 
 ```bash
-assert-eval run --config artifacts/results/<suite>/<run>/config.yaml --resume --force-stage judge
+assert-ai run --config artifacts/results/<suite>/<run>/config.yaml --resume --force-stage judge
 ```
 
 ## Expected verdict contract

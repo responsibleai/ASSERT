@@ -49,15 +49,15 @@ Copy-Item .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY. Adjust model names in YAML if you use a non-Azure LiteLLM provider.
 ```
 
-Run any config with `assert-eval`:
+Run any config with `assert-ai`:
 
-| Config | `assert-eval` |
+| Config | `assert-ai` |
 |---|---|
-| Model only | `assert-eval run --config examples/prompt_agents/health_assistant.yaml` |
-| Simulated tools | `assert-eval run --config examples/prompt_agents/health_assistant_simulated_tools.yaml` |
-| Sandbox tool module | `assert-eval run --config examples/prompt_agents/health_assistant_sandbox.yaml` |
-| Generated tools | `assert-eval run --config examples/prompt_agents/health_assistant_generated_tools.yaml` |
-| External connector | `assert-eval run --config examples/prompt_agents/health_assistant_external.yaml` |
+| Model only | `assert-ai run --config examples/prompt_agents/health_assistant.yaml` |
+| Simulated tools | `assert-ai run --config examples/prompt_agents/health_assistant_simulated_tools.yaml` |
+| Sandbox tool module | `assert-ai run --config examples/prompt_agents/health_assistant_sandbox.yaml` |
+| Generated tools | `assert-ai run --config examples/prompt_agents/health_assistant_generated_tools.yaml` |
+| External connector | `assert-ai run --config examples/prompt_agents/health_assistant_external.yaml` |
 
 **Docker prerequisite:** [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) and [`health_assistant_external.yaml`](health_assistant_external.yaml) start containers per conversation. Keep Docker Desktop running before invoking them. The sandbox variant may pull `python:3.11-bookworm`; the external connector builds an OpenClaw image from [`openclaw/Dockerfile`](openclaw/Dockerfile).
 

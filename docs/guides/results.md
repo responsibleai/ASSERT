@@ -48,11 +48,11 @@ artifacts/results/<suite>/
 ## Useful CLI commands
 
 ```bash
-assert-eval results list
-assert-eval results status <suite>
-assert-eval results status <suite> <run>
-assert-eval results compare <suite> <run-a> <run-b>
-assert-eval results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
+assert-ai results list
+assert-ai results status <suite>
+assert-ai results status <suite> <run>
+assert-ai results compare <suite> <run-a> <run-b>
+assert-ai results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
 ```
 
 See `docs/cli/commands.md` for full options.

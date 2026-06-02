@@ -7,7 +7,7 @@ Multi-node graph with mock tools: agent calls tools, OTel captures every
 LLM call, tool invocation, and routing decision via Phoenix auto-instrumentation.
 
 Usage:
-    uv run assert-eval run --config examples/travel_planner_langgraph/eval_config.yaml
+    assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 """
 # NOTE: do NOT use `from __future__ import annotations` — LangGraph's StateGraph
 # requires runtime-resolvable type hints for state schema introspection.
@@ -27,7 +27,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_MODEL_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_MODEL_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """\
 You are a travel planning assistant with access to tools for searching flights,

@@ -45,7 +45,7 @@ def _get_llm():
     """Return AzureChatOpenAI when Azure env vars are set, else ChatOpenAI."""
     if os.environ.get("AZURE_API_KEY") and os.environ.get("AZURE_API_BASE"):
         return AzureChatOpenAI(
-            azure_deployment=os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-5.4-mini"),
+            azure_deployment=os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini"),
             azure_endpoint=os.environ["AZURE_API_BASE"],
             api_key=os.environ["AZURE_API_KEY"],
             api_version="2024-12-01-preview",

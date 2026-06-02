@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import unittest
 
-from assert_eval.viewer_read_model import (
+from assert_ai.viewer_read_model import (
     _count_target_conversation_messages,
     _materialize_target_messages,
 )

@@ -19,7 +19,7 @@ Each invocation:
    - ``pipeline.inference.concurrency``    = --concurrency  (judge re-uses this number)
    - ``run``                              = the timestamped run id
 
-4. Calls :func:`assert_eval.runner.run_pipeline` directly.
+4. Calls :func:`assert_ai.runner.run_pipeline` directly.
 5. Captures wall-time, exit code, and rate-limiter cooldown count from a
    logging handler attached for the duration of the run.
 6. Reads the resulting ``metrics.json`` if present and appends a single
@@ -54,8 +54,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from assert_eval.runner import run_pipeline  # noqa: E402
-from assert_eval.logging_config import configure_logging  # noqa: E402
+from assert_ai.runner import run_pipeline  # noqa: E402
+from assert_ai.logging_config import configure_logging  # noqa: E402
 
 DEFAULT_BASE_CONFIG = REPO_ROOT / "examples" / "benchmark" / "eval_config.yaml"
 # Quality-only behavior source colocated with the benchmark config. We deliberately
@@ -306,7 +306,7 @@ def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
     the pipeline is the authoritative success signal.
 
     All four outcome fields are sourced from the run's ``scores.jsonl``
-    via :func:`assert_eval.results.load_run_summary`. ``scenario_seeds_generated``
+    via :func:`assert_ai.results.load_run_summary`. ``scenario_seeds_generated``
     is the count of scenario rows that reached the judge stage in this
     run; ``scenarios_scored`` is the subset that judge successfully
     scored (i.e. ``judge_status == "ok"``). For partial-test_set runs that
@@ -320,8 +320,8 @@ def _load_metrics_summary(suite_id: str, run_id: str) -> dict[str, Any]:
     """
     # Imported lazily so this script keeps working in environments where
     # the package isn't fully installed (e.g. running via ``python
-    # scripts/benchmark.py`` without ``uv run``).
-    from assert_eval.results import load_run_summary
+    # scripts/benchmark.py`` directly from the repo root).
+    from assert_ai.results import load_run_summary
 
     run_dir = REPO_ROOT / "artifacts" / "results" / suite_id / run_id
 
@@ -439,7 +439,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Enable DEBUG-level logging from assert_eval for the duration of the run.",
+        help="Enable DEBUG-level logging from assert_ai for the duration of the run.",
     )
     parser.add_argument(
         "--log-file",
@@ -541,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  log file       : {args.log_file}")
     print("=" * 72, flush=True)
 
-    # Configure logging the same way `assert-eval run` does so stage progress and
+    # Configure logging the same way `assert-ai run` does so stage progress and
     # any failure output actually reaches the terminal. Must run BEFORE
     # we attach the rate-limit counter, because configure_logging clears
     # existing handlers on the root logger.
@@ -561,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        from assert_eval.stages import inference as _inference_mod
+        from assert_ai.stages import inference as _inference_mod
         _inference_mod.TESTER_SYSTEM_PROMPT = args.tester_prompt.read_text(
             encoding="utf-8"
         )

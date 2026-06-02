@@ -97,7 +97,7 @@ export function AnimatedSpan({
 export function Terminal({
 	children,
 	className,
-	title = "Agent Shield"
+	title = "AgentControlSpecification"
 }: {
 	children: ReactNode;
 	className?: string;

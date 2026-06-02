@@ -13,15 +13,18 @@
         <a href="examples/README.md">🧪 Examples</a>
 </p>
 <p align="center">
-        <a href="LICENSE">
-                <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
+        <a href="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml">
+                <img src="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml/badge.svg" alt="Build status">
         </a>
         <a href="https://www.python.org/downloads/" target="_blank">
-                <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+                <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python 3.11 | 3.12 | 3.13">
+        </a>
+        <a href="LICENSE">
+                <img src="https://img.shields.io/github/license/responsibleai/ASSERT" alt="License">
         </a>
 </p>
 <p align="center">
-        <img src="assets/assert-eval-framework-diagram.png" alt="Diagram of the ASSERT evaluation framework" width="100%">
+        <img src="assets/assert-ai-framework-diagram.png" alt="Diagram of the ASSERT evaluation framework" width="100%">
 </p>
 
 ## Why ASSERT?
@@ -41,8 +44,17 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 - **Test any agent or multi-agent system** via integrations with [OpenInference](https://github.com/Arize-ai/openinference/). Evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the evaluation orchestration pipeline.
 - **Agent trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (Phoenix/OpenInference auto-instruments 33+ frameworks in two lines, or you can emit your own with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.
 - **Portable artifacts** - every stage writes JSON/JSONL files locally for inspection, CI, and sharing.
+- **Bundled local viewer** - browse runs side-by-side, pin a baseline, drill into per-behavior dimension breakdowns, and read judge justifications cited against the captured traces.
 
 ## Get started
+
+### Quick install
+
+```bash
+pip install -e ".[otel,langgraph]"       # from a clone during preview
+cp .env.example .env                     # add your provider key
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+```
 
 <table align="center" style="width: 100%; border: 1px solid #d0d7de; border-collapse: collapse;">
         <tr>

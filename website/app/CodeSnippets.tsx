@@ -42,7 +42,7 @@ context: |-
   injection from tool outputs, no sycophantic agreement with bad itineraries).
 
 default_model:
-  name: azure/gpt-5.4-mini
+  name: azure/gpt-4o-mini
 
 pipeline:
   systematize:

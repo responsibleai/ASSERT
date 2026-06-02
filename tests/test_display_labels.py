@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Unit tests for ``assert_eval.display`` and CLI terminology regression guards."""
+"""Unit tests for ``assert_ai.display`` and CLI terminology regression guards."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ import re
 import unittest
 from pathlib import Path
 
-from assert_eval import display
+from assert_ai import display
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CLI_PATH = REPO_ROOT / "assert_eval" / "cli.py"
-RUNNER_PATH = REPO_ROOT / "assert_eval" / "runner.py"
+CLI_PATH = REPO_ROOT / "assert_ai" / "cli.py"
+RUNNER_PATH = REPO_ROOT / "assert_ai" / "runner.py"
 
 # Substrings that must not appear inside string literals in the CLI surface.
 # Each is paired with an explanation so a future failure tells the maintainer
@@ -117,14 +117,14 @@ class CliTerminologyGuardTest(unittest.TestCase):
         """Status strings should go through ``label_status``, not be hard-coded.
 
         Heuristic: the literal ``"systematized"`` may appear as a key but not
-        as a user-facing rendering. Once :mod:`assert_eval.display` is wired up,
+        as a user-facing rendering. Once :mod:`assert_ai.display` is wired up,
         ``cli.py`` calls ``label_status`` somewhere.
         """
         text = self._strings_in(CLI_PATH)
         self.assertRegex(
             text,
             r"label_status\s*\(",
-            msg="cli.py should call assert_eval.display.label_status for suite statuses.",
+            msg="cli.py should call assert_ai.display.label_status for suite statuses.",
         )
 
     def test_cli_renders_run_status_via_display_module(self) -> None:
@@ -132,7 +132,7 @@ class CliTerminologyGuardTest(unittest.TestCase):
         self.assertRegex(
             text,
             r"label_run_status\s*\(",
-            msg="cli.py should call assert_eval.display.label_run_status for run statuses.",
+            msg="cli.py should call assert_ai.display.label_run_status for run statuses.",
         )
 
     def test_cli_renders_stages_via_display_module(self) -> None:
@@ -140,7 +140,7 @@ class CliTerminologyGuardTest(unittest.TestCase):
         # Either label_stage or label_stage_status must be used.
         self.assertTrue(
             re.search(r"label_stage(_status)?\s*\(", text),
-            msg="cli.py should call assert_eval.display.label_stage(_status) for stage names.",
+            msg="cli.py should call assert_ai.display.label_stage(_status) for stage names.",
         )
 
 

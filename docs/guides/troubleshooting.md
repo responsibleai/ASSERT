@@ -7,7 +7,7 @@ Use this flow when a run fails or scores look wrong.
 Check status first:
 
 ```bash
-assert-eval results status <suite> <run>
+assert-ai results status <suite> <run>
 ```
 
 Inspect `manifest.json` to confirm the failing stage.
@@ -35,7 +35,7 @@ Then inspect matching rows in `inference_set.jsonl`.
 If you changed inputs for a stage, force rerun from that stage:
 
 ```bash
-assert-eval run --config <config-path> --force-stage <stage-name>
+assert-ai run --config <config-path> --force-stage <stage-name>
 ```
 
 Common examples:
@@ -58,12 +58,12 @@ Common examples:
 Compare runs to spot regressions:
 
 ```bash
-assert-eval results compare <suite> <run-a> <run-b>
-assert-eval results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
+assert-ai results compare <suite> <run-a> <run-b>
+assert-ai results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
 ```
 
 ## 7) Environment-specific fixes
 
-- macOS `litellm` install issue (`AttributeError: module 'litellm' has no attribute 'acompletion'`): some macOS security tooling can silently truncate wheels during `uv sync`. The `pip install -e ".[otel,langgraph]"` path avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv`.
+- macOS `litellm` install issue (`AttributeError: module 'litellm' has no attribute 'acompletion'`): some macOS security tooling can silently truncate wheels during package installation. The `pip install -e ".[otel,langgraph]"` path avoids this. If you hit it, grant your terminal Full Disk Access and run `xattr -cr .venv`.
 - Windows `UnicodeEncodeError` when running auto-trace demos: set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - Docker-backed Prompt Agent configs fail with `docker daemon unavailable`: ensure Docker Desktop is running for `examples/prompt_agents/health_assistant_sandbox.yaml` and `examples/prompt_agents/health_assistant_external.yaml`.

@@ -15,12 +15,12 @@ from typing import Any
 
 import yaml
 
-from assert_eval.core.config_model import (
+from assert_ai.core.config_model import (
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
     DEFAULT_INFERENCE_CONCURRENCY,
 )
-from assert_eval.core.io import (
+from assert_ai.core.io import (
     append_jsonl_row,
     load_jsonl,
     permissible_by_behavior,
@@ -31,15 +31,15 @@ from assert_eval.core.io import (
     row_behavior,
     row_factors,
 )
-from assert_eval.core.judge import (
+from assert_ai.core.judge import (
     build_judge_contract,
     get_verdict_dimension,
     infer_judge_status,
     is_valid_event_flag,
     run_transcript_judge,
 )
-from assert_eval.core.transcript import AddMessageEdit, Transcript, TranscriptEvent, TranscriptMetadata
-from assert_eval.stages.judge import JUDGE_SYSTEM_PROMPT
+from assert_ai.core.transcript import AddMessageEdit, Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.stages.judge import JUDGE_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)

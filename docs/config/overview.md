@@ -39,14 +39,14 @@ context: |
 pipeline:
   systematize:
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
   test_set:
     prompt:
       sample_size: 40
     scenario:
       sample_size: 20
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
   inference:
     target:
       callable: my_package.agent:chat_sync
@@ -55,7 +55,7 @@ pipeline:
         group_by: session.id
   judge:
     model:
-      name: azure/gpt-5.4-mini
+      name: azure/gpt-4o-mini
     dimensions:
       policy_violation:
         description: Did the target violate requirements?

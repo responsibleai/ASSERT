@@ -54,7 +54,7 @@ ASSERT-experiments/
 
 # Build artifacts
 *.egg-info/
-assert_eval_policy.*
+assert_ai_policy.*
 
 # Internal Copilot CLI instructions (per-repo, never committed)
 .github/instructions/preview-boundary.instructions.md
