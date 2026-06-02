@@ -52,10 +52,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # Checkout to a subdirectory so the workspace root does not contain
+      # `assert_ai/`. This prevents pytest from importing the source tree
+      # instead of the installed wheel.
+      - uses: actions/checkout@v4
+        with:
+          path: source
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-      - run: pip install $(ls dist/*.whl)
+      - run: pip install $(ls dist/*.whl) pytest
         shell: bash
       - run: assert-ai --help
+      - name: Test installed wheel
+        # Runs a small subset of the unit tests against the installed wheel
+        # (not the source tree). --import-mode=importlib avoids sys.path
+        # manipulation so `assert_ai` always resolves to the wheel. This
+        # catches packaging regressions like missing data files (e.g. library
+        # YAMLs) or missing modules at import time.
+        run: pytest source/tests/test_import_smoke.py source/tests/test_library_loader.py -v --import-mode=importlib
+        shell: bash

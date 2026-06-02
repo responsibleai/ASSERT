@@ -1,20 +1,31 @@
 # Concepts
 
-ASSERT is a local-first, spec-driven evaluation pipeline for AI systems.
+ASSERT is a local-first, spec-driven evaluation pipeline for AI systems. The pipeline has four stages. First, ASSERT turns a broad behavior specification into an explicit concept specification, which is then converted into a granular, editable behavior taxonomy with suggested permissible and impermissible behaviors. Next, it generates stratified test cases over the dimensions the developer declares. Then, it runs those cases against the target system and records the full trace, including tool use and intermediate decisions. Finally, ASSERT scores each trace against the behavior taxonomy and associated policy stance for that case, producing labels, rationales, and failure patterns that developers can inspect and refine
 
-Core mental model:
+<p align="center">
+  <img src="../assets/assert-ai-framework-diagram.png" alt="Diagram of the ASSERT evaluation framework" width="100%">
+</p>
 
-```text
-eval spec -> behavior categories -> test cases -> execute target -> judge -> artifacts
-```
+## Artifacts-driven workflow and the foundational input: `eval_config.yaml` spec
 
-## Eval spec
+Each step of the pipeline requires an input and outputs an artifact. ASSERT stores outputs as local JSON and JSONL artifacts under `artifacts/results/`. This makes runs easy to inspect, diff, and use in CI without a hosted control plane.
 
-You define behavior requirements in plain language using `behavior.name` and `behavior.description` in `eval_config.yaml`.
+The ASSERT evaluation pipeline starts with an evaluation specification (`eval_config.yaml`) that allows you to specify:
 
-The spec is not a benchmark label. It is your product-specific definition of success and failure.
+- Behavior requirements that you'd like to evaluate in plain language using `behavior.name` and `behavior.description` ("What failure modes am I trying to evaluate my system for?")
+- The AI system/application context or agent context in `context` ("What does my AI system/agent/application do, what is it used for, and who uses it? What does this agent have access to?")
+- Target information ("What am I trying to test: a hosted model? a prompt agent? an agent or multi-agent system with tools?")
+- Evaluation specification for each step of the ASSERT evaluation pipeline stages:
+  - Systematization
+  - Test set generation
+  - Inference
+  - Judge
 
-## Behavior categories
+## Systematization and taxonomization stage
+
+In the systematization stage, ASSERT turns a broad idea like harmful financial advice, tool-use governance, or unsafe health guidance into something concrete enough to evaluate. Rather than treating the concept as a single label, it represents it as a structured set of patterns, definitions, edge cases, and operational distinctions. Following Agarwal et al. (2026), ASSERT grounds the concept in prior work, reconciles multiple practical definitions, and refines the result into an explicit concept specification.
+
+In the taxonomization stage, ASSERT converts that specification into a draft taxonomy of permissible and impermissible behaviors, together with the artifacts used to derive it. Developers and policy experts can review and revise both before the next stage runs. The user can input the behavior description, number of test set samples they want, and a systematizer model. The taxonomization step outputs an editable behavior taxonomy that can be validated by a policy expert.
 
 `pipeline.systematize` transforms the spec into a structured taxonomy of behavior categories.
 
@@ -22,7 +33,9 @@ Output:
 
 - `taxonomy.json`
 
-## Test cases and coverage
+## Test set generation stage
+
+In the test-set generation stage, ASSERT instantiates that taxonomy into executable cases. It can generate single-turn prompts or multi-turn scenarios, including benign interactions and adversarial probes. Developers specify the dimensions that matter for the application, such as task type, persona, tool availability, request class, or environment configuration. ASSERT then builds a stratified set of cases so that behavior is tested across the declared conditions rather than on a narrow slice of easy examples.
 
 `pipeline.test_set` generates:
 
@@ -35,16 +48,9 @@ Output:
 
 - `test_set.jsonl`
 
-## Targets and agents
-
-ASSERT supports multiple target shapes:
-
-- `target.callable` for any Python callable agent or multi-agent system
-- `target.model` + optional `target.tools` for prompt-plus-tools workflows
-
-Recommended for real agents: `target.callable` with `target.trace` (OpenTelemetry), so the judge can see tool calls, routing, and intermediate decisions.
-
 ## Inference
+
+In the inference stage, ASSERT runs those cases against the target. The target can be a model, an agent, or an application-level workflow. Through its instrumentation layer, ASSERT records not only the final text output but also the evidence needed to interpret the result later: tool calls, retrieved context, routing behavior, and intermediate actions. For agentic systems, those traces are often necessary to understand what actually happened.
 
 `pipeline.inference` executes generated test cases against the configured target.
 
@@ -54,6 +60,8 @@ Output:
 
 ## Judge
 
+In the scoring stage, ASSERT evaluates each trace against the associated behavior or policy stance.  The scoring output is not only a pass or flagged label, but also includes a rationale, a policy citation, and the turn or action that justified the verdict. The policy citation refers to the specific taxonomy behavior or developer-provided policy decision that the judge used to support the verdict.
+
 `pipeline.judge` scores each output with your dimensions and rubrics.
 
 Outputs:
@@ -61,11 +69,7 @@ Outputs:
 - `scores.jsonl`
 - `metrics.json`
 
-## Artifacts-first workflow
-
-ASSERT stores outputs as local JSON and JSONL artifacts under `artifacts/results/`. This makes runs easy to inspect, diff, and use in CI without a hosted control plane.
-
-## Risks and limitations
+## Risks and limitations of ASSERT
 
 ASSERT is designed to generate and run scenario-based evaluations for AI systems, including adversarial and edge-case tests. These scenarios are intended to help surface potential weaknesses, unsafe behaviors, and other undesirable outcomes. They do not guarantee that a system has failed, nor are they guarantees that a system is safe.
 
@@ -98,7 +102,8 @@ Use of this system may also result in meaningful compute and inference costs. Yo
 
 ## Related docs
 
-- `docs/getting-started.md`
-- `docs/guides/create-evaluation.md`
-- `docs/config/overview.md`
-- `docs/guides/results.md`
+- [Getting Started](getting-started.md)
+- [Create an Evaluation](guides/create-evaluation.md)
+- [Config Overview](config/overview.md)
+- [Results Guide](guides/results.md)
+- [Best Practices and Limitations](config/best-practices.md)

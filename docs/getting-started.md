@@ -113,8 +113,8 @@ assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with
 assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
 ```
 
-See [`docs/cli/commands.md`](docs/cli/commands.md) for the full option reference.
+See [CLI Commands](cli/commands.md) for the full option reference.
 
-- To learn the config format, see `docs/config/overview.md`.
-- To inspect outputs in detail, see `docs/guides/results.md`.
-- To use the local web viewer, see `docs/guides/local-viewer.md`.
+- To learn the config format, see [Config Overview](config/overview.md).
+- To inspect outputs in detail, see [Results Guide](guides/results.md).
+- To use the local web viewer, see [Run the Local UI Viewer Application](guides/run-local-viewer.md).

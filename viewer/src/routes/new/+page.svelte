@@ -1630,7 +1630,7 @@
 							</div>
 							{#if scenarioTestCasesEnabled || scenarioEvalEnabled}
 								<div class="flex items-baseline justify-between gap-3">
-									<span class="shrink-0 text-text-muted">Scenario pipeline</span>
+									<span class="shrink-0 text-text-muted">Audit pipeline</span>
 									<span class="min-w-0 break-words text-right font-medium text-text">{summaryScenarioPipeline}</span>
 								</div>
 							{/if}
@@ -1639,11 +1639,11 @@
 				</div>
 
 				<div class="mb-5">
-					<h3 class="mb-1 text-base font-semibold text-text">Evaluation suite & run identity</h3>
-					<p class="mb-3 text-xs text-text-muted">Evaluation suites group behavior categories and test cases; runs hold results.</p>
+					<h3 class="mb-1 text-base font-semibold text-text">Measurement suite & run identity</h3>
+					<p class="mb-3 text-xs text-text-muted">Measurement suites group policy + seeds; runs hold measurement results.</p>
 					<div class="grid grid-cols-2 gap-4">
 						<div>
-							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Evaluation suite ID</label>
+							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Measurement suite ID</label>
 							<input id="suite-id" type="text" maxlength="150" class="form-control w-full text-sm" placeholder="Auto-generated if blank" value={suiteId} oninput={(e) => { suiteId = e.currentTarget.value; markDirty(); }} disabled={submitting} />
 						</div>
 						<div>

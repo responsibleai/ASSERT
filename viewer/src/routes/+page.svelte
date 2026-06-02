@@ -74,7 +74,7 @@
 <div class="mb-6 flex items-start justify-between gap-3">
 	<div>
 		<h1 class="text-xl font-semibold tracking-tight">Evaluation suites</h1>
-		<p class="mt-0.5 text-sm text-text-muted">View evaluation test sets and results aligned to taxonomy-defined behavior categories.</p>
+		<p class="mt-0.5 text-sm text-text-muted">View evaluation test sets and results aligned to policy-defined behavior categories.</p>
 	</div>
 	<a
 		href="/new"
@@ -162,7 +162,7 @@
 					{ value: 'runs', label: 'Most runs' }
 				]}
 				selected={sortBy}
-				onSelect={(v) => sortBy = v as typeof sortBy}
+				onSelect={(v) => sortBy = v as 'newest' | 'oldest' | 'name' | 'runs'}
 			/>
 		</div>
 		<span class="flex-shrink-0 text-[11px] text-text-muted">{filtered.length} suites</span>

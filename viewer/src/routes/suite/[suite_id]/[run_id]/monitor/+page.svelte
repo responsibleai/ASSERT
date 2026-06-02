@@ -121,7 +121,7 @@ if (statusPollTimer) clearInterval(statusPollTimer);
 
 <div class="mb-6">
 <div class="flex items-center gap-1.5 text-xs text-text-muted">
-<a href="/" class="transition-colors hover:text-interactive">Evaluation suites</a>
+<a href="/" class="transition-colors hover:text-interactive">Measurement Suites</a>
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 <a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.suite_id}</a>
 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
