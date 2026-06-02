@@ -102,7 +102,7 @@ class CallableSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         session = CallableSession(callable_ref="nonexistent_module_xyz123:func")
         with self.assertRaises(ValueError) as ctx:
             await session.open()
-        self.assertIn("Could not import module", str(ctx.exception))
+        self.assertIn("Could not import callable module", str(ctx.exception))
         self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
 
     async def test_missing_function_raises_value_error(self) -> None:
@@ -202,7 +202,7 @@ class OTelTracedSessionErrorTest(unittest.IsolatedAsyncioTestCase):
         session = OTelTracedSession(callable_ref="nonexistent_module_xyz123:func")
         with self.assertRaises(ValueError) as ctx:
             await session.open()
-        self.assertIn("Could not import module", str(ctx.exception))
+        self.assertIn("Could not import callable module", str(ctx.exception))
         self.assertIn("nonexistent_module_xyz123", str(ctx.exception))
 
     async def test_missing_function_raises_value_error(self) -> None:

@@ -186,6 +186,42 @@ export interface LlmCallTrace {
 	message_ids: string[];
 }
 
+export interface TrajectoryStep {
+	type: string;
+	actor: string;
+	index?: number | null;
+	step_id?: string | null;
+	parent_id?: string | null;
+	event_id?: string | null;
+	message_id?: string | null;
+	tool_call_id?: string | null;
+	llm_call_id?: string | null;
+	role?: string | null;
+	name?: string | null;
+	content?: string | null;
+	args?: Record<string, unknown>;
+	result?: unknown;
+	result_preview?: string | null;
+	status?: string | null;
+	raw?: Record<string, unknown> | null;
+	attributes?: Record<string, unknown>;
+	started_at?: string | null;
+	ended_at?: string | null;
+}
+
+export interface TrajectoryRow {
+	kind: 'prompt' | 'scenario';
+	test_case_id: string;
+	behavior?: string | null;
+	target?: string | null;
+	target_runtime_mode?: string | null;
+	interaction?: string | null;
+	stop_reason?: string | null;
+	steps: TrajectoryStep[];
+	metadata?: Record<string, unknown>;
+	dimensions?: SeedFactors;
+}
+
 export interface JudgedSample {
 	test_case_id?: string;
 	prompt: string;
@@ -201,6 +237,7 @@ export interface JudgedSample {
 	judge_error?: string | null;
 	messages?: InteractionMessage[];
 	llm_calls?: LlmCallTrace[];
+	trajectory?: TrajectoryRow | null;
 	target_runtime_mode?: string | null;
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
@@ -226,6 +263,7 @@ export interface ViewerResultItem {
 	multi_judge?: MultiJudge;
 	messages: InteractionMessage[];
 	llm_calls: LlmCallTrace[];
+	trajectory?: TrajectoryRow | null;
 	target_runtime_mode?: string | null;
 	context: ViewerResultContext;
 	dimensions?: SeedFactors;

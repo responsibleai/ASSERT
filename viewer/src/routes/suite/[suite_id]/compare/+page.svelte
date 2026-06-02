@@ -4,6 +4,7 @@
 <script lang="ts">
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
 	import { quintOut } from 'svelte/easing';
@@ -55,7 +56,7 @@ let disagreementsOnly = $state(false);
 let activeMetric = $state('policy_violation');
 
 function metricLabel(m: string): string {
-	return m.replace(/_/g, ' ');
+	return judgeDimensionLabel(m);
 }
 
 // Short label for a run's target. Callable targets ("module.path:function_name")
