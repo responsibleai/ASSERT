@@ -548,11 +548,13 @@ def _build_target_session(
                 message_timeout_s=inference.tool_timeout_s,
                 group_by=target.trace.group_by,
                 live_otel=True,
+                config_path=config_path,
             )
         return CallableSession(
             callable_ref=target.callable,
             system_prompt=target.system_prompt,
             message_timeout_s=inference.tool_timeout_s,
+            config_path=config_path,
         )
 
     if target.is_external:

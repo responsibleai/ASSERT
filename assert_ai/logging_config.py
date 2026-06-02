@@ -88,10 +88,13 @@ def configure_logging(
 
     # Keep noisy dependency loggers suppressed regardless of verbosity.
     # Errors from these packages are caught and wrapped by ASSERT's own modules.
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-    logging.getLogger("litellm").setLevel(logging.WARNING)
+    # LiteLLM installs its own console handler, so disable propagation to
+    # avoid each warning appearing twice (once via litellm's handler, once
+    # via ASSERT's RichHandler on the root logger).
+    for _name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "litellm"):
+        _logger = logging.getLogger(_name)
+        _logger.setLevel(logging.WARNING)
+        _logger.propagate = False
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

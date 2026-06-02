@@ -12,6 +12,7 @@
 		getCitationDisplayRanges,
 		parseCitationReferences
 	} from '$lib/citation-resolution';
+	import { citationWarningLabel, isDegradedCitationWarning } from '$lib/citation-warnings';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
 	import { formatFactorLabel } from '$lib/grouping.js';
 	import {
@@ -19,6 +20,12 @@
 		stopReasonLabel,
 		stopReasonTitle
 	} from '$lib/result-view.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
+	import {
+		buildTrajectoryGroups,
+		trajectoryGroupSummary,
+		trajectoryMessageLabel
+	} from '$lib/trajectory-view.js';
 	import type {
 		AuditCitation,
 		AuditCitationPart,
@@ -27,6 +34,7 @@
 		LlmCallTrace,
 		NodeJudgment,
 		SeedTool,
+		TrajectoryStep,
 		Verdict,
 		ViewerResultItem
 	} from '$lib/types.js';
@@ -74,11 +82,17 @@
 		payload?: string;
 	}
 
+	interface TrajectoryStepTone {
+		cardClass: string;
+		badgeClass: string;
+		label: string;
+	}
+
 	let highlightedTurn = $state<number | null>(null);
 	let highlightedMessageId = $state<string | null>(null);
 	let highlightedToolFocus = $state<ToolFocusState | null>(null);
 	let highlightResetHandle: ReturnType<typeof setTimeout> | null = null;
-	let activeJudgeIndex = $state(0);
+	let activeJudgeIndex = $state(-1);
 
 	$effect(() => {
 		const handler = (event: KeyboardEvent) => {
@@ -118,7 +132,7 @@
 		highlightedTurn = null;
 		highlightedMessageId = null;
 		highlightedToolFocus = null;
-		activeJudgeIndex = 0;
+		activeJudgeIndex = -1;
 		displayedCitations = null;
 		contextExpanded = false;
 		expandedMessageBodies = {};
@@ -147,7 +161,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		const spaced = metric.replace(/_/g, ' ');
+		const spaced = judgeDimensionLabel(metric);
 		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 	}
 
@@ -171,10 +185,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level policy violation is flagged, but no policy node is marked violated';
+			return 'top-level behavior violation is flagged, but no behavior category is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a policy node is marked violated, but the top-level policy verdict is clear';
+			return 'a behavior category is marked violated, but the top-level behavior verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -184,7 +198,78 @@
 		if (runtimeMode === 'tool_module') return 'tools';
 		if (runtimeMode === 'simulated') return 'simulated tools';
 		if (runtimeMode === 'external') return 'external tools';
-		return hasAgenticTranscript ? 'agentic transcript' : null;
+		return hasAgenticTranscript ? 'agentic' : null;
+	}
+
+	function trajectoryTypeLabel(type: string): string {
+		return type.replace(/_/g, ' ');
+	}
+
+	function trajectoryStepTone(step: TrajectoryStep): TrajectoryStepTone {
+		if (step.type === 'tool_call') {
+			return {
+				cardClass: 'border-blue-500/25 border-l-4 border-l-blue-400 bg-blue-500/5',
+				badgeClass: 'border-blue-400/30 bg-blue-500/15 text-blue-300',
+				label: 'CALL'
+			};
+		}
+		if (step.type === 'tool_result') {
+			return {
+				cardClass: 'border-emerald-500/25 border-l-4 border-l-emerald-400 bg-emerald-500/5',
+				badgeClass: 'border-emerald-400/30 bg-emerald-500/15 text-emerald-300',
+				label: 'RESULT'
+			};
+		}
+		if (step.type === 'llm_call') {
+			return {
+				cardClass: 'border-sky-500/25 border-l-4 border-l-sky-400 bg-sky-500/5',
+				badgeClass: 'border-sky-400/30 bg-sky-500/15 text-sky-300',
+				label: 'LLM'
+			};
+		}
+		if (step.type === 'error') {
+			return {
+				cardClass: 'border-score-fail/30 border-l-4 border-l-score-fail bg-score-fail/5',
+				badgeClass: 'border-score-fail/35 bg-score-fail/15 text-score-fail',
+				label: 'ERROR'
+			};
+		}
+		if (step.type === 'system') {
+			return {
+				cardClass: 'border-yellow-500/25 border-l-4 border-l-yellow-400 bg-yellow-500/5',
+				badgeClass: 'border-yellow-400/30 bg-yellow-500/15 text-yellow-300',
+				label: 'SYSTEM'
+			};
+		}
+		if (step.type === 'message') {
+			return {
+				cardClass: 'border-purple-500/20 border-l-4 border-l-purple-400 bg-purple-500/5',
+				badgeClass: 'border-purple-400/30 bg-purple-500/15 text-purple-300',
+				label: 'MSG'
+			};
+		}
+		return {
+			cardClass: 'border-border border-l-4 border-l-text-muted/50 bg-surface',
+			badgeClass: 'border-border bg-bg/60 text-text-muted',
+			label: trajectoryTypeLabel(step.type).toUpperCase()
+		};
+	}
+
+	function trajectoryStepTitle(step: TrajectoryStep): string {
+		const name = step.name || step.role || step.actor || step.type;
+		return `${trajectoryTypeLabel(step.type)} · ${name}`;
+	}
+
+	function trajectoryStepBody(step: TrajectoryStep): string | null {
+		if (typeof step.content === 'string' && step.content.trim()) return step.content;
+		if (step.result_preview) return step.result_preview;
+		if (step.result !== undefined && step.result !== null) {
+			return typeof step.result === 'string' ? step.result : JSON.stringify(step.result, null, 2);
+		}
+		if (step.args && Object.keys(step.args).length > 0) return JSON.stringify(step.args, null, 2);
+		const message = step.attributes?.message;
+		if (typeof message === 'string' && message.trim()) return message;
+		return null;
 	}
 
 	function isStructuredCitation(value: unknown): value is AuditCitation {
@@ -642,7 +727,7 @@
 		return relevantNodes.length > 0 ? relevantNodes : nodeJudgments;
 	}
 
-	function policyNodeName(node: NodeJudgment): string | null {
+	function behaviorCategoryName(node: NodeJudgment): string | null {
 		const embeddedName = typeof node.node_name === 'string' ? node.node_name.trim() : '';
 		return embeddedName || null;
 	}
@@ -667,9 +752,12 @@
 		runtimeModeLabel(item.target_runtime_mode, hasAgenticTranscript)
 	);
 	const structuredCitations = $derived(getStructuredCitations(item.verdict?.citations));
+	const aggregateVote = $derived(getVerdictFlag(item.verdict, primaryMetric));
 	const activeVerdict = $derived(
-		(item.multi_judge?.verdicts?.[activeJudgeIndex] as Verdict | null | undefined) ??
-			(item.verdict as Verdict | null | undefined)
+		activeJudgeIndex >= 0
+			? ((item.multi_judge?.verdicts?.[activeJudgeIndex] as Verdict | null | undefined) ??
+					(item.verdict as Verdict | null | undefined))
+			: (item.verdict as Verdict | null | undefined)
 	);
 	const activeVerdictCitations = $derived(
 		getActiveVerdictCitations(activeVerdict, structuredCitations)
@@ -678,6 +766,12 @@
 		Array.isArray(activeVerdict?.citation_warnings)
 			? activeVerdict.citation_warnings.filter((warning): warning is string => typeof warning === 'string' && warning.length > 0)
 			: []
+	);
+	const activeDegradedCitationWarnings = $derived(
+		activeCitationWarnings.filter(isDegradedCitationWarning)
+	);
+	const activeDegradedCitationWarningLabels = $derived(
+		activeDegradedCitationWarnings.map(citationWarningLabel)
 	);
 	const activeJudgmentWarnings = $derived(
 		Array.isArray(activeVerdict?.judgment_warnings)
@@ -702,6 +796,9 @@
 		Array.isArray(activeVerdict?.node_judgments)
 			? visibleNodeJudgments(activeVerdict.node_judgments as NodeJudgment[])
 			: []
+	);
+	const trajectoryGroups = $derived(
+		item.trajectory?.steps?.length ? buildTrajectoryGroups(item.trajectory.steps) : []
 	);
 	const firstMessageIdByTurn = $derived.by(() => {
 		const map = new Map<number, string>();
@@ -890,7 +987,7 @@
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Unjudged preview</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This conversation finished rollout and is available for inspection, but the judge has not scored it yet.
+							This result finished inference and is available for inspection, but the judge has not scored it yet.
 						</p>
 					</div>
 				{/if}
@@ -906,13 +1003,38 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Behavior-category findings and the top-level behavior decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+						</p>
+					</div>
+				{/if}
+				{#if activeDegradedCitationWarnings.length > 0}
+					<div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+						<div class="text-xs font-semibold uppercase tracking-wider text-sky-400">Evidence degraded</div>
+						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
+							The judgment was kept, but some cited evidence could not be grounded cleanly. Citation links or transcript highlights may be incomplete for: {activeDegradedCitationWarningLabels.join(', ')}.
 						</p>
 					</div>
 				{/if}
 				{#if hasPerJudgeInspection}
 					<div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
 						<div class="flex flex-wrap gap-1 border-b border-zinc-800 p-1.5">
+							<button
+								class="flex items-center gap-1.5 rounded px-2.5 py-1 text-[10px] font-medium transition-colors {activeJudgeIndex === -1 ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+								onclick={() => {
+									activeJudgeIndex = -1;
+									displayedCitations = null;
+									highlightedTurn = null;
+								}}
+							>
+								<span
+									class="inline-block size-[6px] rounded-full shrink-0"
+									style={aggregateVote === null
+										? 'background: transparent; box-shadow: inset 0 0 0 1.5px var(--theme-text-muted);'
+										: `background: ${metricDotColor(aggregateVote)}`}
+								></span>
+								Aggregate
+								<span class="opacity-50">· {metricOutcomeText(aggregateVote)}</span>
+							</button>
 							{#each item.multi_judge?.verdicts ?? [] as judgeVerdict, i}
 								{@const vote = getVerdictFlag(judgeVerdict, primaryMetric)}
 								<button
@@ -935,13 +1057,17 @@
 							{/each}
 						</div>
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
-							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
+							{#if activeJudgeIndex === -1}
+								Inspecting the aggregate verdict. Its rationale comes from representative judge {typeof item.multi_judge?.representative_index === 'number' ? item.multi_judge.representative_index + 1 : '—'}.
+							{:else}
+								Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, behavior reasoning, and transcript highlights follow this verdict.
+							{/if}
 						</p>
 					</div>
 				{/if}
 				{#if activeVerdict?.narrative}
 					<div class="rounded-lg border border-border bg-surface p-4">
-						<div class="mb-2 text-xs font-semibold text-text-muted">Conversation summary</div>
+						<div class="mb-2 text-xs font-semibold text-text-muted">Result summary</div>
 						<p class="text-sm text-text-secondary leading-relaxed">{activeVerdict.narrative}</p>
 					</div>
 				{/if}
@@ -974,15 +1100,15 @@
 									<div class="mt-3 space-y-1.5 border-t border-border/50 pt-3">
 										{#each nodeJudgments as node}
 											{@const violated = node.violated}
-											{@const nodeName = policyNodeName(node)}
+											{@const nodeName = behaviorCategoryName(node)}
 											<div class="rounded-md px-3 py-2 {violated ? 'bg-score-fail/5' : violated === null ? 'bg-surface-2/50' : 'bg-score-pass/5'}">
 												<div class="flex items-start justify-between gap-2">
 													<div class="min-w-0 flex-1">
 														<div
 															class="truncate text-xs font-semibold text-text-muted"
-															title={nodeName ?? 'Unnamed policy node'}
+															title={nodeName ?? 'Unnamed behavior category'}
 														>
-															{nodeName ?? 'Unnamed policy node'}
+															{nodeName ?? 'Unnamed behavior category'}
 														</div>
 													</div>
 													<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -1063,7 +1189,7 @@
 
 		<div class="w-3/5 overflow-y-auto p-5">
 			<h3 class="mb-4 text-[24px] font-semibold text-text">
-				Conversation · {conversationTurnCount(item.messages)} turns
+				Result · {conversationTurnCount(item.messages)} turns
 			</h3>
 			{#if agentTimeline.length >= 2}
 				<div class="mb-4 flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-surface-2/40 px-3 py-2 text-[11px] text-text-muted">
@@ -1108,6 +1234,60 @@
 						</p>
 					{/if}
 				</div>
+			{/if}
+			{#if trajectoryGroups.length > 0}
+				<details class="mb-4 rounded-lg border border-border bg-surface/40">
+					<summary class="flex cursor-pointer list-none items-center gap-2 px-4 py-3">
+						<svg class="h-3 w-3 text-text-muted/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+						<span class="text-xs font-semibold uppercase tracking-widest text-text-muted">Agent trace ({item.trajectory?.steps.length ?? 0} steps)</span>
+						{#if item.trajectory?.stop_reason}
+							<span class="ml-auto text-[10px] text-text-muted">stop: {item.trajectory.stop_reason}</span>
+						{/if}
+					</summary>
+					<div class="space-y-3 border-t border-border/40 px-4 py-3">
+						{#each trajectoryGroups as group (group.id)}
+							<div class="rounded-lg border border-border/50 bg-bg/40">
+								<div class="flex flex-wrap items-center gap-2 border-b border-border/40 px-3 py-2">
+									<span class="text-xs font-semibold text-text-secondary">{group.label}</span>
+									{#if trajectoryGroupSummary(group)}
+										<span class="text-[10px] text-text-muted">{trajectoryGroupSummary(group)}</span>
+									{/if}
+								</div>
+								<div class="space-y-2 p-3">
+									{#each group.items as itemEntry, stepIndex}
+										{@const step = itemEntry.step}
+										{@const tone = trajectoryStepTone(step)}
+										{@const body = trajectoryStepBody(step)}
+										<details class="rounded-md border {tone.cardClass}" open={stepIndex < 3}>
+											<summary class="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
+												<span class="rounded border px-1.5 py-0.5 font-mono text-[9px] {tone.badgeClass}">{tone.label}</span>
+												<span class="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
+													{step.type === 'message' || step.type === 'system' ? trajectoryMessageLabel(step) : trajectoryStepTitle(step)}
+												</span>
+												{#if step.status}
+													<span class="rounded bg-surface px-1.5 py-0.5 text-[10px] text-text-muted">{step.status}</span>
+												{/if}
+											</summary>
+											{#if body || step.args || step.raw}
+												<div class="space-y-2 border-t border-border/40 px-3 py-2">
+													{#if body}
+														<div class="whitespace-pre-wrap break-words text-xs leading-relaxed text-text-secondary">{body}</div>
+													{/if}
+													{#if step.raw}
+														<details>
+															<summary class="cursor-pointer text-[10px] uppercase tracking-wider text-text-muted">Raw</summary>
+															<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all rounded bg-black/20 p-2 text-[10px] text-text-muted">{JSON.stringify(step.raw, null, 2)}</pre>
+														</details>
+													{/if}
+												</div>
+											{/if}
+										</details>
+									{/each}
+								</div>
+							</div>
+						{/each}
+					</div>
+				</details>
 			{/if}
 			<div class="space-y-3">
 				{#each item.messages as message, messageIndex}

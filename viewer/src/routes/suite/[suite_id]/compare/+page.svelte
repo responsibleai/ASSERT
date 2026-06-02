@@ -4,10 +4,13 @@
 <script lang="ts">
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
 	import { quintOut } from 'svelte/easing';
-	import type { BinaryCounts, DimensionDef } from '$lib/types.js';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import type { BinaryCounts, DimensionDef, InteractionMessage, JudgedSample } from '$lib/types.js';
 
 	let { data } = $props();
 	let requiredBaseMetrics = $derived(
@@ -23,6 +26,26 @@ const RUN_COLORS = ['#a78bfa', '#60a5fa', '#2dd4bf', '#fbbf24'];
 // Baseline is always the first run
 let baselineIdx = $state(0);
 
+// Result type toggle: prompts (single-turn, default) vs scenarios (multi-turn).
+// URL contract is `?kind=prompts|scenarios` — note the new compare-page param
+// name intentionally diverges from the legacy run-page `?tab=prompts|audit`
+// so the public URL surface matches the user-visible "Scenarios" label here
+// without breaking existing run-page bookmarks.
+let activeKind = $derived(
+	((data as { kind?: string }).kind === 'scenarios' ? 'scenarios' : 'prompts') as
+		| 'prompts'
+		| 'scenarios'
+);
+let emptyKind = $derived(Boolean((data as { emptyKind?: boolean }).emptyKind));
+
+function setActiveKind(kind: 'prompts' | 'scenarios') {
+	if (kind === activeKind) return;
+	const url = new URL(page.url);
+	if (kind === 'scenarios') url.searchParams.set('kind', 'scenarios');
+	else url.searchParams.delete('kind');
+	goto(url.toString(), { replaceState: true, noScroll: true, keepFocus: true });
+}
+
 // Expanded behavior rows
 let expandedRows = $state<Set<string>>(new Set());
 
@@ -33,7 +56,7 @@ let disagreementsOnly = $state(false);
 let activeMetric = $state('policy_violation');
 
 function metricLabel(m: string): string {
-	return m.replace(/_/g, ' ');
+	return judgeDimensionLabel(m);
 }
 
 // Short label for a run's target. Callable targets ("module.path:function_name")
@@ -95,13 +118,61 @@ function deltaArrow(d: number): string {
 
 let runIds = $derived(data.runs.map((run) => run.run_id));
 
+// Issue 1: baseline-first display order + run-id-keyed colors so a run keeps its color across pages
+let orderedRuns = $derived([
+	data.runs[baselineIdx],
+	...data.runs.filter((_, i) => i !== baselineIdx)
+]);
+let runColor = $derived(
+	Object.fromEntries(data.runs.map((r, i) => [r.run_id, RUN_COLORS[i]])) as Record<string, string>
+);
+function baselineDeltaFor(run: { run_id: string; policyViolationRate: number; dimensions: Record<string, { rate: number }> }) {
+	const baseline = data.runs[baselineIdx];
+	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? 0);
+	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? 0);
+	return { avg, baselineAvg, delta: run.run_id === baseline.run_id ? 0 : avg - baselineAvg };
+}
+
 function getMatchedSamples(behavior: string) {
 	return buildMatchedSampleRows(
 		data.samplesByBehavior[behavior] ?? {},
 		runIds,
 		activeMetric,
-		disagreementsOnly
+		disagreementsOnly,
+		data.runs[baselineIdx]?.run_id,
+		// In scenarios mode, pair multi-turn conversations by the shared
+		// test_case_id. The opening prompt (first user turn) is identical
+		// across runs because both replays seed from the same test_set.jsonl,
+		// but assistant responses diverge after turn 1 as the adaptive tester
+		// drives each variant differently. Fall back to prompt text when a
+		// row is missing test_case_id (legacy artifacts) so pairing is still
+		// best-effort instead of dropping the row entirely.
+		activeKind === 'scenarios' ? (s: JudgedSample) => s.test_case_id ?? s.prompt : undefined
 	);
+}
+
+// Conversation messages minus system prompts. Used by scenarios mode to
+// render each run's full multi-turn transcript below the shared seed turn.
+function conversationMessages(sample: JudgedSample | null): InteractionMessage[] {
+	if (!sample?.messages) return [];
+	return sample.messages.filter((m) => m.role !== 'system');
+}
+
+// Opening user turn for a scenario row. Per `buildJudgedSampleRow` in
+// server/data.ts, JudgedSample.prompt already holds the first user message,
+// which is the same across runs in scenarios mode (the seed).
+function openingPrompt(samples: Record<string, JudgedSample | null>): string {
+	for (const sample of Object.values(samples)) {
+		if (sample?.prompt) return sample.prompt;
+	}
+	return '';
+}
+
+function turnRoleLabel(role: InteractionMessage['role']): string {
+	if (role === 'user') return 'User';
+	if (role === 'assistant') return 'Assistant';
+	if (role === 'tool') return 'Tool';
+	return role;
 }
 
 function pctBar(counts: BinaryCounts): { clear: number; flagged: number } {
@@ -158,22 +229,64 @@ function capitalize(s: string): string {
 			Comparing {data.runs.length} runs on {data.taxonomy?.behavior?.name ?? data.suite_id}
 		</h1>
 
-		<div class="mt-4">
+		<div class="mt-4 flex flex-wrap items-end gap-4">
 			<!-- Baseline dropdown -->
-			<label for="baseline-select" class="block text-xs font-medium text-text-muted mb-1.5">Baseline</label>
-			<PrimerDropdown
-				ariaLabel="Select baseline run"
-				selected={String(baselineIdx)}
-				options={data.runs.map((run, i) => ({
-					value: String(i),
-					label: `${run.display_name} · ${run.date}`
-				}))}
-				onSelect={(value) => { baselineIdx = Number(value); }}
-			/>
+			<div>
+				<label for="baseline-select" class="block text-xs font-medium text-text-muted mb-1.5">Baseline</label>
+				<PrimerDropdown
+					ariaLabel="Select baseline run"
+					selected={String(baselineIdx)}
+					options={data.runs.map((run, i) => ({
+						value: String(i),
+						label: `${run.display_name} · ${run.date}`
+					}))}
+					onSelect={(value) => { baselineIdx = Number(value); }}
+				/>
+			</div>
+
+			<!-- Result type toggle (same design language as the single-run view) -->
+			<div>
+				<span class="block text-xs font-medium text-text-muted mb-1.5">Result type</span>
+				<div class="SegmentedControl" role="tablist" aria-label="Result type">
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeKind === 'prompts'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeKind === 'prompts'}
+						onclick={() => setActiveKind('prompts')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Prompts</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeKind === 'scenarios'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeKind === 'scenarios'}
+						onclick={() => setActiveKind('scenarios')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Scenarios</span>
+						</span>
+					</button>
+				</div>
+			</div>
 		</div>
 	</div>
 </div>
 
+{#if emptyKind}
+	<div class="rounded-lg border border-border bg-surface px-6 py-12 text-center">
+		<svg class="mx-auto mb-4 h-10 w-10 text-text-muted opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+			<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+		</svg>
+		<p class="text-sm text-text-secondary">No scenario evaluations recorded for these runs.</p>
+		<p class="mt-2 text-xs text-text-muted">Switch back to Prompts to view this comparison.</p>
+	</div>
+{:else}
 <div class="space-y-8">
 	<!-- ═══ SECTION 2: Metric Picker + Summary Cards ═══ -->
 	<section class="space-y-4">
@@ -196,11 +309,11 @@ function capitalize(s: string): string {
 		</div>
 
 		<div class="grid gap-4" style="grid-template-columns: {summaryGridTemplate()};">
-			{#each data.runs as run, i}
-				{@const baseline = data.runs[baselineIdx]}
-				{@const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? 0)}
-				{@const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? 0)}
-				{@const delta = i !== baselineIdx ? avg - baselineAvg : 0}
+			{#each orderedRuns as run (run.run_id)}
+				{@const isBaseline = run.run_id === data.runs[baselineIdx].run_id}
+				{@const dInfo = baselineDeltaFor(run)}
+				{@const avg = dInfo.avg}
+				{@const delta = dInfo.delta}
 				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
 				{@const pct = pctBar(runScores)}
 				{@const totalSamples = runScores[0] + runScores[1]}
@@ -208,9 +321,9 @@ function capitalize(s: string): string {
 					<!-- Header: run name + sample count -->
 					<div class="flex items-start justify-between gap-3">
 						<div class="flex items-center gap-2 min-w-0">
-							<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
+							<span class="h-2 w-2 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
 							<span class="text-sm font-medium text-text truncate">{run.display_name}</span>
-							{#if i === baselineIdx}
+							{#if isBaseline}
 								<span class="inline-flex items-center rounded-full bg-interactive/15 px-2 py-0.5 text-[10px] font-semibold text-interactive ring-1 ring-interactive/40">Baseline</span>
 							{/if}
 						</div>
@@ -224,7 +337,7 @@ function capitalize(s: string): string {
 					<div class="mt-3 flex items-baseline gap-1.5">
 						<span class="text-3xl font-bold tabular-nums text-text">{(avg * 100).toFixed(0)}%</span>
 						<span class="text-sm text-text-muted">Flagged</span>
-						{#if i !== baselineIdx && Math.abs(delta) >= 0.005}
+						{#if !isBaseline && Math.abs(delta) >= 0.005}
 							<span class="ml-1 text-sm font-semibold tabular-nums {deltaClass(delta)}">
 								{deltaText(delta)} {deltaArrow(delta)}
 							</span>
@@ -307,8 +420,8 @@ function capitalize(s: string): string {
 				<div class="grid items-center gap-2 px-4 py-2.5 bg-surface text-xs font-semibold text-text-muted border-b border-border"
 					style="grid-template-columns: {comparisonGridTemplate(data.runs.length)};">
 					<span>Behavior</span>
-					{#each data.runs as run, i}
-						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
+					{#each orderedRuns as run (run.run_id)}
+						<span class="text-center font-mono font-medium truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
 					{/each}
 				</div>
 
@@ -336,7 +449,7 @@ function capitalize(s: string): string {
 						</div>
 
 						<!-- Score cells -->
-						{#each data.runs as run, i}
+						{#each orderedRuns as run (run.run_id)}
 							{@const cell = row.metrics[activeMetric]?.[run.run_id]}
 							{@const hasFlagged = cell && cell.counts[1] > 0}
 							{@const cellColor = hasFlagged ? 'var(--color-score-fail, #cf222e)' : 'var(--color-score-pass, #1a7f37)'}
@@ -362,8 +475,86 @@ function capitalize(s: string): string {
 											{disagreementsOnly ? 'No disagreements for this behavior' : 'No samples'}
 										</div>
 									{:else}
-										{#each displaySamples as pair, pairIdx (pair.prompt)}
+										{#each displaySamples as pair, pairIdx (pair.prompt + ':' + pairIdx)}
 											<div class="rounded-lg border border-border bg-surface overflow-hidden">
+												{#if activeKind === 'scenarios'}
+													<!-- Opening (seed) turn — identical across runs; conversations
+													     diverge from turn 2 onward as each variant is driven by the
+													     adaptive tester. -->
+													<div class="px-4 py-2.5 bg-surface-2 border-b border-border">
+														<div class="text-[12px] font-medium text-text-muted mb-0.5">Opening prompt</div>
+														<div class="text-sm text-text leading-relaxed">{(() => { const op = openingPrompt(pair.samples); return op.length > 200 ? op.slice(0, 200) + '…' : op; })()}</div>
+													</div>
+
+													<!-- Per-run multi-turn transcripts side by side -->
+													<div class="overflow-x-auto">
+														<div
+															class="grid divide-x divide-border"
+															style="grid-template-columns: {sampleGridTemplate(data.runs.length)}; min-width: {sampleGridMinWidth(data.runs.length)};"
+														>
+															{#each orderedRuns as run (run.run_id)}
+																{@const sample = pair.samples[run.run_id]}
+																{@const convo = conversationMessages(sample)}
+																<div class="p-3 space-y-2">
+																	<!-- Model + score -->
+																	<div class="flex items-center justify-between">
+																		<div class="flex items-center gap-1.5 min-w-0">
+																			<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
+																			<span class="text-xs font-mono truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
+																		</div>
+																		{#if sample}
+																			{@const sampleScore = getRecordFlag(sample, activeMetric)}
+																			{#if sampleScore !== null}
+																				<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold {scoreBadgeClass(sampleScore)}">
+																					{sampleScore ? 'Flagged' : 'Clear'}
+																				</span>
+																			{:else if judgeStatus(sample) === 'judge_failed'}
+																				<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-500/10 text-amber-500">
+																					Judge failed
+																				</span>
+																			{/if}
+																		{/if}
+																	</div>
+
+																	{#if sample}
+																		<div class="text-[10px] uppercase tracking-wide text-text-muted">
+																			{convo.length} turn{convo.length === 1 ? '' : 's'}
+																		</div>
+																		<!-- Scrollable conversation; capped height so cards
+																		     stay aligned and long transcripts don't blow up
+																		     the page. -->
+																		<div class="max-h-80 overflow-y-auto rounded border border-border bg-surface-2/40 p-2 space-y-2">
+																			{#each convo as msg, msgIdx (msgIdx)}
+																				{@const isUser = msg.role === 'user'}
+																				{@const isAssistant = msg.role === 'assistant'}
+																				<div class="text-xs leading-relaxed">
+																					<div class="mb-0.5 font-semibold {isUser ? 'text-interactive' : isAssistant ? 'text-text' : 'text-text-muted'}">
+																						{turnRoleLabel(msg.role)}
+																					</div>
+																					<div class="whitespace-pre-wrap text-text-secondary">{msg.content.length > 600 ? msg.content.slice(0, 600) + '…' : msg.content}</div>
+																				</div>
+																			{/each}
+																			{#if convo.length === 0}
+																				<p class="text-xs text-text-muted italic">No transcript captured</p>
+																			{/if}
+																		</div>
+																		{#if typeof sample.verdict?.justification === 'string'}
+																			<p class="text-xs text-text-muted italic leading-relaxed border-t border-border pt-2 mt-2">
+																				{sample.verdict.justification.length > 200 ? sample.verdict.justification.slice(0, 200) + '…' : sample.verdict.justification}
+																			</p>
+																		{:else if judgeStatus(sample) === 'judge_failed'}
+																			<p class="text-xs text-amber-500 italic leading-relaxed border-t border-border pt-2 mt-2">
+																				Judge failed{getJudgeError(sample) ? `: ${getJudgeError(sample)}` : ''}
+																			</p>
+																		{/if}
+																	{:else}
+																		<p class="text-xs text-text-muted italic">No scenario for this run</p>
+																	{/if}
+																</div>
+															{/each}
+														</div>
+													</div>
+												{:else}
 												<!-- Prompt -->
 												<div class="px-4 py-2.5 bg-surface-2 border-b border-border">
 													<div class="text-[12px] font-medium text-text-muted mb-0.5">Test prompt</div>
@@ -376,14 +567,14 @@ function capitalize(s: string): string {
 														class="grid divide-x divide-border"
 														style="grid-template-columns: {sampleGridTemplate(data.runs.length)}; min-width: {sampleGridMinWidth(data.runs.length)};"
 													>
-														{#each data.runs as run, i}
+														{#each orderedRuns as run (run.run_id)}
 															{@const sample = pair.samples[run.run_id]}
 															<div class="p-3 space-y-2">
 														<!-- Model + score -->
 														<div class="flex items-center justify-between">
 															<div class="flex items-center gap-1.5 min-w-0">
-																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {RUN_COLORS[i]}"></span>
-																<span class="text-xs font-mono truncate" title={run.model} style="color: {RUN_COLORS[i]}">{runLabel(run.model)}</span>
+																<span class="h-1.5 w-1.5 rounded-full flex-shrink-0" style="background: {runColor[run.run_id]}"></span>
+																<span class="text-xs font-mono truncate" title={run.model} style="color: {runColor[run.run_id]}">{runLabel(run.model)}</span>
 															</div>
 															{#if sample}
 																{@const sampleScore = getRecordFlag(sample, activeMetric)}
@@ -420,6 +611,7 @@ function capitalize(s: string): string {
 														{/each}
 													</div>
 												</div>
+												{/if}
 											</div>
 										{/each}
 
@@ -449,3 +641,4 @@ function capitalize(s: string): string {
 		</div>
 	</section>
 </div>
+{/if}

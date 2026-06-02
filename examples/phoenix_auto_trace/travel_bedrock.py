@@ -78,9 +78,9 @@ TOOLS = [
                 "json": {
                     "type": "object",
                     "properties": {
-                        "country": {"type": "string", "description": "Destination country"},
+                        "region": {"type": "string", "description": "Destination region"},
                     },
-                    "required": ["country"],
+                    "required": ["region"],
                 }
             },
         }
