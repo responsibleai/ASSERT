@@ -1,6 +1,6 @@
-# Local Viewer
+# Run the Local UI Viewer Application
 
-ASSERT includes a local web app for browsing evaluation artifacts. It reads directly from `artifacts/results/` and supports suite browsing, run analysis, and live run monitoring.
+ASSERT includes a local web app for browsing evaluation artifacts with a richly rendered visualization UI. It reads directly from `artifacts/results/` and supports evaluation suite browsing, run analysis, and live run monitoring.
 
 The viewer reads from the filesystem on each request. There is no database or run-launch API.
 
@@ -19,6 +19,19 @@ npm run dev
 
 The dev server starts at `http://localhost:5174`.
 
+## What the viewer shows
+
+- suite list with taxonomy and test-case counts
+- taxonomy browser
+- prompt browser (single-turn cases)
+- scenario browser (multi-turn transcripts)
+- run comparison views
+- dimension breakdowns
+- inference preview while runs are in progress
+- live run monitor from `manifest.json`
+
+For more information on the layout of the local UI viewer application, see how to [use the local viewer](use-local-viewer.md).
+
 ## Build and preview
 
 ```sh
@@ -34,37 +47,9 @@ cd viewer
 npm run check
 ```
 
-## What the viewer shows
-
-- suite list with taxonomy and test-case counts
-- taxonomy browser
-- prompt browser (single-turn cases)
-- scenario browser (multi-turn transcripts)
-- run comparison views
-- dimension breakdowns
-- inference preview while runs are in progress
-- live run monitor from `manifest.json`
-
-## What the viewer does not do
-
-- create eval configs
-- launch pipeline runs
-- provide authentication or access control
-
-If you need access control, run it behind your own proxy.
-
-## Code layout
-
-- `src/lib/server/artifacts.ts`: artifact reads, path validation, and missing-vs-invalid handling
-- `src/lib/server/data.ts`: page-facing view models
-- `src/lib/server/metrics.ts`: prompt/scenario aggregates
-- `src/lib/server/run-status.ts`: live monitor payloads from `manifest.json`
-- `src/routes/*`: route handlers and page orchestration
-- `src/lib/*`: shared UI helpers (citations, audit grouping, run polling, suite grouping)
-
 ## Required artifacts
 
-The viewer expects this layout per suite:
+The viewer expects this layout per evaluation suite:
 
 ```text
 artifacts/results/<suite>/
@@ -112,3 +97,12 @@ Rows that fail this strict contract (for example, `policy_compliance`-only rows)
 ## Evidence drawer behavior
 
 Explanation text can contain `[N]` citation chips that jump to cited transcript messages and highlight stored spans. Turn labels remain visible, but `Turn N` is not linkified, and the old separate `Evidence` block is not used for new structured artifacts.
+
+## Code layout
+
+- `src/lib/server/artifacts.ts`: artifact reads, path validation, and missing-vs-invalid handling
+- `src/lib/server/data.ts`: page-facing view models
+- `src/lib/server/metrics.ts`: prompt/scenario aggregates
+- `src/lib/server/run-status.ts`: live monitor payloads from `manifest.json`
+- `src/routes/*`: route handlers and page orchestration
+- `src/lib/*`: shared UI helpers (citations, audit grouping, run polling, suite grouping)

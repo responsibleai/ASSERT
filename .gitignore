@@ -62,3 +62,6 @@ assert_ai_policy.*
 
 # Code Security Assessment artifacts
 .security-assessment/
+
+# Local preannounce draft
+README_preannounce.md

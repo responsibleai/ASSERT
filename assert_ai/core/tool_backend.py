@@ -96,6 +96,29 @@ def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any
         _validate_module_file_path(direct_path, config_path=config_path)
         return _load_module_from_file(module_ref, direct_path)
 
+    return _smart_import(module_ref, config_path=config_path, kind="tool module")
+
+
+def _smart_import(
+    module_ref: str,
+    *,
+    config_path: Path | None,
+    kind: str,
+) -> Any:
+    """Import ``module_ref`` with workspace-aware sys.path fallback.
+
+    Resolution order:
+      1. Standard import via ``sys.path``.
+      2. Retry with the config directory temporarily on ``sys.path`` (if known).
+      3. Retry with the current working directory temporarily on ``sys.path``.
+      4. Direct file load via ``spec_from_file_location`` for ``<root>/<dotted>.py``
+         or ``<root>/<dotted>/__init__.py`` under each search root.
+
+    On failure, raises ``ValueError`` listing every location that was searched.
+
+    ``kind`` is used only to make the error message specific (e.g. ``"tool module"``,
+    ``"callable module"``).
+    """
     try:
         return importlib.import_module(module_ref)
     except ModuleNotFoundError as exc:
@@ -115,10 +138,22 @@ def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any
             return _load_module_from_file(module_ref, candidate)
         searched = "\n  ".join(attempted)
         raise ValueError(
-            f"Could not import tool module '{module_ref}'.\n"
+            f"Could not import {kind} '{module_ref}'.\n"
             f"Searched:\n  {searched}\n"
             "Hint: ensure the module exists and add __init__.py when importing a package.",
         ) from exc
+
+
+def import_callable_module(module_ref: str, *, config_path: Path | None = None) -> Any:
+    """Import the module portion of a ``module.path:function`` callable reference.
+
+    Uses the same workspace-aware fallback as :func:`load_tool_module` so that a
+    callable target defined in the user's repo resolves whether the user is
+    running ``assert-ai`` from the repo root, from the config directory, or from
+    elsewhere. The caller is expected to have validated ``module_ref`` via
+    :func:`assert_ai.core.security.validate_callable_ref` first.
+    """
+    return _smart_import(module_ref, config_path=config_path, kind="callable module")
 
 
 def _validate_module_file_path(path: Path, *, config_path: Path | None = None) -> None:

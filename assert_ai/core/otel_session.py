@@ -20,10 +20,10 @@ capturing the target's internal execution traces.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import uuid
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any
 
 from assert_ai.core.async_utils import invoke_callable
@@ -76,6 +76,7 @@ class OTelTracedSession:
         message_timeout_s: float | None = None,
         max_events_per_turn: int = 50,
         live_otel: bool = False,
+        config_path: Path | None = None,
     ) -> None:
         self._callable_ref = callable_ref
         self._collector = collector
@@ -83,6 +84,7 @@ class OTelTracedSession:
         self._system_prompt = system_prompt
         self._message_timeout_s = message_timeout_s
         self._max_events_per_turn = max_events_per_turn
+        self._config_path = config_path
         self._callable: Any = None
         self._supports_history = False
         self._session_id = ""
@@ -114,6 +116,7 @@ class OTelTracedSession:
         import sys
 
         from assert_ai.core.security import validate_callable_ref
+        from assert_ai.core.tool_backend import import_callable_module
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
@@ -123,12 +126,7 @@ class OTelTracedSession:
         _orig_stdout = sys.stdout
         sys.stdout = io.StringIO()
         try:
-            mod = importlib.import_module(module_path)
-        except ModuleNotFoundError as exc:
-            raise ValueError(
-                f"Could not import module '{module_path}' from callable ref "
-                f"'{self._callable_ref}'. Is the package installed? ({exc})"
-            ) from exc
+            mod = import_callable_module(module_path, config_path=self._config_path)
         finally:
             sys.stdout = _orig_stdout
         try:

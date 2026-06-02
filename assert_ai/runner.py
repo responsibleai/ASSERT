@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from assert_ai.config import (
     ConfigError,
@@ -56,7 +56,11 @@ from assert_ai.core.runtime_safety import (
 from assert_ai.display import label_metric
 from assert_ai.stages import STAGES
 
-load_dotenv()
+# Walk up from cwd so the user's project `.env` is found when assert-ai is
+# installed as a wheel. Bare `load_dotenv()` walks up from this file's
+# directory, which lives inside the venv's site-packages and misses the
+# project `.env`.
+load_dotenv(find_dotenv(usecwd=True))
 
 log = logging.getLogger(__name__)
 
