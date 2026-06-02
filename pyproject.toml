@@ -131,6 +131,8 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "assert_ai.internal_pipeline_prompts" = ["*.md"]
+"assert_ai.library.judges" = ["*.yaml", "*.md"]
+"assert_ai.library.behaviors" = ["*.yaml", "*.md"]
 
 [dependency-groups]
 dev = [
