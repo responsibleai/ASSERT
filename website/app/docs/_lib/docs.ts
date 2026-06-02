@@ -3,8 +3,20 @@ import path from "node:path";
 import matter from "gray-matter";
 import GithubSlugger from "github-slugger";
 
-// Docs live at <repo-root>/docs, i.e. one level up from website/
-export const DOCS_DIR = path.resolve(process.cwd(), "..", "docs");
+// Docs live at <repo-root>/docs. In the ASSERT website project that's one
+// level up from process.cwd(); in the sandbox the docs are inside the project
+// itself. Prefer whichever path contains the canonical README.md.
+function resolveDocsDir(): string {
+	const candidates = [
+		path.resolve(process.cwd(), "docs"),
+		path.resolve(process.cwd(), "..", "docs"),
+	];
+	for (const dir of candidates) {
+		if (fs.existsSync(path.join(dir, "README.md"))) return dir;
+	}
+	return candidates[0];
+}
+export const DOCS_DIR = resolveDocsDir();
 
 export type DocSlug = string[]; // e.g. ["targets", "callable"]
 
@@ -102,6 +114,20 @@ export function getAllDocs(): Doc[] {
 		"getting-started": 0,
 		"concepts": 1,
 	};
+	// Within a group, prefer this explicit reading order. Items not listed
+	// fall back to alphabetical ordering after the listed ones.
+	const GROUP_ITEM_ORDER: Record<string, string[]> = {
+		cli: ["overview", "commands"],
+		config: ["overview", "schema", "best-practices"],
+		guides: [
+			"create-evaluation",
+			"results",
+			"run-local-viewer",
+			"use-local-viewer",
+			"troubleshooting",
+		],
+		targets: ["readme", "model-and-tools", "callable"],
+	};
 	docs.sort((a, b) => {
 		const ad = a.slug.length;
 		const bd = b.slug.length;
@@ -110,6 +136,18 @@ export function getAllDocs(): Doc[] {
 			const ap = TOP_LEVEL_PRIORITY[a.slug[0]] ?? 100;
 			const bp = TOP_LEVEL_PRIORITY[b.slug[0]] ?? 100;
 			if (ap !== bp) return ap - bp;
+		}
+		if (ad > 1 && a.slug[0] === b.slug[0]) {
+			const order = GROUP_ITEM_ORDER[a.slug[0]];
+			if (order) {
+				const aLast = a.slug[a.slug.length - 1];
+				const bLast = b.slug[b.slug.length - 1];
+				const ai = order.indexOf(aLast);
+				const bi = order.indexOf(bLast);
+				const aRank = ai === -1 ? order.length : ai;
+				const bRank = bi === -1 ? order.length : bi;
+				if (aRank !== bRank) return aRank - bRank;
+			}
 		}
 		return a.slug.join("/").localeCompare(b.slug.join("/"));
 	});
