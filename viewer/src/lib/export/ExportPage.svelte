@@ -78,9 +78,9 @@
 		judge: 'Scoring'
 	};
 
-	const requiredBaseMetrics = getRequiredBaseMetricNames(
+	let requiredBaseMetrics = $derived(getRequiredBaseMetricNames(
 		(data.dimensionDefs ?? {}) as Record<string, DimensionDef>
-	);
+	));
 
 	function judgeStatus(record: {
 		verdict?: Record<string, unknown> | null;
@@ -122,33 +122,33 @@
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
 	}
 
-	const hasPromptEval = (data.promptCount ?? data.samples.length) > 0;
-	const hasAuditEval = (data.auditCount ?? data.auditScores.length) > 0;
+	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
+	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
 
-	const promptDimensionNames = Object.keys(data.metrics?.dimensions ?? {});
-	const auditDimensionNames = Object.keys(data.auditMetrics?.dimensions ?? {});
-	const promptMetricNames = promptDimensionNames;
-	const auditMetricNames = auditDimensionNames;
-	const promptPrimaryMetric = promptMetricNames[0] ?? 'policy_violation';
-	const auditPrimaryMetric = auditMetricNames[0] ?? 'policy_violation';
+	let promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
+	let auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
+	let promptMetricNames = $derived(promptDimensionNames);
+	let auditMetricNames = $derived(auditDimensionNames);
+	let promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
+	let auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
-	const promptScored = data.samples.filter((s) => judgeStatus(s) === 'ok').length;
-	const promptJudgeFailures = data.samples.length - promptScored;
-	const auditScored = data.auditScores.filter((s) => judgeStatus(s) === 'ok').length;
-	const auditJudgeFailures = data.auditScores.length - auditScored;
+	let promptScored = $derived(data.samples.filter((s) => judgeStatus(s) === 'ok').length);
+	let promptJudgeFailures = $derived(data.samples.length - promptScored);
+	let auditScored = $derived(data.auditScores.filter((s) => judgeStatus(s) === 'ok').length);
+	let auditJudgeFailures = $derived(data.auditScores.length - auditScored);
 
-	const promptMetricCards = promptMetricNames.map((dim) => ({
+	let promptMetricCards = $derived(promptMetricNames.map((dim) => ({
 		key: dim,
 		name: metricLabel(dim),
 		summary: data.metrics?.dimensions?.[dim],
 		description: data.dimensionDefs?.[dim]?.description ?? ''
-	}));
-	const auditMetricCards = auditMetricNames.map((dim) => ({
+	})));
+	let auditMetricCards = $derived(auditMetricNames.map((dim) => ({
 		key: dim,
 		name: metricLabel(dim),
 		summary: data.auditMetrics?.dimensions?.[dim],
 		description: data.dimensionDefs?.[dim]?.description ?? ''
-	}));
+	})));
 
 	function durationLabel(start?: string | null, end?: string | null): string | null {
 		if (!start || !end) return null;
@@ -157,7 +157,7 @@
 		const secs = ms / 1000;
 		return `${Math.round(secs / 60)}m ${Math.round(secs % 60)}s`;
 	}
-	const runDuration = durationLabel(data.manifest?.started_at, data.manifest?.ended_at);
+	let runDuration = $derived(durationLabel(data.manifest?.started_at, data.manifest?.ended_at));
 </script>
 
 <!-- Header -->

@@ -7,7 +7,7 @@ import ExportPage from '$lib/export/ExportPage.svelte';
 import type { ViewerResultItem } from '$lib/types.js';
 import type { RequestHandler } from './$types.js';
 
-export const GET: RequestHandler = async ({ params, fetch }) => {
+export const GET: RequestHandler = async ({ params, fetch, url }) => {
 	if (!isSafeArtifactId(params.suite_id)) throw error(400, 'Invalid suite ID');
 	if (!isSafeArtifactId(params.run_id)) throw error(400, 'Invalid run ID');
 
@@ -44,7 +44,7 @@ export const GET: RequestHandler = async ({ params, fetch }) => {
 		}
 	}
 
-	const css = await loadInlineCss(fetch);
+	const css = await loadInlineCss(fetch, url.origin);
 
 	const merged = {
 		...(promptPayload ?? auditPayload!),

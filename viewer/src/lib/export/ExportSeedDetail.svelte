@@ -27,10 +27,10 @@
 		primaryMetric: string;
 	} = $props();
 
-	const verdict = (item.verdict as Verdict | null | undefined) ?? null;
-	const judgeError = getJudgeError(item);
-	const isJudgeFailed = item.judge_status === 'judge_failed';
-	const multiJudge = item.multi_judge as MultiJudge | undefined;
+	let verdict = $derived((item.verdict as Verdict | null | undefined) ?? null);
+	let judgeError = $derived(getJudgeError(item));
+	let isJudgeFailed = $derived(item.judge_status === 'judge_failed');
+	let multiJudge = $derived(item.multi_judge as MultiJudge | undefined);
 
 	function metricLabel(metric: string): string {
 		return metric.replace(/_/g, ' ');
@@ -144,12 +144,12 @@
 		}
 		return views;
 	}
-	const judgeViews = buildJudgeViews();
-	const hasMultipleJudges = (multiJudge?.verdicts?.length ?? 0) > 1;
+	let judgeViews = $derived(buildJudgeViews());
+	let hasMultipleJudges = $derived((multiJudge?.verdicts?.length ?? 0) > 1);
 
-	const verdictCitations: AuditCitation[] = Array.isArray(verdict?.citations)
+	let verdictCitations: AuditCitation[] = $derived(Array.isArray(verdict?.citations)
 		? (verdict?.citations as AuditCitation[])
-		: [];
+		: []);
 </script>
 
 <div class="grid gap-5 lg:grid-cols-5">

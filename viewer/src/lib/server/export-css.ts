@@ -11,19 +11,19 @@
 const CACHE = new Map<string, { css: string; loadedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function loadInlineCss(fetch: typeof globalThis.fetch): Promise<string> {
+export async function loadInlineCss(fetch: typeof globalThis.fetch, origin?: string): Promise<string> {
 	const cacheKey = 'root';
 	const cached = CACHE.get(cacheKey);
 	if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
 		return cached.css;
 	}
 
-	const css = await resolveCss(fetch);
+	const css = await resolveCss(fetch, origin);
 	CACHE.set(cacheKey, { css, loadedAt: Date.now() });
 	return css;
 }
 
-async function resolveCss(fetch: typeof globalThis.fetch): Promise<string> {
+async function resolveCss(fetch: typeof globalThis.fetch, origin?: string): Promise<string> {
 	let pageHtml: string;
 	try {
 		const res = await fetch('/');
@@ -41,20 +41,33 @@ async function resolveCss(fetch: typeof globalThis.fetch): Promise<string> {
 	const inlineStyles = extractInlineStyles(pageHtml);
 
 	const fetched: string[] = [];
-	for (const href of styleHrefs) {
+	for (const href of styleHrefs.map(normalizeStylesheetHref)) {
+		const fetchUrl = toFetchUrl(href, origin);
+		const fetchAsset = origin ? globalThis.fetch : fetch;
 		try {
-			const res = await fetch(href);
+			const res = await fetchAsset(fetchUrl);
 			if (!res.ok) {
-				console.warn(`[export-css] stylesheet ${href} returned ${res.status}`);
+				console.warn(`[export-css] stylesheet ${fetchUrl} returned ${res.status}`);
 				continue;
 			}
 			fetched.push(`/* ${href} */\n${await res.text()}`);
 		} catch (err) {
-			console.warn(`[export-css] failed to fetch stylesheet ${href}:`, err);
+			console.warn(`[export-css] failed to fetch stylesheet ${fetchUrl}:`, err);
 		}
 	}
 
 	return [...fetched, ...inlineStyles].join('\n\n');
+}
+
+function normalizeStylesheetHref(href: string): string {
+	if (href.startsWith('./')) return `/${href.slice(2)}`;
+	if (href.startsWith('_app/')) return `/${href}`;
+	return href;
+}
+
+function toFetchUrl(href: string, origin?: string): string {
+	if (!origin || !href.startsWith('/')) return href;
+	return new URL(href, origin).toString();
 }
 
 function extractStylesheetHrefs(html: string): string[] {
