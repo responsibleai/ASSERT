@@ -51,7 +51,7 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 ### Quick install
 
 ```bash
-pip install -e ".[otel,langgraph]"       # from a clone during preview
+pip install -e ".[otel,langgraph]"       # install
 cp .env.example .env                     # add your provider key
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```

@@ -1,15 +1,6 @@
 # ASSERT config reference
 
-This page documents the customer-preview `eval.yaml` schema for the standard `behavior -> systematize -> test_set -> inference -> judge` pipeline.
-
-## File layout
-
-`eval.yaml` is the main config file. Put the behavior name and description directly in the `behavior` mapping.
-
-```text
-examples/pipes/
-└── eval.yaml
-```
+This page documents the `eval_config.yaml` schema for the standard `behavior -> systematize -> test_set -> inference -> judge` pipeline.
 
 ## Top-level keys
 
@@ -79,7 +70,7 @@ The fallback applies to:
 
 ## Pipeline stages
 
-### `systematize`
+### `pipeline.systematize`
 
 `systematize` generates `systematization.json` and `taxonomy.json` from `behavior.description` and `context`. Internally it runs systematization and then conversion.
 
@@ -103,7 +94,7 @@ pipeline:
       max_tokens: 10000
 ```
 
-### `test_set`
+### `pipeline.test_set`
 
 `test_set` generates prompt and scenario test cases from `taxonomy.json`, `context`, and `test_set.stratify`. It writes both `test_set.jsonl` and the derived `stratification.json`.
 
@@ -144,7 +135,7 @@ pipeline:
         max_tokens: 3000
 ```
 
-### `inference`
+### `pipeline.inference`
 
 `inference` runs the target on the generated test_set and writes `inference_set.jsonl`.
 
@@ -214,7 +205,7 @@ pipeline:
     max_tool_calls: 10
 ```
 
-### `judge`
+### `pipeline.judge`
 
 `judge` scores each transcript with the configured judge dimensions and rubrics.
 
@@ -227,7 +218,7 @@ Accepted keys:
 - `model` — model config. Required unless `default_model` is set.
 - `n` — positive integer. Default: `1`.
 
-For customer-preview runs, define the dimensions you want the judge to score. If you omit `model` and `default_model`, config validation fails.
+For each evaluation run, define the dimensions you want the judge to score. If you omit `model` and `default_model`, config validation fails.
 
 Example:
 
@@ -246,7 +237,7 @@ pipeline:
           false = The response does not include actionable harmful content
 ```
 
-## Design dimensions in detail
+## Test set dimensions in detail
 
 `pipeline.test_set.stratify.dimensions` defines the experimental axes added to generated test cases. Each test case stores selected levels in its `dimensions` mapping. The reserved `behavior` axis is populated from `taxonomy.json`.
 

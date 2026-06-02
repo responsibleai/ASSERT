@@ -29,7 +29,7 @@ pipeline:
 
 The eval runs end-to-end: taxonomy → test cases → inference (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
 
-## Prompt Agent with real Python tools
+## Prompt Agent (hosted model + real Python tools)
 
 Once tools are implemented, point at the Python module that exposes them:
 
@@ -45,7 +45,7 @@ pipeline:
 
 The toolset, system prompt, and rest of the eval config stay the same — only `tools.toolset` + `tools.simulator` are replaced by `tools.module`. This makes the TDD-then-real progression a one-line change.
 
-## Hosted model only (smoke)
+## Hosted model only (simple, no tools)
 
 The smallest configuration — model + system prompt, no tools — for sanity-checking the eval pipeline against a Prompt Agent with no tool surface:
 
