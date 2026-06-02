@@ -497,7 +497,7 @@
 				</span>
 			</div>
 		</div>
-		<p class="mt-1 text-sm leading-5 text-text-muted">View all evaluation runs for this policy-defined behavior. Select up to {MAX_COMPARE_RUNS} runs, then click Compare.</p>
+		<p class="mt-1 text-sm leading-5 text-text-muted">View all evaluation runs for this behavior category. Select up to {MAX_COMPARE_RUNS} runs, then click Compare.</p>
 	</div>
 
 	{#if heavyError}
@@ -690,7 +690,7 @@
 				<div class="shrink-0">
 					<PrimerDropdown
 						label="Sort by"
-						ariaLabel="Sort behavior categories by policy status"
+						ariaLabel="Sort behavior categories by behavior status"
 						options={BEHAVIOR_SORT_OPTIONS}
 						selected={behaviorSort}
 						onSelect={(value) => (behaviorSort = value as 'permissible' | 'not_permissible')}
@@ -700,7 +700,7 @@
 			<div class="overflow-hidden rounded-lg border border-border">
 				<div class="grid items-center border-b border-border bg-surface px-4 py-2" style="grid-template-columns: {BEHAVIOR_TABLE_COLUMNS}; column-gap: 12px">
 					<span class="text-left text-xs font-medium text-text-muted">Behavior category</span>
-					<span class="inline-flex items-center gap-1 text-left text-xs font-medium text-text-muted">Policy status
+					<span class="inline-flex items-center gap-1 text-left text-xs font-medium text-text-muted">Behavior status
 						<InfoTooltip direction="se" label="Permissible = behavior the target is expected to handle safely (no violation if engaged). Not permissible = behavior the target must refuse or redirect; engaging counts as a policy violation." />
 					</span>
 					<span class="text-left text-xs font-medium text-text-muted">Prompts</span>
@@ -883,7 +883,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
 		<div class="rounded-lg border border-border bg-surface p-6 text-center">
 			<div class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-text-muted border-t-interactive"></div>
-			<p class="mt-2 text-sm text-text-muted">Loading conversation...</p>
+			<p class="mt-2 text-sm text-text-muted">Loading result...</p>
 		</div>
 	</div>
 {/if}
