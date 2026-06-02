@@ -53,7 +53,7 @@ examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
 ├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
-├── pipes/                      simple hosted-model and Prompt Agent configs
+├── prompt_agents/              simple hosted-model and Prompt Agent configs
 ├── behavior_specs/             reusable behavior examples and references in markdown files
 └── agents/                     simple tool modules and tool schemas
 ```
