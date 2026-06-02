@@ -27,7 +27,6 @@ Then inspect matching rows in `inference_set.jsonl` to see the full prompt and r
 
 Often if the inputs are too vague or low-quality, then the resulting output can also lead to failures in the evaluation. Refer to the guidance on structuring high quality inputs in the [Best Practices and Limitations](../config/best-practices.md) documentation.
 
-
 - `systematize` issues: inspect `taxonomy.json`
 - `test_set` issues: inspect `test_set.jsonl` and stratification dimensions
 - `inference` issues: inspect `inference_set.jsonl` events and outputs
@@ -55,9 +54,9 @@ Common examples:
 - Non-instrumented target when trace-level evidence is expected
 - Overly vague judge dimensions and rubrics causing weak verdict evidence
 - Stale artifacts reused without forcing the correct stage
-## 6. Helpful comparisons
+- Mismatched example paths after following older docs; prefer the current `examples/prompt_agents/*` configs for hosted-model tool execution flows
 
-## 6.  Helpful comparisons
+## 6. Helpful comparisons
 
 Compare runs to spot regressions:
 
@@ -68,6 +67,6 @@ assert-ai results compare-suites <suite-a>/<run-a> <suite-b>/<run-b>
 
 ## 7. Environment-specific fixes
 
-- macOS `litellm` install issue (`AttributeError: module 'litellm' has no attribute 'acompletion'`): some macOS security tooling can silently truncate wheels during package installation. The `pip install -e ".[otel,langgraph]"` path avoids this. If you hit it, grant your terminal Full Disk Access and run `xattr -cr .venv`.
+- macOS `litellm` install issue (`AttributeError: module 'litellm' has no attribute 'acompletion'`): some macOS security tooling can silently truncate the `litellm` wheel during extraction with `uv sync`. The `pip install -e ".[otel,langgraph]"` path above uses copy-based installs and avoids this. If you must use `uv`, grant your terminal Full Disk Access and run `xattr -cr .venv` to clear quarantine attributes.
 - Windows `UnicodeEncodeError` when running auto-trace demos: set `$env:PYTHONUTF8 = "1"` before `python -m examples.phoenix_auto_trace.travel_openai`.
 - Docker-backed Prompt Agent configs fail with `docker daemon unavailable`: ensure Docker Desktop is running for `examples/prompt_agents/health_assistant_sandbox.yaml` and `examples/prompt_agents/health_assistant_external.yaml`.
