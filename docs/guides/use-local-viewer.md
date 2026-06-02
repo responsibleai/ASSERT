@@ -1,6 +1,6 @@
 # View results in Local UI Viewer Application
 
-Though portable local artifacts can be a powerful feature, ASSERT comes with a local-hosted UI viewer web application that helps richly render the results and artifacts to help with analysis.
+Though portable local artifacts can be a powerful feature, ASSERT comes with a locally hosted UI viewer web application that helps richly render the results and artifacts to help with analysis.
 
 - suite list with taxonomy and test-case counts
 - taxonomy browser
@@ -27,7 +27,7 @@ The suite details page contains tabs for taxonomy, test set content, and run-lev
 
 #### Review taxonomy
 
-Take a look at the generated taxonomy and the encoded policies (permissable/not permissable), with the definition of each behavior category and its policy label.
+Take a look at the generated taxonomy and the encoded policies (permissible/not permissible), with the definition of each behavior category and its policy label.
 
 ![Suite taxonomy tab](../../assets/viewer-suites-taxonomy.png)
 
@@ -69,7 +69,7 @@ The **Create new run** flow guides you through selecting source artifacts and ru
 
 #### 1. Input specification
 
-First, define your behavior name and description, or re-use one that you've already run before from a different evaluation suite. Select the target type you want to evaluate (currently hosted model or prompt agent), and fill in the application context and system prompt used by your model or prompt agent.
+First, define your behavior name and description, or reuse one that you've already run before from a different evaluation suite. Select the target type you want to evaluate (currently hosted model or prompt agent), and fill in the application context and system prompt used by your model or prompt agent.
 
 ![Create new run step 1](../../assets/create-new-run-1.png)
 
