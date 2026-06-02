@@ -22,6 +22,7 @@
 		buildOutcomeOptions,
 		buildOutcomePlotRows
 	} from '$lib/outcome-plot.js';
+	import { judgeDimensionLabel, titleCaseJudgeDimensionLabel } from '$lib/labels.js';
 	import {
 		normalizePromptResult,
 		stopReasonChipClass,
@@ -161,7 +162,7 @@
 	let auditErroredCount = $derived(countSkippedStopReasonKind('error'));
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return judgeDimensionLabel(metric);
 	}
 
 	function metricOutcomeText(flag: boolean | null): string {
@@ -1210,7 +1211,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={metricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						options={metricNames.map(m => ({ value: m, label: titleCaseJudgeDimensionLabel(m) }))}
 						selected={promptSortMetric}
 						onSelect={(v) => promptSortMetric = v}
 					/>
@@ -1568,7 +1569,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={auditMetricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						options={auditMetricNames.map(m => ({ value: m, label: titleCaseJudgeDimensionLabel(m) }))}
 						selected={auditSortMetric}
 						onSelect={(v) => auditSortMetric = v}
 					/>

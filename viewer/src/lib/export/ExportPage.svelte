@@ -14,6 +14,7 @@
 		multiJudgeDimensionAgreementLabel,
 		multiJudgeHasDisagreement
 	} from '$lib/judgment.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
 
 	type ExportPageData = {
@@ -94,7 +95,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return judgeDimensionLabel(metric);
 	}
 	function metricOutcomeText(flag: boolean | null): string {
 		if (flag === null) return 'n/a';

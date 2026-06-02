@@ -74,7 +74,7 @@
 <div class="mb-6 flex items-start justify-between gap-3">
 	<div>
 		<h1 class="text-xl font-semibold tracking-tight">Evaluation suites</h1>
-		<p class="mt-0.5 text-sm text-text-muted">View evaluation test sets and results aligned to policy-defined behavior categories.</p>
+		<p class="mt-0.5 text-sm text-text-muted">View evaluation test sets and results aligned to taxonomy-defined behavior categories.</p>
 	</div>
 	<a
 		href="/new"

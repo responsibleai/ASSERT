@@ -20,6 +20,7 @@
 		stopReasonLabel,
 		stopReasonTitle
 	} from '$lib/result-view.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
 	import {
 		buildTrajectoryGroups,
 		trajectoryGroupSummary,
@@ -160,7 +161,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		const spaced = metric.replace(/_/g, ' ');
+		const spaced = judgeDimensionLabel(metric);
 		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 	}
 
@@ -184,10 +185,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level policy violation is flagged, but no behavior category is marked violated';
+			return 'top-level behavior violation is flagged, but no behavior category is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a behavior category is marked violated, but the top-level policy verdict is clear';
+			return 'a behavior category is marked violated, but the top-level behavior verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -1002,7 +1003,7 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Behavior-category findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Behavior-category findings and the top-level behavior decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
 						</p>
 					</div>
 				{/if}

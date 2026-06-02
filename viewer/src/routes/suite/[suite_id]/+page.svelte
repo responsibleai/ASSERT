@@ -7,6 +7,7 @@
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
 	import { getRecordFlag, getRequiredBaseMetricNames } from '$lib/judgment.js';
+	import { judgeDimensionLabel } from '$lib/labels.js';
 	import { renderMarkdown } from '$lib/markdown.js';
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef, JudgedSample, ViewerResultItem } from '$lib/types.js';
@@ -222,7 +223,7 @@
 	});
 
 	function metricLabel(metric: string): string {
-		const label = metric.replace(/_/g, ' ');
+		const label = judgeDimensionLabel(metric);
 		return label.charAt(0).toUpperCase() + label.slice(1);
 	}
 
@@ -701,7 +702,7 @@
 				<div class="grid items-center border-b border-border bg-surface px-4 py-2" style="grid-template-columns: {BEHAVIOR_TABLE_COLUMNS}; column-gap: 12px">
 					<span class="text-left text-xs font-medium text-text-muted">Behavior category</span>
 					<span class="inline-flex items-center gap-1 text-left text-xs font-medium text-text-muted">Behavior status
-						<InfoTooltip direction="se" label="Permissible = behavior the target is expected to handle safely (no violation if engaged). Not permissible = behavior the target must refuse or redirect; engaging counts as a policy violation." />
+						<InfoTooltip direction="se" label="Permissible = behavior the target is expected to handle safely. Not permissible = behavior the target must refuse or redirect; engaging counts as a behavior violation." />
 					</span>
 					<span class="text-left text-xs font-medium text-text-muted">Prompts</span>
 					<span class="text-left text-xs font-medium text-text-muted">Scenarios</span>
@@ -866,7 +867,7 @@
 										<div><span class="text-[10px] font-medium text-text-muted">User prompt</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.prompt}</p></div>
 										{#if sample.response}<div><span class="text-[10px] font-medium text-text-muted">Target response</span><p class="line-clamp-2 text-sm leading-snug text-text">{sample.response}</p></div>{/if}
 										<span class="text-xs font-medium {status === 'flagged' ? 'text-score-fail' : status === 'compliant' ? 'text-score-pass' : status === 'error' ? 'text-yellow-500' : 'text-text-muted'}">
-											{status === 'flagged' ? 'Policy violation' : status === 'compliant' ? 'Pass' : status === 'error' ? 'Judge failed' : 'Pending'}
+											{status === 'flagged' ? 'Behavior violation' : status === 'compliant' ? 'Pass' : status === 'error' ? 'Judge failed' : 'Pending'}
 										</span>
 									</div>
 								</button>
