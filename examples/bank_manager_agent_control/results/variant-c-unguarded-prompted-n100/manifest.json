@@ -1,0 +1,24 @@
+{
+  "started_at": "2026-06-01T22:36:52.847161+00:00",
+  "status": "completed",
+  "ended_at": "2026-06-02T00:07:18.128552+00:00",
+  "stages": {
+    "inference": "completed",
+    "judge": "completed"
+  },
+  "pid": 32396,
+  "host": "laptop2",
+  "heartbeat_at": "2026-06-02T00:07:18.048635+00:00",
+  "stage_timings": {
+    "inference": {
+      "started_at": "2026-06-01T22:36:52.849190+00:00",
+      "ended_at": "2026-06-02T00:05:31.397328+00:00",
+      "duration_secs": 5318.546
+    },
+    "judge": {
+      "started_at": "2026-06-02T00:05:31.411272+00:00",
+      "ended_at": "2026-06-02T00:07:18.048635+00:00",
+      "duration_secs": 106.609
+    }
+  }
+}
