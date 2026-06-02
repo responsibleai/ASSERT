@@ -20,7 +20,7 @@
                 <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python 3.11 | 3.12 | 3.13">
         </a>
         <a href="LICENSE">
-                <img src="https://img.shields.io/github/license/responsibleai/ASSERT" alt="License">
+                <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
         </a>
 </p>
 <p align="center">
