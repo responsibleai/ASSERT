@@ -814,4 +814,3 @@ export function loadIndexedRunScoreRow(
 		entry.length
 	);
 }
-
