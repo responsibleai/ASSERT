@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import inspect
 import json
 import logging
@@ -479,10 +478,12 @@ class CallableSession:
         callable_ref: str,
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self._callable_ref = callable_ref
         self._system_prompt = system_prompt
         self._message_timeout_s = message_timeout_s
+        self._config_path = config_path
         self._callable = None
         self._supports_history = False
 
@@ -492,16 +493,11 @@ class CallableSession:
 
     async def open(self) -> None:
         from assert_ai.core.security import validate_callable_ref
+        from assert_ai.core.tool_backend import import_callable_module
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
-        try:
-            mod = importlib.import_module(module_path)
-        except ModuleNotFoundError as exc:
-            raise ValueError(
-                f"Could not import module '{module_path}' from callable ref "
-                f"'{self._callable_ref}'. Is the package installed? ({exc})"
-            ) from exc
+        mod = import_callable_module(module_path, config_path=self._config_path)
         try:
             self._callable = getattr(mod, func_name)
         except AttributeError as exc:
