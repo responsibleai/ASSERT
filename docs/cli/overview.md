@@ -1,55 +1,41 @@
 # CLI Overview
 
-The canonical command is:
+The core CLI command is:
 
 ```bash
 assert-ai
 ```
 
-Use CLI flows to create, run, inspect, and compare evaluations.
+Use CLI flows to create, run, inspect, and compare evaluations from your local development environment.
 
-## Typical workflow
+## CLI workflow
 
-1. Design config:
+All evaluations start with designing an evaluation config YAML file. This YAML file specifies the behavior you are trying to test for, along with the AI system information and target information.
+
+> **Tip:**: Use the `assert-ai init` command to be guided through a multi-turn conversation with an LLM assistant (using a model you specify) that will gather the relevant basic information to configure and ouput the baseline YAML file.
 
 ```bash
 assert-ai init --model azure/gpt-5.4
 ```
 
-1. Run pipeline:
+Once you have an evaluation config YAML file, this is all that is needed to run the evaluation pipeline, which will generate the `taxonomy.json`, test set, inference set, and evaluation results in a long running process.
 
 ```bash
 assert-ai run --config <path-to-eval_config.yaml>
 ```
 
-1. Inspect results:
+Once the evaluation pipeline has finished running, you can list the results and status based on the evaluation suite and the run you want to analyze.
 
 ```bash
 assert-ai results status <suite> <run>
 ```
 
-1. Compare runs:
+Optionally, you can then compare multiple runs within an evaluation suite.
 
 ```bash
 assert-ai results compare <suite> <run-a> <run-b>
 ```
 
-## Command groups
+## Learn more
 
-- `init`: interactive config generation assistant
-- `run`: execute pipeline stages
-- `results`: list/status/compare suites and runs
-- `analysis`: post-hoc metrics commands
-- `judge-traces`: score pre-collected OTel traces
-- `library`: browse built-in behavior/judge presets
-
-## Global options
-
-Top-level options:
-
-- `-v`, `--verbose`
-- `-q`, `--quiet`
-- `--log-file <path>`
-- `--output text|json`
-
-For full syntax and required/optional flags per command, see `docs/cli/commands.md`.
+For full syntax and required/optional flags per command, see [CLI Commands](commands.md).

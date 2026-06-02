@@ -25,7 +25,7 @@ Step-by-step guides for common evaluation tasks.
 
 - [Create an Evaluation](guides/create-evaluation.md): Build a new eval config using the interactive assistant or manual YAML.
 - [Results Guide](guides/results.md): Interpret scores, metrics, and judge evidence from completed runs.
-- [Local Viewer](guides/local-viewer.md): Explore suites, runs, transcripts, and metrics in the local web UI.
+- [Local Viewer](guides/run-local-viewer.md): Explore suites, runs, transcripts, and metrics in the local web UI.
 - [Troubleshooting](guides/troubleshooting.md): Resolve common setup, runtime, and provider integration issues.
 
 ## Configuration
