@@ -8,7 +8,7 @@
 </p>
 <p align="center">
         <a href="docs/getting-started.md">🚀 Get started</a> |
-        <a href="https://aka.ms/assert-ghpage">🌐 Visit project website</a> |
+        <a href="https://responsibleai.github.io/ASSERT/">🌐 Visit project website</a> |
         <a href="docs/targets/callable.md">🔌 View supported targets</a> |
         <a href="docs/cli/overview.md">📘 CLI Reference</a> |
         <a href="examples/README.md">🧪 Examples</a>
