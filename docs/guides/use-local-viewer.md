@@ -60,4 +60,3 @@ The "Create new run" flow guides you through selecting source artifacts and run 
 Use the compare view to inspect differences across runs side by side.
 
 ![Compare runs view](../../assets/compare-runs.png)
-
