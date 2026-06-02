@@ -33,6 +33,7 @@ Accepted fields:
 
 - `name` — required string. Uses the same identifier rules as `suite`.
 - `description` — required string when `systematize` is enabled.
+- `preset` — optional string. Loads a behavior preset and fills missing `name` / `description`.
 
 `behavior.name` identifies the reusable behavior definition. `behavior.description` is the behavior spec that systematization expands into behavior categories.
 
@@ -61,6 +62,22 @@ The fallback applies to:
 
 `pipeline.test_set.prompt.model` and `pipeline.test_set.scenario.model` still fall back through `pipeline.test_set.model` before `default_model`.
 
+### `artifacts_root`
+
+- Type: string path
+- Required: no
+- Default: `artifacts` (resolved under repo root)
+
+Overrides where ASSERT stores artifacts.
+
+### `results_dir`
+
+- Type: string path
+- Required: no
+- Default: `<artifacts_root>/results`
+
+Overrides the suite/run output root.
+
 ### `pipeline`
 
 - Type: mapping
@@ -79,6 +96,11 @@ Accepted keys:
 - `behavior_category_count` — positive integer. Default: `25`.
 - `web_search` — boolean. Default: `true`.
 - `model` — model config. Required unless `default_model` is set.
+- `save_dir` — optional path for suite-stage outputs.
+
+Compatibility note:
+
+- `enabled` and `file_path` are accepted by the shared pipeline loader for stage control.
 
 If you omit `behavior_category_count`, the generator asks for `25` behavior_categories. `web_search` controls whether systematization can use web search.
 
@@ -103,19 +125,28 @@ Accepted keys:
 - `prompt` — mapping. Optional.
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
   - `model` — model config.
+  - `timeout_s` — optional per-call timeout for generation.
 - `scenario` — mapping. Optional.
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
   - `model` — model config.
+  - `timeout_s` — optional per-call timeout for generation.
 - `stratify` — mapping. Optional.
   - `dimensions` — list of dimensions crossed with behavior categories.
   - `level_count` — positive integer. Default: `3`. Used when dimensions need generated levels.
   - `model` — model config for generating missing dimension levels.
 - `tool_source` — string. Default: `runtime`. Allowed values: `runtime`, `per_test_case`. The legacy alias `per_seed` is still accepted but emits a `DeprecationWarning`; prefer `per_test_case`.
 - `model` — shared fallback for `prompt.model`, `scenario.model`, and `stratify.model`.
+- `timeout_s` — optional shared timeout fallback for prompt/scenario generation.
+- `taxonomy_path` — optional override path for taxonomy input.
+- `save_path` — optional override path for `test_set.jsonl` output.
 
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `test_set.prompt.model`, then `test_set.model`, then `default_model`. Scenario generation uses the same order with `test_set.scenario.model` first. Stratify generation uses `test_set.stratify.model`, then `test_set.model`, then `default_model`.
 
 `tool_source: per_test_case` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
+
+Compatibility note:
+
+- `validators` and `validator_model` are accepted as keys but rejected at runtime with a deprecation error.
 
 Example:
 
@@ -145,6 +176,7 @@ Accepted keys:
   - `model` — model config. Use for the [Prompt Agent target](../targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop).
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
   - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
+  - `connector` — external connector target (supported by parser/runtime, not recommended for customer-preview onboarding).
   - `system_prompt` — string. Optional.
   - `trace` — mapping. Optional. Use with callable targets that emit OpenTelemetry spans.
     - `backend` — string. Default: `phoenix`.
@@ -158,8 +190,14 @@ Accepted keys:
 - `max_turns` — positive integer. Default: `10`.
 - `concurrency` — positive integer. Default: `10`.
 - `max_tool_calls` — positive integer. Default: `10`.
+- `tool_timeout_s` — optional positive number.
+- `startup_timeout_s` — optional positive number.
 
 For customer-preview configs, `target` must define exactly one of `model`, `callable`, or `endpoint`.
+
+Compatibility note:
+
+- Additional operational keys accepted by the parser: `test_set_path`, `save_dir`, `strict`, `enabled`, `file_path`.
 
 Callable agent example with optional OTel trace capture:
 
@@ -217,6 +255,11 @@ Accepted keys:
   - `required_base` — optional boolean accepted by the parser and passed through unchanged. Current judge construction code does not read it.
 - `model` — model config. Required unless `default_model` is set.
 - `n` — positive integer. Default: `1`.
+- `preset` — optional string or list of strings. Loads judge dimension presets; inline `dimensions` override preset dimensions with the same name.
+
+Compatibility note:
+
+- Additional operational keys accepted by the parser: `inference_set_path`, `taxonomy_path`, `save_dir`, `enabled`, `file_path`.
 
 For each evaluation run, define the dimensions you want the judge to score. If you omit `model` and `default_model`, config validation fails.
 
@@ -337,7 +380,7 @@ Accepted fields:
 
 Defaults depend on the stage that reads the model:
 
-- `systematize.model` — `temperature: null`, `max_tokens: 10000`
+- `systematize.model` — `temperature: null`, `max_tokens: 16000`
 - `test_set.stratify.model` — `temperature: null`; `max_tokens` is accepted but ignored by the current implementation
 - `test_set.prompt.model` and `test_set.scenario.model` — `temperature: null`, `max_tokens: 3000`
 - `inference.target.model` — `temperature: null`, `max_tokens: 10000`
