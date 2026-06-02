@@ -13,6 +13,7 @@
 		parseCitationReferences
 	} from '$lib/citation-resolution';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
+	import { citationWarningLabel } from '$lib/citation-warnings.js';
 	import { formatFactorLabel } from '$lib/grouping.js';
 	import {
 		stopReasonChipClass,
@@ -679,6 +680,12 @@
 			? activeVerdict.citation_warnings.filter((warning): warning is string => typeof warning === 'string' && warning.length > 0)
 			: []
 	);
+	const activeDegradedCitationWarnings = $derived(
+		activeCitationWarnings.filter((warning) => warning.startsWith('citation_'))
+	);
+	const activeDegradedCitationWarningLabels = $derived(
+		activeDegradedCitationWarnings.map(citationWarningLabel)
+	);
 	const activeJudgmentWarnings = $derived(
 		Array.isArray(activeVerdict?.judgment_warnings)
 			? activeVerdict.judgment_warnings.filter((warning): warning is string => typeof warning === 'string' && warning.length > 0)
@@ -907,6 +914,14 @@
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
 							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+						</p>
+					</div>
+				{/if}
+				{#if activeDegradedCitationWarnings.length > 0}
+					<div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+						<div class="text-xs font-semibold uppercase tracking-wider text-sky-400">Evidence degraded</div>
+						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
+							The judgment was kept, but some cited evidence could not be grounded cleanly. Citation links or transcript highlights may be incomplete for: {activeDegradedCitationWarningLabels.join(', ')}.
 						</p>
 					</div>
 				{/if}

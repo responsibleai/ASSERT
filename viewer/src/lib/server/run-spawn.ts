@@ -172,6 +172,7 @@ interface WizardPayload {
 	toolModuleCode?: string;
 	toolModuleFileName?: string;
 	toolsAcknowledged?: boolean;
+	reuseExistingTarget?: boolean;
 }
 
 // ─── Normalize ─────────────────────────────────────────────────────────
@@ -199,6 +200,50 @@ const RUN_PID_FILE = 'runner.pid';
 const TOOLSET_FILE = 'target_tools.yaml';
 const TOOL_MODULE_FILE = 'target_tools.py';
 const MAX_TOOL_UPLOAD_BYTES = 256 * 1024;
+const RUN_CONFIG_FILES = ['eval_config.yaml', 'config.yaml'];
+
+function asRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function latestRunConfigPath(suite: string): string | null {
+	const suiteDir = suiteDirPath(suite);
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(suiteDir, { withFileTypes: true });
+	} catch {
+		return null;
+	}
+	let best: { path: string; mtimeMs: number } | null = null;
+	for (const entry of entries) {
+		if (!entry.isDirectory() || entry.name === 'artifacts' || !isSafeArtifactId(entry.name)) continue;
+		for (const fileName of RUN_CONFIG_FILES) {
+			const configPath = path.join(suiteDir, entry.name, fileName);
+			let stat: fs.Stats;
+			try {
+				stat = fs.statSync(configPath);
+			} catch {
+				continue;
+			}
+			if (!stat.isFile()) continue;
+			if (!best || stat.mtimeMs > best.mtimeMs) best = { path: configPath, mtimeMs: stat.mtimeMs };
+		}
+	}
+	return best?.path ?? null;
+}
+
+function loadExistingInferenceTarget(suite: string): Record<string, unknown> | null {
+	const configPath = latestRunConfigPath(suite);
+	if (!configPath) return null;
+	const parsed = parseYaml(fs.readFileSync(configPath, 'utf-8'));
+	const target = asRecord(asRecord(asRecord(parsed).pipeline).inference).target;
+	const targetRecord = asRecord(target);
+	return Object.keys(targetRecord).length > 0 ? cloneRecord(targetRecord) : null;
+}
 
 export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 	const errors: string[] = [];
@@ -255,8 +300,9 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 	let toolSource: string | undefined;
 	let toolContextSummary = '';
 	const extraFiles: Array<{ name: string; content: string }> = [];
+	const reuseExistingTarget = payload.reuseExistingTarget === true;
 
-	if (evaluationTarget === 'agent') {
+	if (evaluationTarget === 'agent' && !reuseExistingTarget) {
 		const toolsMode = payload.toolsMode;
 		const simulatorModel = trimOrEmpty(payload.simulatorModel);
 		if (toolsMode === 'generated') {
@@ -350,6 +396,18 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 	} else {
 		errors.push('source must be "new" or "existing".');
 		suite = userSuiteId || autoSuiteId();
+	}
+
+	let preservedInferenceTarget: Record<string, unknown> | null = null;
+	if (reuseExistingTarget) {
+		if (source !== 'existing' || !existingSuiteId || !isSafeArtifactId(existingSuiteId)) {
+			errors.push('reuseExistingTarget is only supported when re-running an existing suite.');
+		} else {
+			preservedInferenceTarget = loadExistingInferenceTarget(existingSuiteId);
+			if (!preservedInferenceTarget) {
+				errors.push(`Could not load an existing inference target for suite "${existingSuiteId}".`);
+			}
+		}
 	}
 
 	const run = trimOrEmpty(payload.runId);
@@ -487,19 +545,23 @@ export function normalizeWizardPayload(raw: unknown): NormalizedRun {
 		trimOrEmpty(promptEvalCfg.targetModel) ||
 		defaultModelName;
 	const targetModelExtras = scenarioEvalEnabled ? scenarioCfg.target : undefined;
-	const inferenceTarget: Record<string, unknown> = {
-		model: buildModelBlock({
-			model: targetModelName,
-			temperature: targetModelExtras?.temperature,
-			maxTokens: targetModelExtras?.maxTokens
-		})
-	};
-	const trimmedSystemPrompt = trimOrEmpty(payload.systemPrompt);
-	if (trimmedSystemPrompt) {
-		inferenceTarget.system_prompt = trimmedSystemPrompt;
-	}
-	if (toolsBlock) {
-		inferenceTarget.tools = toolsBlock;
+	const inferenceTarget: Record<string, unknown> =
+		preservedInferenceTarget ??
+		{
+			model: buildModelBlock({
+				model: targetModelName,
+				temperature: targetModelExtras?.temperature,
+				maxTokens: targetModelExtras?.maxTokens
+			})
+		};
+	if (!preservedInferenceTarget) {
+		const trimmedSystemPrompt = trimOrEmpty(payload.systemPrompt);
+		if (trimmedSystemPrompt) {
+			inferenceTarget.system_prompt = trimmedSystemPrompt;
+		}
+		if (toolsBlock) {
+			inferenceTarget.tools = toolsBlock;
+		}
 	}
 
 	const inferenceBlock: Record<string, unknown> = { target: inferenceTarget };

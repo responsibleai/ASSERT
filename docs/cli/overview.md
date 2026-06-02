@@ -12,7 +12,8 @@ Use CLI flows to create, run, inspect, and compare evaluations from your local d
 
 All evaluations start with designing an evaluation config YAML file. This YAML file specifies the behavior you are trying to test for, along with the AI system information and target information.
 
-> **Tip:** Use the `assert-ai init` command to be guided through a multi-turn conversation with an LLM assistant (using a model you specify) that will gather the relevant basic information to configure and output the baseline YAML file.
+> **Tip:** Use the `assert-ai init` command to be guided through a multi-turn conversation with an LLM assistant (using a model you specify) that will gather the relevant basic information to configure and output the baseline YAML file.
+
 
 ```bash
 assert-ai init --model azure/gpt-5.4

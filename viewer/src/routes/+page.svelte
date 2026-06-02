@@ -162,7 +162,7 @@
 					{ value: 'runs', label: 'Most runs' }
 				]}
 				selected={sortBy}
-				onSelect={(v) => sortBy = v}
+				onSelect={(v) => sortBy = v as 'newest' | 'oldest' | 'name' | 'runs'}
 			/>
 		</div>
 		<span class="flex-shrink-0 text-[11px] text-text-muted">{filtered.length} suites</span>
