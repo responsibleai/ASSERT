@@ -11,7 +11,6 @@ Though portable local artifacts can be a powerful feature, ASSERT comes with a l
 - inference preview while runs are in progress
 - live run monitor from `manifest.json`
  
-# View results in Local UI Viewer Application
 
 ## Screenshot walkthrough
 
