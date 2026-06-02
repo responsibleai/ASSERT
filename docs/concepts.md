@@ -12,9 +12,9 @@ Each step of the pipeline requires an input and outputs an artifact. ASSERT stor
 
 The ASSERT evaluation pipeline starts with an evaluation specification (`eval_config.yaml`) that allows you to specify:
 
-- Behavior requirements that you'd like to evaluation in plain language using `behavior.name` and `behavior.description` ("What failure modes am I trying to evaluate my system for?)
-- The AI system/application context or agent context in `context` ("what does my AI system/agent/application do, what is it used for and whoe uses it? What does this agent have access to?)
-- Target information ("what am I trying to test: a hosted model? a prompt agent? an agent or multi-agent system with tools?)
+- Behavior requirements that you'd like to evaluate in plain language using `behavior.name` and `behavior.description` ("What failure modes am I trying to evaluate my system for?")
+- The AI system/application context or agent context in `context` ("What does my AI system/agent/application do, what is it used for, and who uses it? What does this agent have access to?")
+- Target information ("What am I trying to test: a hosted model? a prompt agent? an agent or multi-agent system with tools?")
 - Evaluation specification for each step of the ASSERT evaluation pipeline stages:
   - Systematization
   - Test set generation
