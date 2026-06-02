@@ -206,7 +206,7 @@ Judge:
 
 ---
 
-MAs a best practice, it is recommended to use different judges and human review to validate the annotator against the policy across different evaluation runs.
+As a best practice, it is recommended to use different judges and human review to validate the annotator against the policy across different evaluation runs.
 
 ### 8. Behavior description quality determines evaluation quality
 
