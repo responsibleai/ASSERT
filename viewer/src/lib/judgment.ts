@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import type { DimensionDef, JudgeStatus, MultiJudge } from './types.js';
+import type { DimensionDef, JudgeStatus } from './types.js';
 
 type VerdictLike = Record<string, unknown> | null | undefined;
 
@@ -98,55 +98,4 @@ export function scoreSortValue(record: JudgmentRecordLike, metric: string): numb
 	const value = getRecordFlag(record, metric);
 	if (value === null) return 2;
 	return value ? 0 : 1;
-}
-
-function votesForMetric(
-	multiJudge: MultiJudge | null | undefined,
-	metric: string
-): boolean[] {
-	return multiJudge?.votes?.[metric] ?? [];
-}
-
-function agreementForVotes(votes: boolean[]): number | null {
-	if (votes.length === 0) return null;
-	const trueCount = votes.filter(Boolean).length;
-	const falseCount = votes.length - trueCount;
-	return Math.max(trueCount, falseCount) / votes.length;
-}
-
-export function multiJudgeMeanAgreement(
-	multiJudge: MultiJudge | null | undefined,
-	metrics?: string[]
-): number | null {
-	if (!multiJudge) return null;
-	const names = metrics && metrics.length > 0 ? metrics : Object.keys(multiJudge.votes ?? {});
-	const agreements = names.flatMap((metric) => {
-		const agreement = agreementForVotes(votesForMetric(multiJudge, metric));
-		return agreement == null ? [] : [agreement];
-	});
-	if (agreements.length > 0) {
-		return agreements.reduce((sum, agreement) => sum + agreement, 0) / agreements.length;
-	}
-	return typeof multiJudge.agreement === 'number' && Number.isFinite(multiJudge.agreement)
-		? multiJudge.agreement
-		: null;
-}
-
-export function multiJudgeHasDisagreement(
-	multiJudge: MultiJudge | null | undefined,
-	metrics?: string[]
-): boolean {
-	const meanAgreement = multiJudgeMeanAgreement(multiJudge, metrics);
-	return meanAgreement != null && meanAgreement < 1;
-}
-
-export function multiJudgeDimensionAgreementLabel(
-	multiJudge: MultiJudge | null | undefined,
-	metric: string
-): string | null {
-	const votes = votesForMetric(multiJudge, metric);
-	if (votes.length === 0) return null;
-	const trueCount = votes.filter(Boolean).length;
-	const agreeingSamples = Math.max(trueCount, votes.length - trueCount);
-	return `${agreeingSamples}/${votes.length} agree`;
 }

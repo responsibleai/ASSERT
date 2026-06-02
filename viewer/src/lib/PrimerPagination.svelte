@@ -47,6 +47,7 @@
 			type="button"
 			class="previous_page"
 			aria-label="Previous page"
+			rel="previous"
 			disabled={page <= 1}
 			onclick={() => go(page - 1)}
 		>Previous</button>
@@ -65,6 +66,7 @@
 			type="button"
 			class="next_page"
 			aria-label="Next page"
+			rel="next"
 			disabled={page >= totalPages}
 			onclick={() => go(page + 1)}
 		>Next</button>

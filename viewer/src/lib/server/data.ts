@@ -13,13 +13,11 @@ import {
 	loadRunJudgeTaxonomyFromArtifacts,
 	loadRunRuntimeMode,
 	loadRunScoreRow,
-	loadRunTrajectoryRow,
 	loadRunTranscriptRow,
 	type RunSnapshot,
 	type SuiteSnapshot,
 	type UnifiedSeedRow,
 	type UnifiedScoreRow,
-	type UnifiedTrajectoryRow,
 	type UnifiedTranscriptRow,
 	loadViewerRunIndexes,
 	loadViewerRunReadModel,
@@ -61,7 +59,6 @@ import type {
 	SuiteListItem,
 	SuiteStatus,
 	Behavior,
-	TrajectoryRow,
 	ViewerResultItem
 } from '$lib/types.js';
 
@@ -248,36 +245,6 @@ function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript 
 		...transcript,
 		behavior: readRowBehavior(transcript),
 		dimensions: readFactors(transcript.dimensions)
-	};
-}
-
-function normalizeTrajectoryRow(row: UnifiedTrajectoryRow | null | undefined): TrajectoryRow | null {
-	const kind = row?.type ?? row?.kind;
-	if (!row || (kind !== 'prompt' && kind !== 'scenario') || typeof row.test_case_id !== 'string') {
-		return null;
-	}
-	const metadata = readObject(row.metadata);
-	const steps = Array.isArray(row.steps)
-		? row.steps
-				.filter((step) => readObject(step) !== null)
-				.map((step) => step as TrajectoryRow['steps'][number])
-		: [];
-	return {
-		kind,
-		test_case_id: row.test_case_id,
-		behavior: typeof row.behavior === 'string' ? row.behavior : null,
-		target: typeof row.target === 'string' ? row.target : null,
-		target_runtime_mode:
-			typeof row.target_runtime_mode === 'string'
-				? row.target_runtime_mode
-				: typeof metadata?.target_runtime_mode === 'string'
-					? metadata.target_runtime_mode
-					: null,
-		interaction: typeof row.interaction === 'string' ? row.interaction : null,
-		stop_reason: typeof row.stop_reason === 'string' ? row.stop_reason : null,
-		steps,
-		metadata: metadata ?? undefined,
-		dimensions: readFactors(row.dimensions)
 	};
 }
 
@@ -483,8 +450,7 @@ function buildJudgedSampleRow(
 	runtimeMode: string | null,
 	seedRow: UnifiedSeedRow | undefined,
 	scoreRow: UnifiedScoreRow,
-	transcriptRow: UnifiedTranscriptRow | undefined,
-	trajectoryRow?: UnifiedTrajectoryRow | null
+	transcriptRow: UnifiedTranscriptRow | undefined
 ): JudgedSample {
 	const seedMetadata = readSeedPayload(seedRow);
 	const messages = transcriptRow ? materializeTargetMessages(transcriptRow) : [];
@@ -518,7 +484,6 @@ function buildJudgedSampleRow(
 		judge_error: typeof scoreRow.judge_error === 'string' ? scoreRow.judge_error : null,
 		messages,
 		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
-		trajectory: normalizeTrajectoryRow(trajectoryRow),
 		target_runtime_mode: runtimeMode,
 		dimensions: readFactors(scoreRow.dimensions) ?? readFactors(transcriptRow?.dimensions) ?? readFactors(seedRow?.dimensions),
 		multi_judge:
@@ -659,8 +624,7 @@ function buildScenarioDrawerItem(
 	runtimeMode: string | null,
 	transcriptRow: UnifiedTranscriptRow,
 	scoreRow: UnifiedScoreRow | undefined,
-	seedInfo: ScenarioSeedInfo | undefined,
-	trajectoryRow?: UnifiedTrajectoryRow | null
+	seedInfo: ScenarioSeedInfo | undefined
 ): ViewerResultItem | null {
 	const seedId = typeof transcriptRow.test_case_id === 'string' ? transcriptRow.test_case_id : '';
 	if (!seedId) return null;
@@ -693,8 +657,7 @@ function buildScenarioDrawerItem(
 		score,
 		materializeTargetMessages(transcriptRow),
 		readLlmCalls(transcriptRow.llm_calls),
-		seedInfo,
-		normalizeTrajectoryRow(trajectoryRow)
+		seedInfo
 	);
 }
 
@@ -1421,7 +1384,7 @@ function findSeedRowById(seedRows: UnifiedSeedRow[], seedId: string): UnifiedSee
 	return seedRows.find((row) => row.test_case_id === seedId);
 }
 
-async function loadPromptDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
+function loadPromptDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
 	const viewerReadModel = loadViewerRunIndexes(suiteId, runId);
 	const transcriptRow = loadIndexedRunTranscriptRow(
@@ -1433,25 +1396,22 @@ async function loadPromptDrawerItemFromReadModel(suiteId: string, runId: string,
 	);
 	const scoreRow = loadIndexedRunScoreRow(suiteId, runId, viewerReadModel.scoreIndex, seedId, 'prompt');
 	if (!transcriptRow || !scoreRow) return null;
-	const trajectoryRow = await loadRunTrajectoryRow(suiteId, runId, seedId, 'prompt');
 
 	const sample = buildJudgedSampleRow(
 		runId,
 		loadRuntimeModeForRun(suiteId, runId),
 		findSeedRowById(suiteSnapshot?.seedRows ?? [], seedId),
 		scoreRow,
-		transcriptRow,
-		trajectoryRow
+		transcriptRow
 	);
 	return normalizePromptResult(sample);
 }
 
 async function loadPromptDrawerItemFromCanonical(suiteId: string, runId: string, seedId: string) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const [transcriptRow, scoreRow, trajectoryRow] = await Promise.all([
+	const [transcriptRow, scoreRow] = await Promise.all([
 		loadRunTranscriptRow(suiteId, runId, seedId, 'prompt'),
-		loadRunScoreRow(suiteId, runId, seedId, 'prompt'),
-		loadRunTrajectoryRow(suiteId, runId, seedId, 'prompt')
+		loadRunScoreRow(suiteId, runId, seedId, 'prompt')
 	]);
 	if (!transcriptRow) return null;
 	if (!scoreRow) return null;
@@ -1461,13 +1421,12 @@ async function loadPromptDrawerItemFromCanonical(suiteId: string, runId: string,
 		loadRuntimeModeForRun(suiteId, runId),
 		findSeedRowById(suiteSnapshot?.seedRows ?? [], seedId),
 		scoreRow,
-		transcriptRow,
-		trajectoryRow
+		transcriptRow
 	);
 	return normalizePromptResult(sample);
 }
 
-async function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
+function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, seedId: string) {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
 	const viewerReadModel = loadViewerRunIndexes(suiteId, runId);
 	const transcriptRow = loadIndexedRunTranscriptRow(
@@ -1479,7 +1438,6 @@ async function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: strin
 	);
 	const scoreRow = loadIndexedRunScoreRow(suiteId, runId, viewerReadModel.scoreIndex, seedId, 'scenario');
 	if (!transcriptRow || !scoreRow) return null;
-	const trajectoryRow = await loadRunTrajectoryRow(suiteId, runId, seedId, 'scenario');
 
 	const auditScore = buildAuditScoreRow(loadRuntimeModeForRun(suiteId, runId), scoreRow, transcriptRow);
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
@@ -1487,15 +1445,14 @@ async function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: strin
 		auditScore,
 		materializeTargetMessages(transcriptRow),
 		readLlmCalls(transcriptRow.llm_calls),
-		buildScenarioSeedInfo(scenarioSeeds, seedId, []),
-		normalizeTrajectoryRow(trajectoryRow)
+		buildScenarioSeedInfo(scenarioSeeds, seedId, [])
 	);
 }
 
 export async function loadPromptDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return await loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
+			return loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
@@ -1506,17 +1463,16 @@ export async function loadPromptDrawerItem(suiteId: string, runId: string, seedI
 export async function loadScenarioDrawerItem(suiteId: string, runId: string, seedId: string) {
 	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
 		try {
-			return await loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
+			return loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
 		} catch (err) {
 			if (!(err instanceof ViewerReadModelError)) throw err;
 		}
 	}
 
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
-	const [transcriptRow, matchedScoreRow, trajectoryRow] = await Promise.all([
+	const [transcriptRow, matchedScoreRow] = await Promise.all([
 		loadRunTranscriptRow(suiteId, runId, seedId, 'scenario'),
-		loadRunScoreRow(suiteId, runId, seedId, 'scenario'),
-		loadRunTrajectoryRow(suiteId, runId, seedId, 'scenario')
+		loadRunScoreRow(suiteId, runId, seedId, 'scenario')
 	]);
 	if (!transcriptRow) return null;
 
@@ -1530,8 +1486,7 @@ export async function loadScenarioDrawerItem(suiteId: string, runId: string, see
 			scenarioSeeds,
 			seedId,
 			matchedScoreRow ? [buildAuditScoreRow(runtimeMode, matchedScoreRow, transcriptRow)] : []
-		),
-		trajectoryRow
+		)
 	);
 }
 
