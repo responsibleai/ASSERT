@@ -142,6 +142,7 @@ cp -R examples/bank_manager_agent_control/results artifacts/results/bank-manager
 ```bash
 cd viewer
 npm install        # one-time, ~1-2 min
+$env:VIEWER_EDIT_MODE = "1"
 npm run dev        # serves http://localhost:5173
 ```
 
