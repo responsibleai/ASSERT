@@ -25,7 +25,8 @@ Then inspect matching rows in `inference_set.jsonl` to see the full prompt and r
 
 ## 3. Debug stage inputs
 
-Often if the inputs are too vague or low-quality, then the resulting output can also lead to failures in the evaluation. Refer to the guidance on structuring high quality inputs in the [Best Practices and Limitations](../config/best-practices.md) documentation.
+Often if the inputs are too vague or low-quality, then the resulting output can also lead to failures in the evaluation. Refer to the guidance on structuring high quality inputs in the [Best Practices and Limitations](../config/best-practices.md) documentation.
+
 
 - `systematize` issues: inspect `taxonomy.json`
 - `test_set` issues: inspect `test_set.jsonl` and stratification dimensions
@@ -54,7 +55,7 @@ Common examples:
 - Non-instrumented target when trace-level evidence is expected
 - Overly vague judge dimensions and rubrics causing weak verdict evidence
 - Stale artifacts reused without forcing the correct stage
-
+## 6. Helpful comparisons
 ## 6.  Helpful comparisons
 
 Compare runs to spot regressions:
