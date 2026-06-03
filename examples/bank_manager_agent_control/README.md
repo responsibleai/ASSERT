@@ -113,6 +113,37 @@ demo data.
 
 Run all commands from the repository root.
 
+### 0. Pull the latest demo branch (discarding any local changes in this folder)
+
+If you have edited anything inside `examples/bank_manager_agent_control/`
+since your last `git pull`, reset the demo folder first so the pull
+fast-forwards cleanly. The commands below discard tracked-file edits
+**only inside this folder** — files anywhere else in the repo and any
+untracked files inside the folder are preserved.
+
+PowerShell (Windows):
+
+```powershell
+git checkout build-demo-final
+git checkout HEAD -- examples/bank_manager_agent_control/
+git pull --ff-only
+```
+
+bash (macOS / Linux):
+
+```bash
+git checkout build-demo-final
+git checkout HEAD -- examples/bank_manager_agent_control/
+git pull --ff-only
+```
+
+> If `git pull --ff-only` errors with "Not possible to fast-forward",
+> your local `build-demo-final` has diverged commits. On a demo-speaker
+> laptop the safe recovery is:
+> `git fetch && git reset --hard origin/build-demo-final`
+> &mdash; **this discards all local commits on the branch.** Do not run
+> this on a work laptop with unpushed changes.
+
 ### 1. Copy the prepared results into the viewer's working dir
 
 This populates `artifacts/results/bank-manager-agent-control/` from
@@ -139,23 +170,22 @@ cp -R examples/bank_manager_agent_control/results artifacts/results/bank-manager
 
 ### 2. Start the viewer (in its own terminal)
 
-```bash
-cd viewer
-npm install        # one-time, ~1-2 min
-```
-
-PowerShell:
+PowerShell (Windows):
 
 ```powershell
+cd viewer
+npm install                          # one-time, ~1-2 min
 $env:VIEWER_EDIT_MODE = "1"
-npm run dev        # serves http://localhost:5173
+npm run dev                          # serves http://localhost:5173
 ```
 
 bash (macOS / Linux):
 
 ```bash
+cd viewer
+npm install                          # one-time, ~1-2 min
 export VIEWER_EDIT_MODE=1
-npm run dev        # serves http://localhost:5173
+npm run dev                          # serves http://localhost:5173
 ```
 
 Open <http://localhost:5173> and pick the suite
