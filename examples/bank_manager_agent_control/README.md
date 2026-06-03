@@ -124,22 +124,30 @@ untracked files inside the folder are preserved.
 PowerShell (Windows):
 
 ```powershell
+cd (git rev-parse --show-toplevel)             # cd to repo root (safe from any subdir, eg viewer/)
 git checkout build-demo-final
 git checkout HEAD -- examples/bank_manager_agent_control/
-git pull --ff-only
+git pull --no-rebase --ff-only
 ```
 
 bash (macOS / Linux):
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"          # cd to repo root (safe from any subdir, eg viewer/)
 git checkout build-demo-final
 git checkout HEAD -- examples/bank_manager_agent_control/
-git pull --ff-only
+git pull --no-rebase --ff-only
 ```
 
-> If `git pull --ff-only` errors with "Not possible to fast-forward",
-> your local `build-demo-final` has diverged commits. On a demo-speaker
-> laptop the safe recovery is:
+> The `cd (git rev-parse ...)` first line guards against running this
+> sequence from a subdirectory (eg. you left a terminal in `viewer/`
+> from the previous demo). The `--no-rebase` flag on the pull guards
+> against any local `pull.rebase=true` config interfering with
+> `--ff-only`.
+>
+> If `git pull --no-rebase --ff-only` errors with "Not possible to
+> fast-forward", your local `build-demo-final` has diverged commits.
+> On a demo-speaker laptop the safe recovery is:
 > `git fetch && git reset --hard origin/build-demo-final`
 > &mdash; **this discards all local commits on the branch.** Do not run
 > this on a work laptop with unpushed changes.
