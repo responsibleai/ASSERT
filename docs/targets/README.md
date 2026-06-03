@@ -21,8 +21,8 @@ For any agent or multi-agent system you can invoke from Python — LangGraph, Cr
 For 33+ supported frameworks the instrumentation is two lines:
 
 ```python
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace.enable()
 ```
 
 For unsupported frameworks or custom orchestration, emit your own OTel spans with the OpenTelemetry SDK; `target.trace` reads the same span data either way.

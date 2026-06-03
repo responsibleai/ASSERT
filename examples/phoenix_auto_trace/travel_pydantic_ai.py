@@ -3,15 +3,15 @@
 
 """Travel planner — PydanticAI (agent framework with typed tools).
 
-Instrumentation: 2 lines. Agent code: standard PydanticAI.
+Instrumentation: central helper call. Agent code: standard PydanticAI.
 Traces captured: agent runs, tool calls, LLM calls, structured output, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-pydantic-ai arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-pydantic-ai arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 

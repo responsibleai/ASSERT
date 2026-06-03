@@ -120,6 +120,10 @@ class OTelTracedSession:
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
+        if self._live_otel:
+            from assert_ai import auto_trace
+
+            auto_trace.enable(export=False)
         # Suppress Phoenix/OTel banner output during module import.
         # Phoenix's register(verbose=True) prints a multi-line banner to
         # stdout when the target module calls register() at import time.

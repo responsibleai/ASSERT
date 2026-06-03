@@ -3,18 +3,18 @@
 
 """Travel planner — DSPy (declarative signatures).
 
-Instrumentation: 2 lines. Agent code: standard DSPy.
+Instrumentation: central helper call. Agent code: standard DSPy.
 Traces captured: module calls, LLM calls with signatures, optimization steps.
 """
 
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-dspy arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-dspy arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard DSPy
