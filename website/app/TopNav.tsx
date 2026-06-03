@@ -83,7 +83,7 @@ export default function TopNav() {
 						</a>
 					)}
 					<a
-						href="https://aka.ms/assert"
+						href="https://commandline.microsoft.com/assert-written-intent-executable-evals/"
 						target="_blank"
 						rel="noopener noreferrer"
 						className="nav-btn nav-btn-secondary"
