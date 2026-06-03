@@ -274,7 +274,7 @@ Run all commands from the repository root.
 
 ### 1. Python 3.11+ venv and ASSERT
 
-PowerShell:
+PowerShell (Windows):
 
 ```powershell
 python -m venv .venv
@@ -283,7 +283,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph,examples]"
 ```
 
-bash:
+bash (macOS / Linux):
 
 ```bash
 python -m venv .venv
@@ -306,9 +306,13 @@ needed -- you only need a C linker).
 
 ### 3. OPA (Open Policy Agent) on PATH
 
+PowerShell (Windows):
+
 ```powershell
 winget install open-policy-agent.opa
 ```
+
+bash (macOS / Linux):
 
 ```bash
 brew install opa                                    # macOS
@@ -320,13 +324,13 @@ Compare tab in the chat UI.
 
 ### 4. `.env` with Azure credentials
 
-PowerShell:
+PowerShell (Windows):
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-bash:
+bash (macOS / Linux):
 
 ```bash
 [[ -f .env ]] || cp .env.example .env
