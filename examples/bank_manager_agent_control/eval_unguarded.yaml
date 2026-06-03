@@ -1,5 +1,5 @@
 suite: bank-manager-agent-control
-run: variant-a-unguarded-n100
+run: variant-a-unguarded-n100-v2
 
 # Baseline (unguarded) config. Owns the full pipeline:
 # systematize → test_set → inference → judge. The produced taxonomy and

@@ -1,5 +1,5 @@
 suite: bank-manager-agent-control
-run: variant-e-guarded-acs-n100
+run: variant-e-guarded-acs-n100-v2
 
 # Comparison config: same shared test_set as variant-a-unguarded-n100,
 # scored against the new Agent Control Specification (ACS) policy at
