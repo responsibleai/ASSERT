@@ -286,7 +286,10 @@ assert-ai run --config examples/bank_manager_agent_control/eval_unguarded_prompt
 assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 ```
 
-Each run writes to `artifacts/results/bank-manager-agent-control/<variant>/`.
+Each run writes to `artifacts/results/bank-manager-agent-control/<variant>/`,
+where `<variant>` is the `run:` value in each yaml (currently suffixed
+`-v2` so fresh runs land in new directories and never overwrite the
+committed `-n100` source shown in the Variants table above).
 The committed source under `examples/bank_manager_agent_control/results/`
 is never touched. To restore the demo working copy after a reproduce
 run, repeat step 1 of [View the demo](#view-the-demo-no-azure-credentials-needed).
