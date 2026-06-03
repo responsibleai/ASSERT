@@ -10,8 +10,8 @@ Traces captured: agent execution, LLM calls, tool invocations, sub-agent delegat
 from __future__ import annotations
 
 # pip install openinference-instrumentation-google-adk arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool

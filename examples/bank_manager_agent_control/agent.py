@@ -18,12 +18,11 @@ ACS spec and SDKs.
 """
 from __future__ import annotations
 
-# 2 lines to instrument, then run the agent unchanged. Phoenix auto-discovers
-# LangChain, CrewAI, OpenAI, and MCP tool calls.
-try:
-    from phoenix.otel import register; register(auto_instrument=True)
-except ImportError:
-    pass  # phoenix-otel + openinference-* not installed; skip auto-trace
+# Auto-trace LangChain / OpenAI / MCP via OpenInference — lazy. Skips the
+# 30-50s `import phoenix.otel` cost when no Phoenix collector is reachable,
+# so interactive demos (e.g. unguarded_ui.py) start instantly. Run
+# `phoenix serve` first, or set PHOENIX_COLLECTOR_ENDPOINT, to see traces.
+from assert_ai import auto_trace; auto_trace()
 
 import asyncio
 import os

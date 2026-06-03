@@ -8,8 +8,8 @@ Traces captured: LLM calls, gateway routing, fallbacks, token counts, latency.
 """
 
 # pip install openinference-instrumentation-portkey arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import json
 from portkey_ai import Portkey

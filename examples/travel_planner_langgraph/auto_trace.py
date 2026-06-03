@@ -9,8 +9,9 @@ LangChain, LangGraph, OpenAI, and MCP tool calls.
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-langchain arize-phoenix-otel
-from phoenix.otel import register  # noqa: F401
-register(auto_instrument=True)
+# 1 line to instrument — lazy via assert_ai.auto_trace so importing this
+# module is fast when no Phoenix collector is running. See assert_ai/tracing.py.
+from assert_ai import auto_trace
+auto_trace()
 
 from examples.travel_planner_langgraph.agent import chat_sync  # noqa: E402
