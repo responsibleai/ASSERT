@@ -10,8 +10,8 @@ Traces captured: pipeline runs, LLM calls, tool invocations, token counts, laten
 from __future__ import annotations
 
 # pip install openinference-instrumentation-haystack arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import os
 

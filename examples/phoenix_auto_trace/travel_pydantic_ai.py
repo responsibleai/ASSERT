@@ -10,8 +10,8 @@ Traces captured: agent runs, tool calls, LLM calls, structured output, token cou
 from __future__ import annotations
 
 # pip install openinference-instrumentation-pydantic-ai arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import os
 

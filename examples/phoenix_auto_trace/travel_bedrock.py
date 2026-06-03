@@ -10,8 +10,8 @@ Traces captured: LLM calls, tool use, token counts, latency.
 from __future__ import annotations
 
 # pip install openinference-instrumentation-bedrock arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import json
 import boto3

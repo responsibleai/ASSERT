@@ -1,5 +1,5 @@
 suite: bank-manager-agent-control
-run: variant-c-unguarded-prompted-n100
+run: variant-c-unguarded-prompted-n100-v2
 
 # Prompt-engineering intervention: same unguarded LangGraph agent as
 # variant-a-unguarded-n100, but with defensive safety directives appended

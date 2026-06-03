@@ -8,8 +8,8 @@ Traces captured: LLM calls, tool calls, token counts, latency, model name.
 """
 
 # pip install openinference-instrumentation-litellm arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import json
 import os

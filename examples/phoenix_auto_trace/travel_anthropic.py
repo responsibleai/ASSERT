@@ -8,8 +8,8 @@ Traces captured: LLM calls, tool use blocks, token counts, latency.
 """
 
 # pip install openinference-instrumentation-anthropic arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import json
 import anthropic

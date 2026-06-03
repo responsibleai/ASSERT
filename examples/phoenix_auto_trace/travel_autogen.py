@@ -10,8 +10,8 @@ Traces captured: agent messages, tool calls, LLM calls, team orchestration, toke
 from __future__ import annotations
 
 # pip install openinference-instrumentation-autogen-agentchat arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import asyncio
 import os

@@ -113,6 +113,45 @@ demo data.
 
 Run all commands from the repository root.
 
+### 0. Pull the latest demo branch (discarding any local changes in this folder)
+
+If you have edited anything inside `examples/bank_manager_agent_control/`
+since your last `git pull`, reset the demo folder first so the pull
+fast-forwards cleanly. The commands below discard tracked-file edits
+**only inside this folder** — files anywhere else in the repo and any
+untracked files inside the folder are preserved.
+
+PowerShell (Windows):
+
+```powershell
+cd (git rev-parse --show-toplevel)             # cd to repo root (safe from any subdir, eg viewer/)
+git checkout build-demo-final
+git checkout HEAD -- examples/bank_manager_agent_control/
+git pull --no-rebase --ff-only
+```
+
+bash (macOS / Linux):
+
+```bash
+cd "$(git rev-parse --show-toplevel)"          # cd to repo root (safe from any subdir, eg viewer/)
+git checkout build-demo-final
+git checkout HEAD -- examples/bank_manager_agent_control/
+git pull --no-rebase --ff-only
+```
+
+> The `cd (git rev-parse ...)` first line guards against running this
+> sequence from a subdirectory (eg. you left a terminal in `viewer/`
+> from the previous demo). The `--no-rebase` flag on the pull guards
+> against any local `pull.rebase=true` config interfering with
+> `--ff-only`.
+>
+> If `git pull --no-rebase --ff-only` errors with "Not possible to
+> fast-forward", your local `build-demo-final` has diverged commits.
+> On a demo-speaker laptop the safe recovery is:
+> `git fetch && git reset --hard origin/build-demo-final`
+> &mdash; **this discards all local commits on the branch.** Do not run
+> this on a work laptop with unpushed changes.
+
 ### 1. Copy the prepared results into the viewer's working dir
 
 This populates `artifacts/results/bank-manager-agent-control/` from
@@ -139,11 +178,22 @@ cp -R examples/bank_manager_agent_control/results artifacts/results/bank-manager
 
 ### 2. Start the viewer (in its own terminal)
 
+PowerShell (Windows):
+
+```powershell
+cd viewer
+npm install                          # one-time, ~1-2 min
+$env:VIEWER_EDIT_MODE = "1"
+npm run dev                          # serves http://localhost:5173
+```
+
+bash (macOS / Linux):
+
 ```bash
 cd viewer
-npm install        # one-time, ~1-2 min
-$env:VIEWER_EDIT_MODE = "1"
-npm run dev        # serves http://localhost:5173
+npm install                          # one-time, ~1-2 min
+export VIEWER_EDIT_MODE=1
+npm run dev                          # serves http://localhost:5173
 ```
 
 Open <http://localhost:5173> and pick the suite
@@ -274,7 +324,10 @@ assert-ai run --config examples/bank_manager_agent_control/eval_unguarded_prompt
 assert-ai run --config examples/bank_manager_agent_control/eval_guarded_acs.yaml
 ```
 
-Each run writes to `artifacts/results/bank-manager-agent-control/<variant>/`.
+Each run writes to `artifacts/results/bank-manager-agent-control/<variant>/`,
+where `<variant>` is the `run:` value in each yaml (currently suffixed
+`-v2` so fresh runs land in new directories and never overwrite the
+committed `-n100` source shown in the Variants table above).
 The committed source under `examples/bank_manager_agent_control/results/`
 is never touched. To restore the demo working copy after a reproduce
 run, repeat step 1 of [View the demo](#view-the-demo-no-azure-credentials-needed).

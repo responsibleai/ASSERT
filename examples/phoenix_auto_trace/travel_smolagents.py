@@ -10,8 +10,8 @@ Traces captured: agent steps, tool calls, LLM calls, reasoning traces, token cou
 from __future__ import annotations
 
 # pip install openinference-instrumentation-smolagents arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace()
 
 import os
 
