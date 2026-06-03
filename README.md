@@ -1,5 +1,5 @@
 <h1 align="center">
-        <img src="assets/assert-logo.png" alt="ASSERT logo" width="22" style="vertical-align: middle; margin-right: 5px;"/>
+        <img src="https://raw.githubusercontent.com/responsibleai/ASSERT/main/assets/assert-logo.png" alt="ASSERT logo" width="22" style="vertical-align: middle; margin-right: 5px;"/>
         <span style="vertical-align: middle; font-family: 'Spline Sans Mono', monospace;">ASSERT.</span>
 </h1>
 <p align="center">
