@@ -223,6 +223,46 @@ static reader and needs neither.
 
 Stop each service with Ctrl+C in its terminal.
 
+### Restarting the viewer (if it hangs or behaves erratically)
+
+The SvelteKit dev server occasionally wedges -- blank pages, stale
+suite list after `git pull`, "compare" tab not updating, or Ctrl+C
+not actually freeing port 5173. Hard-restart it like this:
+
+PowerShell (Windows):
+
+```powershell
+# From any terminal: kill anything holding the viewer port
+Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+
+# Then in the viewer terminal, restart cleanly
+cd viewer
+Remove-Item -Recurse -Force .svelte-kit -ErrorAction SilentlyContinue
+$env:VIEWER_EDIT_MODE = "1"
+npm run dev
+```
+
+bash (macOS / Linux):
+
+```bash
+# From any terminal: kill anything holding the viewer port
+lsof -ti :5173 | xargs -r kill -9
+
+# Then in the viewer terminal, restart cleanly
+cd viewer
+rm -rf .svelte-kit
+export VIEWER_EDIT_MODE=1
+npm run dev
+```
+
+If the chat UI (port 8766) gets stuck the same way, swap `5173` for
+`8766` and re-run `python examples/bank_manager_agent_control/unguarded_ui.py`.
+
+A hard browser refresh (Ctrl+Shift+R / Cmd+Shift+R) clears most
+stale-state weirdness without a server restart.
+
 ## Set up to reproduce (Azure credentials required)
 
 This is the one-time install path. After step 4, **you are fully set
