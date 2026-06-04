@@ -3,7 +3,7 @@
 
 """Travel planner — LangChain/LangGraph (multi-node graph).
 
-Instrumentation: 2 lines. Agent code: standard LangGraph.
+Instrumentation: central helper call. Agent code: standard LangGraph.
 Traces captured: graph node executions, LLM calls per node, tool invocations,
 routing decisions, token counts, latency per node.
 
@@ -14,11 +14,11 @@ architecture, no MCP dependency, self-contained with simulated tools.
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-langchain arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-langchain arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard LangGraph

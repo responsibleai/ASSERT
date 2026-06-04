@@ -12,6 +12,10 @@ Usage:
 # NOTE: do NOT use `from __future__ import annotations` — LangGraph's StateGraph
 # requires runtime-resolvable type hints for state schema introspection.
 
+# Optional Phoenix export: pip install openinference-instrumentation-langchain arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
+
 import os
 from typing import Annotated, Optional
 

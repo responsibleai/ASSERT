@@ -13,7 +13,7 @@ generated test case
 assert-ai inference loop
       |
       v
-auto_trace.register(auto_instrument=True) -> chat_sync(message)
+auto_trace.enable() -> chat_sync(message)
       |
       v
 intent_classifier -- no book_trip/destination --> clarification --> END

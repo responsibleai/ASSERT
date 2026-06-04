@@ -3,15 +3,15 @@
 
 """Travel planner — OpenAI Agents SDK (multi-agent orchestration).
 
-Instrumentation: 2 lines. Agent code: standard openai-agents SDK.
+Instrumentation: central helper call. Agent code: standard openai-agents SDK.
 Traces captured: agent runs, handoffs, tool calls, LLM completions, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-openai-agents arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-openai-agents arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import asyncio
 import os

@@ -104,13 +104,13 @@ def _ensure_hosted_trace_instrumentation() -> None:
     if _hosted_trace_registered:
         return
     try:
-        from phoenix.otel import register
+        from assert_ai import auto_trace
         from openinference.instrumentation.litellm import LiteLLMInstrumentor
 
-        register()
+        auto_trace.enable(auto_instrument=False, export=False)
         LiteLLMInstrumentor().instrument()
         _hosted_trace_registered = True
-        log.info("Enabled Phoenix LiteLLM instrumentation for hosted session tracing")
+        log.info("Enabled LiteLLM instrumentation for hosted session tracing")
     except ImportError:
         log.warning(
             "target.trace is set but tracing dependencies are not installed. "

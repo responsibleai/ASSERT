@@ -3,7 +3,7 @@
 
 """Travel planner — CrewAI (multi-agent crew).
 
-Instrumentation: 2 lines. Agent code: standard CrewAI.
+Instrumentation: central helper call. Agent code: standard CrewAI.
 Traces captured: agent delegations, LLM calls per agent, tool invocations,
 crew execution flow, token counts.
 """
@@ -11,11 +11,11 @@ crew execution flow, token counts.
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-crewai arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-crewai arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard CrewAI

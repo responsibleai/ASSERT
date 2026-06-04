@@ -3,15 +3,15 @@
 
 """Travel planner — AutoGen AgentChat (multi-agent conversation).
 
-Instrumentation: 2 lines. Agent code: standard AutoGen AgentChat.
+Instrumentation: central helper call. Agent code: standard AutoGen AgentChat.
 Traces captured: agent messages, tool calls, LLM calls, team orchestration, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-autogen-agentchat arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-autogen-agentchat arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import asyncio
 import os

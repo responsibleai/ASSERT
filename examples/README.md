@@ -4,7 +4,7 @@ Runnable configs and sample agents for ASSERT.
 
 Start with the LangGraph travel planner. It is the flagship example because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
 
-> **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds two lines (`from phoenix.otel import register; register(auto_instrument=True)`) so the judge can score tool use and routing, not just the final response.
+> **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds the central helper (`from assert_ai import auto_trace; auto_trace.enable()`) so the judge can score tool use and routing, not just the final response.
 
 ## First run
 
@@ -39,7 +39,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Goal | Example | Notes |
 |---|---|---|
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
-| Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths. |
+| Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
 | Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
 | Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
