@@ -29,9 +29,9 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 try:
-    from phoenix.otel import register
+    from assert_ai import auto_trace
 
-    register(
+    auto_trace.enable(
         project_name=os.environ.get("PHOENIX_PROJECT_NAME", "incident-triage-agent"),
         auto_instrument=True,
         verbose=False,

@@ -3,15 +3,15 @@
 
 """Travel planner — Google ADK (Agent Development Kit).
 
-Instrumentation: 2 lines. Agent code: standard Google ADK.
+Instrumentation: central helper call. Agent code: standard Google ADK.
 Traces captured: agent execution, LLM calls, tool invocations, sub-agent delegations.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-google-adk arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-google-adk arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool

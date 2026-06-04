@@ -3,15 +3,15 @@
 
 """Travel planner — Instructor (structured LLM output via Pydantic).
 
-Instrumentation: 2 lines. Agent code: Instructor-patched OpenAI client.
+Instrumentation: central helper call. Agent code: Instructor-patched OpenAI client.
 Traces captured: LLM calls with structured output schemas, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-instructor arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-instructor arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 

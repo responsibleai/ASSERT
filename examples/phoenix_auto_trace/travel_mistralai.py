@@ -3,13 +3,13 @@
 
 """Travel planner — MistralAI.
 
-Instrumentation: 2 lines. Agent code: standard Mistral SDK.
+Instrumentation: central helper call. Agent code: standard Mistral SDK.
 Traces captured: LLM calls, tool calls, token counts, latency.
 """
 
-# pip install openinference-instrumentation-mistralai arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-mistralai arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 from mistralai import Mistral
