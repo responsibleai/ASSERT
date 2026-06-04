@@ -105,7 +105,7 @@ export function getAllDocs(): Doc[] {
 			title,
 			description,
 			href: "/docs/" + slug.join("/"),
-			relativePath: rel,
+			relativePath: rel.split(path.sep).join("/"),
 			content: stripped,
 		});
 	}
@@ -181,6 +181,10 @@ export function getDocsNav(): { group: string | null; items: DocMeta[] }[] {
 	}));
 }
 
+// Path within docs/ that the sidebar uses for `arr.push({ ..., relativePath })`
+// is set in getAllDocs above; getDocsNav copies the same field. Ensure POSIX
+// separator for cross-platform consistency.
+
 export type Heading = { id: string; text: string; level: 2 };
 
 /**
@@ -224,7 +228,7 @@ export function getDocGroupLabel(doc: DocMeta): string | null {
  * Returns the parsed README.md from the docs root, used to render the /docs
  * landing page. Returns null if README.md does not exist.
  */
-export function getDocsIndex(): { title: string; description?: string; content: string } | null {
+export function getDocsIndex(): { title: string; description?: string; content: string; relativePath: string } | null {
 	const candidates = ["README.md", "readme.md", "README.mdx", "readme.mdx"];
 	for (const name of candidates) {
 		const full = path.join(DOCS_DIR, name);
@@ -236,7 +240,7 @@ export function getDocsIndex(): { title: string; description?: string; content: 
 			titleFromContent(content, "ASSERT Documentation");
 		const description = typeof data.description === "string" ? data.description : undefined;
 		const stripped = content.replace(/^\s*#\s+.+\r?\n+/, "");
-		return { title, description, content: stripped };
+		return { title, description, content: stripped, relativePath: name };
 	}
 	return null;
 }

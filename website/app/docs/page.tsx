@@ -12,6 +12,7 @@ export default function DocsIndex() {
 	const title = index?.title ?? "ASSERT Documentation";
 	const description = index?.description;
 	const content = index?.content ?? "";
+	const relativePath = index?.relativePath ?? "README.md";
 	const headings = getHeadings(content);
 	return (
 		<div className="docs-layout has-toc">
@@ -22,7 +23,7 @@ export default function DocsIndex() {
 						<h1 className="docs-title">{title}</h1>
 						{description && <p className="docs-lede">{description}</p>}
 					</header>
-					<MarkdownContent source={content} />
+					<MarkdownContent source={content} relativePath={relativePath} />
 				</article>
 			</main>
 			<OnThisPage headings={headings} />

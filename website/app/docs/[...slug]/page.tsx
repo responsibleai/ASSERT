@@ -53,7 +53,7 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
 						<h1 className="docs-title">{doc.title}</h1>
 						{doc.description && <p className="docs-lede">{doc.description}</p>}
 					</header>
-					<MarkdownContent source={doc.content} />
+					<MarkdownContent source={doc.content} relativePath={doc.relativePath} />
 				</article>
 			</main>
 			<OnThisPage headings={headings} />
