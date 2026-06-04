@@ -32,7 +32,7 @@ assert-ai init --model azure/gpt-5.4-mini
 assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/eval_config.yaml
 ```
 
-See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) for all options.
+See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
 ## Which example to start with
 
@@ -44,7 +44,7 @@ See the [CLI reference](../docs/reference/cli.md#design-a-config-interactively) 
 | Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
 | Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
-| See runtime + eval close the loop on a real workflow | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md) and [`docs/case-study-incident-triage-joint.md`](../docs/case-study-incident-triage-joint.md). |
+| See runtime + eval close the loop on a real workflow | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
 
 ## Layout
 

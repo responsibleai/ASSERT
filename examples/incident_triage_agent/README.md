@@ -1,6 +1,6 @@
 # Incident-triage agent — ACS efficacy demo (A → C demo path)
 
-This example builds on the [responsibleai/AgentControlSpecification](https://github.com/responsibleai/AgentShield)
+This example builds on the [responsibleai/AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification)
 incident-triage reference shape and turns it into a **4-variant ASSERT eval**
 that measures ACS efficacy on a second vertical (the canonical bank-manager
 demo lives in [PR #88](https://github.com/microsoft/ASSERT/pull/88)).
