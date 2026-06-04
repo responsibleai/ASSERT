@@ -1,6 +1,6 @@
 # Agents
 
-This directory holds tool modules and tool schemas used by the example pipeline configs in [`../pipes/`](../pipes/). The flagship customer integration path is `target.callable` — see [`../travel_planner_langgraph/`](../travel_planner_langgraph/).
+This directory holds tool modules and tool schemas used by the Prompt Agent example configs in [`../prompt_agents/`](../prompt_agents/). The flagship customer integration path is `target.callable` — see [`../travel_planner_langgraph/`](../travel_planner_langgraph/).
 
 ASSERT supports three ways to give a target access to tools or external systems.
 
@@ -52,4 +52,4 @@ The `health_assistant.py` module requires Docker locally. On first use, Docker m
 
 The `examples.agents.openclaw` connector also requires Docker with Compose support. Each inference conversation gets its own Compose project and container. On first use, Docker Compose builds the image from `openclaw/Dockerfile`, which pulls `node:24-bookworm` and installs `openclaw@latest`. The container reads `AZURE_API_KEY` and `AZURE_API_BASE` from the host environment at startup to configure OpenClaw. See [openclaw/README.md](openclaw/README.md) for the Docker-specific setup.
 
-See [pipes/](../pipes/) for complete configs that use each pattern.
+See [`../prompt_agents/`](../prompt_agents/) for complete configs that use each pattern.
