@@ -106,19 +106,43 @@ don't pollute the headline. The ACS-guarded variant ran clean at n=100.
 
 ## View the demo (no Azure credentials needed)
 
-Prereqs: Python 3.11+ and Node 20+. If neither is installed yet,
-jump to [Set up to reproduce](#set-up-to-reproduce-azure-credentials-required)
+Prereqs: **git**, **Python 3.11+**, and **Node 20+**. Verify with
+`git --version`, `python --version`, `node --version`. If Python or
+Node is missing, jump to [Set up to reproduce](#set-up-to-reproduce-azure-credentials-required)
 first -- the install steps there are read-only with respect to the
 demo data.
 
 Run all commands from the repository root.
 
-### 0. Pull the latest demo branch (discarding any local changes in this folder)
+### 0. Get the demo branch on disk
 
-If you have edited anything inside `examples/bank_manager_agent_control/`
-since your last `git pull`, reset the demo folder first so the pull
-fast-forwards cleanly. The commands below discard tracked-file edits
-**only inside this folder** — files anywhere else in the repo and any
+Pick the path that matches your setup. Both end at the same place:
+a working tree on the `build-demo-final` branch, ready for step 1.
+
+**Path A -- Fresh laptop / no clone yet.** Run this once. The clone
+is ~700 MB and takes 30-60s on a typical connection.
+
+PowerShell (Windows):
+
+```powershell
+git clone --branch build-demo-final https://github.com/responsibleai/ASSERT.git
+cd ASSERT
+```
+
+bash (macOS / Linux):
+
+```bash
+git clone --branch build-demo-final https://github.com/responsibleai/ASSERT.git
+cd ASSERT
+```
+
+> If you already cloned ASSERT into a different folder name, append
+> it to the clone command (`... ASSERT.git my-folder`) and `cd` into
+> that folder instead.
+
+**Path B -- Already have a local clone.** Sync to the latest demo
+branch and discard any tracked-file edits inside this folder so the
+pull fast-forwards cleanly. Files anywhere else in the repo and any
 untracked files inside the folder are preserved.
 
 PowerShell (Windows):
