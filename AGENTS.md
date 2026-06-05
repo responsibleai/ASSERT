@@ -179,11 +179,12 @@ The Copilot/orientation guidance above this section applies to every contributor
 
 VACATION MODE is the default and currently only enabled state. In VACATION MODE:
 
-- All five agents are observation-only by default.
+- Four of the five agents (designer, feedback, pm, comms) are observation-only.
+- The fifth agent (dev-maintainer) is observation-only **except** for the two narrow write exceptions described below — those are active by default and do not require activation.
 - No PR approvals. No merges. No issue files. No Discussion replies. No support replies. No social posts. No Outlook or Teams sends.
 - Each agent logs its findings as rows in an inbox file. The inbox is markdown; entries are reviewed by Chang manually.
 
-Activation of any agent requires explicit, agent-specific approval by Chang. There is no global "activate all" switch.
+Broader activation of any agent — including any *new* write capability beyond the dev-maintainer's two narrow exceptions — requires explicit, agent-specific approval by Chang. There is no global "activate all" switch.
 
 ### Narrow write exceptions (dev-maintainer only)
 

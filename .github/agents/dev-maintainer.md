@@ -80,12 +80,14 @@ Columns: `date | PR/issue | finding | severity | recommended action`
 
 This inbox is public-safe (technical findings on public PRs). No external content lives here.
 
-## Activation gate
+## Activation gate (broader writes only)
 
-Before this agent transitions from observation to any external write, the operator must:
+The two narrow vacation-mode writes above (audit-only PR comment + reviewer request) are **active on merge** per [`AGENTS.md`](../../AGENTS.md) §"Narrow write exceptions" and do not require an activation gate.
 
-1. Confirm vacation mode is intentionally being lifted for this agent.
-2. Confirm the activation scope (e.g., "post one comment per PR" vs "post on every push").
+This activation gate applies only to **broader write capabilities** that may be added in the future (e.g., approving review, merge, label change, issue filing, automated PR closure). Before any such broader write becomes active, the operator must:
+
+1. Confirm vacation mode is intentionally being lifted for that specific capability.
+2. Confirm the activation scope (which broader write, on what cadence, with what review gate).
 3. Confirm the audit-pr skill output format is still accurate.
 
-Until those three confirmations are recorded explicitly by Chang, all outputs land in the inbox only.
+Until those three confirmations are recorded explicitly by Chang, no broader writes occur. The two narrow writes continue per the vacation-mode workflow above.
