@@ -33,4 +33,4 @@ examples/                        @changliu2 @tangym @jakepresent @AaronAspinwall
 prompts/                         @changliu2 @tangym @jakepresent @AaronAspinwall123
 
 # ---- CI / workflows ----
-.github/workflows/               @tangym @jakepresent
+.github/workflows/               @tangym @jakepresent @changliu2
