@@ -1,0 +1,36 @@
+# Code owners for responsibleai/ASSERT
+#
+# Rules:
+# - GitHub uses the LAST matching pattern as the effective code owners list.
+# - Listed owners are alternatives — any ONE of them satisfies the required review.
+# - Branch protection on `main` should be set to "Require review from Code Owners"
+#   so reviewers are auto-requested when a PR opens.
+#
+# Pecking order (per maintainer agreement):
+#   - UI / viewer        → Aaron
+#   - Website / doc site → Sooyeon, Minsoo
+#   - Core code & examples → Chang, Yeming, Jake, Aaron
+#   - CI / workflows     → Yeming, Jake
+#   - Documentation      → Chang, Minsoo, Jake
+#   - Catch-all fallback → Chang (only when no specific rule matches)
+
+# ---- Catch-all (most general; specific rules below override) ----
+*                                @changliu2
+
+# ---- Documentation (any .md anywhere; docs/ tree) ----
+*.md                             @changliu2 @minthigpen @jakepresent
+docs/                            @changliu2 @minthigpen @jakepresent
+
+# ---- UI / viewer ----
+viewer/                          @AaronAspinwall123
+
+# ---- Website / doc site ----
+website/                         @sooyeonni @minthigpen
+
+# ---- Core code, examples, prompts ----
+assert_ai/                       @changliu2 @tangym @jakepresent @AaronAspinwall123
+examples/                        @changliu2 @tangym @jakepresent @AaronAspinwall123
+prompts/                         @changliu2 @tangym @jakepresent @AaronAspinwall123
+
+# ---- CI / workflows ----
+.github/workflows/               @tangym @jakepresent
