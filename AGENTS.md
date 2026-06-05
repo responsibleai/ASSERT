@@ -166,3 +166,111 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 - Use forward slashes in customer-facing docs unless the block is explicitly PowerShell-only.
 - Frame OpenTelemetry trace capture as the recommended integration path for any non-trivial agent — not as an optional add-on. A plain callable without traces is a customization fallback for black-box APIs or pipeline smoke tests.
 - If a command needs credentials, say which environment variable names are required but do not inspect or print their values.
+
+---
+
+# Autonomous agent system (operator-only)
+
+This section defines a separate, operator-only autonomous-agent system used to maintain the ASSERT repository, monitor its docs and feedback surfaces, and triage operator-side communication. It is **not** part of the customer-facing product, and most contributors will never need to interact with it.
+
+The Copilot/orientation guidance above this section applies to every contributor. Everything below applies only to the operator running these agents on their local workstation.
+
+## Default state: VACATION MODE
+
+VACATION MODE is the default and currently only enabled state. In VACATION MODE:
+
+- All five agents are observation-only by default.
+- No PR approvals. No merges. No issue files. No Discussion replies. No support replies. No social posts. No Outlook or Teams sends.
+- Each agent logs its findings as rows in an inbox file. The inbox is markdown; entries are reviewed by Chang manually.
+
+Activation of any agent requires explicit, agent-specific approval by Chang. There is no global "activate all" switch.
+
+### Narrow write exceptions (dev-maintainer only)
+
+To prevent PRs from sitting unreviewed while Chang is on vacation, the **dev-maintainer agent** has two narrowly-scoped write powers that are always active (not gated on activation):
+
+1. **Post audit-only comments** on open PRs — technical findings, severity, suggested next steps. Never an approval, never a request-changes review, never a merge, never a label change.
+2. **Request review** (assign reviewers) from CODEOWNERS when a PR has been open with no requested reviewers, or when an existing reviewer has not responded within the escalation window.
+
+Both writes use the customer-safe terminology defined elsewhere in this document.
+
+### 24-hour escalation rule
+
+The dev-maintainer agent enforces this rule on every observation pass:
+
+| PR age (no review action) | Action |
+|---|---|
+| < 24h | Observe only; log to dev-inbox. |
+| ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path (see routing below). |
+| ≥ 72h, reviewer requested but no response | Post a polite escalation comment tagging a second CODEOWNER from the same path. |
+| ≥ 7 days, still no response | Escalate to Chang as last resort. |
+
+### Reviewer routing logic
+
+When picking a reviewer to request or ping:
+
+1. Read the effective CODEOWNERS list for the PR's changed paths.
+2. **Exclude the PR author.**
+3. **Exclude any owner listed as unavailable in [`.github/CODEOWNERS-VACATIONS.md`](.github/CODEOWNERS-VACATIONS.md).**
+4. **Exclude Chang** unless every other co-owner has been excluded by the rules above. Chang is the fallback-only reviewer because his bandwidth is intentionally constrained during vacation.
+5. Pick from the remaining candidates. Prefer admins. If the path has multiple eligible owners, pick the one not recently pinged.
+
+### Other four agents stay observation-only
+
+The designer, feedback, pm, and comms agents have **no** write exceptions in vacation mode. Everything they produce lands in an inbox only.
+
+## Sole human approver
+
+**Chang** is the sole human approver for every external write, send, merge, or activation by any agent in this system. This applies in vacation mode and after activation: even after an agent is activated, the scope of what it may write externally is defined per activation by Chang.
+
+## The five agents
+
+All agent specs live in [`.github/agents/`](.github/agents/):
+
+| Agent | Spec | Inbox | Inbox location |
+|---|---|---|---|
+| Dev maintainer | [`dev-maintainer.md`](.github/agents/dev-maintainer.md) | `dev-inbox.md` | `docs/agents/inbox/` (public-safe) |
+| Designer | [`designer.md`](.github/agents/designer.md) | `designer-inbox.md` | `docs/agents/inbox/` (public-safe) |
+| Feedback | [`feedback.md`](.github/agents/feedback.md) | `feedback-inbox.md` | `docs/agents/inbox/` (public-safe, anonymized) |
+| PM | [`pm.md`](.github/agents/pm.md) | `pm-inbox.md` | operator-side internal workspace (not in this repo) |
+| Comms | [`comms.md`](.github/agents/comms.md) | `comms-inbox.md` | operator-side internal workspace (not in this repo) |
+
+The dev-maintainer, designer, and feedback agents produce public-safe outputs that live in this repository under `docs/agents/inbox/`. The PM and comms agents produce sensitive outputs (competitive positioning, operator-private communication drafts) that do not belong in a public repository; their inboxes live in the operator's internal workspace.
+
+## Reusable skills
+
+All skill specs live in [`.github/skills/`](.github/skills/). Each skill defines a single methodology with an explicit output format:
+
+- [`audit-pr.md`](.github/skills/audit-pr.md) — review a PR for behavior naming, OpenInference trace attributes, and dataset coverage. Output: pass/fail per dimension + one-line summary.
+- [`competitive-scan.md`](.github/skills/competitive-scan.md) — scan public eval-framework sources for signal. Output destination: internal PM inbox.
+- [`strategy-synthesis.md`](.github/skills/strategy-synthesis.md) — distill signals into targeted positioning diffs. Output destination: internal strategy docs.
+- [`ux-audit.md`](.github/skills/ux-audit.md) — walk the ASSERT golden path and score each step on clarity, delight, friction, and error quality.
+- [`feedback-synthesis.md`](.github/skills/feedback-synthesis.md) — extract structured signal from transcripts and support threads. Always anonymized.
+- [`draft-reply.md`](.github/skills/draft-reply.md) — draft a comms response in Chang's voice.
+- [`file-feedback-issue.md`](.github/skills/file-feedback-issue.md) — **post-vacation only**. Routes findings to the correct downstream agent.
+
+## Public-safe inboxes
+
+Public inboxes are header-only markdown templates that live under `docs/agents/inbox/` and remain empty until activation:
+
+- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md)
+- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md)
+- [`feedback-inbox.md`](docs/agents/inbox/feedback-inbox.md)
+
+See [`docs/agents/README.md`](docs/agents/README.md) for the operator-facing index of the agent system.
+
+## Customer-safe terminology
+
+All files in this autonomous-agent system that live under `responsibleai/ASSERT` use the same customer-facing vocabulary as the rest of the repo: `behavior`, `eval spec`, `dataset`, `test cases`, `OpenTelemetry`, `OpenInference`, `spec-driven scoring`. Internal shorthand stays out of public files.
+
+## Activation procedure
+
+When Chang activates an agent:
+
+1. Pick the agent (one at a time).
+2. Read its spec file and confirm the trigger conditions, output destination, and skills used are still current.
+3. Define the activation scope: what external writes are now allowed, on what cadence, and with what review gate.
+4. Record the activation decision (date, agent, scope) in a place Chang can audit later.
+5. The agent transitions from observation-only to the activated scope. Everything outside that scope still routes to the inbox.
+
+Until step 5 is recorded for a given agent, that agent remains in VACATION MODE.
