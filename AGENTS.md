@@ -252,11 +252,11 @@ All skill specs live in [`.github/skills/`](.github/skills/). Each skill defines
 
 ## Public-safe inboxes
 
-Public inboxes are header-only markdown templates that live under `docs/agents/inbox/` and remain empty until activation:
+Public inboxes live under `docs/agents/inbox/`:
 
-- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md)
-- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md)
-- [`feedback-inbox.md`](docs/agents/inbox/feedback-inbox.md)
+- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) — begins receiving observation rows and audit summaries from the dev-maintainer agent as soon as its recurring loop runs post-merge, because the dev-maintainer's two narrow write exceptions are active by default (see [`docs/agents/README.md`](docs/agents/README.md) for the public-facing summary).
+- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) — remains a header-only template until the designer agent is activated.
+- [`feedback-inbox.md`](docs/agents/inbox/feedback-inbox.md) — remains a header-only template until the feedback agent is activated.
 
 See [`docs/agents/README.md`](docs/agents/README.md) for the operator-facing index of the agent system.
 

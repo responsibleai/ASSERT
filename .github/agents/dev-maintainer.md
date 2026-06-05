@@ -17,7 +17,7 @@ Watches the `responsibleai/ASSERT` repository for new pull requests and issues. 
 
 ## Sole human approver
 
-**Chang.** Any future activation — PR comments, label suggestions, status checks — requires explicit approval from Chang before the agent writes to any external surface.
+**Chang.** The two narrow vacation-mode writes (audit-only PR comment + reviewer request) are already granted by `AGENTS.md` and do not require per-write approval. Any **broader** write capability — approving review, request-changes review, merge, label change, status check creation, issue filing, Discussion reply — requires explicit approval from Chang before the agent writes to that surface.
 
 ## When this agent observes
 
