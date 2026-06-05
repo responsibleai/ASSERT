@@ -169,26 +169,27 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 
 ---
 
-# Autonomous agent system (operator-only)
+# Maintainer assist pattern (Copilot CLI + agents)
 
-This section defines a separate, operator-only autonomous-agent system used to maintain the ASSERT repository, monitor its docs and feedback surfaces, and triage operator-side communication. It is **not** part of the customer-facing product, and most contributors will never need to interact with it.
+This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on their local workstation, plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
 
-The Copilot/orientation guidance above this section applies to every contributor. Everything below applies only to the operator running these agents on their local workstation.
+It is **not** part of the ASSERT product. Contributors do not need to interact with it. Other OSS maintainers are welcome to fork the pattern.
 
-## Default state: VACATION MODE
+The Copilot/orientation guidance above this section applies to every contributor. Everything below describes the maintainer-assist agents.
 
-VACATION MODE is the default and currently only enabled state. In VACATION MODE:
+## Default state: observation mode
 
-- Four of the five agents (designer, feedback, pm, comms) are observation-only.
-- The fifth agent (dev-maintainer) is observation-only **except** for the two narrow write exceptions described below — those are active by default and do not require activation.
-- No PR approvals. No merges. No issue files. No Discussion replies. No support replies. No social posts. No Outlook or Teams sends.
-- Each agent logs its findings as rows in an inbox file. The inbox is markdown; entries are reviewed by Chang manually.
+Observation mode is the default and currently only enabled state. In observation mode:
 
-Broader activation of any agent — including any *new* write capability beyond the dev-maintainer's two narrow exceptions — requires explicit, agent-specific approval by Chang. There is no global "activate all" switch.
+- The **designer** agent is observation-only; UX findings land in an inbox for the maintainer to triage.
+- The **dev-maintainer** agent is observation-only **except** for the two narrow write exceptions described below — those are active by default and do not require activation.
+- No PR approvals. No merges. No issue files. No Discussion replies. No label changes.
+
+Broader activation of either agent — including any *new* write capability beyond the dev-maintainer's two narrow exceptions — requires explicit, agent-specific approval by the maintainer. There is no global "activate all" switch.
 
 ### Narrow write exceptions (dev-maintainer only)
 
-To prevent PRs from sitting unreviewed while Chang is on vacation, the **dev-maintainer agent** has two narrowly-scoped write powers that are always active (not gated on activation):
+To prevent PRs from sitting unreviewed when the maintainer is unavailable, the **dev-maintainer agent** has two narrowly-scoped write powers that are always active (not gated on activation):
 
 1. **Post audit-only comments** on open PRs — technical findings, severity, suggested next steps. Never an approval, never a request-changes review, never a merge, never a label change.
 2. **Request review** (assign reviewers) from CODEOWNERS when a PR has been open with no requested reviewers, or when an existing reviewer has not responded within the escalation window.
@@ -204,7 +205,7 @@ The dev-maintainer agent enforces this rule on every observation pass:
 | < 24h | Observe only; log to dev-inbox. |
 | ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path (see routing below). |
 | ≥ 72h, reviewer requested but no response | Post a polite escalation comment tagging a second CODEOWNER from the same path. |
-| ≥ 7 days, still no response | Escalate to Chang as last resort. |
+| ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
 
 ### Reviewer routing logic
 
@@ -212,66 +213,56 @@ When picking a reviewer to request or ping:
 
 1. Read the effective CODEOWNERS list for the PR's changed paths.
 2. **Exclude the PR author.**
-3. **Exclude any owner listed as unavailable in [`.github/CODEOWNERS-VACATIONS.md`](.github/CODEOWNERS-VACATIONS.md).**
-4. **Exclude Chang** unless every other co-owner has been excluded by the rules above. Chang is the fallback-only reviewer because his bandwidth is intentionally constrained during vacation.
+3. **Exclude any owner whose GitHub status is set to "busy" / "out of office"** at the time the agent runs (the agent reads the GraphQL `user.status` field for each candidate; owners keep this in sync themselves).
+4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort.
 5. Pick from the remaining candidates. Prefer admins. If the path has multiple eligible owners, pick the one not recently pinged.
 
-### Other four agents stay observation-only
+### Designer agent stays observation-only
 
-The designer, feedback, pm, and comms agents have **no** write exceptions in vacation mode. Everything they produce lands in an inbox only.
+The designer agent has **no** write exceptions in observation mode. Everything it produces lands in `designer-inbox.md` for the maintainer to triage.
 
 ## Sole human approver
 
-**Chang** is the sole human approver for every external write, send, merge, or activation by any agent in this system. This applies in vacation mode and after activation: even after an agent is activated, the scope of what it may write externally is defined per activation by Chang.
+The **repository maintainer** is the sole human approver for every external write, merge, label change, or activation by either agent. This applies in observation mode and after activation: even after an agent is activated, the scope of what it may write externally is defined per activation by the maintainer.
 
-## The five agents
+## The two agents
 
-All agent specs live in [`.github/agents/`](.github/agents/):
+Both agent specs live in [`.github/agents/`](.github/agents/):
 
-| Agent | Spec | Inbox | Inbox location |
-|---|---|---|---|
-| Dev maintainer | [`dev-maintainer.md`](.github/agents/dev-maintainer.md) | `dev-inbox.md` | `docs/agents/inbox/` (public-safe) |
-| Designer | [`designer.md`](.github/agents/designer.md) | `designer-inbox.md` | `docs/agents/inbox/` (public-safe) |
-| Feedback | [`feedback.md`](.github/agents/feedback.md) | `feedback-inbox.md` | `docs/agents/inbox/` (public-safe, anonymized) |
-| PM | [`pm.md`](.github/agents/pm.md) | `pm-inbox.md` | operator-side internal workspace (not in this repo) |
-| Comms | [`comms.md`](.github/agents/comms.md) | `comms-inbox.md` | operator-side internal workspace (not in this repo) |
+| Agent | Spec | Inbox |
+|---|---|---|
+| Dev maintainer | [`dev-maintainer.md`](.github/agents/dev-maintainer.md) | [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) |
+| Designer | [`designer.md`](.github/agents/designer.md) | [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) |
 
-The dev-maintainer, designer, and feedback agents produce public-safe outputs that live in this repository under `docs/agents/inbox/`. The PM and comms agents produce sensitive outputs (competitive positioning, operator-private communication drafts) that do not belong in a public repository; their inboxes live in the operator's internal workspace.
+Both agents produce public-safe outputs that live in this repository under `docs/agents/inbox/`. The dev-maintainer's audit findings on public PRs are technical observations; the designer's UX findings reference public docs and example surfaces. No operator-private content lives in either inbox.
 
 ## Reusable skills
 
-All skill specs live in [`.github/skills/`](.github/skills/). Each skill defines a single methodology with an explicit output format:
+Both skill specs live in [`.github/skills/`](.github/skills/). Each skill defines a single methodology with an explicit output format:
 
 - [`audit-pr.md`](.github/skills/audit-pr.md) — review a PR for behavior naming, OpenInference trace attributes, and dataset coverage. Output: pass/fail per dimension + one-line summary.
-- [`competitive-scan.md`](.github/skills/competitive-scan.md) — scan public eval-framework sources for signal. Output destination: internal PM inbox.
-- [`strategy-synthesis.md`](.github/skills/strategy-synthesis.md) — distill signals into targeted positioning diffs. Output destination: internal strategy docs.
 - [`ux-audit.md`](.github/skills/ux-audit.md) — walk the ASSERT golden path and score each step on clarity, delight, friction, and error quality.
-- [`feedback-synthesis.md`](.github/skills/feedback-synthesis.md) — extract structured signal from transcripts and support threads. Always anonymized.
-- [`draft-reply.md`](.github/skills/draft-reply.md) — draft a comms response in Chang's voice.
-- [`file-feedback-issue.md`](.github/skills/file-feedback-issue.md) — **post-vacation only**. Routes findings to the correct downstream agent.
 
 ## Public-safe inboxes
 
 Public inboxes live under `docs/agents/inbox/`:
 
-- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) — begins receiving observation rows and audit summaries from the dev-maintainer agent as soon as its recurring loop runs post-merge, because the dev-maintainer's two narrow write exceptions are active by default (see [`docs/agents/README.md`](docs/agents/README.md) for the public-facing summary).
+- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) — begins receiving observation rows and audit summaries from the dev-maintainer agent as soon as its recurring loop runs post-merge, because the dev-maintainer's two narrow write exceptions are active by default.
 - [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) — remains a header-only template until the designer agent is activated.
-- [`feedback-inbox.md`](docs/agents/inbox/feedback-inbox.md) — remains a header-only template until the feedback agent is activated.
+- [`run-log.md`](docs/agents/inbox/run-log.md) — one-line status entry per observation-loop pass.
 
-See [`docs/agents/README.md`](docs/agents/README.md) for the operator-facing index of the agent system.
+See [`docs/agents/README.md`](docs/agents/README.md) for the contributor-facing index of the agent system.
 
 ## Customer-safe terminology
 
-All files in this autonomous-agent system that live under `responsibleai/ASSERT` use the same customer-facing vocabulary as the rest of the repo: `behavior`, `eval spec`, `dataset`, `test cases`, `OpenTelemetry`, `OpenInference`, `spec-driven scoring`. Internal shorthand stays out of public files.
+All files in this maintainer-assist system use the same customer-facing vocabulary as the rest of the repo: `behavior`, `eval spec`, `dataset`, `test cases`, `OpenTelemetry`, `OpenInference`, `spec-driven scoring`. Internal shorthand stays out of public files.
 
 ## Activation procedure
 
-When Chang activates an agent:
+When the maintainer activates a broader agent capability:
 
-1. Pick the agent (one at a time).
-2. Read its spec file and confirm the trigger conditions, output destination, and skills used are still current.
+1. Pick the agent and the specific capability (one at a time).
+2. Read the agent spec and confirm trigger conditions, output destination, and skills used are still current.
 3. Define the activation scope: what external writes are now allowed, on what cadence, and with what review gate.
-4. Record the activation decision (date, agent, scope) in a place Chang can audit later.
+4. Record the activation decision (date, agent, scope) in a place the maintainer can audit later.
 5. The agent transitions from observation-only to the activated scope. Everything outside that scope still routes to the inbox.
-
-Until step 5 is recorded for a given agent, that agent remains in VACATION MODE.

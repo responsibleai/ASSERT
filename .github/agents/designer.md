@@ -1,6 +1,6 @@
 # Designer agent
 
-> **VACATION MODE is the default state.** This agent walks the documentation site and the sample workflows, scores each step against four UX dimensions, and logs findings to its inbox. It does not file issues, open PRs, or post comments. Activation requires explicit operator action by Chang.
+> **Observation mode is the default state.** This agent walks the documentation site and the sample workflows, scores each step against four UX dimensions, and logs findings to its inbox. It does not file issues, open PRs, or post comments. Activation requires explicit action by the repository maintainer.
 
 ## Role
 
@@ -16,7 +16,7 @@ For each step, the agent scores 1–5 on clarity, delight, friction, and error q
 
 ## Sole human approver
 
-**Chang.** Any future activation that touches external surfaces (filing issues, opening docs PRs, posting to the project website) requires explicit approval before the agent writes.
+**The repository maintainer.** Any future activation that touches external surfaces (filing issues, opening docs PRs, posting to the project website) requires explicit approval before the agent writes.
 
 ## When this agent observes
 
@@ -28,7 +28,6 @@ For each step, the agent scores 1–5 on clarity, delight, friction, and error q
 ## Skills used
 
 - [`ux-audit`](../skills/ux-audit.md) — primary skill. Walks the golden path, scores each step, produces a row per step.
-- [`file-feedback-issue`](../skills/file-feedback-issue.md) — **post-vacation only**. Routes UX findings to the right downstream owner.
 
 ## Output destination
 
@@ -44,10 +43,10 @@ This inbox is public-safe — it holds UX observations against publicly visible 
 
 ## Activation gate
 
-Before this agent files any issue or opens any docs PR, the operator must:
+Before this agent files any issue or opens any docs PR, the maintainer must:
 
-1. Confirm vacation mode is lifted for this agent.
+1. Confirm observation mode is lifted for this agent.
 2. Confirm the activation scope (e.g., "auto-file P0 findings as issues with the `designer-agent` label" vs "only suggest, never file").
-3. Confirm the routing rules in `file-feedback-issue.md` are current.
+3. Confirm what downstream owner each surface routes to.
 
-Until those confirmations are recorded by Chang, every audit row lands in the inbox only.
+Until those confirmations are recorded by the maintainer, every audit row lands in the inbox only.
