@@ -10,7 +10,7 @@
 #   - UI / viewer        → Aaron
 #   - Website / doc site → Sooyeon, Minsoo
 #   - Core code & examples → Chang, Yeming, Jake, Aaron
-#   - CI / workflows     → Yeming, Jake
+#   - CI / workflows     → Yeming, Jake, Chang
 #   - Documentation      → Chang, Minsoo, Jake
 #   - Catch-all fallback → Chang (only when no specific rule matches)
 
