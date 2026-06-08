@@ -36,7 +36,7 @@ The agent runs on a recurring observation loop. For each open PR on every pass:
 1. **Run `audit-pr`** and log the result to `dev-inbox.md`. This always happens.
 2. **Check reviewer state.** If the PR has no reviewer requested, or a reviewer has not responded within the escalation windows below, the agent issues exactly one of the two permitted writes:
    - **Audit comment** — when the audit reveals a blocker (P0/P1) or a question the author should answer before merge. Comment is a technical observation; the agent never adds an approving or request-changes review.
-   - **Review request** — when the PR is unreviewed and the 24h window has elapsed, assign reviewers per the routing rules below.
+   - **Review request** — at the 24h threshold (no reviewer requested), assign a CODEOWNER per the routing rules below. At the 72h threshold (existing reviewer non-responsive), assign a *second* CODEOWNER from the same path. Both are the same narrow write; the 72h escalation just uses it a second time on a different person.
 3. **Log the write** as a row appended to `dev-inbox.md` and a one-line entry in `run-log.md`.
 
 ### Escalation windows
@@ -45,7 +45,7 @@ The agent runs on a recurring observation loop. For each open PR on every pass:
 |---|---|
 | < 24h | Observe only. |
 | ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path. |
-| ≥ 72h, reviewer requested but no response | Post a polite ping comment tagging a second CODEOWNER on the same path. |
+| ≥ 72h, reviewer requested but no response | Request review from a *second* CODEOWNER on the same path (uses narrow write #2 again). |
 | ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
 
 ### Reviewer routing rules

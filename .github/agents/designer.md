@@ -23,7 +23,7 @@ For each step, the agent scores 1–5 on clarity, delight, friction, and error q
 - A doc file is added or substantially edited under `docs/`, `README.md`, or `examples/*/README.md`.
 - A new example is added under `examples/`.
 - The viewer source under `viewer/` changes in a way that affects what users see.
-- A scheduled cadence audit is requested (e.g., weekly walk of the golden path against the published docs site at https://responsibleai.github.io/ASSERT/).
+- A scheduled cadence audit is requested (e.g., weekly walk of the golden path against the published docs site at https://responsibleai.github.io/ASSERT/). The designer agent runs only when such a schedule is in place; by default it has no schedule and produces no inbox rows.
 
 ## Skills used
 

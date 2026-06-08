@@ -181,7 +181,7 @@ The Copilot/orientation guidance above this section applies to every contributor
 
 Observation mode is the default and currently only enabled state. In observation mode:
 
-- The **designer** agent is observation-only; UX findings land in an inbox for the maintainer to triage.
+- The **designer** agent is **off by default** — it has no recurring schedule and no triggers active. When the maintainer adds a schedule for the designer, it walks the golden path and writes findings to `designer-inbox.md`. External writes (filing issues, opening docs PRs) require a separate explicit activation per the activation procedure.
 - The **dev-maintainer** agent is observation-only **except** for the two narrow write exceptions described below — those are active by default and do not require activation.
 - No PR approvals. No merges. No issue files. No Discussion replies. No label changes.
 
@@ -204,7 +204,7 @@ The dev-maintainer agent enforces this rule on every observation pass:
 |---|---|
 | < 24h | Observe only; log to dev-inbox. |
 | ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path (see routing below). |
-| ≥ 72h, reviewer requested but no response | Post a polite escalation comment tagging a second CODEOWNER from the same path. |
+| ≥ 72h, reviewer requested but no response | Request review from a *second* CODEOWNER on the same path (uses narrow write #2 again — GitHub's review-request mechanism notifies the new reviewer directly). |
 | ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
 
 ### Reviewer routing logic
@@ -219,7 +219,7 @@ When picking a reviewer to request or ping:
 
 ### Designer agent stays observation-only
 
-The designer agent has **no** write exceptions in observation mode. Everything it produces lands in `designer-inbox.md` for the maintainer to triage.
+The designer agent has **no** write exceptions in observation mode. When the maintainer adds a schedule for it, the designer produces inbox rows only; any external writes (filing issues, opening docs PRs, posting comments) require explicit activation per the activation procedure below.
 
 ## Sole human approver
 
@@ -248,7 +248,7 @@ Both skill specs live in [`.github/skills/`](.github/skills/). Each skill define
 Public inboxes live under `docs/agents/inbox/`:
 
 - [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) — begins receiving observation rows and audit summaries from the dev-maintainer agent as soon as its recurring loop runs post-merge, because the dev-maintainer's two narrow write exceptions are active by default.
-- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) — remains a header-only template until the designer agent is activated.
+- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) — header-only template by default. When the maintainer adds a schedule for the designer agent, this inbox begins receiving observation rows. The designer has no external writes; filing issues or opening docs PRs from these findings requires separate activation per the activation procedure.
 - [`run-log.md`](docs/agents/inbox/run-log.md) — one-line status entry per observation-loop pass.
 
 See [`docs/agents/README.md`](docs/agents/README.md) for the contributor-facing index of the agent system.

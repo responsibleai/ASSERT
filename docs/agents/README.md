@@ -16,10 +16,10 @@ This is a reusable pattern: other OSS maintainers can fork it.
 The public inboxes ship as header-only templates:
 
 - `inbox/dev-inbox.md` — PR and issue audit findings. **The dev-maintainer agent's two narrow write exceptions are active by default**, so this inbox begins receiving observation rows and audit summaries as soon as the dev-maintainer's recurring loop runs post-merge.
-- `inbox/designer-inbox.md` — docs-site and sample UX findings. Empty until the designer agent is activated.
+- `inbox/designer-inbox.md` — docs-site and sample UX findings. Header-only template by default. When the maintainer adds a schedule for the designer agent, this inbox begins receiving observation rows. No external writes (issue files, docs PRs, comments) are permitted until further activation per the activation procedure in `AGENTS.md`.
 - `inbox/run-log.md` — one line per observation-loop pass (agent, items observed, items logged, anomalies).
 
-The designer inbox uses placeholder rows only. Do not add real entries unless the maintainer explicitly activates the designer agent and approves the destination.
+The designer inbox starts as a header-only template. Once the designer agent has a schedule, it logs observation rows here. Filing issues or opening docs PRs from those findings requires separate, explicit activation per `AGENTS.md`.
 
 ## Observation mode
 
