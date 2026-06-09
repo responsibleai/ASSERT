@@ -31,7 +31,7 @@ Watches the `responsibleai/ASSERT` repository for new pull requests and issues. 
 
 ## Observation-mode write workflow
 
-The agent runs on a recurring observation loop. For each open PR on every pass:
+The agent runs on a recurring observation loop on an always-on host (not the maintainer's workstation — the wall-clock escalation windows below only fire if the loop stays up while the maintainer is away; see the "Where to run the loop" section in `AGENTS.md`). For each open PR on every pass:
 
 1. **Run `audit-pr`** and log the result to `dev-inbox.md`. This always happens.
 2. **Check reviewer state.** If the PR has no reviewer requested, or a reviewer has not responded within the escalation windows below, the agent issues exactly one of the two permitted writes:

@@ -171,7 +171,7 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 
 # Maintainer assist pattern (Copilot CLI + agents)
 
-This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on their local workstation, plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
+This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on a scheduled loop on an always-on host (see [Where to run the loop](#where-to-run-the-loop)), plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
 
 It is **not** part of the ASSERT product. Contributors do not need to interact with it. Other OSS maintainers are welcome to fork the pattern.
 
@@ -206,6 +206,18 @@ The dev-maintainer agent enforces this rule on every observation pass:
 | ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path (see routing below). |
 | ≥ 72h, reviewer requested but no response | Request review from a *second* CODEOWNER on the same path (uses narrow write #2 again — GitHub's review-request mechanism notifies the new reviewer directly). |
 | ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
+
+### Where to run the loop
+
+The escalation windows above are wall-clock thresholds, so the loop only helps if it runs somewhere that stays up while the maintainer is away — which is the exact situation the escalation is designed for. Running it on the maintainer's own workstation defeats the purpose: if the maintainer is offline (vacation, travel, off-grid), so is their laptop, and the 24h / 72h passes never fire.
+
+Run the loop on an **always-on host** instead:
+
+- a small always-on VM (the maintainer's own infrastructure), or
+- a scheduled CI job or cron, or
+- a scheduled GitHub Action (`on: schedule:`), which needs no separate host at all.
+
+`.github/CODEOWNERS` (GitHub-native review routing) already covers the baseline case on its own and keeps working regardless of where — or whether — this loop runs. Treat the agent loop as an enhancement layered on top of CODEOWNERS, not a replacement for it.
 
 ### Reviewer routing logic
 
