@@ -7,6 +7,14 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import rehypeSlug from "rehype-slug";
 import "highlight.js/styles/github-dark.css";
+import QuickstartTabs from "./QuickstartTabs";
+
+// Sentinels in docs/getting-started.md that bracket the Markdown fallback for
+// the interactive quickstart. On the website we replace the whole bracketed
+// region with the <QuickstartTabs/> component; on GitHub the comments are
+// invisible and the Markdown fallback renders normally.
+const QUICKSTART_OPEN = "<!--quickstart-tabs-->";
+const QUICKSTART_CLOSE = "<!--/quickstart-tabs-->";
 
 // Repo-relative asset references in the source markdown (e.g. `../assets/foo.png`)
 // must be rewritten to URLs that resolve under the site basePath.
@@ -17,7 +25,7 @@ const BASE_PATH = "/ASSERT";
 // app/page.tsx and TopNav.tsx so the source-of-truth repo is consistent.
 const GITHUB_BLOB_BASE =
 	process.env.NEXT_PUBLIC_DOCS_GITHUB_BLOB_BASE ??
-	"https://github.com/microsoft/ASSERT/blob/main";
+	"https://github.com/responsibleai/ASSERT/blob/main";
 
 function rewriteAssetPaths(source: string): string {
 	// Matches `./assets/` or any depth of `../assets/` after a quote or paren
@@ -131,15 +139,32 @@ export default function MarkdownContent({ source, relativePath = "" }: MarkdownC
 			</a>
 		);
 	};
-	return (
-		<div className="docs-prose">
-			<ReactMarkdown
-				remarkPlugins={[remarkGfm]}
-				rehypePlugins={[rehypeRaw, rehypeSlug, rehypeHighlight]}
-				components={{ a: anchorRenderer }}
-			>
-				{rewriteAssetPaths(source)}
-			</ReactMarkdown>
-		</div>
+
+	const renderMarkdown = (md: string) => (
+		<ReactMarkdown
+			remarkPlugins={[remarkGfm]}
+			rehypePlugins={[rehypeRaw, rehypeSlug, rehypeHighlight]}
+			components={{ a: anchorRenderer }}
+		>
+			{rewriteAssetPaths(md)}
+		</ReactMarkdown>
 	);
+
+	// If the doc brackets a quickstart region, swap the Markdown fallback for the
+	// interactive tabs component (content before/after the region still renders).
+	const openIdx = source.indexOf(QUICKSTART_OPEN);
+	const closeIdx = source.indexOf(QUICKSTART_CLOSE);
+	if (openIdx !== -1 && closeIdx !== -1 && closeIdx > openIdx) {
+		const before = source.slice(0, openIdx);
+		const after = source.slice(closeIdx + QUICKSTART_CLOSE.length);
+		return (
+			<div className="docs-prose">
+				{before.trim() && renderMarkdown(before)}
+				<QuickstartTabs />
+				{after.trim() && renderMarkdown(after)}
+			</div>
+		);
+	}
+
+	return <div className="docs-prose">{renderMarkdown(source)}</div>;
 }

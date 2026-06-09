@@ -4274,6 +4274,76 @@ h3 {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* ── Quickstart tabs (docs/getting-started.md) ───────────────── */
+.quickstart {
+  margin: 20px 0 28px;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d1117;
+}
+.quickstart-tablist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 0;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.quickstart-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: #adbac7;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 14px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+.quickstart-tab:hover { color: #fff; }
+.quickstart-tab.is-active {
+  background: #0d1117;
+  color: #fff;
+  border-color: #30363d;
+  margin-bottom: -1px;
+}
+.quickstart-os {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  padding-bottom: 8px;
+}
+.quickstart-os-btn {
+  appearance: none;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #768390;
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.quickstart-os-btn:first-child { border-radius: 6px 0 0 6px; }
+.quickstart-os-btn:last-child { border-radius: 0 6px 6px 0; }
+.quickstart-os-btn.is-active { color: #fff; background: #21262d; }
+.quickstart-panel { padding: 16px 18px 4px; }
+.quickstart-panel p { margin: 0 0 12px; color: #c9d1d9; }
+.quickstart-code {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: #e6edf3;
+}
+.quickstart-aside { color: #768390 !important; font-size: 13px; }
 .docs-prose table {
   display: block;
   width: 100%;

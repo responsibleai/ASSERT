@@ -43,13 +43,55 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 
 ## Get started
 
-### Quick install
+```bash
+pip install assert-ai
+```
+
+Then pick the path that matches what you already have:
+
+**I have an agent** (LangGraph, CrewAI, OpenAI Agents SDK, custom…) — connect it and capture traces so the judge scores tool calls and routing, not just the final text:
 
 ```bash
-pip install -e ".[otel,langgraph]"       # install
-cp .env.example .env                     # add your provider key
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+pip install "assert-ai[otel]"          # quote the brackets so your shell keeps them
 ```
+
+```python
+# eval_target.py
+from assert_ai import auto_trace
+auto_trace.enable()                    # 2 lines: judge sees tool calls + routing
+from my_app import run_agent           # your agent's entry function
+```
+
+```yaml
+# eval_config.yaml — point the eval at your agent
+pipeline:
+  inference:
+    target:
+      callable: eval_target:run_agent
+      trace:
+        backend: phoenix
+```
+
+```bash
+assert-ai run --config eval_config.yaml
+```
+
+**I have the agent spec** (a system prompt or description) — run a Prompt Agent eval on a base install:
+
+```bash
+pip install assert-ai
+assert-ai run --example health-assistant
+```
+
+**Help me start** — describe your system and let an LLM assistant design the eval:
+
+```bash
+pip install assert-ai
+assert-ai init --describe "a customer-support bot for an online bank"
+assert-ai run --config eval_config.yaml
+```
+
+See the [full quickstart](docs/getting-started.md) for trace setup, reading results, and developing from source.
 
 <table align="center" style="width: 100%; border: 1px solid #d0d7de; border-collapse: collapse;">
         <tr>
