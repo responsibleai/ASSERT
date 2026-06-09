@@ -180,6 +180,7 @@ Accepted keys:
     - `protocol` — optional string. `assert` (default) sends `{message, history}` and expects `{response}`. `openai_chat` sends an OpenAI-compatible Chat Completions request and reads `choices[0].message.content`.
     - `model` — required for `openai_chat`.
     - `api_key_env` — optional environment variable name. When set, ASSERT sends its value as a bearer token without storing the secret in config.
+    - `stream` — optional boolean for `openai_chat`. When `true`, ASSERT sends `"stream": true`, reads Server-Sent Events from `text/event-stream` responses, accumulates `choices[0].delta.content`, and preserves supported tool-progress events as evidence.
   - `connector` — external connector target (supported by parser/runtime, not recommended for customer-preview onboarding).
   - `system_prompt` — string. Optional.
   - `trace` — mapping. Optional. Use with callable targets that emit OpenTelemetry spans.
@@ -232,6 +233,7 @@ pipeline:
         url: http://localhost:8000/v1/chat/completions
         model: my-agent
         api_key_env: ASSERT_TARGET_API_KEY
+        stream: true
     tester:
       model:
         name: azure/gpt-4o-mini

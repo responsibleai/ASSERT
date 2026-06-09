@@ -657,6 +657,7 @@ class HTTPEndpointSession:
         protocol: str = "assert",
         model: str | None = None,
         api_key_env: str | None = None,
+        stream: bool = False,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
@@ -668,6 +669,7 @@ class HTTPEndpointSession:
         self._protocol = protocol
         self._model = model
         self._api_key_env = api_key_env
+        self._stream = stream
         self._session = None  # aiohttp.ClientSession
 
     @property
@@ -707,6 +709,7 @@ class HTTPEndpointSession:
             return {
                 "model": self._model,
                 "messages": messages_to_openai(messages),
+                **({"stream": True} if self._stream else {}),
             }
         return {"message": user_text, "history": history}
 
@@ -723,6 +726,172 @@ class HTTPEndpointSession:
             text=response.text,
             events=response.events,
             raw=sanitize_payload(raw),
+        )
+
+    @staticmethod
+    def _response_content_type(resp: Any) -> str:
+        content_type = str(getattr(resp, "content_type", "") or "")
+        if content_type:
+            return content_type.lower()
+        headers = getattr(resp, "headers", None)
+        if headers is not None and hasattr(headers, "get"):
+            return str(headers.get("content-type", "") or "").lower()
+        return ""
+
+    async def _read_openai_chat_stream(
+        self,
+        resp: Any,
+        *,
+        messages: list[Message],
+        user_text: str,
+    ) -> TurnResult:
+        from assert_ai.core.security import sanitize_payload
+
+        chunks: list[str] = []
+        events: list[AdapterEvent] = []
+        tool_traces: list[ToolTrace] = []
+        stream_events: list[dict[str, Any]] = []
+        pending_tool_args: dict[str, tuple[str, dict[str, Any]]] = {}
+        model = self._model
+        response_id = None
+        finish_reason = None
+        usage = None
+
+        buffer = ""
+        current_event = "message"
+        data_lines: list[str] = []
+
+        def flush_event() -> None:
+            nonlocal current_event, response_id, model, finish_reason, usage
+            if not data_lines:
+                current_event = current_event or "message"
+                return
+            payload = "\n".join(data_lines)
+            data_lines.clear()
+            event_name = current_event or "message"
+            current_event = "message"
+            if payload == "[DONE]":
+                return
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                if event_name != "message":
+                    stream_events.append({"event": event_name, "data": payload})
+                return
+            if event_name != "message":
+                stream_events.append({"event": event_name, "data": data})
+
+            if event_name == "message":
+                if isinstance(data, dict):
+                    response_id = data.get("id") or response_id
+                    model = data.get("model") or model
+                    usage = data.get("usage") or usage
+                    choices = data.get("choices") if isinstance(data.get("choices"), list) else []
+                    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+                    raw_delta = choice.get("delta")
+                    delta = raw_delta if isinstance(raw_delta, dict) else {}
+                    if isinstance(delta.get("content"), str):
+                        chunks.append(delta["content"])
+                    raw_message = choice.get("message")
+                    message = raw_message if isinstance(raw_message, dict) else {}
+                    if isinstance(message.get("content"), str):
+                        chunks.append(message["content"])
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                return
+
+            if event_name == "hermes.tool.progress" and isinstance(data, dict):
+                tool_name = str(data.get("tool") or "tool")
+                tool_call_id = str(data.get("toolCallId") or data.get("tool_call_id") or f"tool_{len(events) + 1}")
+                status = str(data.get("status") or "")
+                label = str(data.get("label") or data.get("displayLabel") or tool_name)
+                if status in {"running", "started", "start", "pending", ""}:
+                    tool_args = {"label": label, "status": status} if status else {"label": label}
+                    pending_tool_args[tool_call_id] = (tool_name, tool_args)
+                    events.append(
+                        AdapterEvent(
+                            role="tool_call",
+                            content="",
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    return
+
+                pending_tool_name, tool_args = pending_tool_args.get(tool_call_id, (tool_name, {}))
+                content = status or "completed"
+                events.append(
+                    AdapterEvent(
+                        role="tool_result",
+                        content=content,
+                        tool_name=pending_tool_name,
+                        tool_args=tool_args,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+                tool_traces.append(
+                    ToolTrace(
+                        tool_name=pending_tool_name,
+                        tool_args=tool_args,
+                        tool_result=content,
+                        raw={"event": event_name, "data": data},
+                    )
+                )
+
+        def process_line(line: str) -> None:
+            nonlocal current_event
+            if line == "":
+                flush_event()
+                return
+            if line.startswith(":"):
+                return
+            if line.startswith("event:"):
+                current_event = line[len("event:"):].strip() or "message"
+                return
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:"):].lstrip())
+
+        async for chunk in resp.content:
+            if isinstance(chunk, bytes):
+                buffer += chunk.decode("utf-8", errors="replace")
+            else:
+                buffer += str(chunk)
+            while True:
+                match = re.search(r"\r?\n", buffer)
+                if not match:
+                    break
+                line = buffer[: match.start()]
+                buffer = buffer[match.end():]
+                process_line(line)
+        if buffer.strip():
+            process_line(buffer.strip())
+        flush_event()
+
+        response_text = _sanitize_response_text("".join(chunks))
+        response_summary: dict[str, Any] = {
+            "content": response_text,
+            "stop_reason": finish_reason or "",
+            "model": model,
+            "stream_events": stream_events,
+        }
+        if response_id:
+            response_summary["response_id"] = response_id
+        if isinstance(usage, dict):
+            response_summary["usage"] = usage
+        raw = sanitize_payload({"endpoint": self._endpoint, "response": response_summary})
+
+        response_events = [*events, AdapterEvent(role="assistant", content=response_text)] if events else None
+        interaction_messages = _serialize_connector_interaction_messages(
+            user_text=user_text,
+            response=ConnectorResponse(text=response_text, events=response_events, raw=raw),
+        )
+        return TurnResult(
+            text=response_text,
+            state_messages=list(messages) + [Message(role="assistant", content=response_text)],
+            interaction_messages=interaction_messages,
+            tool_traces=tool_traces,
+            raw=raw,
+            finish_reason=finish_reason,
         )
 
     async def run_turn(self, messages: list[Message]) -> TurnResult:
@@ -749,6 +918,16 @@ class HTTPEndpointSession:
                 headers=self._request_headers(),
             ) as resp:
                 resp.raise_for_status()
+                if (
+                    self._protocol == "openai_chat"
+                    and self._stream
+                    and "text/event-stream" in self._response_content_type(resp)
+                ):
+                    return await self._read_openai_chat_stream(
+                        resp,
+                        messages=messages,
+                        user_text=user_text,
+                    )
                 data = await resp.json()
         except aiohttp.ClientResponseError as exc:
             raise RuntimeError(

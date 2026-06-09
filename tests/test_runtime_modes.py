@@ -132,6 +132,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                                 "protocol": "openai_chat",
                                 "model": "custom-agent",
                                 "api_key_env": "ASSERT_TARGET_API_KEY",
+                                "stream": True,
                             }
                         }
                     }
@@ -146,6 +147,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
         self.assertEqual(parsed.target.endpoint.protocol, "openai_chat")
         self.assertEqual(parsed.target.endpoint.model, "custom-agent")
         self.assertEqual(parsed.target.endpoint.api_key_env, "ASSERT_TARGET_API_KEY")
+        self.assertEqual(parsed.target.endpoint.stream, True)
 
     def test_parse_pipeline_config_rejects_openai_chat_endpoint_without_model(self) -> None:
         with self.assertRaisesRegex(ValueError, "target.endpoint.model is required when protocol is openai_chat"):

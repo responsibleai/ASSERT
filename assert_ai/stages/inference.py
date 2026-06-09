@@ -165,6 +165,7 @@ def _inference_config_fingerprint(
                 endpoint_config.model,
                 endpoint_config.url,
                 endpoint_config.api_key_env,
+                "stream" if endpoint_config.stream else "",
             )
             if part
         )
@@ -560,6 +561,7 @@ def _build_target_session(
             protocol=endpoint_config.protocol,
             model=endpoint_config.model,
             api_key_env=endpoint_config.api_key_env,
+            stream=endpoint_config.stream,
         )
 
     if target.is_callable:

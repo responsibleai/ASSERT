@@ -45,6 +45,7 @@ pipeline:
         url: http://localhost:8000/v1/chat/completions
         model: my-agent
         api_key_env: ASSERT_TARGET_API_KEY
+        stream: true  # optional; captures streaming endpoint events when returned
 ```
 
 ASSERT sends:
@@ -62,11 +63,14 @@ and reads `choices[0].message.content` from the response.
 
 `api_key_env` is optional. When set, ASSERT reads that environment variable and sends it as a bearer token. The secret value is not stored in the YAML config.
 
+`stream` is optional and defaults to `false`. When `stream: true`, ASSERT sends `"stream": true` and can read Server-Sent Events from endpoints that return `text/event-stream`. It accumulates normal Chat Completions `choices[0].delta.content` chunks into the assistant answer.
+
 ## Tool-call evidence
 
 Endpoint targets are black-box unless the service returns evidence. ASSERT captures tool calls when it can see them:
 
 - `protocol: openai_chat` preserves `choices[0].message.tool_calls` when present.
+- `protocol: openai_chat` with `stream: true` preserves supported streaming events, including Hermes `hermes.tool.progress` events, as best-effort tool progress evidence.
 - The simple ASSERT endpoint protocol can optionally return `events`:
 
 ```json

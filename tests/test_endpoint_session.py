@@ -15,6 +15,7 @@ class _FakeResponse:
         self._payload = payload
         self.status = status
         self.content_type = content_type
+        self.headers = {"content-type": content_type}
 
     async def __aenter__(self):
         return self
@@ -29,15 +30,40 @@ class _FakeResponse:
         return self._payload
 
 
+class _FakeStreamContent:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._iter = iter(self._chunks)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter).encode("utf-8")
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+class _FakeStreamingResponse(_FakeResponse):
+    def __init__(self, chunks: list[str]) -> None:
+        super().__init__({}, content_type="text/event-stream")
+        self.content = _FakeStreamContent(chunks)
+
+    async def json(self):  # pragma: no cover - streaming path should not call json()
+        raise AssertionError("streaming response should not be parsed as JSON")
+
+
 class _FakeClientSession:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict | None = None, *, response: _FakeResponse | None = None) -> None:
         self.payload = payload
+        self.response = response
         self.requests: list[dict] = []
         self.closed = False
 
     def post(self, url: str, *, json: dict, headers: dict | None = None):
         self.requests.append({"url": url, "json": json, "headers": headers or {}})
-        return _FakeResponse(self.payload)
+        return self.response or _FakeResponse(self.payload or {})
 
     async def close(self) -> None:
         self.closed = True
@@ -100,6 +126,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.text, "I will check that.")
         self.assertEqual(client.requests[0]["json"]["model"], "custom-agent")
+        self.assertNotIn("stream", client.requests[0]["json"])
         self.assertEqual(
             client.requests[0]["json"]["messages"],
             [
@@ -115,6 +142,46 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw["response"]["model"], "custom-agent")
         self.assertEqual(raw["response"]["usage"]["total_tokens"], 15)
         self.assertNotIn("secret-token", json.dumps(raw))
+
+    async def test_streaming_openai_chat_protocol_accumulates_text_and_tool_progress(self) -> None:
+        chunks = [
+            "event: hermes.tool.progress\n",
+            f"data: {json.dumps({'tool': 'search_files', 'label': 'search_files pattern=foo', 'toolCallId': 'call_search', 'status': 'running'})}\n\n",
+            f"data: {json.dumps({'model': 'custom-agent', 'choices': [{'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n",
+            f"data: {json.dumps({'model': 'custom-agent', 'choices': [{'delta': {'content': 'streamed'}, 'finish_reason': None}]})}\n\n",
+            "event: hermes.tool.progress\n",
+            f"data: {json.dumps({'tool': 'search_files', 'toolCallId': 'call_search', 'status': 'completed'})}\n\n",
+            f"data: {json.dumps({'model': 'custom-agent', 'choices': [{'delta': {'content': ' answer'}, 'finish_reason': None}]})}\n\n",
+            f"data: {json.dumps({'model': 'custom-agent', 'choices': [{'delta': {}, 'finish_reason': 'stop'}]})}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        client = _FakeClientSession(response=_FakeStreamingResponse(chunks))
+        session = HTTPEndpointSession(
+            endpoint="http://localhost:8000/v1/chat/completions",
+            protocol="openai_chat",
+            model="custom-agent",
+            stream=True,
+        )
+        setattr(session, "_aiohttp", object())
+        setattr(session, "_session", client)
+
+        result = await session.run_turn([Message(role="user", content="Say hello slowly")])
+
+        self.assertEqual(result.text, "streamed answer")
+        self.assertEqual(client.requests[0]["json"]["stream"], True)
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.interaction_messages[1]["tool_calls"][0]["function"], "search_files")
+        self.assertEqual(
+            result.interaction_messages[1]["tool_calls"][0]["arguments"],
+            {"label": "search_files pattern=foo", "status": "running"},
+        )
+        self.assertEqual(result.interaction_messages[2]["role"], "tool")
+        self.assertEqual(result.interaction_messages[2]["tool_call_id"], "call_search")
+        self.assertIn("completed", result.interaction_messages[2]["content"])
+        self.assertEqual(result.interaction_messages[-1]["content"], "streamed answer")
+        raw = result.raw or {}
+        self.assertEqual(raw["response"]["model"], "custom-agent")
+        self.assertEqual(raw["response"]["stream_events"][0]["event"], "hermes.tool.progress")
 
     async def test_endpoint_events_are_recorded_as_tool_interaction_messages(self) -> None:
         client = _FakeClientSession(
