@@ -166,3 +166,103 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 - Use forward slashes in customer-facing docs unless the block is explicitly PowerShell-only.
 - Frame OpenTelemetry trace capture as the recommended integration path for any non-trivial agent — not as an optional add-on. A plain callable without traces is a customization fallback for black-box APIs or pipeline smoke tests.
 - If a command needs credentials, say which environment variable names are required but do not inspect or print their values.
+
+---
+
+# Maintainer assist pattern (Copilot CLI + agents)
+
+This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on their local workstation, plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
+
+It is **not** part of the ASSERT product. Contributors do not need to interact with it. Other OSS maintainers are welcome to fork the pattern.
+
+The Copilot/orientation guidance above this section applies to every contributor. Everything below describes the maintainer-assist agents.
+
+## Default state: observation mode
+
+Observation mode is the default and currently only enabled state. In observation mode:
+
+- The **designer** agent is **off by default** — it has no recurring schedule and no triggers active. When the maintainer adds a schedule for the designer, it walks the golden path and writes findings to `designer-inbox.md`. External writes (filing issues, opening docs PRs) require a separate explicit activation per the activation procedure.
+- The **dev-maintainer** agent is observation-only **except** for the two narrow write exceptions described below — those are active by default and do not require activation.
+- No PR approvals. No merges. No issue files. No Discussion replies. No label changes.
+
+Broader activation of either agent — including any *new* write capability beyond the dev-maintainer's two narrow exceptions — requires explicit, agent-specific approval by the maintainer. There is no global "activate all" switch.
+
+### Narrow write exceptions (dev-maintainer only)
+
+To prevent PRs from sitting unreviewed when the maintainer is unavailable, the **dev-maintainer agent** has two narrowly-scoped write powers that are always active (not gated on activation):
+
+1. **Post audit-only comments** on open PRs — technical findings, severity, suggested next steps. Never an approval, never a request-changes review, never a merge, never a label change.
+2. **Request review** (assign reviewers) from CODEOWNERS when a PR has been open with no requested reviewers, or when an existing reviewer has not responded within the escalation window.
+
+Both writes use the customer-safe terminology defined elsewhere in this document.
+
+### 24-hour escalation rule
+
+The dev-maintainer agent enforces this rule on every observation pass:
+
+| PR age (no review action) | Action |
+|---|---|
+| < 24h | Observe only; log to dev-inbox. |
+| ≥ 24h, no reviewer requested | Request review from a CODEOWNER on the affected path (see routing below). |
+| ≥ 72h, reviewer requested but no response | Request review from a *second* CODEOWNER on the same path (uses narrow write #2 again — GitHub's review-request mechanism notifies the new reviewer directly). |
+| ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
+
+### Reviewer routing logic
+
+When picking a reviewer to request or ping:
+
+1. Read the effective CODEOWNERS list for the PR's changed paths.
+2. **Exclude the PR author.**
+3. **Exclude any owner whose GitHub status is set to "busy" / "out of office"** at the time the agent runs (the agent reads the GraphQL `user.status` field for each candidate; owners keep this in sync themselves).
+4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort.
+5. Pick from the remaining candidates. Prefer admins. If the path has multiple eligible owners, pick the one not recently pinged.
+
+### Designer agent stays observation-only
+
+The designer agent has **no** write exceptions in observation mode. When the maintainer adds a schedule for it, the designer produces inbox rows only; any external writes (filing issues, opening docs PRs, posting comments) require explicit activation per the activation procedure below.
+
+## Sole human approver
+
+The **repository maintainer** is the sole human approver for every external write, merge, label change, or activation by either agent. This applies in observation mode and after activation: even after an agent is activated, the scope of what it may write externally is defined per activation by the maintainer.
+
+## The two agents
+
+Both agent specs live in [`.github/agents/`](.github/agents/):
+
+| Agent | Spec | Inbox |
+|---|---|---|
+| Dev maintainer | [`dev-maintainer.md`](.github/agents/dev-maintainer.md) | [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) |
+| Designer | [`designer.md`](.github/agents/designer.md) | [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) |
+
+Both agents produce public-safe outputs that live in this repository under `docs/agents/inbox/`. The dev-maintainer's audit findings on public PRs are technical observations; the designer's UX findings reference public docs and example surfaces. No operator-private content lives in either inbox.
+
+## Reusable skills
+
+Both skill specs live in [`.github/skills/`](.github/skills/). Each skill defines a single methodology with an explicit output format:
+
+- [`audit-pr.md`](.github/skills/audit-pr.md) — review a PR for behavior naming, OpenInference trace attributes, and dataset coverage. Output: pass/fail per dimension + one-line summary.
+- [`ux-audit.md`](.github/skills/ux-audit.md) — walk the ASSERT golden path and score each step on clarity, delight, friction, and error quality.
+
+## Public-safe inboxes
+
+Public inboxes live under `docs/agents/inbox/`:
+
+- [`dev-inbox.md`](docs/agents/inbox/dev-inbox.md) — begins receiving observation rows and audit summaries from the dev-maintainer agent as soon as its recurring loop runs post-merge, because the dev-maintainer's two narrow write exceptions are active by default.
+- [`designer-inbox.md`](docs/agents/inbox/designer-inbox.md) — header-only template by default. When the maintainer adds a schedule for the designer agent, this inbox begins receiving observation rows. The designer has no external writes; filing issues or opening docs PRs from these findings requires separate activation per the activation procedure.
+- [`run-log.md`](docs/agents/inbox/run-log.md) — one-line status entry per observation-loop pass.
+
+See [`docs/agents/README.md`](docs/agents/README.md) for the contributor-facing index of the agent system.
+
+## Customer-safe terminology
+
+All files in this maintainer-assist system use the same customer-facing vocabulary as the rest of the repo: `behavior`, `eval spec`, `dataset`, `test cases`, `OpenTelemetry`, `OpenInference`, `spec-driven scoring`. Internal shorthand stays out of public files.
+
+## Activation procedure
+
+When the maintainer activates a broader agent capability:
+
+1. Pick the agent and the specific capability (one at a time).
+2. Read the agent spec and confirm trigger conditions, output destination, and skills used are still current.
+3. Define the activation scope: what external writes are now allowed, on what cadence, and with what review gate.
+4. Record the activation decision (date, agent, scope) in a place the maintainer can audit later.
+5. The agent transitions from observation-only to the activated scope. Everything outside that scope still routes to the inbox.
