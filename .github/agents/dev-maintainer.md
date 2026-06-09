@@ -54,8 +54,10 @@ Read [`.github/CODEOWNERS`](../CODEOWNERS) for the path-to-owner mapping. Then:
 
 1. **Exclude the PR author.**
 2. **Exclude any owner whose GitHub user status is set to "busy" / "out of office"** at the time the agent runs. The agent queries the GraphQL `user.status` field for each candidate; owners keep this in sync themselves via their GitHub profile.
-3. **Exclude the fallback admin** unless every other eligible owner has been excluded by the rules above. The fallback admin is the reviewer of last resort.
-4. From the remaining candidates, prefer the owner who has been pinged least recently for this path.
+3. **Exclude the fallback admin** unless every other eligible owner has been excluded by the rules above. The fallback admin is the reviewer of last resort. **Never request the PR author**: if a path's only owner is the author (e.g. the catch-all owner opened the PR), make no request and flag the PR for manual escalation instead.
+4. Pick deterministically from the remaining candidates: the owner covering the most changed paths, then alphabetical order. The reference Action (`../workflows/review-escalation.yml`, via `../scripts/escalate_reviews.py`) is **stateless**, so it uses this deterministic order rather than tracking per-path ping history; a stateful host may substitute "least recently pinged for this path." For the 72h second-owner and 7d fallback steps, already-requested owners are excluded and the next is chosen by the same order.
+
+The escalation cascade is evaluated by severity (7d → 72h → 24h) so the 7-day fallback is always reachable for a requested-but-silent PR, and the fallback step is skipped (logged as a manual escalation) whenever it would otherwise target the author.
 
 ### What this agent never does (even in observation mode)
 

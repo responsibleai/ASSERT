@@ -228,8 +228,8 @@ When picking a reviewer to request or ping:
 1. Read the effective CODEOWNERS list for the PR's changed paths.
 2. **Exclude the PR author.**
 3. **Exclude any owner whose GitHub status is set to "busy" / "out of office"** at the time the agent runs (the agent reads the GraphQL `user.status` field for each candidate; owners keep this in sync themselves).
-4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort.
-5. Pick from the remaining candidates. Prefer admins. If the path has multiple eligible owners, pick the one not recently pinged.
+4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort. **Never request the PR author** — if the only owner of a path is the author (e.g. the catch-all owner authored the PR), the agent makes no request and logs the PR for manual escalation rather than pinging the author.
+5. Pick deterministically from the remaining candidates: the owner covering the most changed paths, then alphabetical order. The reference Action (`.github/workflows/review-escalation.yml`) is stateless, so it uses this deterministic order in place of "least recently pinged"; a stateful host may substitute ping-history. For the 72h second-owner and 7d fallback steps, owners already requested are excluded and the next is chosen by the same order.
 
 ### Designer agent stays observation-only
 

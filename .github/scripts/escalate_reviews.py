@@ -159,6 +159,21 @@ def _rank_owners(candidates_by_file: dict[str, list[str]]) -> list[str]:
     return sorted(coverage, key=lambda o: (-coverage[o], o))
 
 
+def _safe_fallback(author: str, requested: set[str], reviewed_by: set[str]) -> str | None:
+    """The fallback admin, or None when requesting them would be wrong.
+
+    Honors routing rule #1 (never request the PR author): if the fallback admin
+    *is* the author, or has already been requested or has already reviewed,
+    return None so the caller escalates for manual handling instead of pinging
+    the author / re-pinging the same person.
+    """
+    if FALLBACK_LOGIN == author:
+        return None
+    if FALLBACK_LOGIN in requested or FALLBACK_LOGIN in reviewed_by:
+        return None
+    return FALLBACK_LOGIN
+
+
 def evaluate_pr(
     repo: str,
     pr: dict,
@@ -206,26 +221,53 @@ def evaluate_pr(
         return d
 
     has_reviewed = bool(reviewed_by)
-    if not requested and not has_reviewed:
+    if has_reviewed:
+        d.action = "observe"
+        d.reason = "a reviewer has already responded"
+        return d
+
+    # Cascade by severity. `pool` already excludes the author, OOO owners, and
+    # anyone already requested, so no branch can ever target the author.
+    if not requested:
+        # No reviewer ever requested → assign the first eligible owner (the
+        # documented 24h action), at any age past the first window.
         if pool:
             d.action, d.chosen = "request", [pool[0]]
-            d.reason = "first window reached, no reviewer requested"
+            d.reason = "no reviewer requested; assigning the first eligible owner"
         else:
-            d.action, d.chosen = "fallback", [FALLBACK_LOGIN]
-            d.reason = "no eligible owner; fallback admin"
-    elif requested and not has_reviewed and age >= WINDOW_72H:
-        second = [o for o in pool if o not in requested]
-        if second:
-            d.action, d.chosen = "request-second", [second[0]]
-            d.reason = "72h reached, requested reviewer non-responsive; add a second owner"
+            fb = _safe_fallback(author, requested, reviewed_by)
+            if fb:
+                d.action, d.chosen = "fallback", [fb]
+                d.reason = "no eligible owner; fallback admin (last resort)"
+            else:
+                d.action = "manual"
+                d.reason = "no eligible owner and fallback would be the author — manual escalation needed"
+    elif age >= WINDOW_7D:
+        # Requested but silent for 7d+ → fallback admin, the reviewer of last resort.
+        fb = _safe_fallback(author, requested, reviewed_by)
+        if fb:
+            d.action, d.chosen = "fallback", [fb]
+            d.reason = "7d+ no response; fallback admin (last resort)"
+        elif pool:
+            # Fallback is the author or already pinged → widen to another owner.
+            d.action, d.chosen = "request-second", [pool[0]]
+            d.reason = "7d+ no response; fallback unavailable, widening to another owner"
         else:
-            d.reason = "72h reached but no additional eligible owner"
-    elif age >= WINDOW_7D and not has_reviewed:
-        d.action, d.chosen = "fallback", [FALLBACK_LOGIN]
-        d.reason = "7d reached, still no response; fallback admin (last resort)"
+            d.action = "manual"
+            d.reason = "7d+ no response; fallback is the author and no other owner — manual escalation needed"
+    elif age >= WINDOW_72H:
+        # Requested but silent for 72h+ → add a second *non-fallback* owner from
+        # the same path. The fallback admin is reserved for the 7d last resort,
+        # so we do not pull them in early here.
+        if non_fallback:
+            d.action, d.chosen = "request-second", [non_fallback[0]]
+            d.reason = "72h+ requested reviewer non-responsive; adding a second owner"
+        else:
+            d.action = "observe"
+            d.reason = "72h+ but no additional non-fallback owner; awaiting 7d fallback"
     else:
         d.action = "observe"
-        d.reason = "reviewer present or already responded"
+        d.reason = "reviewer requested; within the response window"
     return d
 
 
@@ -272,6 +314,8 @@ def main() -> int:
             print(f"         routing (ranked owners): {', '.join('@' + c for c in d.routing_preview)}")
         if d.candidates and d.candidates != d.routing_preview:
             print(f"         eligible now (not yet requested): {', '.join('@' + c for c in d.candidates)}")
+        if d.action == "manual":
+            print(f"::warning::PR #{d.pr} needs manual escalation: {d.reason}")
         if d.action in {"request", "request-second", "fallback"} and d.chosen and not args.dry_run:
             try:
                 request_reviewers(args.repo, d.pr, d.chosen)
