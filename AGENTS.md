@@ -219,6 +219,8 @@ Run the loop on an **always-on host** instead:
 
 `.github/CODEOWNERS` (GitHub-native review routing) already covers the baseline case on its own and keeps working regardless of where — or whether — this loop runs. Treat the agent loop as an enhancement layered on top of CODEOWNERS, not a replacement for it.
 
+This repo ships that enhancement as a reference implementation: the scheduled workflow `.github/workflows/review-escalation.yml` runs `.github/scripts/escalate_reviews.py`, which applies the windows and routing above deterministically (no LLM) on GitHub's own always-on schedule. The LLM `audit-pr` pass remains a separate concern a maintainer can run from any host.
+
 ### Reviewer routing logic
 
 When picking a reviewer to request or ping:
