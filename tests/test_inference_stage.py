@@ -9,11 +9,24 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
+from assert_ai.core.config_model import (
+    EndpointConfig,
+    EvaluationConfig,
+    InferenceConfig,
+    JudgeConfig,
+    TargetConfig,
+    TesterConfig,
+    ToolsConfig,
+)
 from assert_ai.core.io import load_test_cases
 from assert_ai.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from assert_ai.core.session import TurnResult
-from assert_ai.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
+from assert_ai.stages.inference import (
+    _inference_config_fingerprint,
+    _prepare_test_cases,
+    _run_prompt_test_case,
+    run_inference,
+)
 from assert_ai.viewer_read_model import ViewerReadModelBuildError
 
 
@@ -52,6 +65,41 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         # with the same test_case_id but different content must hash apart.
         self.assertNotEqual(hash_a, hash_no_seeds)
         self.assertNotEqual(hash_a, hash_b)
+
+    def test_inference_config_fingerprint_uses_endpoint_url_for_mapping_config(self) -> None:
+        target = TargetConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                protocol="openai_chat",
+                model="custom-agent",
+            )
+        )
+        evaluation = EvaluationConfig(
+            inference=InferenceConfig(max_turns=4, concurrency=1),
+            judge=JudgeConfig(model="azure/gpt-5.4"),
+            tester=TesterConfig(model="azure/gpt-5.4"),
+        )
+
+        self.assertEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(target, evaluation, 1024),
+        )
+        same_url_other_model = TargetConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                protocol="openai_chat",
+                model="other-agent",
+            )
+        )
+        other_target = TargetConfig(endpoint="http://localhost:9000/chat")
+        self.assertNotEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(same_url_other_model, evaluation, 1024),
+        )
+        self.assertNotEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(other_target, evaluation, 1024),
+        )
 
     def test_prepare_test_cases_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
         rows = [

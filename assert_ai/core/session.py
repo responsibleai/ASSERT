@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ from assert_ai.core.model_client import (
     build_llm_call_trace,
     generate,
     generate_with_tools,
+    messages_to_openai,
     normalize_response,
     summarize_response,
 )
@@ -639,9 +641,10 @@ class CallableSession:
 class HTTPEndpointSession:
     """Invokes an HTTP endpoint as the eval target.
 
-    POST {"message": text, "history": [...]} to the URL.
-    Expects {"response": "..."} back.
-    Same black-box visibility as CallableSession.
+    The default ``assert`` protocol POSTs ``{"message": text, "history": [...]}``
+    and expects ``{"response": "..."}`` back. The ``openai_chat`` protocol
+    calls an OpenAI-compatible Chat Completions endpoint and preserves returned
+    tool calls when they are present.
     """
 
     def __init__(
@@ -651,14 +654,20 @@ class HTTPEndpointSession:
         headers: dict[str, str] | None = None,
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
+        protocol: str = "assert",
+        model: str | None = None,
+        api_key_env: str | None = None,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
         validate_endpoint_url(endpoint)
         self._endpoint = endpoint
-        self._headers = headers or {}
+        self._headers = dict(headers or {})
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
+        self._protocol = protocol
+        self._model = model
+        self._api_key_env = api_key_env
         self._session = None  # aiohttp.ClientSession
 
     @property
@@ -682,6 +691,40 @@ class HTTPEndpointSession:
             await self._session.close()
             self._session = None
 
+    def _request_headers(self) -> dict[str, str]:
+        headers = dict(self._headers)
+        if self._api_key_env:
+            api_key = os.environ.get(self._api_key_env)
+            if not api_key:
+                raise RuntimeError(f"Environment variable {self._api_key_env} is required for endpoint authentication")
+            headers.setdefault("Authorization", f"Bearer {api_key}")
+        return headers
+
+    def _build_payload(self, messages: list[Message], user_text: str, history: list[dict[str, str]]) -> dict[str, Any]:
+        if self._protocol == "openai_chat":
+            if not self._model:
+                raise RuntimeError("OpenAI chat endpoint protocol requires a model")
+            return {
+                "model": self._model,
+                "messages": messages_to_openai(messages),
+            }
+        return {"message": user_text, "history": history}
+
+    def _normalize_response(self, data: dict[str, Any], request_payload: dict[str, Any]) -> ConnectorResponse:
+        response = _normalize_connector_response(data)
+        if response.text == "" and isinstance(data.get("response"), str):
+            response.text = data["response"]
+        raw = response.raw or dict(data)
+        if "metadata" in data and isinstance(data["metadata"], dict):
+            raw["metadata"] = data["metadata"]
+        from assert_ai.core.security import sanitize_payload
+
+        return ConnectorResponse(
+            text=response.text,
+            events=response.events,
+            raw=sanitize_payload(raw),
+        )
+
     async def run_turn(self, messages: list[Message]) -> TurnResult:
         aiohttp = self._aiohttp
 
@@ -697,17 +740,16 @@ class HTTPEndpointSession:
             if msg.role in ("user", "assistant")
         ]
 
-        payload = {"message": user_text, "history": history}
+        payload = self._build_payload(messages, user_text, history)
 
         try:
             async with self._session.post(
                 self._endpoint,
                 json=payload,
-                headers=self._headers,
+                headers=self._request_headers(),
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
-                response_text = data.get("response", "")
         except aiohttp.ClientResponseError as exc:
             raise RuntimeError(
                 f"HTTP endpoint {self._endpoint} returned status {exc.status}: {exc.message}"
@@ -717,19 +759,67 @@ class HTTPEndpointSession:
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc
 
-        # Sanitize response text to prevent credential leakage into artifacts
-        response_text = _sanitize_response_text(response_text)
+        if self._protocol == "openai_chat":
+            model_response = normalize_response(
+                data,
+                api_mode="openai_chat_endpoint",
+                request_payload=payload,
+            )
+            response_text = _sanitize_response_text(model_response.text or "")
+            response_summary = summarize_response(model_response)
+            response_summary["content"] = response_text
+            raw = {"endpoint": self._endpoint, "response": response_summary}
+            assistant_message = {
+                "role": "assistant",
+                "content": response_text,
+                "raw": raw,
+            }
+            if model_response.tool_calls:
+                assistant_message["tool_calls"] = [
+                    _serialize_tool_call(tool_call)
+                    for tool_call in model_response.tool_calls
+                ]
+            return TurnResult(
+                text=response_text,
+                state_messages=list(messages) + [
+                    Message(
+                        role="assistant",
+                        content=response_text,
+                        tool_calls=list(model_response.tool_calls),
+                    )
+                ],
+                interaction_messages=[
+                    {"role": "user", "content": user_text},
+                    assistant_message,
+                ],
+                tool_traces=[
+                    ToolTrace(
+                        tool_name=tool_call.name,
+                        tool_args=tool_call.arguments,
+                        tool_result="",
+                        raw=tool_call.raw if isinstance(tool_call.raw, dict) else None,
+                    )
+                    for tool_call in model_response.tool_calls
+                ],
+                raw=raw,
+                finish_reason=model_response.finish_reason,
+            )
 
-        interaction_messages = [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": response_text},
-        ]
+        response = self._normalize_response(data, payload)
+        response_text = _sanitize_response_text(response.text)
+        response = ConnectorResponse(text=response_text, events=response.events, raw=response.raw)
+        interaction_messages = _serialize_connector_interaction_messages(
+            user_text=user_text,
+            response=response,
+        )
+        if response.events:
+            interaction_messages.append({"role": "assistant", "content": response_text, "raw": response.raw})
 
         return TurnResult(
             text=response_text,
             state_messages=list(messages) + [Message(role="assistant", content=response_text)],
             interaction_messages=interaction_messages,
-            raw={"endpoint": self._endpoint},
+            raw={"endpoint": self._endpoint, **(response.raw or {})},
         )
 
 

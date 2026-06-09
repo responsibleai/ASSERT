@@ -25,6 +25,7 @@ from assert_ai.config import resolve_stage_paths
 from assert_ai.core.config_model import (
     DEFAULT_MODEL_TIMEOUT_S,
     DEFAULT_INFERENCE_MAX_TOKENS,
+    EndpointConfig,
     EvaluationConfig,
     ModelConfig,
     InferenceConfig,
@@ -154,7 +155,24 @@ def _inference_config_fingerprint(
     test case ids are deterministic enough that the resume path silently
     reuses inference rows from prior test_set.jsonl content.
     """
-    target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
+    endpoint_config = target.endpoint if isinstance(target.endpoint, EndpointConfig) else None
+    endpoint_name = ""
+    if endpoint_config:
+        endpoint_name = "|".join(
+            part
+            for part in (
+                endpoint_config.protocol,
+                endpoint_config.model,
+                endpoint_config.url,
+                endpoint_config.api_key_env,
+            )
+            if part
+        )
+    target_name = (
+        target.model.name
+        if isinstance(target.model, ModelConfig)
+        else (target.connector or target.callable or endpoint_name or "")
+    )
     test_set_sha = ""
     if test_set_path is not None and test_set_path.exists():
         test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
@@ -530,10 +548,18 @@ def _build_target_session(
     if target.is_endpoint:
         if not target.endpoint:
             raise ValueError("endpoint target requires an endpoint URL")
+        endpoint_config = (
+            target.endpoint
+            if isinstance(target.endpoint, EndpointConfig)
+            else EndpointConfig(url=str(target.endpoint))
+        )
         return HTTPEndpointSession(
-            endpoint=target.endpoint,
+            endpoint=endpoint_config.url,
             system_prompt=target.system_prompt,
             message_timeout_s=inference.tool_timeout_s,
+            protocol=endpoint_config.protocol,
+            model=endpoint_config.model,
+            api_key_env=endpoint_config.api_key_env,
         )
 
     if target.is_callable:
@@ -597,6 +623,20 @@ def _build_target_session(
     )
 
 
+def _target_identifier(target: TargetConfig) -> str:
+    if isinstance(target.model, ModelConfig):
+        return str(target.model.name)
+    if target.model:
+        return str(target.model)
+    if target.connector:
+        return target.connector
+    if target.callable:
+        return target.callable
+    if isinstance(target.endpoint, EndpointConfig):
+        return target.endpoint.model or target.endpoint.url
+    return str(target.endpoint or "")
+
+
 async def _run_prompt_test_case(
     *,
     test_case: dict[str, Any],
@@ -618,7 +658,7 @@ async def _run_prompt_test_case(
         config_path=config_path,
         call_label=f"target:{test_case_id}",
     )
-    target_id = str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or "")
+    target_id = _target_identifier(target)
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="prompt",
@@ -626,7 +666,7 @@ async def _run_prompt_test_case(
             behavior=str(test_case.get("behavior") or ""),
             target=target_id,
             tester_model="",
-            target_reasoning_effort=target.model.reasoning_effort if target.model else None,
+            target_reasoning_effort=target.model.reasoning_effort if isinstance(target.model, ModelConfig) else None,
             dimensions=row_factors(test_case),
         )
     )
@@ -936,9 +976,9 @@ async def _run_scenario_test_case(
             kind="scenario",
             test_case_id=test_case_id,
             behavior=str(test_case.get("behavior") or ""),
-            target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
+            target=_target_identifier(target),
             tester_model=str(tester.model.name),
-            target_reasoning_effort=target.model.reasoning_effort if target.model else None,
+            target_reasoning_effort=target.model.reasoning_effort if isinstance(target.model, ModelConfig) else None,
             tester_reasoning_effort=tester.model.reasoning_effort,
             dimensions=row_factors(test_case),
         )

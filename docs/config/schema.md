@@ -175,7 +175,11 @@ Accepted keys:
 - `target` — mapping. Required when `inference` is enabled.
   - `model` — model config. Use for the [Prompt Agent target](../targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop).
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
-  - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
+  - `endpoint` — HTTP endpoint URL or mapping. Use when the target is already running as a service. String form uses the simple ASSERT endpoint protocol. Mapping form accepts:
+    - `url` — required endpoint URL.
+    - `protocol` — optional string. `assert` (default) sends `{message, history}` and expects `{response}`. `openai_chat` sends an OpenAI-compatible Chat Completions request and reads `choices[0].message.content`.
+    - `model` — required for `openai_chat`.
+    - `api_key_env` — optional environment variable name. When set, ASSERT sends its value as a bearer token without storing the secret in config.
   - `connector` — external connector target (supported by parser/runtime, not recommended for customer-preview onboarding).
   - `system_prompt` — string. Optional.
   - `trace` — mapping. Optional. Use with callable targets that emit OpenTelemetry spans.
@@ -215,6 +219,24 @@ pipeline:
         max_tokens: 10000
     max_turns: 6
     concurrency: 1
+```
+
+OpenAI-compatible endpoint example:
+
+```yaml
+pipeline:
+  inference:
+    target:
+      endpoint:
+        protocol: openai_chat
+        url: http://localhost:8000/v1/chat/completions
+        model: my-agent
+        api_key_env: ASSERT_TARGET_API_KEY
+    tester:
+      model:
+        name: azure/gpt-4o-mini
+        max_tokens: 10000
+    max_turns: 6
 ```
 
 Hosted model with simulated tools example:

@@ -50,6 +50,7 @@ Choose the right target integration path for your system.
 - [Target Support Overview](targets/README.md): Compare supported target types and choose the best integration path.
 - [Callable Target](targets/callable.md): Connect any Python agent or multi-agent system through a callable entry point.
 - [Prompt Agent Target](targets/model-and-tools.md): Configure a hosted model with a system prompt and optional tool schema.
+- [Endpoint Target](targets/endpoint.md): Connect an already-running HTTP service or OpenAI-compatible chat endpoint.
 
 ## Related docs
 
