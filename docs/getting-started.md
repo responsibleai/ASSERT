@@ -26,7 +26,7 @@ Connect an agent you already built (LangGraph powers ~half of agent builds; Crew
 
 ```bash
 pip install "assert-ai[otel]"
-cp .env.example .env          # add your model key (Windows: Copy-Item .env.example .env)
+# set your model key: export AZURE_API_KEY and AZURE_API_BASE (or create a .env here — it's auto-loaded)
 ```
 
 Wrap your agent's entry function so its spans are captured:
@@ -68,7 +68,7 @@ You have a system prompt or a written description of how the agent should behave
 
 ```bash
 pip install assert-ai
-cp .env.example .env          # add your model key (Windows: Copy-Item .env.example .env)
+# set your model key: export AZURE_API_KEY and AZURE_API_BASE (or create a .env here — it's auto-loaded)
 assert-ai run --example health-assistant
 ```
 
@@ -80,7 +80,7 @@ No spec yet? Describe your system in one line and an LLM assistant interviews yo
 
 ```bash
 pip install assert-ai
-cp .env.example .env          # add your model key (Windows: Copy-Item .env.example .env)
+# set your model key: export AZURE_API_KEY and AZURE_API_BASE (or create a .env here — it's auto-loaded)
 assert-ai init --describe "a customer-support bot for an online bank"
 assert-ai run --config eval_config.yaml
 ```

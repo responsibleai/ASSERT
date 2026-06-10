@@ -543,6 +543,12 @@ def _render_examples_table(console: Console) -> None:
     console.print("Run one with:  [bold]assert-ai run --example <name>[/bold]")
 
 
+@cli.command("examples", short_help="List the bundled examples runnable with `run --example`")
+def examples_cmd() -> None:
+    """List bundled examples that ``assert-ai run --example <name>`` can run."""
+    _render_examples_table(_console())
+
+
 @cli.command(short_help="Run a pipeline from a YAML config")
 @click.option(
     "--config",
@@ -556,11 +562,9 @@ def _render_examples_table(console: Console) -> None:
     "--example",
     default=None,
     help=(
-        "Run a bundled example instead of --config. Use without a value "
-        "(or with an unknown name) to list available examples."
+        "Run a bundled example by name instead of --config. "
+        "Run `assert-ai examples` to list the available examples."
     ),
-    is_flag=False,
-    flag_value="",  # `--example` with no value lists the catalog
 )
 @click.option(
     "--force-stage",
@@ -623,12 +627,11 @@ def run(
 
         if config is not None:
             _error("Pass either --config or --example, not both.")
-        if example == "" or example not in EXAMPLES:
+        if example not in EXAMPLES:
             console = _console()
-            if example and example not in EXAMPLES:
-                console.print(f"[red]Unknown example:[/red] {example!r}\n")
+            console.print(f"[red]Unknown example:[/red] {example!r}\n")
             _render_examples_table(console)
-            raise SystemExit(0 if example == "" else 2)
+            raise SystemExit(2)
         config = resolve_example(example)
     elif config is None:
         console = _console()

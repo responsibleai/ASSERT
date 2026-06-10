@@ -135,11 +135,17 @@ class CliTest(unittest.TestCase):
         self.assertIn("health_assistant", forwarded)
         self.assertTrue(Path(forwarded).exists(), msg=forwarded)
 
-    def test_example_without_value_lists_catalog(self) -> None:
-        result = self.runner.invoke(cli, ["run", "--example"])
+    def test_examples_command_lists_catalog(self) -> None:
+        result = self.runner.invoke(cli, ["examples"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("health-assistant", result.output)
         self.assertIn("travel-planner-langgraph", result.output)
+
+    def test_bare_example_flag_errors(self) -> None:
+        # `--example` requires a value across the supported Click range; the
+        # catalog is discoverable via the `examples` command instead.
+        result = self.runner.invoke(cli, ["run", "--example"])
+        self.assertNotEqual(result.exit_code, 0, msg=result.output)
 
     def test_unknown_example_lists_catalog_and_errors(self) -> None:
         result = self.runner.invoke(cli, ["run", "--example", "does-not-exist"])

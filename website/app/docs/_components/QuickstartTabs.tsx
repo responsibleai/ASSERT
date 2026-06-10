@@ -26,8 +26,8 @@ function Code({ children }: { children: string }) {
 
 function envLine(os: OS): string {
 	return os === "powershell"
-		? "Copy-Item .env.example .env   # add your model key (e.g. AZURE_API_KEY)"
-		: "cp .env.example .env          # add your model key (e.g. AZURE_API_KEY)";
+		? '# set your model key: $env:AZURE_API_KEY / $env:AZURE_API_BASE (or create a .env here \u2014 auto-loaded)'
+		: "# set your model key: export AZURE_API_KEY / AZURE_API_BASE (or create a .env here \u2014 auto-loaded)";
 }
 
 export default function QuickstartTabs() {
