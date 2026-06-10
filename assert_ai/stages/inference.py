@@ -158,13 +158,18 @@ def _inference_config_fingerprint(
     endpoint_config = target.endpoint if isinstance(target.endpoint, EndpointConfig) else None
     endpoint_name = ""
     if endpoint_config:
+        # Note: the auth env var name is intentionally excluded. It is not
+        # output-affecting (the URL already identifies the target), and feeding
+        # a key-named string into a hash trips static-analysis "sensitive data
+        # in weak hash" rules. A boolean presence flag preserves the
+        # cache-invalidation signal without naming a credential.
         endpoint_name = "|".join(
             part
             for part in (
                 endpoint_config.protocol,
                 endpoint_config.model,
                 endpoint_config.url,
-                endpoint_config.api_key_env,
+                "auth" if endpoint_config.api_key_env else "",
                 "stream" if endpoint_config.stream else "",
             )
             if part
@@ -312,6 +317,13 @@ def _record_interaction_messages(
     skipped_initial_user = False
     pending_tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
     pending_target_llm_call_id: str | None = None
+    # Tool calls whose result message never arrives (e.g. a non-streaming
+    # OpenAI-compatible endpoint that returns finish_reason='tool_calls' with
+    # no following role:tool message, or a service that executes tools
+    # internally and only surfaces the requested call). Tracked in order so
+    # they can still be recorded as judge-visible tool_call evidence at the end
+    # instead of being silently dropped.
+    unresolved_tool_calls: list[tuple[str, str, dict[str, Any], str | None]] = []
 
     for message in interaction_messages:
         role = message.get("role")
@@ -352,9 +364,13 @@ def _record_interaction_messages(
                         continue
                     tool_call_id = str(tool_call.get("id") or "")
                     tool_name = str(tool_call.get("function") or "tool")
-                    tool_args = tool_call.get("arguments") if isinstance(tool_call.get("arguments"), dict) else {}
+                    raw_args = tool_call.get("arguments")
+                    parsed_args = dict(raw_args) if isinstance(raw_args, dict) else {}
                     if tool_call_id:
-                        pending_tool_calls[tool_call_id] = (tool_name, tool_args)
+                        pending_tool_calls[tool_call_id] = (tool_name, parsed_args)
+                    # Track every requested call (even id-less ones) so a turn
+                    # with no following tool result still records evidence.
+                    unresolved_tool_calls.append((tool_call_id, tool_name, parsed_args, llm_call_id))
             if content:
                 message_id = f"event:{len(transcript.events)}"
                 transcript.add_event(TranscriptEvent(
@@ -370,8 +386,15 @@ def _record_interaction_messages(
         if role == "tool":
             tool_call_id = str(message.get("tool_call_id") or "")
             default_name = str(message.get("function") or "tool")
-            default_args = message.get("arguments") if isinstance(message.get("arguments"), dict) else {}
+            raw_default_args = message.get("arguments")
+            default_args: dict[str, Any] = dict(raw_default_args) if isinstance(raw_default_args, dict) else {}
             tool_name, tool_args = pending_tool_calls.get(tool_call_id, (default_name, default_args))
+            # This call now has a result; drop it from the unresolved list so it
+            # isn't double-recorded by the end-of-loop flush below.
+            if tool_call_id:
+                unresolved_tool_calls = [
+                    entry for entry in unresolved_tool_calls if entry[0] != tool_call_id
+                ]
             message_id = f"event:{len(transcript.events)}"
             transcript.add_event(TranscriptEvent(
                 view=["target", "combined"],
@@ -387,6 +410,25 @@ def _record_interaction_messages(
                 transcript.link_llm_call_to_message(llm_call_id, message_id)
             if pending_target_llm_call_id is not None:
                 transcript.link_llm_call_to_message(pending_target_llm_call_id, message_id)
+
+    # Flush any requested tool calls that never received a result message so the
+    # judge still sees them as tool/process evidence. The empty tool_result
+    # signals "result not reported by the target," which is the honest state for
+    # final-text-only or internally-executed endpoint targets.
+    for tool_call_id, tool_name, tool_args, owner_llm_call_id in unresolved_tool_calls:
+        message_id = f"event:{len(transcript.events)}"
+        transcript.add_event(TranscriptEvent(
+            view=["target", "combined"],
+            actor="tool",
+            edit=ToolCallEdit(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result="",
+            ),
+        ))
+        link_id = owner_llm_call_id or pending_target_llm_call_id
+        if link_id is not None:
+            transcript.link_llm_call_to_message(link_id, message_id)
 
 
 def _append_llm_calls(transcript: Transcript, llm_calls: list[dict[str, Any]]) -> dict[int, str]:

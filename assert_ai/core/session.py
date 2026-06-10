@@ -752,6 +752,11 @@ class HTTPEndpointSession:
         tool_traces: list[ToolTrace] = []
         stream_events: list[dict[str, Any]] = []
         pending_tool_args: dict[str, tuple[str, dict[str, Any]]] = {}
+        # Standard OpenAI-compatible streamed tool calls arrive as fragmented
+        # ``choices[0].delta.tool_calls`` entries keyed by ``index``; name and
+        # id come on the first fragment and ``function.arguments`` is appended
+        # across fragments. Accumulate by index and finalize after the stream.
+        streamed_tool_calls: dict[int, dict[str, Any]] = {}
         model = self._model
         response_id = None
         finish_reason = None
@@ -796,6 +801,9 @@ class HTTPEndpointSession:
                     message = raw_message if isinstance(raw_message, dict) else {}
                     if isinstance(message.get("content"), str):
                         chunks.append(message["content"])
+                    delta_tool_calls = delta.get("tool_calls")
+                    if isinstance(delta_tool_calls, list):
+                        _accumulate_streamed_tool_calls(streamed_tool_calls, delta_tool_calls)
                     finish_reason = choice.get("finish_reason") or finish_reason
                 return
 
@@ -866,6 +874,35 @@ class HTTPEndpointSession:
         if buffer.strip():
             process_line(buffer.strip())
         flush_event()
+
+        # Finalize standard OpenAI-compatible streamed tool calls (delta.tool_calls)
+        # into tool-call adapter events. These complement custom progress events
+        # like hermes.tool.progress and are emitted before the final assistant text.
+        for index in sorted(streamed_tool_calls):
+            accumulated = streamed_tool_calls[index]
+            tool_name = str(accumulated.get("name") or "tool")
+            tool_call_id = str(accumulated.get("id") or f"tool_{index}")
+            raw_arguments = str(accumulated.get("arguments") or "")
+            tool_args: dict[str, Any] = {}
+            if raw_arguments.strip():
+                try:
+                    parsed = json.loads(raw_arguments)
+                    if isinstance(parsed, dict):
+                        tool_args = parsed
+                except json.JSONDecodeError:
+                    tool_args = {"raw_arguments": raw_arguments}
+            events.append(
+                AdapterEvent(
+                    role="tool_call",
+                    content="",
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_call_id=tool_call_id,
+                )
+            )
+            tool_traces.append(
+                ToolTrace(tool_name=tool_name, tool_args=tool_args, tool_result="")
+            )
 
         response_text = _sanitize_response_text("".join(chunks))
         response_summary: dict[str, Any] = {
@@ -944,10 +981,12 @@ class HTTPEndpointSession:
                 api_mode="openai_chat_endpoint",
                 request_payload=payload,
             )
+            from assert_ai.core.security import sanitize_payload
+
             response_text = _sanitize_response_text(model_response.text or "")
             response_summary = summarize_response(model_response)
             response_summary["content"] = response_text
-            raw = {"endpoint": self._endpoint, "response": response_summary}
+            raw = sanitize_payload({"endpoint": self._endpoint, "response": response_summary})
             assistant_message = {
                 "role": "assistant",
                 "content": response_text,
@@ -1089,6 +1128,34 @@ def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
         "function": tool_call.function,
         "arguments": tool_call.arguments,
     }
+
+
+def _accumulate_streamed_tool_calls(
+    accumulator: dict[int, dict[str, Any]],
+    delta_tool_calls: list[Any],
+) -> None:
+    """Fold one streamed ``delta.tool_calls`` fragment into per-index state.
+
+    OpenAI-compatible streaming splits each tool call across chunks: the first
+    fragment carries ``id``/``function.name`` and later fragments append to
+    ``function.arguments``. Fragments are keyed by ``index``.
+    """
+    for fragment in delta_tool_calls:
+        if not isinstance(fragment, dict):
+            continue
+        index = fragment.get("index")
+        if not isinstance(index, int):
+            index = len(accumulator)
+        entry = accumulator.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        if fragment.get("id"):
+            entry["id"] = str(fragment["id"])
+        function = fragment.get("function")
+        if isinstance(function, dict):
+            if function.get("name"):
+                entry["name"] = str(function["name"])
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                entry["arguments"] += arguments
 
 
 def _tool_history_entry(tool_name: str, tool_args: dict[str, Any], tool_result: str) -> dict[str, Any]:

@@ -69,8 +69,8 @@ and reads `choices[0].message.content` from the response.
 
 Endpoint targets are black-box unless the service returns evidence. ASSERT captures tool calls when it can see them:
 
-- `protocol: openai_chat` preserves `choices[0].message.tool_calls` when present.
-- `protocol: openai_chat` with `stream: true` preserves supported streaming events, including Hermes `hermes.tool.progress` events, as best-effort tool progress evidence.
+- `protocol: openai_chat` preserves `choices[0].message.tool_calls` when present, including non-streaming responses that return `finish_reason: "tool_calls"` with no separate tool-result message.
+- `protocol: openai_chat` with `stream: true` parses standard streamed `choices[0].delta.tool_calls` and also preserves custom events such as Hermes `hermes.tool.progress` as best-effort tool progress evidence.
 - The simple ASSERT endpoint protocol can optionally return `events`:
 
 ```json

@@ -143,6 +143,32 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw["response"]["usage"]["total_tokens"], 15)
         self.assertNotIn("secret-token", json.dumps(raw))
 
+    async def test_streaming_openai_chat_protocol_parses_standard_delta_tool_calls(self) -> None:
+        frames = [
+            {"model": "custom-agent", "choices": [{"delta": {"role": "assistant"}, "finish_reason": None}]},
+            {"model": "custom-agent", "choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_lookup", "type": "function", "function": {"name": "lookup", "arguments": '{"qu'}}]}, "finish_reason": None}]},
+            {"model": "custom-agent", "choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'ery": "x"}'}}]}, "finish_reason": None}]},
+            {"model": "custom-agent", "choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        chunks = [f"data: {json.dumps(frame)}\n\n" for frame in frames] + ["data: [DONE]\n\n"]
+        client = _FakeClientSession(response=_FakeStreamingResponse(chunks))
+        session = HTTPEndpointSession(
+            endpoint="http://localhost:8000/v1/chat/completions",
+            protocol="openai_chat",
+            model="custom-agent",
+            stream=True,
+        )
+        setattr(session, "_aiohttp", object())
+        setattr(session, "_session", client)
+
+        result = await session.run_turn([Message(role="user", content="Use the lookup tool.")])
+
+        self.assertEqual(result.finish_reason, "tool_calls")
+        assistant_turn = result.interaction_messages[1]
+        self.assertEqual(assistant_turn["tool_calls"][0]["function"], "lookup")
+        self.assertEqual(assistant_turn["tool_calls"][0]["arguments"], {"query": "x"})
+        self.assertEqual(assistant_turn["tool_calls"][0]["id"], "call_lookup")
+
     async def test_streaming_openai_chat_protocol_accumulates_text_and_tool_progress(self) -> None:
         chunks = [
             "event: hermes.tool.progress\n",
