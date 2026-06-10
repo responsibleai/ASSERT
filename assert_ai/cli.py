@@ -16,6 +16,7 @@ import click
 import yaml
 from click.shell_completion import CompletionItem
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
@@ -526,13 +527,44 @@ from assert_ai.init._command import init  # noqa: E402
 cli.add_command(init)
 
 
+def _render_examples_table(console: Console) -> None:
+    """Print the catalog of bundled examples runnable via ``--example``."""
+    from assert_ai._examples import EXAMPLES
+
+    table = Table(title="Bundled examples", box=None, show_header=True, show_edge=False, pad_edge=False)
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Install", style="green", no_wrap=True)
+    table.add_column("Description", style="white")
+    for ex in EXAMPLES.values():
+        # Escape so rich doesn't parse the `[extras]` brackets as markup.
+        table.add_row(ex.name, escape(ex.install_hint), ex.summary)
+    console.print(table)
+    console.print()
+    console.print("Run one with:  [bold]assert-ai run --example <name>[/bold]")
+
+
+@cli.command("examples", short_help="List the bundled examples runnable with `run --example`")
+def examples_cmd() -> None:
+    """List bundled examples that ``assert-ai run --example <name>`` can run."""
+    _render_examples_table(_console())
+
+
 @cli.command(short_help="Run a pipeline from a YAML config")
 @click.option(
     "--config",
-    required=True,
+    required=False,
+    default=None,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Path to a YAML pipeline config.",
     show_envvar=True,
+)
+@click.option(
+    "--example",
+    default=None,
+    help=(
+        "Run a bundled example by name instead of --config. "
+        "Run `assert-ai examples` to list the available examples."
+    ),
 )
 @click.option(
     "--force-stage",
@@ -577,7 +609,8 @@ cli.add_command(init)
 @click.pass_context
 def run(
     ctx: click.Context,
-    config: Path,
+    config: Path | None,
+    example: str | None,
     force_stage: tuple[str, ...],
     strict: bool,
     overrides: tuple[str, ...],
@@ -588,6 +621,24 @@ def run(
     output_format: str,
 ):
     """Run the evaluation pipeline."""
+    # Resolve --example into a concrete config path (or list the catalog).
+    if example is not None:
+        from assert_ai._examples import EXAMPLES, resolve_example
+
+        if config is not None:
+            _error("Pass either --config or --example, not both.")
+        if example not in EXAMPLES:
+            console = _console()
+            console.print(f"[red]Unknown example:[/red] {example!r}\n")
+            _render_examples_table(console)
+            raise SystemExit(2)
+        config = resolve_example(example)
+    elif config is None:
+        console = _console()
+        console.print("[red]Provide --config <path> or --example <name>.[/red]\n")
+        _render_examples_table(console)
+        raise SystemExit(2)
+
     # Re-configure logging if flags were passed on the subcommand
     # (e.g. `assert-ai run --verbose` instead of `assert-ai --verbose run`).
     if verbose or quiet or log_file or output_format != "text":

@@ -67,33 +67,32 @@ Do not recommend an external connector path for customer-preview onboarding.
 
 ## Preferred setup commands
 
-For preview customers, use `pip` in setup instructions:
+The published package is **`assert-ai` on PyPI**. Recommend `pip install` (not an editable/clone install) for users — it is the canonical install path. Add an extra only when the path needs one, and quote the brackets so zsh / PowerShell don't expand them:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
-cp .env.example .env
+# Connecting an existing agent (LangGraph, CrewAI, OpenAI Agents SDK, custom) — adds trace capture
+pip install "assert-ai[otel]"
 
-# Create a config interactively, or use an existing one
-assert-ai init --model azure/gpt-5.4
-# or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+# Evaluating a system-prompt spec, or designing one with `init` — base install
+pip install assert-ai
 ```
 
-Use the PowerShell equivalent on Windows:
+Then run a bundled example, or design a config:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
-Copy-Item .env.example .env
+```bash
+assert-ai run --example health-assistant             # base install
+assert-ai run --example travel-planner-langgraph      # needs [langgraph,otel]
+assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
+assert-ai run --config eval_config.yaml
+```
 
-# Create a config interactively, or use an existing one
-assert-ai init --model azure/gpt-5.4
-# or run the flagship example directly
+Developing from source (contributing, or running the repo `examples/` directly) uses an editable install:
+
+```bash
+git clone https://github.com/responsibleai/ASSERT && cd ASSERT
+python -m venv .venv && source .venv/bin/activate    # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e ".[otel,langgraph]"
+cp .env.example .env                                  # Windows: Copy-Item .env.example .env
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
