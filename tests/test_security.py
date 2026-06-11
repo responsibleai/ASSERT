@@ -249,6 +249,17 @@ class SanitizePayloadTest(unittest.TestCase):
         result = sanitize_payload({"auth": "Basic dXNlcjpwYXNz"})
         self.assertEqual(result["auth"], "[REDACTED]")
 
+    def test_redacts_azure_ad_token(self) -> None:
+        result = sanitize_payload({"azure_ad_token": "eyJ0eXAiOiJKV1QiLCJhbGc..."})
+        self.assertEqual(result["azure_ad_token"], "[REDACTED]")
+
+    def test_redacts_azure_ad_token_provider(self) -> None:
+        """The provider value is a callable, but the key alone must trigger redaction."""
+        provider = lambda: "tok"  # noqa: E731 — minimal callable
+        result = sanitize_payload({"azure_ad_token_provider": provider, "model": "azure/gpt-4o"})
+        self.assertEqual(result["azure_ad_token_provider"], "[REDACTED]")
+        self.assertEqual(result["model"], "azure/gpt-4o")
+
     def test_leaves_normal_values(self) -> None:
         payload = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
         result = sanitize_payload(payload)
