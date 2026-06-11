@@ -1033,5 +1033,186 @@ class NormalizeUsageZeroTokenDiagnosticsTest(unittest.TestCase):
         self.assertFalse(any("zero/None tokens" in msg for msg in cm.output))
 
 
+# ── Azure AD token provider injection ─────────────────────────
+
+
+class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
+    """The 6-row matrix for ``_maybe_inject_azure_aad_token``.
+
+    Covers every (model_family × auth_mode × dep_available) combination
+    that affects whether ``azure_ad_token_provider`` ends up in the
+    LiteLLM payload — plus the eager error when AAD is the only viable
+    path but azure-identity is missing.
+    """
+
+    def _stub_litellm(self, captured: dict[str, object]) -> SimpleNamespace:
+        async def fake_acompletion(**kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {
+                "id": "resp-aad-1",
+                "model": str(kwargs.get("model", "")),
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ],
+            }
+
+        return SimpleNamespace(acompletion=fake_acompletion)
+
+    async def _run_chat(
+        self,
+        *,
+        model: str,
+        mode: object,
+        provider: object,
+    ) -> dict[str, object]:
+        captured: dict[str, object] = {}
+        fake_litellm = self._stub_litellm(captured)
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client, "_AZURE_AUTH_MODE", mode), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=provider):
+            await model_client.generate(model, "hi")
+        return captured
+
+    # Row 1: key + azure/* → no provider injected
+    async def test_key_mode_azure_model_no_provider(self) -> None:
+        captured = await self._run_chat(
+            model="azure/gpt-4o-mini", mode="key", provider=lambda: "tok",
+        )
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    # Row 2: aad + azure/* → provider injected
+    async def test_aad_mode_azure_model_injects_provider(self) -> None:
+        stub = lambda: "stub-token"
+        captured = await self._run_chat(
+            model="azure/gpt-4o-mini", mode="aad", provider=stub,
+        )
+        self.assertIs(captured["azure_ad_token_provider"], stub)
+
+    # Row 3: aad-fallback + azure/* → provider injected
+    async def test_aad_fallback_mode_azure_model_injects_provider(self) -> None:
+        stub = lambda: "stub-token"
+        captured = await self._run_chat(
+            model="azure/gpt-4o-mini", mode="aad-fallback", provider=stub,
+        )
+        self.assertIs(captured["azure_ad_token_provider"], stub)
+
+    # Row 4: aad + non-azure → no provider injected
+    async def test_aad_mode_openai_model_no_provider(self) -> None:
+        captured = await self._run_chat(
+            model="openai/gpt-5-mini", mode="aad", provider=lambda: "tok",
+        )
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    # Row 5: key + non-azure → no provider injected
+    async def test_key_mode_openai_model_no_provider(self) -> None:
+        captured = await self._run_chat(
+            model="openai/gpt-5-mini", mode="key", provider=None,
+        )
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    # Row 6: aad + azure/* + missing dep → raises LLMAuthError eagerly
+    async def test_aad_mode_azure_model_missing_dep_raises(self) -> None:
+        with patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=None):
+            with self.assertRaises(model_client.LLMAuthError) as ctx:
+                await model_client.generate("azure/gpt-4o-mini", "hi")
+        self.assertIn("azure-identity", str(ctx.exception))
+        self.assertIn("assert-ai[azure-aad]", str(ctx.exception))
+
+    # Row 6b: aad-fallback + azure/* + missing dep → silent skip (no inject, no raise)
+    async def test_aad_fallback_missing_dep_silently_skips_injection(self) -> None:
+        captured = await self._run_chat(
+            model="azure/gpt-4o-mini", mode="aad-fallback", provider=None,
+        )
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    async def test_user_extra_kwargs_override_injected_provider(self) -> None:
+        """Explicit user-supplied provider must always win over the auto one."""
+        user_provider = lambda: "user-token"
+        captured = await self._run_chat(
+            model="azure/gpt-4o-mini",
+            mode="aad",
+            provider=lambda: "auto-token",
+        )
+        # Sanity: auto provider was injected
+        self.assertIsNotNone(captured.get("azure_ad_token_provider"))
+        # Now confirm extra_kwargs overrides it
+        captured.clear()
+        fake_litellm = self._stub_litellm(captured)
+        opts = model_client.GenerateOptions(
+            extra_kwargs={"azure_ad_token_provider": user_provider},
+        )
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=lambda: "auto-token"):
+            await model_client.generate("azure/gpt-4o-mini", "hi", opts)
+        self.assertIs(captured["azure_ad_token_provider"], user_provider)
+
+
+class ClassifyLlmErrorAadHintTest(unittest.TestCase):
+    """When AAD is active, the auth-error message must point at RBAC."""
+
+    def _fake_litellm_with_auth_error(self) -> SimpleNamespace:
+        class AuthenticationError(Exception):
+            pass
+
+        # The other names just need to exist so isinstance checks don't crash.
+        return SimpleNamespace(
+            AuthenticationError=AuthenticationError,
+            PermissionDeniedError=type("PermissionDeniedError", (Exception,), {}),
+            RateLimitError=type("RateLimitError", (Exception,), {}),
+            BadRequestError=type("BadRequestError", (Exception,), {}),
+            NotFoundError=type("NotFoundError", (Exception,), {}),
+            APIError=type("APIError", (Exception,), {}),
+            APIConnectionError=type("APIConnectionError", (Exception,), {}),
+            Timeout=type("Timeout", (Exception,), {}),
+            UnprocessableEntityError=type("UnprocessableEntityError", (Exception,), {}),
+            APIResponseValidationError=type("APIResponseValidationError", (Exception,), {}),
+            ContextWindowExceededError=type("ContextWindowExceededError", (Exception,), {}),
+            ContentPolicyViolationError=type("ContentPolicyViolationError", (Exception,), {}),
+            UnsupportedParamsError=type("UnsupportedParamsError", (Exception,), {}),
+            ImageFetchError=type("ImageFetchError", (Exception,), {}),
+            ServiceUnavailableError=type("ServiceUnavailableError", (Exception,), {}),
+            InternalServerError=type("InternalServerError", (Exception,), {}),
+            BudgetExceededError=type("BudgetExceededError", (Exception,), {}),
+        )
+
+    def test_auth_error_message_includes_aad_hint_when_aad_active(self) -> None:
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: bad token")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client, "_AZURE_AAD_DEP_MISSING", False):
+            wrapped = model_client._classify_llm_error(exc)
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertIn("Cognitive Services OpenAI User", str(wrapped))
+        self.assertIn("AZURE_API_KEY", str(wrapped))
+
+    def test_auth_error_message_omits_aad_hint_when_key_mode(self) -> None:
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: bad key")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client, "_AZURE_AUTH_MODE", "key"):
+            wrapped = model_client._classify_llm_error(exc)
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+
+    def test_auth_error_message_swaps_to_install_hint_when_dep_missing(self) -> None:
+        """In aad-fallback mode with azure-identity missing, point at the install hint."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: no api key supplied")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client, "_AZURE_AUTH_MODE", "aad-fallback"), \
+             patch.object(model_client, "_AZURE_AAD_DEP_MISSING", True):
+            wrapped = model_client._classify_llm_error(exc)
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        # The RBAC hint must not appear in this branch — it would be misleading.
+        self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+
+
 if __name__ == "__main__":
     unittest.main()
