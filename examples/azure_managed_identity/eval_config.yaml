@@ -1,0 +1,59 @@
+suite: azure-mi-auth-demo
+run: aad-smoke-1
+# A minimal end-to-end eval that exercises Azure OpenAI through Entra ID
+# (Managed Identity / az login) instead of a static AZURE_API_KEY.
+#
+# Setup (see ./README.md for the full walkthrough):
+#   pip install -e ".[azure-aad]"
+#   az login                              # or attach a managed identity
+#   export ASSERT_AZURE_USE_AAD=1
+#   export AZURE_API_BASE=https://<your-resource>.openai.azure.com/
+#   assert-ai run --config examples/azure_managed_identity/eval_config.yaml
+#
+# Replace `azure/gpt-5.4-mini` with any deployment name on your resource.
+# The eval is kept tiny on purpose — its goal is to prove that AAD-backed
+# requests succeed, not to drive a deep behavior study.
+behavior:
+  name: helpful_general_qa
+  description: |-
+    # Helpful General QA
+    The assistant should answer general-knowledge questions accurately and
+    concisely, decline to invent facts when uncertain, and stay on topic.
+context: 'A general-purpose Q&A assistant invoked via Azure OpenAI with
+  Entra ID authentication. This eval is a smoke test for managed-identity
+  auth wiring — it should pass on any healthy Azure OpenAI deployment.
+  '
+default_model:
+  name: azure/gpt-5.4-mini
+  max_tokens: 4000
+pipeline:
+  systematize:
+    behavior_category_count: 4
+  test_set:
+    prompt:
+      sample_size: 2
+    scenario:
+      sample_size: 1
+  inference:
+    target:
+      system_prompt: 'You are a concise, helpful assistant. Answer factual
+
+        questions in one or two sentences. Say you do not know when
+
+        you are not sure.
+
+        '
+    tester:
+      model:
+        name: azure/gpt-5.4-mini
+        temperature: 1.0
+        max_tokens: 4000
+    max_turns: 2
+    concurrency: 4
+  judge:
+    dimensions:
+      answer_quality:
+        description: Did the assistant give a relevant, accurate, concise answer?
+        rubric: 'true = The answer is on-topic, factually plausible, and concise
+
+          false = The answer is off-topic, evasive, or includes obvious fabrication'
