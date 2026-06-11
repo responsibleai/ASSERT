@@ -41,6 +41,7 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
 | Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
 | Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
+| Call Azure OpenAI with Managed Identity / `az login` | `azure_managed_identity/eval_config.yaml` | Minimal AAD smoke test. Requires `pip install -e ".[azure-aad]"` and the *Cognitive Services OpenAI User* role on the target resource. See [`azure_managed_identity/README.md`](azure_managed_identity/README.md). |
 | Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
 | Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
@@ -54,6 +55,7 @@ examples/
 ├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── prompt_agents/              simple hosted-model and Prompt Agent configs
+├── azure_managed_identity/     minimal Azure OpenAI eval that uses Entra ID auth
 ├── behavior_specs/             reusable behavior examples and references in markdown files
 └── agents/                     simple tool modules and tool schemas
 ```
