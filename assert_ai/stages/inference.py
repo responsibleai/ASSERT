@@ -604,6 +604,7 @@ def _build_target_session(
             model=endpoint_config.model,
             api_key_env=endpoint_config.api_key_env,
             stream=endpoint_config.stream,
+            local_dev=endpoint_config.local_dev,
         )
 
     if target.is_callable:

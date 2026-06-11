@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from assert_ai.config import parse_endpoint_config
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession
 
@@ -70,6 +71,28 @@ class _FakeClientSession:
 
 
 class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
+    def test_endpoint_config_parses_explicit_local_dev_mode(self) -> None:
+        endpoint = parse_endpoint_config(
+            {"url": "http://127.0.0.1:18081/chat", "local_dev": True},
+            field_name="pipeline.inference.target.endpoint",
+        )
+
+        assert endpoint is not None
+        self.assertTrue(endpoint.local_dev)
+
+    async def test_local_dev_endpoint_mode_allows_loopback_without_env_override(self) -> None:
+        client = _FakeClientSession({"response": "ok"})
+        session = HTTPEndpointSession(
+            endpoint="http://127.0.0.1:18081/chat",
+            local_dev=True,
+        )
+        setattr(session, "_aiohttp", object())
+        setattr(session, "_session", client)
+
+        result = await session.run_turn([Message(role="user", content="hello")])
+
+        self.assertEqual(result.text, "ok")
+
     async def test_default_endpoint_protocol_preserves_legacy_payload_and_response(self) -> None:
         client = _FakeClientSession({"response": "legacy answer"})
         session = HTTPEndpointSession(endpoint="http://localhost:8787/chat")

@@ -125,6 +125,7 @@ class EndpointConfig:
     model: str | None = None
     api_key_env: str | None = None
     stream: bool = False
+    local_dev: bool = False
 
     def __post_init__(self) -> None:
         self.url = _require_nonempty_string(self.url, field_name="target.endpoint.url")
@@ -136,6 +137,8 @@ class EndpointConfig:
         self.api_key_env = _normalize_optional_string(self.api_key_env)
         if not isinstance(self.stream, bool):
             raise ValueError("target.endpoint.stream must be a boolean")
+        if not isinstance(self.local_dev, bool):
+            raise ValueError("target.endpoint.local_dev must be a boolean")
         if self.protocol == "openai_chat" and not self.model:
             raise ValueError("target.endpoint.model is required when protocol is openai_chat")
 

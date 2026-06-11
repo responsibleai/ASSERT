@@ -29,8 +29,12 @@ Configure it with a string URL:
 pipeline:
   inference:
     target:
-      endpoint: http://localhost:8787/chat
+      endpoint:
+        url: http://127.0.0.1:8787/chat
+        local_dev: true
 ```
+
+`local_dev: true` is the explicit opt-in for loopback services such as a sandboxed local agent endpoint. It allows `127.0.0.1` / `::1` without disabling SSRF protection for private networks or metadata endpoints. Do not use it for remote services.
 
 ## OpenAI-compatible chat endpoint
 
@@ -46,6 +50,7 @@ pipeline:
         model: my-agent
         api_key_env: ASSERT_TARGET_API_KEY
         stream: true  # optional; captures streaming endpoint events when returned
+        local_dev: true  # only for loopback/local sandbox endpoints
 ```
 
 ASSERT sends:

@@ -466,7 +466,7 @@ def parse_endpoint_config(raw: Any, *, field_name: str) -> EndpointConfig | None
         return EndpointConfig(url=url or "")
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a string or mapping")
-    reject_unknown_keys(raw, field_name=field_name, allowed={"url", "protocol", "model", "api_key_env", "stream"})
+    reject_unknown_keys(raw, field_name=field_name, allowed={"url", "protocol", "model", "api_key_env", "stream", "local_dev"})
     url = _optional_str(raw.get("url"), field_name=f"{field_name}.url")
     if not url:
         raise ValueError(f"{field_name}.url is required")
@@ -476,6 +476,7 @@ def parse_endpoint_config(raw: Any, *, field_name: str) -> EndpointConfig | None
         model=_optional_str(raw.get("model"), field_name=f"{field_name}.model"),
         api_key_env=_optional_str(raw.get("api_key_env"), field_name=f"{field_name}.api_key_env"),
         stream=raw.get("stream", False),
+        local_dev=raw.get("local_dev", False),
     )
 
 

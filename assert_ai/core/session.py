@@ -658,10 +658,11 @@ class HTTPEndpointSession:
         model: str | None = None,
         api_key_env: str | None = None,
         stream: bool = False,
+        local_dev: bool = False,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
-        validate_endpoint_url(endpoint)
+        validate_endpoint_url(endpoint, allow_localhost=local_dev)
         self._endpoint = endpoint
         self._headers = dict(headers or {})
         self._system_prompt = system_prompt
@@ -670,6 +671,7 @@ class HTTPEndpointSession:
         self._model = model
         self._api_key_env = api_key_env
         self._stream = stream
+        self._local_dev = local_dev
         self._session = None  # aiohttp.ClientSession
 
     @property
