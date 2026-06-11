@@ -76,6 +76,13 @@ regression = [
   "scipy>=1.11.0",
   "numpy>=2.0.0",
 ]
+# Optional Entra ID / Managed Identity auth for Azure OpenAI calls.
+# Lets users on `az login`, system-assigned MI, or user-assigned MI skip
+# `AZURE_API_KEY` entirely. Strictly additive: the base install keeps
+# working with API keys exactly as before.
+azure-aad = [
+  "azure-identity>=1.19.0",
+]
 examples = [
   "autogen-agentchat>=0.7.5",
   "autogen-ext>=0.7.5",
@@ -105,7 +112,7 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
-  "assert-ai[otel,langgraph,analysis,examples,regression]",
+  "assert-ai[otel,langgraph,analysis,examples,regression,azure-aad]",
 ]
 dev = [
   "pytest>=9.0.3",
