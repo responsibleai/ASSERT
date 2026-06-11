@@ -132,3 +132,63 @@ See [CLI Commands](cli/commands.md) for the full option reference.
 - To learn the config format, see [Config Overview](config/overview.md).
 - To inspect outputs in detail, see [Results Guide](guides/results.md).
 - To use the local web viewer, see [Run the Local UI Viewer Application](guides/run-local-viewer.md).
+
+## Authenticating Azure OpenAI with Managed Identity
+
+If you would rather not provision and rotate an `AZURE_API_KEY`, ASSERT can call
+Azure OpenAI using Entra ID (Microsoft Managed Identity / `az login`) instead.
+This works for any `azure/*` model string and uses LiteLLM's native
+`azure_ad_token_provider` hook under the hood — no other config changes required.
+
+### Install the optional dependency
+
+```bash
+python -m pip install -e ".[azure-aad]"
+```
+
+This pulls in `azure-identity` and lets ASSERT mint bearer tokens through
+`DefaultAzureCredential`.
+
+### Grant the caller the right RBAC role
+
+On the target Azure OpenAI resource, give the caller identity (your user, a
+managed identity, or a service principal) the **Cognitive Services OpenAI User**
+role. Without this role every request will return `401`.
+
+### Pick an auth mode
+
+Auth resolution at process start follows a single precedence rule:
+
+| You set | Mode resolved | When to use |
+|---|---|---|
+| `ASSERT_AZURE_USE_AAD=1` | `aad` (explicit AAD) | Production: AAD only, even if a key is also in the env. Missing `azure-identity` fails loud. |
+| `AZURE_API_KEY=...` (and the flag above is unset) | `key` | Today's default. Zero behavior change. |
+| Neither | `aad-fallback` | Best-effort AAD. If `azure-identity` is missing, LiteLLM's own error is rewritten to suggest the install. |
+
+`AZURE_API_BASE` is still required so LiteLLM knows which Azure OpenAI endpoint
+to call.
+
+### Local development with `az login`
+
+```bash
+az login
+export ASSERT_AZURE_USE_AAD=1
+unset AZURE_API_KEY  # optional — the flag wins regardless
+assert-ai run --config examples/azure_managed_identity/eval_config.yaml
+```
+
+### Running on Azure (App Service, AKS, Container Apps, VM)
+
+Assign a managed identity to the workload, grant it the OpenAI User role,
+and set `ASSERT_AZURE_USE_AAD=1`. To pin a specific user-assigned identity
+when multiple are attached, set `AZURE_CLIENT_ID` to its client ID;
+`DefaultAzureCredential` will pick it up automatically.
+
+### Troubleshooting
+
+- `LLMAuthError: ... azure-identity package is not installed` — run
+  `pip install -e ".[azure-aad]"` (or `assert-ai[azure-aad]` if you installed from PyPI).
+- `401` with a hint about *Cognitive Services OpenAI User* — the credential
+  resolved, but the identity is missing the RBAC role on the resource.
+- A 401 that mentions the install hint instead — you are in `aad-fallback`
+  mode without `azure-identity`. Install the extra or set `AZURE_API_KEY`.
