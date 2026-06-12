@@ -72,6 +72,16 @@ ASSERT's automated behavioral-evaluation pipeline builds on and adapts the desig
 
 Adapted third-party material and the corresponding license notices are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). If you use ASSERT in research, please also consider citing Bloom (see [`CITATION.cff`](CITATION.cff)).
 
+### Team and contributors
+
+ASSERT was built by the Microsoft Responsible AI organization.
+
+- **Product:** Mehrnoosh Sameki, Minsoo Thigpen, Chang Liu, Abby Palia, Hanna Kim
+- **Science:** Riccardo Fogliato, Emily Sheng, Alex Dow, Meera Chander, Alex Chouldechova, Sharman Tan, Xiawei Wang, Ahmed Magooda, Mayank Gupta, Jean Garcia-Gathright, Chad Atalla, Dan Vann, Hanna Wallach, Hannah Washington, Meredith Rodden, Nadine Frey, Melissa Kirkwood, Nick Pangakis, Ali Azad, Ahmed Elghory Ghoneim, Shushan Arakleyan
+- **Engineering:** Mohamed Elmergawi, Jake Present, Aaron Aspinwall, Yeming Tang
+- **Design:** Sooyeon Hwang, Becky Haruyama
+- **Special thanks:** Roni Burd, Mohammad A, Heba Elfardy, Sandeep Atluri, Sydney Lister, Ram Shankar Siva Kumar, Andrew Gully
+
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is subject to those third party's policies.
