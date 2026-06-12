@@ -64,12 +64,14 @@ def _make_runner_root(base: Path) -> Path:
     return runner_root
 
 
-def _server_command() -> str:
-    code = """
+def _server_command(response_text: str = "ok") -> str:
+    code = f"""
 import json
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+RESPONSE_TEXT = {response_text!r}
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -77,7 +79,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = json.dumps({'status': 'ok'}).encode()
+        body = json.dumps({{'status': 'ok'}}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -87,7 +89,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get('Content-Length', '0'))
         self.rfile.read(length)
-        body = json.dumps({'response': 'ok', 'events': [], 'metadata': {'runtime': 'fake', 'provider': 'copilot', 'model': 'gpt-5.5'}}).encode()
+        body = json.dumps({{'response': RESPONSE_TEXT, 'events': [], 'metadata': {{'runtime': 'fake', 'provider': 'copilot', 'model': 'gpt-5.5'}}}}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -184,6 +186,75 @@ def test_smoke_local_sandbox_posts_message_and_returns_response(tmp_path: Path) 
     assert smoke["response"] == "ok"
     assert smoke["events"] == []
     assert smoke["metadata"] == {"runtime": "fake", "provider": "copilot", "model": "gpt-5.5"}
+
+
+def test_smoke_local_sandbox_flags_openclaw_first_run_workspace_response(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    first_run_response = "Hey, I just came online in a fresh workspace. What should I call you?"
+    result = start_local_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        backend="command",
+        command=_server_command(first_run_response),
+        endpoint_url="http://127.0.0.1:{port}",
+        health_url="http://127.0.0.1:{port}/health",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        output_dir=tmp_path / "sandbox-out",
+        redact_paths=True,
+    )
+
+    try:
+        smoke = smoke_local_sandbox(result.state_path, configured_workspace_check=True, timeout_seconds=5)
+    finally:
+        result.stop()
+
+    assert smoke["status"] == "failed"
+    assert smoke["response"] == first_run_response
+    assert smoke["configured_workspace_check"] == {
+        "status": "failed",
+        "failure_signals": ["came online", "fresh workspace", "what should i call you"],
+    }
+
+
+def test_cli_local_sandbox_smoke_prints_first_run_response_before_failing(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    first_run_response = "I came online in a fresh workspace, so what should I call you?"
+    start_result = start_local_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        backend="command",
+        command=_server_command(first_run_response),
+        endpoint_url="http://127.0.0.1:{port}",
+        health_url="http://127.0.0.1:{port}/health",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        output_dir=tmp_path / "sandbox-out",
+        redact_paths=True,
+    )
+
+    try:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "local",
+                "sandbox",
+                "smoke",
+                "--state",
+                str(start_result.state_path),
+            ],
+        )
+    finally:
+        start_result.stop()
+
+    assert result.exit_code == 1
+    assert first_run_response in result.output
+    assert "Sandbox smoke: failed" in result.output
+    assert "configured workspace check failed" in result.output
 
 
 def test_start_local_sandbox_requires_model_for_openai_chat(tmp_path: Path) -> None:

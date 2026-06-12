@@ -1003,25 +1003,56 @@ def start_openclaw_docker_sandbox(
         cleanup_step=cleanup_step,
     )
 
+_OPENCLAW_CONFIGURED_WORKSPACE_SMOKE_MESSAGE = (
+    "What should you call the user, and is this a fresh first-run workspace or an already configured workspace? "
+    "Answer in one short paragraph."
+)
+_OPENCLAW_FIRST_RUN_SIGNALS = (
+    "came online",
+    "fresh workspace",
+    "who am i",
+    "who are you",
+    "what should i call you",
+    "what should you call me",
+)
+
+
+def _first_run_workspace_signals(response_text: str) -> list[str]:
+    lowered = response_text.casefold()
+    return [signal for signal in _OPENCLAW_FIRST_RUN_SIGNALS if signal in lowered]
+
+
 def smoke_local_sandbox(
     state_path: str | Path,
     *,
-    message: str = "Reply exactly: ok",
+    message: str | None = None,
     timeout_seconds: float = 240.0,
+    configured_workspace_check: bool | None = None,
 ) -> dict[str, Any]:
-    """Send a minimal request to a started sandbox endpoint."""
+    """Send a request to a started sandbox endpoint and optionally check configured-workspace fidelity."""
 
     state_file = Path(state_path).expanduser().resolve()
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"could not read sandbox state: {state_file}") from exc
+    target = str(state.get("target") or "")
+    check_configured_workspace = (
+        configured_workspace_check
+        if configured_workspace_check is not None
+        else target == "openclaw" and message is None
+    )
+    smoke_message = message or (
+        _OPENCLAW_CONFIGURED_WORKSPACE_SMOKE_MESSAGE
+        if check_configured_workspace
+        else "Reply exactly: ok"
+    )
     endpoint = state.get("endpoint")
     if not isinstance(endpoint, dict) or not isinstance(endpoint.get("url"), str):
         raise ValueError("sandbox state must include endpoint.url")
     endpoint_url = endpoint["url"]
     validate_endpoint_url(endpoint_url, allow_localhost=True)
-    payload = json.dumps({"message": message, "history": []}).encode("utf-8")
+    payload = json.dumps({"message": smoke_message, "history": []}).encode("utf-8")
     request = Request(
         endpoint_url,
         data=payload,
@@ -1040,15 +1071,26 @@ def smoke_local_sandbox(
     if not isinstance(response_json, dict):
         raise ValueError("sandbox smoke response must be a JSON object")
     final_response = response_json.get("response")
-    return {
+    status = "ok" if isinstance(final_response, str) and final_response else "empty_response"
+    result = {
         "schema_version": 1,
         "target": state.get("target"),
         "agent_endpoint": endpoint_url,
-        "status": "ok" if isinstance(final_response, str) and final_response else "empty_response",
+        "status": status,
         "response": final_response,
         "events": response_json.get("events", []),
         "metadata": response_json.get("metadata", {}),
     }
+    if check_configured_workspace:
+        signals = _first_run_workspace_signals(final_response if isinstance(final_response, str) else "")
+        check_status = "failed" if signals else "ok"
+        result["configured_workspace_check"] = {
+            "status": check_status,
+            "failure_signals": signals,
+        }
+        if signals:
+            result["status"] = "failed"
+    return result
 
 
 def _pid_has_exited(pid: int) -> bool:

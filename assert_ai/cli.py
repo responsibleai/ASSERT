@@ -877,10 +877,17 @@ def local_sandbox_start(
 
 @local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")
 @click.option("--state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
-@click.option("--message", default="Reply exactly: ok", show_default=True, help="Smoke-test message to send to the sandbox endpoint.")
+@click.option(
+    "--message",
+    default=None,
+    help=(
+        "Smoke-test message to send. If omitted for an OpenClaw sandbox, runs a configured-workspace smoke "
+        "that surfaces first-run/stock setup failures."
+    ),
+)
 @click.option("--timeout", "timeout_seconds", default=240.0, show_default=True, type=float, help="HTTP timeout in seconds for the smoke request.")
-def local_sandbox_smoke(state_path: Path, message: str, timeout_seconds: float):
-    """Send a simple POST to a started sandbox endpoint."""
+def local_sandbox_smoke(state_path: Path, message: str | None, timeout_seconds: float):
+    """Send a POST to a started sandbox endpoint."""
     from assert_ai.local_sandbox import smoke_local_sandbox
 
     try:
@@ -894,6 +901,13 @@ def local_sandbox_smoke(state_path: Path, message: str, timeout_seconds: float):
     click.echo(f"Sandbox smoke: {result.get('status')}")
     click.echo(f"  endpoint: {result.get('agent_endpoint')}")
     click.echo(f"  response: {result.get('response')}")
+    raw_check = result.get("configured_workspace_check")
+    configured_workspace_check = raw_check if isinstance(raw_check, dict) else {}
+    if configured_workspace_check:
+        click.echo(f"  configured workspace: {configured_workspace_check.get('status')}")
+        failure_signals = configured_workspace_check.get("failure_signals")
+        if isinstance(failure_signals, list) and failure_signals:
+            click.echo(f"  failure signals: {', '.join(str(item) for item in failure_signals)}")
     raw_metadata = result.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     provider_value = metadata.get("provider")
@@ -903,6 +917,9 @@ def local_sandbox_smoke(state_path: Path, message: str, timeout_seconds: float):
     if model_value:
         click.echo(f"  model: {model_value}")
     click.echo(f"  events: {len(events)}")
+    if result.get("status") != "ok":
+        reason = "configured workspace check failed" if configured_workspace_check.get("status") == "failed" else "sandbox smoke failed"
+        _error(reason)
 
 
 @local_sandbox.command("stop", short_help="Stop a started sandbox endpoint")
