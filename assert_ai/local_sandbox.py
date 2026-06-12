@@ -4,10 +4,10 @@
 """Local agent sandbox startup helpers.
 
 This module owns the product-shaped contract for turning a copied local-agent
-snapshot into a running endpoint target. The first backend is intentionally
-minimal and generic: it stages the snapshot into a disposable work directory,
-starts a user-provided command, waits for an optional health endpoint, and writes
-state/config artifacts that the normal ASSERT pipeline can consume.
+snapshot into a running endpoint target. The sandbox runner is split into a
+generic backend that stages snapshots, writes state/config artifacts, executes
+runtime launch plans, and cleans up, plus thin runtime descriptors such as the
+OpenClaw/RAMPART descriptor.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import subprocess
 import sys
 import tarfile
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -65,6 +65,31 @@ class LocalSandboxCleanupCommand:
     name: str
     command: list[str]
     timeout_seconds: int = 120
+
+
+@dataclass(frozen=True)
+class LocalSandboxLaunchContext:
+    """Resolved inputs shared by a Docker sandbox runtime descriptor."""
+
+    manifest_path: Path
+    manifest: dict[str, Any]
+    output_dir: Path
+    sandbox_root: Path
+    endpoint_url: str
+    endpoint: dict[str, Any]
+    logs_dir: Path
+    provider: str
+    redact_paths: bool = True
+
+
+@dataclass(frozen=True)
+class LocalSandboxLaunchPlan:
+    """Runtime-specific launch plan executed by the generic Docker backend."""
+
+    steps: list[LocalSandboxStep]
+    cleanup_commands: list[LocalSandboxCleanupCommand] = field(default_factory=list)
+    plan_metadata: dict[str, Any] = field(default_factory=dict)
+    prepare: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -438,6 +463,352 @@ def _local_cleanup_json(command: LocalSandboxCleanupCommand, *, redact_paths: bo
     }
 
 
+class DockerSandboxBackend:
+    """Generic Docker-style sandbox backend that executes a runtime descriptor."""
+
+    def __init__(self, *, descriptor: Any) -> None:
+        self.descriptor = descriptor
+
+    def start(
+        self,
+        *,
+        snapshot_manifest_path: str | Path,
+        target: str,
+        output_dir: str | Path,
+        endpoint_url: str,
+        provider: str,
+        protocol: str = "assert",
+        model: str | None = None,
+        api_key_env: str | None = None,
+        stream: bool = False,
+        redact_paths: bool = True,
+        dry_run: bool = False,
+        run_step: Any | None = None,
+        start_step: Any | None = None,
+        stop_process: Any | None = None,
+        cleanup_step: Any | None = None,
+    ) -> LocalSandboxStartResult:
+        """Stage a snapshot and run the descriptor's launch plan."""
+
+        descriptor_target = getattr(self.descriptor, "target", None)
+        if descriptor_target is not None and descriptor_target != target:
+            raise ValueError(f"runtime descriptor target is {descriptor_target!r}, not {target!r}")
+
+        run_step_fn = run_step or _default_run_step
+        start_step_fn = start_step or _default_start_step
+        stop_process_fn = stop_process or (lambda pid, timeout_seconds: _terminate_process_group_status(pid, timeout_seconds=timeout_seconds))
+        cleanup_step_fn = cleanup_step or _default_cleanup_step
+
+        manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
+        output = Path(output_dir).expanduser().resolve()
+        manifest = _load_snapshot_manifest(manifest_path)
+        if manifest.get("target") != target:
+            raise ValueError(f"snapshot manifest target is {manifest.get('target')!r}, not {target!r}")
+
+        endpoint = _endpoint_config(
+            endpoint_url=endpoint_url,
+            protocol=protocol,
+            model=model,
+            api_key_env=api_key_env,
+            stream=stream,
+        )
+        validate_endpoint_url(endpoint["url"], allow_localhost=True)
+        output.mkdir(parents=True, exist_ok=True)
+        sandbox_root = _stage_snapshot(manifest_path=manifest_path, manifest=manifest, output_dir=output)
+        state_path = output / "sandbox_state.json"
+        config_path = output / "endpoint_target.yaml"
+        logs_dir = output / "logs"
+        context = LocalSandboxLaunchContext(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            output_dir=output,
+            sandbox_root=sandbox_root,
+            endpoint_url=endpoint_url,
+            endpoint=endpoint,
+            logs_dir=logs_dir,
+            provider=provider,
+            redact_paths=redact_paths,
+        )
+        validate = getattr(self.descriptor, "validate", None)
+        if validate is not None:
+            validate(context)
+        plan = self.descriptor.build_plan(context)
+        runner_name = str(getattr(self.descriptor, "runner_name", "runtime"))
+        plan_steps = [_local_sandbox_step_json(step, redact_paths=redact_paths) for step in plan.steps]
+        cleanup_json = [_local_cleanup_json(command, redact_paths=redact_paths) for command in plan.cleanup_commands]
+        plan_metadata = dict(plan.plan_metadata)
+        state = {
+            "schema_version": 1,
+            "target": target,
+            "backend": "docker",
+            "status": "planned" if dry_run else "starting",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "snapshot": {
+                "manifest": _path_value(manifest_path, redact_paths=redact_paths),
+                "snapshot_root": str(manifest.get("snapshot_root")),
+                "copied_roots": manifest.get("copied_roots", []),
+            },
+            "sandbox_root": "sandbox" if redact_paths else str(sandbox_root),
+            "endpoint": endpoint,
+            "plan": {
+                "runner": runner_name,
+                **plan_metadata,
+                "steps": plan_steps,
+            },
+            "processes": [],
+            "cleanup": {
+                "required": bool(plan.cleanup_commands) and not dry_run,
+                "commands": cleanup_json,
+            },
+            "safety": {
+                "live_home_mount": False,
+                "snapshot_staged": True,
+                "endpoint_local_dev": True,
+                "external_services_proxied_or_mocked": True,
+            },
+        }
+        sandbox_name = plan_metadata.get("sandbox_name")
+        if sandbox_name is not None:
+            state["cleanup"]["sandbox_name"] = sandbox_name
+        write_json(state_path, state)
+        _write_endpoint_target_config(config_path, endpoint)
+        if dry_run:
+            return LocalSandboxStartResult(
+                state_path=state_path,
+                config_path=config_path,
+                sandbox_root=sandbox_root,
+                endpoint_url=endpoint_url,
+                process=None,
+            )
+
+        managed: list[LocalSandboxManagedProcess] = []
+        try:
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            if plan.prepare is not None:
+                plan.prepare()
+            for step in plan.steps:
+                log_path = logs_dir / (step.log_name or f"{step.name}.log")
+                if step.kind == "service":
+                    managed.append(start_step_fn(step, log_path))
+                    continue
+                rc = int(run_step_fn(step, log_path))
+                if rc != 0:
+                    raise ValueError(f"{step.name} failed with exit code {rc}; see {log_path}")
+            state["status"] = "running"
+            state["started_at"] = datetime.now(timezone.utc).isoformat()
+            state["processes"] = [
+                {
+                    "name": process.name,
+                    "pid": process.pid,
+                    "log_path": _path_value(process.log_path, redact_paths=redact_paths),
+                }
+                for process in managed
+            ]
+            write_json(state_path, state)
+            return LocalSandboxStartResult(
+                state_path=state_path,
+                config_path=config_path,
+                sandbox_root=sandbox_root,
+                endpoint_url=endpoint_url,
+                process=managed[-1].process if managed else None,
+            )
+        except Exception:
+            for process in reversed(managed):
+                stop_process_fn(process.pid, 5.0)
+            cleanup_dir = logs_dir / "cleanup"
+            for command in plan.cleanup_commands:
+                cleanup_step_fn(command.command, cleanup_dir / f"{command.name}.log", command.timeout_seconds)
+            raise
+
+
+@dataclass(frozen=True)
+class OpenClawDockerLaunchDescriptor:
+    """OpenClaw/RAMPART launch descriptor for the generic Docker backend."""
+
+    runner_root: str | Path | None = None
+    rampart_root: str | Path | None = None
+    sandbox_name: str = "oc-local-agent"
+    provider: str = "mock"
+    provider_route: str = "copilot"
+    model_ref: str = "openai/mock-model=Mock Model"
+    endpoint_port: int = 18081
+    auth_proxy_port: int = 12435
+    mock_openai_port: int = 18080
+    docker_command: str = "docker.exe"
+    skip_build: bool = False
+    auth_proxy_config: str | Path | None = None
+    target: str = "openclaw"
+    runner_name: str = "openclaw-docker-sandbox"
+
+    def _runner_path(self) -> Path:
+        return Path(self.runner_root).expanduser().resolve() if self.runner_root else _default_runner_root()
+
+    def _rampart_path(self) -> Path:
+        return Path(self.rampart_root).expanduser().resolve() if self.rampart_root else _default_rampart_root()
+
+    def validate(self, context: LocalSandboxLaunchContext) -> None:
+        if self.provider not in {"mock", "live"}:
+            raise ValueError("provider must be one of: mock, live")
+        if self.provider == "live" and self.provider_route != "copilot":
+            raise ValueError("live provider route must be one of: copilot")
+        _find_staged_workspace(context.sandbox_root)
+        _find_staged_openclaw_runtime(context.sandbox_root)
+        runner_path = self._runner_path()
+        rampart_path = self._rampart_path()
+        helpers = [runner_path / "start_openclaw_sandbox.ps1", runner_path / "openclaw_endpoint_bridge.py"]
+        if self.provider == "mock":
+            helpers.append(runner_path / "mock_openai_server.py")
+        for helper in helpers:
+            if not helper.exists():
+                raise ValueError(f"local sandbox helper is missing: {helper}")
+        if not (rampart_path / "scripts" / "openclaw-sandbox.ps1").exists():
+            raise ValueError(f"OpenClaw Docker sandbox launcher not found under: {rampart_path}")
+        if not (rampart_path / "scripts" / "run_auth_proxy.py").exists():
+            raise ValueError(f"OpenClaw auth proxy runner not found under: {rampart_path}")
+
+    def build_plan(self, context: LocalSandboxLaunchContext) -> LocalSandboxLaunchPlan:
+        workspace = _find_staged_workspace(context.sandbox_root)
+        runtime_path = _find_staged_openclaw_runtime(context.sandbox_root)
+        source_bundle = _ensure_source_bundle(workspace)
+        output = context.output_dir
+        runner_path = self._runner_path()
+        rampart_path = self._rampart_path()
+        rampart_python = _rampart_python(rampart_path)
+        runtime_archive = output / "runtime" / "openclaw-runtime.tar.gz"
+        request_log = output / "auth-proxy-requests.jsonl"
+        mock_config_path = output / "mock-auth-proxy.json"
+        live_config_path = output / "live-auth-proxy.json"
+        resolved_auth_proxy_config = Path(self.auth_proxy_config).expanduser().resolve() if self.auth_proxy_config else (mock_config_path if self.provider == "mock" else live_config_path)
+        if self.provider == "mock" and not self.auth_proxy_config:
+            _write_mock_auth_proxy_config(mock_config_path, mock_openai_port=self.mock_openai_port)
+        if self.provider == "live" and not self.auth_proxy_config:
+            _write_live_auth_proxy_config(live_config_path, provider_route=self.provider_route)
+
+        launcher = runner_path / "start_openclaw_sandbox.ps1"
+        mock_server = runner_path / "mock_openai_server.py"
+        endpoint_bridge = runner_path / "openclaw_endpoint_bridge.py"
+        model_json = _models_json(self.model_ref)
+        steps: list[LocalSandboxStep] = [
+            LocalSandboxStep(
+                name="preflight",
+                command=[sys.executable, "-c", "import pathlib, sys; sys.exit(0)"],
+                cwd=output,
+                timeout_seconds=120,
+            ),
+            LocalSandboxStep(
+                name="prepare_openclaw_runtime_archive",
+                command=[sys.executable, "-c", "import pathlib, sys; sys.exit(0)"],
+                cwd=output,
+                timeout_seconds=300,
+            ),
+        ]
+        if self.provider == "mock":
+            steps.append(
+                LocalSandboxStep(
+                    name="start_mock_openai",
+                    command=[sys.executable, str(mock_server), "--port", str(self.mock_openai_port)],
+                    cwd=runner_path,
+                    kind="service",
+                    health_url=f"http://127.0.0.1:{self.mock_openai_port}/health",
+                    log_name="mock-openai.log",
+                )
+            )
+        steps.extend(
+            [
+                LocalSandboxStep(
+                    name="start_auth_proxy",
+                    command=[
+                        rampart_python,
+                        str(rampart_path / "scripts" / "run_auth_proxy.py"),
+                        "serve",
+                        "--config",
+                        str(resolved_auth_proxy_config),
+                        "--port",
+                        str(self.auth_proxy_port),
+                        "--request-log",
+                        str(request_log),
+                        "-v",
+                    ],
+                    cwd=rampart_path,
+                    kind="service",
+                    health_url=f"http://127.0.0.1:{self.auth_proxy_port}/health",
+                    log_name="auth-proxy.log",
+                ),
+                LocalSandboxStep(
+                    name="launch_openclaw_sandbox",
+                    command=[
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(launcher),
+                        "-RampartOpenClawRoot",
+                        str(rampart_path),
+                        "-SandboxName",
+                        self.sandbox_name,
+                        "-Models",
+                        model_json,
+                        "-AuthProxyPort",
+                        str(self.auth_proxy_port),
+                        "-RuntimeArchive",
+                        str(runtime_archive),
+                        *(["-SkipBuild"] if self.skip_build else []),
+                    ],
+                    cwd=runner_path,
+                    timeout_seconds=900,
+                    log_name="launch-openclaw-sandbox.log",
+                ),
+                LocalSandboxStep(
+                    name="start_openclaw_endpoint_bridge",
+                    command=[
+                        rampart_python,
+                        str(endpoint_bridge),
+                        "--sandbox-name",
+                        self.sandbox_name,
+                        "--workspace",
+                        str(workspace),
+                        "--rampart-root",
+                        str(rampart_path),
+                        "--port",
+                        str(self.endpoint_port),
+                        "--docker-command",
+                        self.docker_command,
+                    ],
+                    cwd=runner_path,
+                    kind="service",
+                    health_url=f"{context.endpoint_url}/health",
+                    log_name="openclaw-endpoint-bridge.log",
+                    env={"ASSERT_DOCKER_COMMAND": self.docker_command, "RAMPART_OPENCLAW_ROOT": str(rampart_path)},
+                ),
+            ]
+        )
+        cleanup_commands = [
+            LocalSandboxCleanupCommand("sandbox_stop", [self.docker_command, "sandbox", "stop", self.sandbox_name]),
+            LocalSandboxCleanupCommand("sandbox_rm", [self.docker_command, "sandbox", "rm", self.sandbox_name]),
+        ]
+        metadata = {
+            "sandbox_name": self.sandbox_name,
+            "provider": self.provider,
+            "provider_route": self.provider_route if self.provider == "live" else None,
+            "model_ref": self.model_ref,
+            "endpoint_port": self.endpoint_port,
+            "auth_proxy_port": self.auth_proxy_port,
+            "mock_openai_port": self.mock_openai_port if self.provider == "mock" else None,
+            "runner_root": _path_value(runner_path, redact_paths=context.redact_paths),
+            "rampart_root": _path_value(rampart_path, redact_paths=context.redact_paths),
+            "workspace": _path_value(workspace, redact_paths=context.redact_paths),
+            "source_bundle": _path_value(source_bundle, redact_paths=context.redact_paths),
+            "runtime_archive": _path_value(runtime_archive, redact_paths=context.redact_paths),
+        }
+        return LocalSandboxLaunchPlan(
+            steps=steps,
+            cleanup_commands=cleanup_commands,
+            plan_metadata=metadata,
+            prepare=lambda: _write_runtime_archive(runtime_path, runtime_archive),
+        )
+
+
 def start_openclaw_docker_sandbox(
     *,
     snapshot_manifest_path: str | Path,
@@ -466,262 +837,40 @@ def start_openclaw_docker_sandbox(
     stop_process: Any | None = None,
     cleanup_step: Any | None = None,
 ) -> LocalSandboxStartResult:
-    """Prepare or start an OpenClaw Docker sandbox using the product state contract."""
+    """Start OpenClaw through the generic Docker backend using its launch descriptor."""
 
-    if target != "openclaw":
-        raise ValueError("the docker backend currently supports target openclaw only")
-    if provider not in {"mock", "live"}:
-        raise ValueError("provider must be one of: mock, live")
-    if provider == "live" and provider_route != "copilot":
-        raise ValueError("live provider route must be one of: copilot")
-
-    run_step_fn = run_step or _default_run_step
-    start_step_fn = start_step or _default_start_step
-    stop_process_fn = stop_process or (lambda pid, timeout_seconds: _terminate_process_group_status(pid, timeout_seconds=timeout_seconds))
-    cleanup_step_fn = cleanup_step or _default_cleanup_step
-
-    manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
-    output = Path(output_dir).expanduser().resolve()
-    manifest = _load_snapshot_manifest(manifest_path)
-    if manifest.get("target") != target:
-        raise ValueError(f"snapshot manifest target is {manifest.get('target')!r}, not {target!r}")
-
-    endpoint_url = f"http://127.0.0.1:{endpoint_port}"
-    endpoint = _endpoint_config(
-        endpoint_url=endpoint_url,
+    descriptor = OpenClawDockerLaunchDescriptor(
+        runner_root=runner_root,
+        rampart_root=rampart_root,
+        sandbox_name=sandbox_name,
+        provider=provider,
+        provider_route=provider_route,
+        model_ref=model_ref,
+        endpoint_port=endpoint_port,
+        auth_proxy_port=auth_proxy_port,
+        mock_openai_port=mock_openai_port,
+        docker_command=docker_command,
+        skip_build=skip_build,
+        auth_proxy_config=auth_proxy_config,
+    )
+    backend = DockerSandboxBackend(descriptor=descriptor)
+    return backend.start(
+        snapshot_manifest_path=snapshot_manifest_path,
+        target=target,
+        output_dir=output_dir,
+        endpoint_url=f"http://127.0.0.1:{endpoint_port}",
+        provider=provider,
         protocol=protocol,
         model=model,
         api_key_env=api_key_env,
         stream=stream,
+        redact_paths=redact_paths,
+        dry_run=dry_run,
+        run_step=run_step,
+        start_step=start_step,
+        stop_process=stop_process,
+        cleanup_step=cleanup_step,
     )
-    validate_endpoint_url(endpoint["url"], allow_localhost=True)
-    output.mkdir(parents=True, exist_ok=True)
-    sandbox_root = _stage_snapshot(manifest_path=manifest_path, manifest=manifest, output_dir=output)
-    workspace = _find_staged_workspace(sandbox_root)
-    runtime_path = _find_staged_openclaw_runtime(sandbox_root)
-    source_bundle = _ensure_source_bundle(workspace)
-    state_path = output / "sandbox_state.json"
-    config_path = output / "endpoint_target.yaml"
-    logs_dir = output / "logs"
-    runtime_archive = output / "runtime" / "openclaw-runtime.tar.gz"
-    request_log = output / "auth-proxy-requests.jsonl"
-    runner_path = Path(runner_root).expanduser().resolve() if runner_root else _default_runner_root()
-    rampart_path = Path(rampart_root).expanduser().resolve() if rampart_root else _default_rampart_root()
-    mock_config_path = output / "mock-auth-proxy.json"
-    live_config_path = output / "live-auth-proxy.json"
-    resolved_auth_proxy_config = Path(auth_proxy_config).expanduser().resolve() if auth_proxy_config else (mock_config_path if provider == "mock" else live_config_path)
-    rampart_python = _rampart_python(rampart_path)
-    launcher = runner_path / "start_openclaw_sandbox.ps1"
-    mock_server = runner_path / "mock_openai_server.py"
-    endpoint_bridge = runner_path / "openclaw_endpoint_bridge.py"
-    setup_helpers = [launcher, endpoint_bridge]
-    if provider == "mock":
-        setup_helpers.append(mock_server)
-    for helper in setup_helpers:
-        if not helper.exists():
-            raise ValueError(f"local sandbox helper is missing: {helper}")
-    if not (rampart_path / "scripts" / "openclaw-sandbox.ps1").exists():
-        raise ValueError(f"OpenClaw Docker sandbox launcher not found under: {rampart_path}")
-    if not (rampart_path / "scripts" / "run_auth_proxy.py").exists():
-        raise ValueError(f"OpenClaw auth proxy runner not found under: {rampart_path}")
-    if provider == "mock" and not auth_proxy_config:
-        _write_mock_auth_proxy_config(mock_config_path, mock_openai_port=mock_openai_port)
-    if provider == "live" and not auth_proxy_config:
-        _write_live_auth_proxy_config(live_config_path, provider_route=provider_route)
-
-    model_json = _models_json(model_ref)
-    steps: list[LocalSandboxStep] = [
-        LocalSandboxStep(
-            name="preflight",
-            command=[sys.executable, "-c", "import pathlib, sys; sys.exit(0)"],
-            cwd=output,
-            timeout_seconds=120,
-        ),
-        LocalSandboxStep(
-            name="prepare_openclaw_runtime_archive",
-            command=[sys.executable, "-c", "import pathlib, sys; sys.exit(0)"],
-            cwd=output,
-            timeout_seconds=300,
-        ),
-    ]
-    if provider == "mock":
-        steps.append(
-            LocalSandboxStep(
-                name="start_mock_openai",
-                command=[sys.executable, str(mock_server), "--port", str(mock_openai_port)],
-                cwd=runner_path,
-                kind="service",
-                health_url=f"http://127.0.0.1:{mock_openai_port}/health",
-                log_name="mock-openai.log",
-            )
-        )
-    steps.extend(
-        [
-            LocalSandboxStep(
-                name="start_auth_proxy",
-                command=[
-                    rampart_python,
-                    str(rampart_path / "scripts" / "run_auth_proxy.py"),
-                    "serve",
-                    "--config",
-                    str(resolved_auth_proxy_config),
-                    "--port",
-                    str(auth_proxy_port),
-                    "--request-log",
-                    str(request_log),
-                    "-v",
-                ],
-                cwd=rampart_path,
-                kind="service",
-                health_url=f"http://127.0.0.1:{auth_proxy_port}/health",
-                log_name="auth-proxy.log",
-            ),
-            LocalSandboxStep(
-                name="launch_openclaw_sandbox",
-                command=[
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(launcher),
-                    "-RampartOpenClawRoot",
-                    str(rampart_path),
-                    "-SandboxName",
-                    sandbox_name,
-                    "-Models",
-                    model_json,
-                    "-AuthProxyPort",
-                    str(auth_proxy_port),
-                    "-RuntimeArchive",
-                    str(runtime_archive),
-                    *( ["-SkipBuild"] if skip_build else [] ),
-                ],
-                cwd=runner_path,
-                timeout_seconds=900,
-                log_name="launch-openclaw-sandbox.log",
-            ),
-            LocalSandboxStep(
-                name="start_openclaw_endpoint_bridge",
-                command=[
-                    rampart_python,
-                    str(endpoint_bridge),
-                    "--sandbox-name",
-                    sandbox_name,
-                    "--workspace",
-                    str(workspace),
-                    "--rampart-root",
-                    str(rampart_path),
-                    "--port",
-                    str(endpoint_port),
-                    "--docker-command",
-                    docker_command,
-                ],
-                cwd=runner_path,
-                kind="service",
-                health_url=f"{endpoint_url}/health",
-                log_name="openclaw-endpoint-bridge.log",
-                env={"ASSERT_DOCKER_COMMAND": docker_command, "RAMPART_OPENCLAW_ROOT": str(rampart_path)},
-            ),
-        ]
-    )
-    cleanup_commands = [
-        LocalSandboxCleanupCommand("sandbox_stop", [docker_command, "sandbox", "stop", sandbox_name]),
-        LocalSandboxCleanupCommand("sandbox_rm", [docker_command, "sandbox", "rm", sandbox_name]),
-    ]
-    plan_steps = [_local_sandbox_step_json(step, redact_paths=redact_paths) for step in steps]
-    cleanup_json = [_local_cleanup_json(command, redact_paths=redact_paths) for command in cleanup_commands]
-    state = {
-        "schema_version": 1,
-        "target": target,
-        "backend": "docker",
-        "status": "planned" if dry_run else "starting",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "snapshot": {
-            "manifest": _path_value(manifest_path, redact_paths=redact_paths),
-            "snapshot_root": str(manifest.get("snapshot_root")),
-            "copied_roots": manifest.get("copied_roots", []),
-        },
-        "sandbox_root": "sandbox" if redact_paths else str(sandbox_root),
-        "endpoint": endpoint,
-        "plan": {
-            "sandbox_name": sandbox_name,
-            "provider": provider,
-            "provider_route": provider_route if provider == "live" else None,
-            "model_ref": model_ref,
-            "endpoint_port": endpoint_port,
-            "auth_proxy_port": auth_proxy_port,
-            "mock_openai_port": mock_openai_port if provider == "mock" else None,
-            "runner": "openclaw-docker-sandbox",
-            "runner_root": _path_value(runner_path, redact_paths=redact_paths),
-            "rampart_root": _path_value(rampart_path, redact_paths=redact_paths),
-            "workspace": _path_value(workspace, redact_paths=redact_paths),
-            "source_bundle": _path_value(source_bundle, redact_paths=redact_paths),
-            "runtime_archive": _path_value(runtime_archive, redact_paths=redact_paths),
-            "steps": plan_steps,
-        },
-        "processes": [],
-        "cleanup": {
-            "sandbox_name": sandbox_name,
-            "required": not dry_run,
-            "commands": cleanup_json,
-        },
-        "safety": {
-            "live_home_mount": False,
-            "snapshot_staged": True,
-            "endpoint_local_dev": True,
-            "external_services_proxied_or_mocked": True,
-        },
-    }
-    write_json(state_path, state)
-    _write_endpoint_target_config(config_path, endpoint)
-    if dry_run:
-        return LocalSandboxStartResult(
-            state_path=state_path,
-            config_path=config_path,
-            sandbox_root=sandbox_root,
-            endpoint_url=endpoint_url,
-            process=None,
-        )
-
-    managed: list[LocalSandboxManagedProcess] = []
-    try:
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        _write_runtime_archive(runtime_path, runtime_archive)
-        for step in steps:
-            log_path = logs_dir / (step.log_name or f"{step.name}.log")
-            if step.kind == "service":
-                managed.append(start_step_fn(step, log_path))
-                continue
-            rc = int(run_step_fn(step, log_path))
-            if rc != 0:
-                raise ValueError(f"{step.name} failed with exit code {rc}; see {log_path}")
-        state["status"] = "running"
-        state["started_at"] = datetime.now(timezone.utc).isoformat()
-        state["processes"] = [
-            {
-                "name": process.name,
-                "pid": process.pid,
-                "log_path": _path_value(process.log_path, redact_paths=redact_paths),
-            }
-            for process in managed
-        ]
-        write_json(state_path, state)
-        return LocalSandboxStartResult(
-            state_path=state_path,
-            config_path=config_path,
-            sandbox_root=sandbox_root,
-            endpoint_url=endpoint_url,
-            process=managed[-1].process if managed else None,
-        )
-    except Exception:
-        for process in reversed(managed):
-            stop_process_fn(process.pid, 5.0)
-        cleanup_dir = logs_dir / "cleanup"
-        for command in cleanup_commands:
-            cleanup_step_fn(command.command, cleanup_dir / f"{command.name}.log", command.timeout_seconds)
-        raise
-
 
 def smoke_local_sandbox(
     state_path: str | Path,

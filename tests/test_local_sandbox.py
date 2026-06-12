@@ -14,8 +14,12 @@ from click.testing import CliRunner
 
 from assert_ai.cli import cli
 from assert_ai.local_sandbox import (
+    DockerSandboxBackend,
+    LocalSandboxLaunchContext,
+    LocalSandboxLaunchPlan,
     LocalSandboxManagedProcess,
     LocalSandboxStep,
+    OpenClawDockerLaunchDescriptor,
     smoke_local_sandbox,
     start_local_sandbox,
     start_openclaw_docker_sandbox,
@@ -547,6 +551,133 @@ def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_pa
         assert state["plan"]["model_ref"] == "copilot/gpt-5.5=GPT 5.5 via Copilot"
         assert state["cleanup"]["sandbox_name"].startswith("oc-")
         assert (state_path.parent / "live-auth-proxy.json").exists()
+
+
+class FakeDockerLaunchDescriptor:
+    target = "fake-agent"
+    runner_name = "fake-runtime"
+
+    def validate(self, context: LocalSandboxLaunchContext) -> None:
+        assert (context.sandbox_root / "profile" / "AGENTS.md").exists()
+
+    def build_plan(self, context: LocalSandboxLaunchContext) -> LocalSandboxLaunchPlan:
+        return LocalSandboxLaunchPlan(
+            steps=[
+                LocalSandboxStep(
+                    name="start_fake_runtime",
+                    command=[sys.executable, "-c", "print('ready')"],
+                    cwd=context.output_dir,
+                    kind="service",
+                    health_url=f"{context.endpoint_url}/health",
+                    log_name="fake-runtime.log",
+                )
+            ],
+            cleanup_commands=[],
+            plan_metadata={"runtime_profile": "profile"},
+        )
+
+
+def _write_fake_snapshot_manifest(base: Path) -> Path:
+    snapshot_root = base / "snapshot"
+    (snapshot_root / "profile").mkdir(parents=True)
+    (snapshot_root / "profile" / "AGENTS.md").write_text("fake runtime instructions\n", encoding="utf-8")
+    manifest = {
+        "schema_version": 1,
+        "target": "fake-agent",
+        "agent": {"id": "fake-agent", "display_name": "Fake Agent", "kind": "fake", "status": "ready"},
+        "snapshot_root": "snapshot",
+        "copied_roots": [{"source": "[LOCAL_PATH]", "dest": "profile", "files_copied": 1, "bytes_copied": 20}],
+        "excluded_files": [],
+        "safety": {"explicit_copy_roots_only": True},
+    }
+    manifest_path = base / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
+
+
+def test_docker_backend_runs_runtime_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input")
+    executed: list[str] = []
+
+    def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
+        executed.append(f"service:{step.name}:{step.cwd.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ready\n", encoding="utf-8")
+        return LocalSandboxManagedProcess(name=step.name, pid=3100, log_path=log_path)
+
+    backend = DockerSandboxBackend(descriptor=FakeDockerLaunchDescriptor())
+
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="fake-agent",
+        output_dir=tmp_path / "sandbox-out",
+        endpoint_url="http://127.0.0.1:19999",
+        provider="mock",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        redact_paths=True,
+        dry_run=False,
+        start_step=start_step,
+    )
+
+    assert executed == ["service:start_fake_runtime:sandbox-out"]
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["target"] == "fake-agent"
+    assert state["backend"] == "docker"
+    assert state["status"] == "running"
+    assert state["plan"]["runner"] == "fake-runtime"
+    assert state["plan"]["runtime_profile"] == "profile"
+    assert [step["name"] for step in state["plan"]["steps"]] == ["start_fake_runtime"]
+    assert "openclaw" not in result.state_path.read_text(encoding="utf-8").lower()
+
+
+def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    runner_root = _make_runner_root(tmp_path)
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+
+    backend = DockerSandboxBackend(
+        descriptor=OpenClawDockerLaunchDescriptor(
+            runner_root=runner_root,
+            rampart_root=rampart_root,
+            sandbox_name="oc-descriptor-test",
+            provider="mock",
+            model_ref="openai/mock-model=Mock Model",
+            endpoint_port=19998,
+            auth_proxy_port=19997,
+            mock_openai_port=19996,
+            docker_command="docker.exe",
+        )
+    )
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        output_dir=tmp_path / "sandbox-out",
+        endpoint_url="http://127.0.0.1:19998",
+        provider="mock",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        redact_paths=True,
+        dry_run=True,
+    )
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["plan"]["runner"] == "openclaw-docker-sandbox"
+    assert [step["name"] for step in state["plan"]["steps"]] == [
+        "preflight",
+        "prepare_openclaw_runtime_archive",
+        "start_mock_openai",
+        "start_auth_proxy",
+        "launch_openclaw_sandbox",
+        "start_openclaw_endpoint_bridge",
+    ]
 
 
 def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(tmp_path: Path) -> None:
