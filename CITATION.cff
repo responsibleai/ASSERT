@@ -38,3 +38,29 @@ references:
         given-names: "Samuel R."
       - family-names: Price
         given-names: Sara
+  - type: article
+    title: "AI-Assisted Systematization for Evaluating GenAI Systems"
+    year: 2026
+    month: 5
+    url: "https://www.microsoft.com/en-us/research/publication/ai-assisted-systematization-for-evaluating-genai-systems/"
+    notes: >-
+      ASSERT's concept-systematization stage follows this work.
+    authors:
+      - family-names: Agarwal
+        given-names: Dhruv
+      - family-names: Sheng
+        given-names: Emily
+      - family-names: Atalla
+        given-names: Chad
+      - family-names: Garcia-Gathright
+        given-names: Jean
+      - family-names: Mozannar
+        given-names: Hussein
+      - family-names: Washington
+        given-names: Hannah
+      - family-names: Chouldechova
+        given-names: Alexandra
+      - family-names: Barocas
+        given-names: Solon
+      - family-names: Wallach
+        given-names: Hanna

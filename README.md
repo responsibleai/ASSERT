@@ -68,7 +68,7 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 
 ## Acknowledgments
 
-ASSERT's automated behavioral-evaluation pipeline builds on and adapts the design of **[Bloom](https://github.com/safety-research/bloom)**, an open-source framework for automated behavioral evaluations from the Anthropic alignment team (released under the Safety Research organization, MIT licensed), and the broader line of work it belongs to, including [Petri](https://github.com/safety-research/petri). The concept-systematization stage additionally follows [Agarwal et al. (2026)](https://arxiv.org/abs/2605.26001).
+ASSERT's automated behavioral-evaluation pipeline builds on and adapts the design of **[Bloom](https://github.com/safety-research/bloom)**, an open-source framework for automated behavioral evaluations from the Anthropic alignment team (released under the Safety Research organization, MIT licensed), and the broader line of work it belongs to, including [Petri](https://github.com/safety-research/petri). The concept-systematization stage additionally follows [Agarwal et al. (2026)](https://www.microsoft.com/en-us/research/publication/ai-assisted-systematization-for-evaluating-genai-systems/).
 
 Adapted third-party material and the corresponding license notices are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). If you use ASSERT in research, please also consider citing Bloom (see [`CITATION.cff`](CITATION.cff)).
 
