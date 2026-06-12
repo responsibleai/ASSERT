@@ -213,6 +213,7 @@ def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     assert "Found local agents" in result.output
     assert "hermes" in result.output
     assert "codex" in result.output
+    assert "elapsed:" in result.output
     assert "config: [LOCAL_PATH]" in result.output
     assert "found local config or executable" in result.output
     assert "runtime: codex (not found)" in result.output
@@ -244,6 +245,7 @@ def test_cli_local_discover_prints_include_root_suggestions_for_external_referen
     assert result.exit_code == 0, result.output
     assert "external references: 1" in result.output
     assert "suggested extra roots:" in result.output
+    assert "elapsed:" in result.output
     assert "--include-root [LOCAL_PATH]" in result.output
     assert "--copy-root" not in result.output
 
@@ -275,6 +277,7 @@ def test_cli_local_discover_writes_reviewable_manifest(tmp_path: Path) -> None:
     assert "Found local agents" in result.output
     assert "openclaw" in result.output
     assert "ready for snapshot" in result.output
+    assert "elapsed:" in result.output
     payload = json.loads(out.read_text(encoding="utf-8"))
     agent = payload["agents"][0]
     assert agent["id"] == "openclaw"

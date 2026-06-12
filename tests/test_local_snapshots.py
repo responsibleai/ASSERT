@@ -231,6 +231,7 @@ def test_cli_local_snapshot_create_writes_manifest(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Created local-agent snapshot" in result.output
     assert "copied roots: 1" in result.output
+    assert "elapsed:" in result.output
     assert (out / "snapshot" / ".openclaw" / "workspace" / "AGENTS.md").exists()
     manifest = json.loads((out / "snapshot_manifest.json").read_text(encoding="utf-8"))
     assert manifest["target"] == "openclaw"
@@ -283,6 +284,7 @@ def test_cli_local_snapshot_create_uses_openclaw_defaults_and_include_root(tmp_p
 
     assert result.exit_code == 0, result.output
     assert "copied roots: 3" in result.output
+    assert "elapsed:" in result.output
     assert (out / "snapshot" / ".openclaw" / "workspace" / "AGENTS.md").exists()
     assert (out / "snapshot" / "runtime" / "openclaw-package" / "openclaw.mjs").exists()
     assert (out / "snapshot" / "chatworkspace" / "context.md").exists()

@@ -8,6 +8,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import time
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,20 @@ def _local_sandbox_display_model(provider_route: str, model: str) -> str:
 
 def _local_sandbox_model_ref(*, provider_route: str, model: str) -> str:
     return f"{provider_route}/{model}={_local_sandbox_display_model(provider_route, model)}"
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Render elapsed wall time for CLI summaries."""
+
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    minutes, remainder = divmod(seconds, 60)
+    hours, minutes = divmod(int(minutes), 60)
+    if hours:
+        return f"{hours}h {minutes}m {remainder:.1f}s"
+    if minutes:
+        return f"{minutes}m {remainder:.1f}s"
+    return f"{seconds:.2f}s"
 
 def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
     missing = getattr(exc, "name", "") or "analysis extras"
@@ -584,6 +599,7 @@ def local_discover(
     """Find local agent installs/configs and write a reviewable manifest."""
     from assert_ai.local_agents import discover_local_agents
 
+    started_at = time.perf_counter()
     try:
         result = discover_local_agents(
             target=target,
@@ -611,6 +627,7 @@ def local_discover(
         click.echo("No local agents found.")
         if output_path is not None:
             click.echo(f"Wrote discovery manifest: {output_path}")
+        click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
         return
 
     click.echo("Found local agents:")
@@ -659,6 +676,7 @@ def local_discover(
     if any(agent.get("status") == "ready" for agent in agents):
         click.echo("Next:")
         click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id> [--include-root <path>]")
+    click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
 
 
 @local.group("snapshot", cls=SuggestingGroup, short_help="Create copied local-agent snapshots")
@@ -684,6 +702,7 @@ def local_snapshot_create(
     """Copy user-approved roots into a reviewable local-agent snapshot."""
     from assert_ai.local_snapshots import create_local_agent_snapshot
 
+    started_at = time.perf_counter()
     try:
         result = create_local_agent_snapshot(
             discovery_path=discovery_path,
@@ -708,6 +727,7 @@ def local_snapshot_create(
     click.echo(f"  copied roots: {copied_count}")
     click.echo(f"  files copied: {files_copied}")
     click.echo(f"  excluded files: {excluded_count}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
 
 
 @local.group("spec", cls=SuggestingGroup, short_help="Build ASSERT specs from sandbox snapshots")
@@ -723,6 +743,7 @@ def local_spec_build(state_path: Path, include_patterns: tuple[str, ...], output
     """Build a normal ASSERT eval config from the copied sandbox snapshot."""
     from assert_ai.local_specs import build_local_agent_spec
 
+    started_at = time.perf_counter()
     resolved_output_dir = output_dir or (state_path.parent / "spec")
     try:
         result = build_local_agent_spec(
@@ -739,6 +760,7 @@ def local_spec_build(state_path: Path, include_patterns: tuple[str, ...], output
     click.echo(f"  spec: {result.spec_json_path}")
     click.echo(f"  summary: {result.spec_markdown_path}")
     click.echo(f"  config: {result.eval_config_path}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
     click.echo("Next:")
     click.echo(f"  assert-ai run --config {result.eval_config_path}")
 
@@ -804,6 +826,7 @@ def local_sandbox_start(
     """Stage a copied snapshot and start a local sandbox endpoint."""
     from assert_ai.local_sandbox import start_local_sandbox, start_openclaw_docker_sandbox
 
+    started_at = time.perf_counter()
     run_dir = output_dir or _local_sandbox_run_dir(target=target, snapshot_manifest=snapshot_manifest)
     generated_sandbox_name = sandbox_name or _local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest)
 
@@ -876,6 +899,7 @@ def local_sandbox_start(
     click.echo(f"  target config: {result.config_path}")
     if result.process is not None:
         click.echo(f"  pid: {result.process.pid}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
 
 
 @local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")
@@ -893,6 +917,7 @@ def local_sandbox_smoke(state_path: Path, message: str | None, timeout_seconds: 
     """Send a POST to a started sandbox endpoint."""
     from assert_ai.local_sandbox import smoke_local_sandbox
 
+    started_at = time.perf_counter()
     try:
         result = smoke_local_sandbox(state_path, message=message, timeout_seconds=timeout_seconds)
     except ValueError as exc:
@@ -920,6 +945,7 @@ def local_sandbox_smoke(state_path: Path, message: str | None, timeout_seconds: 
     if model_value:
         click.echo(f"  model: {model_value}")
     click.echo(f"  events: {len(events)}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
     if result.get("status") != "ok":
         reason = "configured workspace check failed" if configured_workspace_check.get("status") == "failed" else "sandbox smoke failed"
         _error(reason)
@@ -932,6 +958,7 @@ def local_sandbox_stop(state_path: Path, timeout_seconds: float):
     """Terminate processes recorded in a sandbox state file."""
     from assert_ai.local_sandbox import stop_local_sandbox
 
+    started_at = time.perf_counter()
     try:
         result = stop_local_sandbox(state_path, timeout_seconds=timeout_seconds)
     except ValueError as exc:
@@ -943,6 +970,7 @@ def local_sandbox_stop(state_path: Path, timeout_seconds: float):
     click.echo("Stopped local-agent sandbox")
     click.echo(f"  state: {state_path}")
     click.echo(f"  processes: {len(processes)}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
 
 
 # -- init (design an eval config with an LLM assistant) ---------------------
@@ -1023,6 +1051,7 @@ def run(
             json_output=(output_format == "json"),
         )
     runner = _load_runner_module()
+    started_at = time.perf_counter()
     rc = runner.run_pipeline(
         config=str(config),
         force_stages=list(force_stage),
@@ -1030,6 +1059,7 @@ def run(
         overrides=list(overrides),
         concurrency=concurrency,
     )
+    click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
     raise SystemExit(rc)
 
 

@@ -254,6 +254,7 @@ def test_cli_local_sandbox_smoke_prints_first_run_response_before_failing(tmp_pa
     assert result.exit_code == 1
     assert first_run_response in result.output
     assert "Sandbox smoke: failed" in result.output
+    assert "elapsed:" in result.output
     assert "configured workspace check failed" in result.output
 
 
@@ -316,6 +317,7 @@ def test_cli_local_sandbox_smoke_posts_to_started_endpoint(tmp_path: Path) -> No
     assert "provider: copilot" in result.output
     assert "model: gpt-5.5" in result.output
     assert "events: 0" in result.output
+    assert "elapsed:" in result.output
 
 
 def test_stop_local_sandbox_terminates_process_and_updates_state(tmp_path: Path) -> None:
@@ -405,6 +407,7 @@ def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> N
 
     assert result.exit_code == 0, result.output
     assert "Stopped local-agent sandbox" in result.output
+    assert "elapsed:" in result.output
     assert start_result.process.poll() is not None
 
 
@@ -441,6 +444,7 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
     assert "rampart" not in result.output.lower()
     assert "state:" in result.output
     assert "target config:" in result.output
+    assert "elapsed:" in result.output
 
     state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
     state_text = (tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8")
@@ -557,6 +561,7 @@ def test_cli_local_sandbox_start_live_copilot_does_not_require_manual_auth_confi
 
     assert result.exit_code == 0, result.output
     assert "Prepared local-agent sandbox" in result.output
+    assert "elapsed:" in result.output
     state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
     assert state["plan"]["provider"] == "live"
     assert state["plan"]["provider_route"] == "copilot"
@@ -609,6 +614,7 @@ def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_pa
         assert result.exit_code == 0, result.output
         assert "Prepared local-agent sandbox" in result.output
         assert "backend: docker" in result.output
+        assert "elapsed:" in result.output
         assert "model-ref" not in result.output
         assert "provider-route" not in result.output
         state_line = next(line for line in result.output.splitlines() if "state:" in line)

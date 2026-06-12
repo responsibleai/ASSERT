@@ -191,6 +191,7 @@ def test_cli_local_spec_build_writes_spec_and_eval_config(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert "Built local-agent ASSERT spec" in result.output
     assert "sources: 6" in result.output
+    assert "elapsed:" in result.output
     assert (tmp_path / "spec" / "agent-spec.json").exists()
     assert (tmp_path / "spec" / "agent-spec.md").exists()
     assert (tmp_path / "spec" / "eval_config.yaml").exists()
