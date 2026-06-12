@@ -520,6 +520,106 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     )
 
 
+# -- local agent setup ------------------------------------------------------
+@cli.group(cls=SuggestingGroup, short_help="Discover and prepare local agent targets")
+def local():
+    """Local agent setup commands for sandboxed target evaluation."""
+
+
+@local.command("discover", short_help="Find local agent installs/configs")
+@click.option(
+    "--target",
+    type=click.Choice(["all", "openclaw", "hermes", "claude-code", "codex", "opencode", "gemini"], case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Local agent family to discover.",
+)
+@click.option("--home", type=click.Path(path_type=Path), default=None, help="Home directory to inspect instead of the current user home.")
+@click.option("--runtime-path", type=click.Path(path_type=Path), default=None, help="Explicit runtime/package path for targets that support it.")
+@click.option("--workspace", "workspace_path", type=click.Path(path_type=Path), default=None, help="Explicit workspace/context path for targets that support it.")
+@click.option("--source-bundle", "source_bundle_path", type=click.Path(path_type=Path), default=None, help="Explicit source-bundle manifest path.")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None, help="Write discovery JSON manifest to this path.")
+@click.option("--show-paths", is_flag=True, help="Print local absolute paths instead of redacted path placeholders.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON only.")
+def local_discover(
+    target: str,
+    home: Path | None,
+    runtime_path: Path | None,
+    workspace_path: Path | None,
+    source_bundle_path: Path | None,
+    output_path: Path | None,
+    show_paths: bool,
+    as_json: bool,
+):
+    """Find local agent installs/configs and write a reviewable manifest."""
+    from assert_ai.local_agents import discover_local_agents
+
+    try:
+        result = discover_local_agents(
+            target=target,
+            home=home,
+            runtime_path=runtime_path,
+            workspace_path=workspace_path,
+            source_bundle_path=source_bundle_path,
+            redact_paths=not show_paths,
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    payload = result.to_json()
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    if as_json:
+        _echo_json(payload)
+        return
+
+    agents = payload.get("agents", [])
+    if not agents:
+        click.echo("No local agents found.")
+        if output_path is not None:
+            click.echo(f"Wrote discovery manifest: {output_path}")
+        return
+
+    click.echo("Found local agents:")
+    click.echo("")
+    for index, agent in enumerate(agents, 1):
+        click.echo(f"{index}. {agent['id']}")
+        runtime = agent.get("runtime") or {}
+        config = agent.get("config") or {}
+        workspace = agent.get("workspace") or {}
+        if runtime.get("version"):
+            click.echo(f"   runtime: {agent.get('display_name', agent['id'])} {runtime['version']}")
+        elif runtime.get("binary"):
+            binary_state = "found" if runtime.get("valid") else "not found"
+            click.echo(f"   runtime: {runtime['binary']} ({binary_state})")
+        if runtime.get("path"):
+            click.echo(f"   runtime path: {runtime['path']}")
+        if config.get("path"):
+            click.echo(f"   config: {config['path']}")
+        if workspace.get("path"):
+            click.echo(f"   workspace: {workspace['path']}")
+        source_bundle = agent.get("source_bundle") or {}
+        if source_bundle:
+            click.echo(f"   source bundle: {'found' if source_bundle.get('exists') else 'not found'}")
+        candidate_count = len(agent.get("candidate_files") or [])
+        if candidate_count:
+            click.echo(f"   candidate files: {candidate_count}")
+        excluded_count = len(agent.get("excluded_files") or [])
+        if excluded_count:
+            click.echo(f"   excluded files: {excluded_count} secret-looking file{'s' if excluded_count != 1 else ''}")
+        click.echo(f"   status: {agent.get('summary') or agent.get('status')}")
+        click.echo("")
+
+    if output_path is not None:
+        click.echo(f"Wrote discovery manifest: {output_path}")
+    if any(agent.get("status") == "ready" for agent in agents):
+        click.echo("Next:")
+        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id>")
+
+
 # -- init (design an eval config with an LLM assistant) ---------------------
 from assert_ai.init._command import init  # noqa: E402
 
