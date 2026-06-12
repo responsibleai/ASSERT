@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Iterable
 
@@ -53,6 +54,44 @@ def _parse_copy_root_spec(spec: str) -> tuple[Path, Path]:
         raise ValueError(f"copy-root source does not exist: {source_raw}")
     dest = _safe_relative_dest(dest_raw)
     return source, dest
+
+
+def _safe_default_dest(path: Path) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name).strip(".-") or "included-root"
+    return _safe_relative_dest(safe)
+
+
+def _parse_include_root_spec(spec: str) -> tuple[Path, Path]:
+    source = Path(spec).expanduser().resolve()
+    if not source.exists():
+        raise ValueError(f"include-root source does not exist: {spec}")
+    return source, _safe_default_dest(source)
+
+
+def _is_redacted_path(value: Any) -> bool:
+    return value in {None, "", "[LOCAL_PATH]", "[PATH_ENTRY]"}
+
+
+def _agent_path(agent: dict[str, Any], section: str, field: str) -> Path | None:
+    value = (agent.get(section) or {}).get(field)
+    if _is_redacted_path(value):
+        return None
+    return Path(str(value)).expanduser().resolve()
+
+
+def _default_openclaw_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
+    workspace = _agent_path(agent, "workspace", "path")
+    runtime = _agent_path(agent, "runtime", "path")
+    if workspace is None and (agent.get("workspace") or {}).get("exists"):
+        workspace = Path.home() / ".openclaw" / "workspace"
+    if runtime is None and (agent.get("runtime") or {}).get("valid"):
+        runtime = Path.home() / ".npm-global" / "lib" / "node_modules" / "openclaw"
+    defaults: list[tuple[Path, Path]] = []
+    if workspace is not None and workspace.exists():
+        defaults.append((workspace, Path(".openclaw/workspace")))
+    if runtime is not None and runtime.exists():
+        defaults.append((runtime, Path("runtime/openclaw-package")))
+    return defaults
 
 
 def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str] = ()) -> bool:
@@ -136,22 +175,35 @@ def create_local_agent_snapshot(
     target: str,
     copy_root_specs: Iterable[str],
     output_dir: str | Path,
+    include_root_specs: Iterable[str] = (),
     redact_paths: bool = True,
 ) -> LocalAgentSnapshotResult:
     """Create a copied snapshot for a discovered local agent.
 
-    ``copy_root_specs`` are explicit ``SOURCE:DEST`` entries. Discovery hints are
-    not treated as authoritative; the caller decides which roots matter.
+    ``copy_root_specs`` are advanced explicit ``SOURCE:DEST`` entries.
+    Runtime-specific defaults may contribute required roots for supported
+    targets, and ``include_root_specs`` lets users add extra context roots
+    without deciding the snapshot destination.
     """
 
     discovery_file = Path(discovery_path).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
-    copy_roots = [_parse_copy_root_spec(spec) for spec in copy_root_specs]
-    if not copy_roots:
-        raise ValueError("at least one --copy-root is required")
-
     discovery = _load_discovery(discovery_file)
     agent = _select_agent(discovery, target)
+
+    copy_roots: list[tuple[Path, Path]] = []
+    copy_root_values = tuple(copy_root_specs)
+    include_root_values = tuple(include_root_specs)
+    used_default_runtime_roots = False
+    if target == "openclaw":
+        default_roots = _default_openclaw_roots(agent)
+        if default_roots:
+            copy_roots.extend(default_roots)
+            used_default_runtime_roots = True
+    copy_roots.extend(_parse_copy_root_spec(spec) for spec in copy_root_values)
+    copy_roots.extend(_parse_include_root_spec(spec) for spec in include_root_values)
+    if not copy_roots:
+        raise ValueError("at least one default root, --include-root, or --copy-root is required")
 
     snapshot_root = output / "snapshot"
     if snapshot_root.exists():
@@ -191,7 +243,9 @@ def create_local_agent_snapshot(
         "copied_roots": copied_roots,
         "excluded_files": sorted(excluded_files, key=lambda item: item["dest"]),
         "safety": {
-            "explicit_copy_roots_only": True,
+            "default_runtime_roots": used_default_runtime_roots,
+            "explicit_include_roots": bool(include_root_values),
+            "advanced_copy_roots_used": bool(copy_root_values),
             "secrets_excluded_by_path": True,
             "symlinks_not_copied": True,
         },

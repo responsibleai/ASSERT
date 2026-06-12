@@ -658,7 +658,7 @@ def local_discover(
         click.echo(f"Wrote discovery manifest: {output_path}")
     if any(agent.get("status") == "ready" for agent in agents):
         click.echo("Next:")
-        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id> --copy-root <source>:<dest>")
+        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id> [--include-root <path>]")
 
 
 @local.group("snapshot", cls=SuggestingGroup, short_help="Create copied local-agent snapshots")
@@ -666,15 +666,17 @@ def local_snapshot():
     """Create copied snapshots from explicit local roots."""
 
 
-@local_snapshot.command("create", short_help="Copy explicit roots into a snapshot directory")
+@local_snapshot.command("create", short_help="Copy local-agent roots into a snapshot directory")
 @click.option("--from", "discovery_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Discovery JSON manifest from `assert-ai local discover`.")
 @click.option("--target", required=True, help="Agent ID from the discovery manifest.")
-@click.option("--copy-root", "copy_roots", multiple=True, required=True, help="Root to copy as SOURCE:DEST. Repeat for multiple roots.")
+@click.option("--include-root", "include_roots", multiple=True, help="Extra root to include. Destination is derived from the folder name. Repeat for multiple roots.")
+@click.option("--copy-root", "copy_roots", multiple=True, help="Advanced root mapping as SOURCE:DEST. Repeat for multiple roots.")
 @click.option("--output-dir", required=True, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written.")
 @click.option("--show-paths", is_flag=True, help="Write local absolute paths in the manifest instead of redacted placeholders.")
 def local_snapshot_create(
     discovery_path: Path,
     target: str,
+    include_roots: tuple[str, ...],
     copy_roots: tuple[str, ...],
     output_dir: Path,
     show_paths: bool,
@@ -687,6 +689,7 @@ def local_snapshot_create(
             discovery_path=discovery_path,
             target=target,
             copy_root_specs=copy_roots,
+            include_root_specs=include_roots,
             output_dir=output_dir,
             redact_paths=not show_paths,
         )
