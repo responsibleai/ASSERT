@@ -5,9 +5,8 @@ description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-# TODO: add a public team contact email once a team alias is available.
 authors = [
-  { name = "Microsoft Responsible AI" },
+  { name = "ASSERT contributors" },
 ]
 keywords = [
   "safety",
@@ -92,7 +91,7 @@ examples = [
   "pydantic-ai>=0.8.1",
   "smolagents>=1.22.0",
   # Framework-specific OpenInference instrumentors used by the
-  # examples/phoenix_auto_trace/* demos. `phoenix.otel.register(auto_instrument=True)`
+  # examples/phoenix_auto_trace/* demos. `assert_ai.auto_trace.enable()`
   # auto-loads every installed `openinference-instrumentation-*` package and a
   # single version mismatch crashes the whole call, so the upper bounds below
   # match the framework versions pinned above. The crewai instrumentor pin is

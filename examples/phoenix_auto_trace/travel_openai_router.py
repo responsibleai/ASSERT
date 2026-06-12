@@ -2,8 +2,8 @@
 # Licensed under the MIT License.
 
 """Travel planner — model-router (SWC endpoint, multi-model ensemble)."""
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 import os

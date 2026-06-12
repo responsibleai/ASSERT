@@ -6,11 +6,11 @@ ASSERT uses one YAML file (commonly `eval_config.yaml`) to define what to test a
 
 Your config declares:
 
-1. Behavior spec (`behavior.name`, `behavior.description`)
+1. Behavior specification (`behavior.name`, `behavior.description`)
 2. Target/system context (`context`)
 3. Pipeline stages (`pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, `pipeline.judge`)
 
-Pipeline execution is fixed order:
+Pipeline execution is fixed chronological order:
 
 ```text
 systematize -> test_set -> inference -> judge
@@ -25,7 +25,7 @@ systematize -> test_set -> inference -> judge
 - `default_model`: optional stage model fallback
 - `pipeline`: stage configuration
 
-## Minimal example
+Minimal YAML configuration:
 
 ```yaml
 suite: support-agent-v1
@@ -63,9 +63,3 @@ pipeline:
           true = violation observed
           false = no violation observed
 ```
-
-## Where to go next
-
-- Full schema details: `docs/config/schema.md`
-- Authoring guidance: `docs/guides/create-evaluation.md`
-- Official field reference: `docs/config/schema.md`

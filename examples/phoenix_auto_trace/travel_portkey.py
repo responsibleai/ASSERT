@@ -3,13 +3,13 @@
 
 """Travel planner — Portkey AI Gateway.
 
-Instrumentation: 2 lines. Agent code: Portkey SDK (OpenAI-compatible).
+Instrumentation: central helper call. Agent code: Portkey SDK (OpenAI-compatible).
 Traces captured: LLM calls, gateway routing, fallbacks, token counts, latency.
 """
 
-# pip install openinference-instrumentation-portkey arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-portkey arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 from portkey_ai import Portkey

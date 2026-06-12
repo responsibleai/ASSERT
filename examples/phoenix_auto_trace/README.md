@@ -1,6 +1,6 @@
 # Phoenix Auto-Trace Gallery — Same Scenario, 33 Frameworks
 
-This is a **multi-framework instrumentation gallery**, not a single-agent example. It shows how one Phoenix/OpenInference setup (typically 2 lines: install the instrumentor, call `register(auto_instrument=True)`) gives `target.callable` + `target.trace` OpenTelemetry visibility across supported frameworks — without per-framework integration work in ASSERT itself.
+This is a **multi-framework instrumentation gallery**, not a single-agent example. It shows how the `assert_ai.auto_trace` helper gives `target.callable` + `target.trace` OpenTelemetry visibility across supported frameworks — without per-framework integration work in ASSERT itself.
 
 All runnable demos implement the **same travel planner** with 5 mock tools:
 
@@ -65,7 +65,7 @@ Additional runnable variants: `travel_langgraph.py` (LangGraph-specific target u
 | `openinference-instrumentation-agentspec` | AgentSpec |
 | `openinference-instrumentation-vertexai` | VertexAI |
 
-**Total: 33 auto-instrumented frameworks** in OpenInference. This gallery includes 19 per-framework demos plus the runnable variants above; the remaining instrumentors follow the same install + `register(auto_instrument=True)` pattern. For anything not in OpenInference, you can still emit spans via the OpenTelemetry SDK with `@tracer.start_as_current_span`.
+**Total: 33 auto-instrumented frameworks** in OpenInference. This gallery includes 19 per-framework demos plus the runnable variants above; the remaining instrumentors follow the same install + `auto_trace.enable()` pattern. For anything not in OpenInference, you can still emit spans via the OpenTelemetry SDK with `@tracer.start_as_current_span`.
 
 ---
 

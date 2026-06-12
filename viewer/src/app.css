@@ -75,6 +75,10 @@
 	--font-sans: var(--fontStack-sansSerif);
 }
 
+html {
+	scrollbar-gutter: stable;
+}
+
 body {
 	background-color: var(--color-bg);
 	color: var(--color-text);

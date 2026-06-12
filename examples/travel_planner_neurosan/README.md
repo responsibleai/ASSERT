@@ -7,8 +7,7 @@ This is the NeurOSan-pattern variant of the travel-planner agent. The flagship [
 
 ## Why this matters
 
-The `phoenix_auto_trace/` demos show the happy path: Phoenix auto-discovers frameworks
-and instruments them with 2 lines. But what about custom orchestrators, in-house
+The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper installs available framework instrumentors. But what about custom orchestrators, in-house
 frameworks, or agents that Phoenix doesn't auto-instrument?
 
 This demo proves the general case: if your code emits OpenTelemetry spans following

@@ -65,8 +65,8 @@ export default function DocsSidebar({
 							<div className="docs-sidebar-group-title">{group.group}</div>
 						)}
 						<ul className="docs-sidebar-list">
-							{/* Place Overview at the top of the first untitled group so it
-							    shares the same row rhythm as the other top-level items. */}
+							{/* Place the docs index link at the top of the first untitled
+							    group so it shares the same row rhythm as the other top-level items. */}
 							{gi === 0 && !group.group && !query.trim() && (
 								<li>
 									<Link
@@ -75,7 +75,7 @@ export default function DocsSidebar({
 											activeHref === "/docs" ? " is-active" : ""
 										}`}
 									>
-										Overview
+										ASSERT Documentation
 									</Link>
 								</li>
 							)}

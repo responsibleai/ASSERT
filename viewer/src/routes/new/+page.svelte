@@ -69,6 +69,8 @@
 	let toolModuleCode = $state('');
 	let toolModuleFileName = $state('');
 	let toolsAcknowledged = $state(false);
+	let reuseExistingTarget = $state(false);
+	let existingTargetSummary = $state('');
 
 	// Step 2
 	let step2Source = $state<'new' | 'existing' | null>(null);
@@ -138,7 +140,11 @@
 
 	// ── Data loading ────────────────────────────────────────────────
 	onMount(() => {
-		void loadCatalogs();
+		const presetSuite = new URLSearchParams(window.location.search).get('suite');
+		void (async () => {
+			await loadCatalogs();
+			if (presetSuite) await prefillFromSuite(presetSuite);
+		})();
 
 		const handler = (e: BeforeUnloadEvent) => {
 			if (isDirty) {
@@ -149,6 +155,91 @@
 		window.addEventListener('beforeunload', handler);
 		return () => window.removeEventListener('beforeunload', handler);
 	});
+
+	/**
+	 * Pre-fill the wizard for an existing suite (launched from a suite's
+	 * "Run evaluation" button) and jump straight to the Summary & submit step so
+	 * the operator can review before submitting. Uses the suite's catalog entry
+	 * plus /api/suites/<id>/config for the authored context/system prompt/target.
+	 */
+	async function prefillFromSuite(suite: string) {
+		const knownSuite = knownSuites.find((s) => s.suite_id === suite) ?? null;
+		if (!knownSuite) return; // Unknown suite — leave the wizard at step 1.
+
+		let behaviorName = '';
+		try {
+			const res = await fetch(`/api/suites/${encodeURIComponent(suite)}/config`);
+			if (res.ok) {
+				const cfg = (await res.json()) as {
+					behaviorName?: string;
+					context?: string;
+					systemPrompt?: string;
+					evaluationTarget?: 'model' | 'agent';
+					toolsMode?: 'generated' | 'simulated' | 'real';
+					simulatorModel?: string;
+					toolsetYaml?: string;
+					toolsetFileName?: string;
+					reuseExistingTarget?: boolean;
+					targetSummary?: string;
+					nextRunId?: string;
+					testExampleCount?: number;
+				};
+				if (typeof cfg.behaviorName === 'string') behaviorName = cfg.behaviorName;
+				if (typeof cfg.context === 'string' && cfg.context) applicationContext = cfg.context;
+				if (typeof cfg.systemPrompt === 'string' && cfg.systemPrompt) systemPrompt = cfg.systemPrompt;
+				if (cfg.evaluationTarget === 'model' || cfg.evaluationTarget === 'agent') {
+					evaluationTarget = cfg.evaluationTarget;
+				}
+				if (cfg.toolsMode === 'generated' || cfg.toolsMode === 'simulated' || cfg.toolsMode === 'real') {
+					toolsMode = cfg.toolsMode;
+				}
+				if (typeof cfg.simulatorModel === 'string' && cfg.simulatorModel) {
+					simulatorModel = cfg.simulatorModel;
+				}
+				if (typeof cfg.toolsetYaml === 'string' && cfg.toolsetYaml) {
+					toolsetYaml = cfg.toolsetYaml;
+					toolsetFileName = typeof cfg.toolsetFileName === 'string' ? cfg.toolsetFileName : 'target_tools.yaml';
+				}
+				reuseExistingTarget = cfg.reuseExistingTarget === true;
+				existingTargetSummary = typeof cfg.targetSummary === 'string' ? cfg.targetSummary : '';
+				// Default the test set size to the previous run's test set size so a
+				// re-run reproduces the same number of test cases by default.
+				if (typeof cfg.testExampleCount === 'number' && cfg.testExampleCount > 0) {
+					promptTestCasesConfig = { ...promptTestCasesConfig, budget: cfg.testExampleCount };
+				}
+				// Auto-increment past the suite's latest run so the prefilled run id
+				// doesn't collide with an existing run dir (v1 -> v2).
+				if (typeof cfg.nextRunId === 'string' && cfg.nextRunId) runId = cfg.nextRunId;
+			}
+		} catch {
+			// Best-effort prefill; the operator can fill any gaps before submitting.
+		}
+
+		// Resolve the behavior. /api/behaviors dedupes by name and exposes only one
+		// suiteId per behavior, so matching by suiteId misses suites that aren't the
+		// canonical one. Resolve the name from the suite's own config/catalog and
+		// always anchor suiteId to the suite being re-run.
+		const resolvedName = behaviorName || knownSuite.behavior_name;
+		const catalogMatch =
+			knownBehaviors.find((b) => b.name === resolvedName) ??
+			knownBehaviors.find((b) => b.suiteId === suite) ??
+			null;
+		if (resolvedName) {
+			step1Mode = 'select';
+			selectedBehavior = {
+				name: resolvedName,
+				definition: catalogMatch?.definition ?? '',
+				suiteId: suite
+			};
+			behaviorSearch = resolvedName;
+		}
+		step2Source = 'existing';
+		selectedSuite = knownSuite;
+		suiteSearch = knownSuite.suite_id;
+		suiteId = knownSuite.suite_id;
+		step1Touched = true;
+		currentStep = 3;
+	}
 
 	async function loadCatalogs() {
 		try {
@@ -306,6 +397,7 @@
 	);
 	let step1ContextValid = $derived(applicationContext.trim().length > 0);
 	let step1ToolsValid = $derived.by(() => {
+		if (reuseExistingTarget) return true;
 		if (evaluationTarget !== 'agent') return true;
 		if (toolsMode === 'generated') return simulatorModel.trim().length > 0;
 		if (toolsMode === 'simulated')
@@ -314,7 +406,7 @@
 		return toolModuleCode.trim().length > 0 && toolsAcknowledged;
 	});
 	let step1SystemPromptValid = $derived(
-		evaluationTarget === 'model' ? systemPrompt.trim().length > 0 : true
+		!reuseExistingTarget && evaluationTarget === 'model' ? systemPrompt.trim().length > 0 : true
 	);
 	let step1Valid = $derived(
 		step1BehaviorValid && step1ContextValid && step1ToolsValid && step1SystemPromptValid
@@ -324,7 +416,7 @@
 		if (!promptTestCasesEnabled || !promptEvalEnabled) return false;
 		// Generated tools are produced during test-set generation, so they require
 		// creating a new test set — reusing an existing suite can't supply them.
-		if (evaluationTarget === 'agent' && toolsMode === 'generated' && step2Source === 'existing') {
+		if (!reuseExistingTarget && evaluationTarget === 'agent' && toolsMode === 'generated' && step2Source === 'existing') {
 			return false;
 		}
 		if (step2Source === 'new') return true;
@@ -428,6 +520,7 @@
 			...(applicationContext.trim() ? { applicationContext: applicationContext.trim() } : {}),
 			evaluationTarget,
 			...(systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
+			...(reuseExistingTarget ? { reuseExistingTarget: true } : {}),
 			source: step2Source,
 			...(step2Source === 'existing'
 				? { existingSuiteId: selectedSuite?.suite_id }
@@ -739,7 +832,7 @@
 						<button
 							type="button"
 							class="flex-1 rounded-lg border p-3 text-left transition-colors {evaluationTarget === 'model' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
-							onclick={() => { evaluationTarget = 'model'; markDirty(); }}
+							onclick={() => { evaluationTarget = 'model'; reuseExistingTarget = false; existingTargetSummary = ''; markDirty(); }}
 						>
 							<span class="text-sm font-medium text-text">Model</span>
 							<span class="block text-xs text-text-muted">Evaluate a model directly.</span>
@@ -747,12 +840,18 @@
 						<button
 							type="button"
 							class="flex-1 rounded-lg border p-3 text-left transition-colors {evaluationTarget === 'agent' ? 'border-interactive bg-interactive/10 ring-1 ring-interactive/40' : 'border-border hover:border-text-muted'}"
-							onclick={() => { evaluationTarget = 'agent'; markDirty(); }}
+							onclick={() => { evaluationTarget = 'agent'; reuseExistingTarget = false; existingTargetSummary = ''; markDirty(); }}
 						>
 							<span class="text-sm font-medium text-text">Prompt Agent</span>
 							<span class="block text-xs text-text-muted">Evaluate an agent or system.</span>
 						</button>
 					</div>
+					{#if reuseExistingTarget}
+						<div class="mt-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-secondary">
+							<span class="font-medium text-text">Using existing target.</span>
+							{existingTargetSummary || 'The original run target will be reused for this evaluation.'}
+						</div>
+					{/if}
 				</div>
 
 				<!-- Application context -->
@@ -791,19 +890,19 @@
 					</p>
 					<textarea
 						id="system-prompt"
-						class="form-control w-full text-sm {step1Touched && evaluationTarget === 'model' && !systemPrompt.trim() ? 'border-score-fail' : ''}"
+						class="form-control w-full text-sm {step1Touched && !reuseExistingTarget && evaluationTarget === 'model' && !systemPrompt.trim() ? 'border-score-fail' : ''}"
 						rows="6"
 						placeholder="You are a helpful assistant that…"
 						value={systemPrompt}
 						oninput={(e) => { systemPrompt = e.currentTarget.value; step1Touched = true; markDirty(); }}
 					></textarea>
-					{#if step1Touched && evaluationTarget === 'model' && !systemPrompt.trim()}
+					{#if step1Touched && !reuseExistingTarget && evaluationTarget === 'model' && !systemPrompt.trim()}
 						<p class="mt-1 text-xs text-score-fail">System prompt is required when evaluating a model.</p>
 					{/if}
 				</div>
 
 				<!-- Tools (Prompt Agent only) -->
-				{#if evaluationTarget === 'agent'}
+				{#if evaluationTarget === 'agent' && !reuseExistingTarget}
 				<div class="mt-6">
 					<p class="mb-1 text-[16px] font-semibold text-text">Tools</p>
 					<p class="mb-2 text-xs text-text-muted">Choose how the agent's tools are provided and resolved during evaluation.</p>
@@ -1502,9 +1601,19 @@
 						{#if systemPrompt.trim()}
 							<div><span class="mb-0.5 block text-text-muted">System prompt</span><span class="block whitespace-pre-wrap break-words text-text">{systemPrompt.trim()}</span></div>
 						{/if}
+						{#if reuseExistingTarget}
+							<div class="flex items-baseline justify-between gap-3">
+								<span class="shrink-0 text-text-muted">Target</span>
+								<span class="min-w-0 break-words text-right font-medium text-text">{existingTargetSummary || 'Existing target'}</span>
+							</div>
+						{/if}
 						<div class="flex items-baseline justify-between gap-3">
 							<span class="shrink-0 text-text-muted">Behavior categories</span>
 							<span class="min-w-0 break-words text-right font-medium text-text">{summaryTaxonomy}</span>
+						</div>
+						<div class="flex items-baseline justify-between gap-3">
+							<span class="shrink-0 text-text-muted">Test set size</span>
+							<span class="min-w-0 break-words text-right font-medium text-text">{promptTestCasesConfig.budget}</span>
 						</div>
 						<div class="flex items-baseline justify-between gap-3">
 							<span class="shrink-0 text-text-muted">Measurement suite</span>
@@ -1521,7 +1630,7 @@
 							</div>
 							{#if scenarioTestCasesEnabled || scenarioEvalEnabled}
 								<div class="flex items-baseline justify-between gap-3">
-									<span class="shrink-0 text-text-muted">Scenario pipeline</span>
+									<span class="shrink-0 text-text-muted">Audit pipeline</span>
 									<span class="min-w-0 break-words text-right font-medium text-text">{summaryScenarioPipeline}</span>
 								</div>
 							{/if}
@@ -1530,11 +1639,11 @@
 				</div>
 
 				<div class="mb-5">
-					<h3 class="mb-1 text-base font-semibold text-text">Evaluation suite & run identity</h3>
-					<p class="mb-3 text-xs text-text-muted">Evaluation suites group behavior categories and test cases; runs hold results.</p>
+					<h3 class="mb-1 text-base font-semibold text-text">Measurement suite & run identity</h3>
+					<p class="mb-3 text-xs text-text-muted">Measurement suites group policy + seeds; runs hold measurement results.</p>
 					<div class="grid grid-cols-2 gap-4">
 						<div>
-							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Evaluation suite ID</label>
+							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Measurement suite ID</label>
 							<input id="suite-id" type="text" maxlength="150" class="form-control w-full text-sm" placeholder="Auto-generated if blank" value={suiteId} oninput={(e) => { suiteId = e.currentTarget.value; markDirty(); }} disabled={submitting} />
 						</div>
 						<div>

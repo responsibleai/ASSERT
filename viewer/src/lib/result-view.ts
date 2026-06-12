@@ -9,7 +9,6 @@ import type {
 	LlmCallTrace,
 	ScenarioSeedInfo,
 	StopReasonDisplay,
-	TrajectoryRow,
 	ViewerResultItem
 } from '$lib/types.js';
 
@@ -215,7 +214,6 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 		multi_judge: sample.multi_judge,
 		messages,
 		llm_calls: sample.llm_calls ?? [],
-		trajectory: sample.trajectory ?? null,
 		target_runtime_mode: sample.target_runtime_mode ?? null,
 		dimensions: sample.dimensions,
 		context: {
@@ -229,8 +227,7 @@ export function normalizeScenarioResult(
 	score: AuditScore,
 	messages: AuditTranscriptMessage[],
 	llmCalls: LlmCallTrace[],
-	seedInfo: ScenarioSeedInfo | undefined,
-	trajectory: TrajectoryRow | null = null
+	seedInfo: ScenarioSeedInfo | undefined
 ): ViewerResultItem {
 	const interactionMessages = toInteractionMessages(messages);
 	return {
@@ -245,7 +242,6 @@ export function normalizeScenarioResult(
 		multi_judge: score.multi_judge,
 		messages: interactionMessages,
 		llm_calls: llmCalls,
-		trajectory,
 		target_runtime_mode: score.target_runtime_mode ?? null,
 		dimensions: score.dimensions ?? seedInfo?.dimensions,
 		context: {

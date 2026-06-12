@@ -13,10 +13,10 @@ The five configs exercise different Prompt Agent options around the same failure
 | Config | Target shape | What it demonstrates |
 |---|---|---|
 | [`health_assistant.yaml`](health_assistant.yaml) | Hosted model + system prompt | Smallest smoke test: no tools, just the model behavior and judge loop. |
-| [`health_assistant_simulated_tools.yaml`](health_assistant_simulated_tools.yaml) | Hosted model + fixed toolset + simulator | Tool schemas from [`health_assistant_tools.yaml`](health_assistant_tools.yaml); an LLM simulator returns tool results. |
-| [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) | Hosted model + Python tool module | Real tool functions from [`health_assistant.py`](health_assistant.py), executed in a Docker-backed sandbox per conversation. |
+| [`health_assistant_simulated_tools.yaml`](health_assistant_simulated_tools.yaml) | Hosted model + fixed toolset + simulator | Tool schemas from [`health_assistant_tools.yaml`](../agents/health_assistant_tools.yaml); an LLM simulator returns tool results. |
+| [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) | Hosted model + Python tool module | Real tool functions from [`health_assistant.py`](../agents/health_assistant.py), executed in a Docker-backed sandbox per conversation. |
 | [`health_assistant_generated_tools.yaml`](health_assistant_generated_tools.yaml) | Hosted model + per-test-case tools + simulator | Each generated test case carries its own tool definitions; the simulator returns plausible results. |
-| [`health_assistant_external.yaml`](health_assistant_external.yaml) | External connector | Advanced/legacy connector path through [`openclaw/`](openclaw/), with the external agent owning the conversation. |
+| [`health_assistant_external.yaml`](health_assistant_external.yaml) | External connector | Advanced/legacy connector path through [`openclaw/`](../agents/openclaw/), with the external agent owning the conversation. |
 
 ## Value-add
 
@@ -59,7 +59,7 @@ Run any config with `assert-ai`:
 | Generated tools | `assert-ai run --config examples/prompt_agents/health_assistant_generated_tools.yaml` |
 | External connector | `assert-ai run --config examples/prompt_agents/health_assistant_external.yaml` |
 
-**Docker prerequisite:** [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) and [`health_assistant_external.yaml`](health_assistant_external.yaml) start containers per conversation. Keep Docker Desktop running before invoking them. The sandbox variant may pull `python:3.11-bookworm`; the external connector builds an OpenClaw image from [`openclaw/Dockerfile`](openclaw/Dockerfile).
+**Docker prerequisite:** [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) and [`health_assistant_external.yaml`](health_assistant_external.yaml) start containers per conversation. Keep Docker Desktop running before invoking them. The sandbox variant may pull `python:3.11-bookworm`; the external connector builds an OpenClaw image from [`openclaw/Dockerfile`](../agents/openclaw/Dockerfile).
 
 ### Files
 

@@ -4,7 +4,7 @@ Use the callable target for any agent or multi-agent system with a Python entry 
 
 The callable target has two integration paths:
 
-- **Recommended (happy path):** OTel-traced agent — two-line auto-instrumentation across 33 supported frameworks. The judge cites tool calls, routing decisions, model calls, and latency as evidence.
+- **Recommended (happy path):** OTel-traced agent — central auto-instrumentation helper across supported OpenInference frameworks. The judge cites tool calls, routing decisions, model calls, and latency as evidence.
 - **Customization:** for unsupported frameworks (emit your own OTel spans) or for cases where instrumentation is impossible or unnecessary (plain callable / HTTP endpoint, no traces).
 
 ## What the judge sees, by integration path
@@ -27,13 +27,13 @@ Pick the path that exposes enough internals for the judge to score what matters.
 
 When your agent emits OpenTelemetry spans, the judge can cite tool arguments, routing decisions, model calls, and latency as evidence — not just the final response. This is the integration shape every flagship example uses.
 
-For 33 supported frameworks (OpenAI Agents SDK, LangChain/LangGraph, CrewAI, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, Smolagents, Instructor, Haystack, …), instrumentation is **two lines** at the top of your callable module:
+For 33 supported frameworks (OpenAI Agents SDK, LangChain/LangGraph, CrewAI, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, Smolagents, Instructor, Haystack, …), instrumentation is a small helper call at the top of your callable module:
 
 ```python
 # e.g. examples/travel_planner_langgraph/auto_trace.py
-from phoenix.otel import register
+from assert_ai import auto_trace
 
-register(auto_instrument=True)  # picks up any installed openinference-instrumentation-* package
+auto_trace.enable()  # installs available OpenInference instrumentors without starting Phoenix
 
 def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:
     return run_my_agent(message, history)
@@ -129,7 +129,7 @@ Return types and what the judge sees:
 | Return type | Judge sees |
 |---|---|
 | `str`, or `dict` with `text` / `content` | final response text only |
-| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`assert_ai.core.model_client.ModelResponse`](../../assert_ai/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `assert_ai.core.model_client.ModelResponse` internally) |
+| Any object with a `.choices` attribute — [`litellm.ModelResponse`](https://github.com/BerriAI/litellm), OpenAI's [`ChatCompletion`](https://platform.openai.com/docs/api-reference/chat/object), etc. — or a [`assert_ai.core.model_client.ModelResponse`](https://github.com/microsoft/ASSERT/blob/main/assert_ai/core/model_client.py) returned directly | final response text **plus** final tool calls, token usage, and model name (the `.choices` form is normalized to `assert_ai.core.model_client.ModelResponse` internally) |
 
 #### HTTP endpoint (`target.endpoint`)
 

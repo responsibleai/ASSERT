@@ -5,6 +5,8 @@ on:
     branches: [main, assert-gh-page]
     paths:
       - "website/**"
+      - "docs/**"
+      - "assets/**"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 

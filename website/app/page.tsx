@@ -74,7 +74,6 @@ const frameworkLogos: { src: string; alt: string }[] = [
 	{ src: "DSPy logo.png", alt: "DSPy" },
 	{ src: "llamalndexlogo.png", alt: "LlamaIndex" },
 	{ src: "autogen logo.png", alt: "AutoGen / MAF" },
-	{ src: "anthropic-logo.svg", alt: "Anthropic" },
 	{ src: "nvidia-logo.webp", alt: "NVIDIA" },
 	{ src: "vertex-ai-logo.png", alt: "Vertex AI" },
 	// Add more logos here — drop the file into public/icons/ and add an entry.
@@ -83,7 +82,7 @@ const frameworkLogos: { src: string; alt: string }[] = [
 const policyResources: { title: string; body?: string; href: string }[] = [
 	{ title: "GitHub repo", body: "Browse the code repository.", href: "https://github.com/microsoft/ASSERT/" },
 	{ title: "Get started", body: "Install the SDK and run your first evaluation in under 5 minutes.", href: "https://aka.ms/assert-get-started" },
-	{ title: "Read the technical blog", body: "Learn more about how ASSERT works.", href: "https://aka.ms/assert" },
+	{ title: "Read the technical blog", body: "Learn more about how ASSERT works.", href: "https://commandline.microsoft.com/assert-written-intent-executable-evals/" },
 	{ title: "Examples", body: "Take a look at sample config files and datasets created by ASSERT.", href: "https://aka.ms/assert-examples" }
 ];
 
@@ -265,7 +264,7 @@ export default function Home() {
 									/>
 								</svg>
 							</a>
-							<a href="https://aka.ms/assert" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-secondary">Read the blog</a>
+							<a href="https://commandline.microsoft.com/assert-written-intent-executable-evals/" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-secondary">Read the blog</a>
 							<a href="https://aka.ms/assert-get-started" target="_blank" rel="noopener noreferrer" className="hero-btn hero-btn-shine">
 								<span className="hero-btn-shine-border" aria-hidden="true" />
 								<span className="hero-btn-shine-label">Get started</span>

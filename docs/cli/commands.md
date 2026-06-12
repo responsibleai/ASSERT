@@ -8,12 +8,21 @@ This page lists command signatures and key options.
 assert-ai [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
 ```
 
-Global options:
+### Global options
 
 - `-v`, `--verbose`
 - `-q`, `--quiet`
 - `--log-file <path>`
 - `--output text|json`
+
+## Command groups
+
+- `init`: interactive config generation assistant
+- `run`: execute pipeline stages
+- `results`: list/status/compare suites and runs
+- `analysis`: post-hoc metrics commands
+- `judge-traces`: score pre-collected OTel traces
+- `library`: browse built-in behavior/judge presets
 
 ## `init`
 
@@ -41,7 +50,7 @@ Options:
 
 ## `run`
 
-Run the pipeline from config.
+Run the evaluation pipeline from evaluation config YAML file.
 
 ```bash
 assert-ai run --config <path> [OPTIONS]

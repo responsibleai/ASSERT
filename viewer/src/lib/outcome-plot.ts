@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { getRecordFlag } from './judgment.js';
 import type { Behavior, NodeJudgment } from './types.js';
 
@@ -13,7 +16,7 @@ export interface SelectableOutcome {
 }
 
 export interface OutcomePlotRow {
-	dimension: string;
+	factor: string;
 	level: string;
 	n: number;
 	flagged: number;
@@ -83,11 +86,11 @@ export function buildOutcomeOptions(
 	const behaviorOptions = [...behaviorNames].map((name) => ({
 		id: outcomeId('behavior', name),
 		kind: 'behavior' as const,
-			key: name,
-			label: name,
-			groupLabel: 'Behavior categories',
-			denominatorLabel: 'assessed relevant'
-		}));
+		key: name,
+		label: name,
+		groupLabel: 'Behavior categories',
+		denominatorLabel: 'assessed relevant'
+	}));
 
 	return [...dimensionOptions, ...behaviorOptions];
 }
@@ -118,7 +121,7 @@ function outcomeFlag(item: OutcomeRecord, outcome: SelectableOutcome): boolean |
 	return behaviorFlag(item, outcome.key);
 }
 
-function rateRow(dimension: string, level: string, items: OutcomeRecord[], outcome: SelectableOutcome): OutcomePlotRow {
+function rateRow(factor: string, level: string, items: OutcomeRecord[], outcome: SelectableOutcome): OutcomePlotRow {
 	let n = 0;
 	let flagged = 0;
 	for (const item of items) {
@@ -129,7 +132,7 @@ function rateRow(dimension: string, level: string, items: OutcomeRecord[], outco
 	}
 	const interval = wilsonInterval(flagged, n);
 	return {
-		dimension,
+		factor,
 		level,
 		n,
 		flagged,

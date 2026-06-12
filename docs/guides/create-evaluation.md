@@ -1,24 +1,24 @@
 # Create an Evaluation
 
-Use this guide to create `eval_config.yaml` for your agent.
+Use this guide to create `eval_config.yaml` for an ASSERT evaluation run. The evaluation configuration YAML file is the spec that drives an ASSERT evaluation and all the stages of the pipelines.
 
-## Option A: Create with CLI assistant (recommended)
+## Option A: Create with CLI LLM assistant (recommended)
 
-Generate a config interactively:
+Generate a config YAML file interactively with a [CLI LLM assistant using `assert-ai init`](../cli/commands.md), which will take you through a guided step-by-step multi-turn conversation to gather the basic information to create your evaluation config YAML file.
 
 ```bash
 assert-ai init --model azure/gpt-5.4
 ```
 
-Helpful options:
+> **Helpful CLI options:**
+>
+> - `--describe "..."` to skip the first question
+> - `--from <path>` to extend an existing config
+> - `--non-interactive` for one-shot generation
+> - `-o <path>` to choose output file
+> - `--dry-run` to print YAML without writing
 
-- `--describe "..."` to skip the first question
-- `--from <path>` to extend an existing config
-- `--non-interactive` for one-shot generation
-- `-o <path>` to choose output file
-- `--dry-run` to print YAML without writing
-
-Then run:
+Once you've written the YAML file to path, verify that it looks correct and edit it to add any missing information that may be relevant, then create an evaluation with a single CLI run command:
 
 ```bash
 assert-ai run --config <path-to-eval_config.yaml>
@@ -69,11 +69,13 @@ pipeline:
           false = followed requirements
 ```
 
-## About creating evaluations in a UI
+Then run the CLI command to run the evaluation:
 
-The local viewer is read-only today. It helps inspect suites, runs, transcripts, and metrics, but it does not create configs or launch runs.
+```bash
+assert-ai run --config <path-to-eval_config.yaml>
+```
 
-Use `assert-ai init` or manual YAML editing to create evaluations.
+For full configuration schema information, see the [ASSERT Config Reference](../config/schema.md).
 
 ## Choose the right target shape
 
@@ -81,4 +83,4 @@ Use `assert-ai init` or manual YAML editing to create evaluations.
 - Prefer `target.callable` with `target.trace` so the judge can inspect tool calls and routing.
 - Use `target.model` plus `target.tools` for prompt-and-tool-schema workflows.
 
-For full target details, see `docs/targets/README.md`.
+For full target details, see the [Target Support Overview](../targets/README.md).

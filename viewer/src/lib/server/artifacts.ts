@@ -10,7 +10,6 @@ import type { Manifest, Taxonomy, Suite } from '$lib/types.js';
 
 export const SUITE_TEST_SET_FILE = 'test_set.jsonl';
 export const RUN_INFERENCE_SET_FILE = 'inference_set.jsonl';
-export const RUN_TRAJECTORIES_FILE = 'trajectories.jsonl';
 export const RUN_SCORES_FILE = 'scores.jsonl';
 export const RUN_CONFIG_FILE = 'config.yaml';
 export const RUN_MANIFEST_FILE = 'manifest.json';
@@ -57,18 +56,6 @@ export type UnifiedScoreRow = Record<string, unknown> & {
 	judge_error?: unknown;
 	target?: unknown;
 	tester_model?: unknown;
-	dimensions?: unknown;
-};
-
-export type UnifiedTrajectoryRow = Record<string, unknown> & {
-	type?: unknown;
-	kind?: unknown;
-	test_case_id?: unknown;
-	steps?: unknown;
-	stop_reason?: unknown;
-	target?: unknown;
-	target_runtime_mode?: unknown;
-	metadata?: unknown;
 	dimensions?: unknown;
 };
 
@@ -778,22 +765,6 @@ export async function loadRunTranscriptRow(
 				missingOk: true,
 				lineMatcher
 			});
-}
-
-export async function loadRunTrajectoryRow(
-	suiteId: string,
-	runId: string,
-	seedId: string,
-	kind: 'prompt' | 'scenario'
-): Promise<UnifiedTrajectoryRow | null> {
-	const seedMatcher = buildJsonStringFieldMatcher('test_case_id', seedId);
-	const typeMatcher = buildJsonStringFieldMatcher('type', kind);
-	const kindMatcher = buildJsonStringFieldMatcher('kind', kind);
-	const lineMatcher = (line: string) => seedMatcher(line) && (typeMatcher(line) || kindMatcher(line));
-	return readJsonlMatchingRow<UnifiedTrajectoryRow>(path.join(runDirPath(suiteId, runId), RUN_TRAJECTORIES_FILE), {
-		missingOk: true,
-		lineMatcher
-	});
 }
 
 export async function loadRunScoreRow(

@@ -3,15 +3,15 @@
 
 """Travel planner — smolagents (HuggingFace tool-calling agent).
 
-Instrumentation: 2 lines. Agent code: standard smolagents.
+Instrumentation: central helper call. Agent code: standard smolagents.
 Traces captured: agent steps, tool calls, LLM calls, reasoning traces, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-smolagents arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-smolagents arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 

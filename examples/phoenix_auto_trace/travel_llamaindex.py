@@ -3,7 +3,7 @@
 
 """Travel planner — LlamaIndex (ReAct agent).
 
-Instrumentation: 2 lines. Agent code: standard LlamaIndex.
+Instrumentation: central helper call. Agent code: standard LlamaIndex.
 Traces captured: LLM calls, tool invocations,
 response synthesis, token counts.
 """
@@ -11,11 +11,11 @@ response synthesis, token counts.
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-llama-index arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-llama-index arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard LlamaIndex

@@ -14,7 +14,7 @@ The flagship example evaluates a multi-tool LangGraph travel planner. The target
 
 ### Recommended install path
 
-Bash:
+bash (macOS / Linux):
 
 ```bash
 python -m venv .venv
@@ -26,7 +26,7 @@ cp .env.example .env
 
 Edit `.env` with credentials for your provider. Defaults match the example's `azure/...` model. Any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, and others) works.
 
-PowerShell:
+PowerShell (Windows):
 
 ```powershell
 python -m venv .venv
@@ -38,21 +38,35 @@ Copy-Item .env.example .env
 
 ### Run your first evaluation
 
-Optional: run Phoenix locally if you want to browse traces.
+The example's `auto_trace.py` calls `assert_ai.auto_trace.enable()`, which installs the available OpenInference instrumentors locally so the judge can cite tool calls, routing decisions, model calls, and latency as evidence. It does **not** start a Phoenix server.
+
+`phoenix serve` is optional — only run it if you want a browser UI to inspect the traces visually. The eval runs and the judge see the same span data either way.
+
+bash (macOS / Linux):
 
 ```bash
-phoenix serve
+phoenix serve  # optional: trace UI on http://localhost:6006
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
-Run the flagship quick start example:
+PowerShell (Windows):
 
-```bash
+```powershell
+phoenix serve  # optional: trace UI on http://localhost:6006
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
 
 Check run status:
 
+PowerShell (Windows):
+
 ```powershell
+assert-ai results status travel-planner-langgraph-v1 demo-1
+```
+
+bash (macOS / Linux):
+
+```bash
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
 
@@ -68,7 +82,7 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 
 The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
 
-Windows PowerShell equivalent:
+PowerShell (Windows) — full sequence:
 
 ```powershell
 python -m venv .venv
@@ -77,7 +91,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
-phoenix serve
+phoenix serve  # optional
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
@@ -97,7 +111,7 @@ What the quickstart does:
 | 2 | **Behavior categories**: generated failure-mode taxonomy | `pipeline.systematize` writes `taxonomy.json` |
 | 3 | **Test cases**: prompts and multi-turn scenarios | `pipeline.test_set` writes `test_set.jsonl` |
 | 4 | **Execute**: run the agent and capture traces | `pipeline.inference.target.callable` + `target.trace` write `inference_set.jsonl` |
-| 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl`; `metrics.json` (token-usage telemetry) is written by the runner |
+| 5 | **Judge**: score against your rubric | `pipeline.judge.dimensions` writes `scores.jsonl` and `metrics.json` |
 
 ### CLI helper assistant to create your own config
 
@@ -113,8 +127,8 @@ assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with
 assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
 ```
 
-See [`docs/cli/commands.md`](docs/cli/commands.md) for the full option reference.
+See [CLI Commands](cli/commands.md) for the full option reference.
 
-- To learn the config format, see `docs/config/overview.md`.
-- To inspect outputs in detail, see `docs/guides/results.md`.
-- To use the local web viewer, see `docs/guides/local-viewer.md`.
+- To learn the config format, see [Config Overview](config/overview.md).
+- To inspect outputs in detail, see [Results Guide](guides/results.md).
+- To use the local web viewer, see [Run the Local UI Viewer Application](guides/run-local-viewer.md).

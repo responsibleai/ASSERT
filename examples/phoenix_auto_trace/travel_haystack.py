@@ -3,15 +3,15 @@
 
 """Travel planner — Haystack (pipeline with tool-calling loop).
 
-Instrumentation: 2 lines. Agent code: standard Haystack 2.x.
+Instrumentation: central helper call. Agent code: standard Haystack 2.x.
 Traces captured: pipeline runs, LLM calls, tool invocations, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-haystack arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-haystack arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 

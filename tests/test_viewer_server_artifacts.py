@@ -39,6 +39,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
 
         data_source = (
             DATA_SRC.read_text(encoding="utf-8")
+            .replace("import { env } from '$env/dynamic/private';", "const env = process.env;")
             .replace("./config.js", "./config.ts")
             .replace("./dimensions.js", "./dimensions.ts")
             .replace("./artifacts.js", "./artifacts.ts")
