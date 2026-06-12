@@ -36,6 +36,13 @@ DEFAULT_OPENCLAW_INCLUDE = (
 )
 
 REFERENCE_FILE_NAMES = set(DEFAULT_OPENCLAW_INCLUDE) | {
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "MEMORY.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "USER.md",
     "config.json",
     "config.toml",
     "config.yaml",
@@ -43,9 +50,32 @@ REFERENCE_FILE_NAMES = set(DEFAULT_OPENCLAW_INCLUDE) | {
     "settings.json",
     "source-bundle.json",
 }
-REFERENCE_FILE_SUFFIXES = {".json", ".jsonc", ".md", ".toml", ".yaml", ".yml"}
 MAX_REFERENCE_FILE_BYTES = 64 * 1024
 ABSOLUTE_PATH_RE = re.compile(r"(?:[A-Za-z]:\\[^\s'\"<>]+|/[A-Za-z0-9._~+\-/]+)")
+PATH_TOKEN_RE = re.compile(r"[`'\"]?([^`'\"\s<>]+/[^`'\"\s<>]+)[`'\"]?")
+CONFIG_POINTER_FILE_NAMES = {
+    "MEMORY.md",
+    "USER.md",
+    "config.json",
+    "config.toml",
+    "config.yaml",
+    "config.yml",
+    "settings.json",
+}
+CONFIG_POINTER_DIR_NAMES = {"memory", "memories"}
+INTERNAL_RELATIVE_ROOTS = {
+    "assets",
+    "cache",
+    "cron",
+    "logs",
+    "memory",
+    "memories",
+    "node_modules",
+    "profiles",
+    "sessions",
+    "skills",
+    "tmp",
+}
 _COMMON_AGENT_IDS = {"openclaw", "hermes", "claude-code", "codex", "opencode", "gemini"}
 
 
@@ -113,6 +143,8 @@ def _is_low_value_copy_root(path: Path) -> bool:
 
 
 def _is_high_confidence_copy_root(*, kind: str, target: Path) -> bool:
+    if kind == "relative_path_value":
+        return True
     if kind == "symlink" and not _is_low_value_copy_root(target):
         return True
     if (target / ".git").exists():
@@ -212,36 +244,70 @@ def _candidate_and_excluded_files(
     return candidate_files, excluded_files, exclude_patterns
 
 
+def _primary_reference_files(root: Path) -> list[Path]:
+    files: dict[str, Path] = {}
+    for name in REFERENCE_FILE_NAMES:
+        path = root / name
+        if path.exists() and path.is_file() and not path.is_symlink():
+            files[path.relative_to(root).as_posix()] = path
+    for dirname in CONFIG_POINTER_DIR_NAMES:
+        directory = root / dirname
+        if not directory.exists() or not directory.is_dir():
+            continue
+        for name in CONFIG_POINTER_FILE_NAMES:
+            path = directory / name
+            if path.exists() and path.is_file() and not path.is_symlink():
+                files[path.relative_to(root).as_posix()] = path
+    return [files[key] for key in sorted(files)]
+
+
+def _relative_root_reference(value: str, *, home: Path | None) -> tuple[Path, str] | None:
+    if home is None:
+        return None
+    raw = value.strip().strip("`'\"").rstrip(".,;:)]}")
+    if not raw or raw.startswith(("./", "../", "http://", "https://")):
+        return None
+    first_part = raw.split("/", 1)[0]
+    if first_part in INTERNAL_RELATIVE_ROOTS or first_part.startswith("."):
+        return None
+    root = (home / first_part).expanduser().resolve(strict=False)
+    if not root.exists():
+        return None
+    return root, first_part
+
+
 def _external_references(
     *,
-    workspace: Path,
+    root: Path,
     exclude_patterns: Iterable[str],
     redact_paths: bool,
+    home: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Find shallow out-of-root references without following or copying them.
 
-    This is intentionally generic: symlinks that leave the workspace and obvious
-    absolute path values in small root-level config/instruction files are surfaced
-    as hints for later ``--copy-root`` selection. Discovery does not crawl the
-    referenced roots and does not decide that they must be copied.
+    This is intentionally generic. Discovery looks at structural symlinks and a
+    small set of primary agent definition/pointer files such as ``AGENTS.md``,
+    ``MEMORY.md``, ``USER.md``, and config files. It does not crawl arbitrary
+    markdown, referenced roots, or the whole machine.
     """
 
-    if not workspace.exists() or not workspace.is_dir():
+    if not root.exists() or not root.is_dir():
         return [], []
 
-    workspace_root = workspace.resolve()
+    root_resolved = root.resolve()
+    home_resolved = home.expanduser().resolve(strict=False) if home is not None else None
     references: list[dict[str, Any]] = []
     seen_references: set[tuple[str, str, str]] = set()
     suggested_roots: dict[str, dict[str, Any]] = {}
 
-    def add_reference(*, source: str, kind: str, target: Path) -> None:
+    def add_reference(*, source: str, kind: str, target: Path, dest: str | None = None) -> None:
         try:
             resolved = target.expanduser().resolve(strict=False)
         except OSError:
             resolved = target.expanduser().absolute()
         if not resolved.is_absolute():
             return
-        if resolved == workspace_root or _is_relative_to(resolved, workspace_root):
+        if resolved == root_resolved or _is_relative_to(resolved, root_resolved):
             return
         key = (source, kind, str(resolved))
         if key in seen_references:
@@ -260,39 +326,29 @@ def _external_references(
                 str(resolved),
                 {
                     "source": _path_value(resolved, redact_paths=redact_paths),
-                    "dest": _safe_copy_root_dest(resolved),
+                    "dest": dest or _safe_copy_root_dest(resolved),
                     "reason": "external_reference",
                 },
             )
 
-    # Symlink scan stays inside the selected workspace tree. ``rglob`` lists the
-    # symlink itself but does not require reading or copying the target root.
+    # Symlink scan stays shallow. Top-level symlinks often describe intentional
+    # external roots; deep symlinks in venvs/node_modules/caches usually describe
+    # runtime internals and are too noisy for copy-root discovery.
     try:
-        workspace_paths = list(workspace.rglob("*"))
+        root_paths = list(root.iterdir())
     except OSError:
-        workspace_paths = []
-    for path in sorted(workspace_paths):
+        root_paths = []
+    for path in sorted(root_paths):
         if not path.is_symlink():
             continue
         try:
-            source = path.relative_to(workspace).as_posix()
+            source = path.relative_to(root).as_posix()
         except ValueError:
             source = path.name
         add_reference(source=source, kind="symlink", target=path.resolve(strict=False))
 
-    # Path-value detection is deliberately shallow: only small root-level files
-    # that look like instructions or config are read, and secret-looking files are
-    # skipped by name.
-    try:
-        root_files = sorted(workspace.iterdir())
-    except OSError:
-        root_files = []
-    for path in root_files:
-        if not path.is_file() or path.is_symlink():
-            continue
-        if _matches_any(path, workspace, exclude_patterns):
-            continue
-        if path.name not in REFERENCE_FILE_NAMES and path.suffix.lower() not in REFERENCE_FILE_SUFFIXES:
+    for path in _primary_reference_files(root):
+        if _matches_any(path, root, exclude_patterns):
             continue
         try:
             if path.stat().st_size > MAX_REFERENCE_FILE_BYTES:
@@ -300,11 +356,24 @@ def _external_references(
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        source = path.relative_to(workspace).as_posix()
+        source = path.relative_to(root).as_posix()
+        absolute_spans = [match.span() for match in ABSOLUTE_PATH_RE.finditer(text)]
         for match in ABSOLUTE_PATH_RE.findall(text):
             candidate = Path(match.rstrip(".,;:)]}"))
             if candidate.exists():
                 add_reference(source=source, kind="path_value", target=candidate)
+        for token_match in PATH_TOKEN_RE.finditer(text):
+            token_start, token_end = token_match.span(1)
+            if any(token_start >= abs_start and token_end <= abs_end for abs_start, abs_end in absolute_spans):
+                continue
+            token = token_match.group(1)
+            if token.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", token):
+                continue
+            relative = _relative_root_reference(token, home=home_resolved)
+            if relative is None:
+                continue
+            candidate, dest = relative
+            add_reference(source=source, kind="relative_path_value", target=candidate, dest=dest)
 
     references.sort(key=lambda item: (item["source"], item["kind"], item["path"] or ""))
     copy_roots = sorted(suggested_roots.values(), key=lambda item: (item["dest"], item["source"] or ""))
@@ -345,9 +414,10 @@ def _openclaw_agent(
         source_bundle_path=source_bundle if source_bundle_exists else None,
     )
     external_references, suggested_copy_roots = _external_references(
-        workspace=workspace,
+        root=workspace,
         exclude_patterns=exclude_patterns,
         redact_paths=redact_paths,
+        home=home,
     )
     status = "ready" if runtime_valid and workspace_exists else "found"
     return {
@@ -386,12 +456,19 @@ def _config_agent(
     config_path: Path,
     binary_name: str | None,
     redact_paths: bool,
+    home: Path | None = None,
     notes: list[str] | None = None,
 ) -> dict[str, Any] | None:
     binary = shutil.which(binary_name) if binary_name else None
     config_exists = config_path.exists()
     if not (config_exists or binary):
         return None
+    external_references, suggested_copy_roots = _external_references(
+        root=config_path,
+        exclude_patterns=DEFAULT_EXCLUDE_PATTERNS,
+        redact_paths=redact_paths,
+        home=home,
+    )
     return {
         "id": agent_id,
         "display_name": display_name,
@@ -407,6 +484,8 @@ def _config_agent(
             "binary_path": "[PATH_ENTRY]" if redact_paths and binary else binary,
             "valid": bool(binary),
         },
+        "external_references": external_references,
+        "suggested_copy_roots": suggested_copy_roots,
         "notes": notes or [],
     }
 
@@ -450,6 +529,7 @@ def discover_local_agents(
                 config_path=home_path / ".hermes",
                 binary_name="hermes",
                 redact_paths=redact_paths,
+                home=home_path,
                 notes=["Hermes local API endpoints commonly run on localhost when the gateway/api server is enabled."],
             )
         )
@@ -461,6 +541,7 @@ def discover_local_agents(
                 config_path=home_path / ".claude",
                 binary_name="claude",
                 redact_paths=redact_paths,
+                home=home_path,
                 notes=["Claude Code uses ~/.claude for user configuration on common installs."],
             )
         )
@@ -472,6 +553,7 @@ def discover_local_agents(
                 config_path=home_path / ".codex",
                 binary_name="codex",
                 redact_paths=redact_paths,
+                home=home_path,
                 notes=["Codex CLI commonly stores local config/session state under ~/.codex."],
             )
         )
@@ -483,6 +565,7 @@ def discover_local_agents(
                 config_path=home_path / ".config" / "opencode",
                 binary_name="opencode",
                 redact_paths=redact_paths,
+                home=home_path,
                 notes=["OpenCode global config commonly lives under ~/.config/opencode; projects may also have .opencode."],
             )
         )
@@ -494,6 +577,7 @@ def discover_local_agents(
                 config_path=home_path / ".gemini",
                 binary_name="gemini",
                 redact_paths=redact_paths,
+                home=home_path,
                 notes=["Gemini CLI commonly uses ~/.gemini/settings.json for settings and MCP server configuration."],
             )
         )

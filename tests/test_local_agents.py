@@ -85,6 +85,44 @@ def test_discover_local_agents_reports_common_agent_config_dirs(tmp_path: Path) 
     assert agents["gemini"]["config"]["path"] == "[LOCAL_PATH]"
 
 
+def test_discover_hermes_surfaces_relative_external_context_roots(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = home / ".hermes"
+    memory_dir = config / "memories"
+    memory_dir.mkdir(parents=True)
+    context_root = home / "KnowledgeBase"
+    (context_root / "work").mkdir(parents=True)
+    python_runtime = tmp_path / "uv" / "python3.11"
+    python_runtime.parent.mkdir(parents=True)
+    python_runtime.write_text("python\n", encoding="utf-8")
+    venv_bin = config / "hermes-agent" / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(python_runtime)
+    (memory_dir / "MEMORY.md").write_text(
+        "Work context -> `KnowledgeBase/work/context.md`; local memory -> `memory/profile.md`\n",
+        encoding="utf-8",
+    )
+
+    payload = discover_local_agents(target="hermes", home=home, redact_paths=True).to_json()
+
+    agent = payload["agents"][0]
+    assert agent["external_references"] == [
+        {
+            "source": "memories/MEMORY.md",
+            "kind": "relative_path_value",
+            "path": "[LOCAL_PATH]",
+            "exists": True,
+        }
+    ]
+    assert agent["suggested_copy_roots"] == [
+        {
+            "source": "[LOCAL_PATH]",
+            "dest": "KnowledgeBase",
+            "reason": "external_reference",
+        }
+    ]
+
+
 def test_discover_openclaw_surfaces_external_symlinks_and_path_references(tmp_path: Path) -> None:
     runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
     external_knowledge = tmp_path / "context-repo"
