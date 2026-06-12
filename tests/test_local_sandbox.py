@@ -283,6 +283,62 @@ def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> N
     assert start_result.process.poll() is not None
 
 
+def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart_label(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    rampart_root = tmp_path / "rampart-openclaw"
+    rampart_root.mkdir()
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "sandbox",
+            "start",
+            "--snapshot",
+            str(manifest_path),
+            "--target",
+            "openclaw",
+            "--backend",
+            "docker",
+            "--rampart-root",
+            str(rampart_root),
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "sandbox-out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared local-agent sandbox" in result.output
+    assert "backend: docker" in result.output
+    assert "rampart" not in result.output.lower()
+    assert "state:" in result.output
+    assert "target config:" in result.output
+
+    state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert state["target"] == "openclaw"
+    assert state["backend"] == "docker"
+    assert state["status"] == "planned"
+    assert state["endpoint"] == {
+        "url": "http://127.0.0.1:18081",
+        "protocol": "assert",
+        "stream": False,
+        "local_dev": True,
+    }
+    assert [step["name"] for step in state["plan"]["steps"]] == [
+        "preflight",
+        "prepare_openclaw_runtime_archive",
+        "start_mock_openai",
+        "start_auth_proxy",
+        "launch_openclaw_sandbox",
+        "start_openclaw_endpoint_bridge",
+    ]
+    assert all(step["name"] != "run_behavior_suite" for step in state["plan"]["steps"])
+    assert state["safety"]["live_home_mount"] is False
+    config = yaml.safe_load((tmp_path / "sandbox-out" / "endpoint_target.yaml").read_text(encoding="utf-8"))
+    assert config["pipeline"]["inference"]["target"]["endpoint"]["local_dev"] is True
+
+
 def test_cli_local_sandbox_start_writes_state_and_config(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     out = tmp_path / "sandbox-out"

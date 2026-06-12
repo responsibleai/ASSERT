@@ -685,10 +685,16 @@ def local_sandbox():
 @local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
 @click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
 @click.option("--target", required=True, help="Agent ID expected in the snapshot manifest.")
-@click.option("--backend", type=click.Choice(["command"], case_sensitive=False), default="command", show_default=True, help="Sandbox backend to use.")
-@click.option("--command", "command_text", required=True, help="Long-running command that starts the sandbox endpoint. If URL templates use {port}, print the port on the first stdout line.")
-@click.option("--endpoint-url", required=True, help="Endpoint URL or URL template. Use {port} when the command prints a dynamic port.")
+@click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use.")
+@click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.")
+@click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.")
 @click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.")
+@click.option("--rampart-root", default=None, type=click.Path(path_type=Path), help="Path to the existing OpenClaw Docker sandbox runner. Advanced option.")
+@click.option("--sandbox-name", default="oc-local-agent", show_default=True, help="Name for the local sandbox instance.")
+@click.option("--provider", type=click.Choice(["mock", "live"], case_sensitive=False), default="mock", show_default=True, help="Model provider route for the sandboxed runtime.")
+@click.option("--model-ref", default="openai/mock-model=Mock Model", show_default=True, help="Provider/model mapping for the sandboxed runtime.")
+@click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker.")
+@click.option("--dry-run", is_flag=True, help="Prepare state/config and show the sandbox plan without launching Docker.")
 @click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config.")
 @click.option("--model", default=None, help="Model name for openai_chat endpoint targets.")
 @click.option("--api-key-env", default=None, help="Environment variable name containing endpoint auth; the value is not written to artifacts.")
@@ -699,9 +705,15 @@ def local_sandbox_start(
     snapshot_manifest: Path,
     target: str,
     backend: str,
-    command_text: str,
+    command_text: str | None,
     endpoint_url: str,
     health_url: str | None,
+    rampart_root: Path | None,
+    sandbox_name: str,
+    provider: str,
+    model_ref: str,
+    endpoint_port: int,
+    dry_run: bool,
     protocol: str,
     model: str | None,
     api_key_env: str | None,
@@ -710,34 +722,57 @@ def local_sandbox_start(
     show_paths: bool,
 ):
     """Stage a copied snapshot and start a local sandbox endpoint."""
-    from assert_ai.local_sandbox import start_local_sandbox
+    from assert_ai.local_sandbox import start_local_sandbox, start_openclaw_docker_sandbox
 
     try:
-        result = start_local_sandbox(
-            snapshot_manifest_path=snapshot_manifest,
-            target=target,
-            backend=backend,
-            command=command_text,
-            endpoint_url=endpoint_url,
-            health_url=health_url,
-            protocol=protocol,
-            model=model,
-            api_key_env=api_key_env,
-            stream=stream,
-            output_dir=output_dir,
-            redact_paths=not show_paths,
-        )
+        if backend == "command":
+            if not command_text:
+                raise ValueError("--command is required when --backend command")
+            result = start_local_sandbox(
+                snapshot_manifest_path=snapshot_manifest,
+                target=target,
+                backend=backend,
+                command=command_text,
+                endpoint_url=endpoint_url,
+                health_url=health_url,
+                protocol=protocol,
+                model=model,
+                api_key_env=api_key_env,
+                stream=stream,
+                output_dir=output_dir,
+                redact_paths=not show_paths,
+            )
+            prepared_only = False
+        else:
+            result = start_openclaw_docker_sandbox(
+                snapshot_manifest_path=snapshot_manifest,
+                target=target,
+                output_dir=output_dir,
+                rampart_root=rampart_root,
+                sandbox_name=sandbox_name,
+                provider=provider,
+                model_ref=model_ref,
+                endpoint_port=endpoint_port,
+                protocol=protocol,
+                model=model,
+                api_key_env=api_key_env,
+                stream=stream,
+                redact_paths=not show_paths,
+                dry_run=dry_run,
+            )
+            prepared_only = dry_run
     except ValueError as exc:
         _error(str(exc))
         return
 
-    click.echo("Started local-agent sandbox")
+    click.echo("Prepared local-agent sandbox" if prepared_only else "Started local-agent sandbox")
     click.echo(f"  target: {target}")
     click.echo(f"  backend: {backend}")
     click.echo(f"  endpoint: {result.endpoint_url}")
     click.echo(f"  state: {result.state_path}")
     click.echo(f"  target config: {result.config_path}")
-    click.echo(f"  pid: {result.process.pid}")
+    if result.process is not None:
+        click.echo(f"  pid: {result.process.pid}")
 
 
 @local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")

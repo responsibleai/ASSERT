@@ -40,10 +40,12 @@ class LocalSandboxStartResult:
     config_path: Path
     sandbox_root: Path
     endpoint_url: str
-    process: subprocess.Popen[str]
+    process: subprocess.Popen[str] | None = None
 
     def stop(self) -> None:
         """Terminate the started command if it is still running."""
+        if self.process is None:
+            return
         if self.process.poll() is not None:
             return
         self.process.terminate()
@@ -156,6 +158,113 @@ def _write_endpoint_target_config(path: Path, endpoint: dict[str, Any]) -> None:
     payload = {"pipeline": {"inference": {"target": {"endpoint": endpoint}}}}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _openclaw_docker_plan_steps(*, provider: str) -> list[dict[str, Any]]:
+    steps = [
+        {"name": "preflight", "kind": "run"},
+        {"name": "prepare_openclaw_runtime_archive", "kind": "run"},
+    ]
+    if provider == "mock":
+        steps.append({"name": "start_mock_openai", "kind": "service"})
+    steps.extend(
+        [
+            {"name": "start_auth_proxy", "kind": "service"},
+            {"name": "launch_openclaw_sandbox", "kind": "run"},
+            {"name": "start_openclaw_endpoint_bridge", "kind": "service"},
+        ]
+    )
+    return steps
+
+
+def start_openclaw_docker_sandbox(
+    *,
+    snapshot_manifest_path: str | Path,
+    target: str,
+    output_dir: str | Path,
+    rampart_root: str | Path | None = None,
+    sandbox_name: str = "oc-local-agent",
+    provider: str = "mock",
+    model_ref: str = "openai/mock-model=Mock Model",
+    endpoint_port: int = 18081,
+    protocol: str = "assert",
+    model: str | None = None,
+    api_key_env: str | None = None,
+    stream: bool = False,
+    redact_paths: bool = True,
+    dry_run: bool = False,
+) -> LocalSandboxStartResult:
+    """Prepare or start an OpenClaw Docker sandbox using the product state contract."""
+
+    if target != "openclaw":
+        raise ValueError("the docker backend currently supports target openclaw only")
+    if provider not in {"mock", "live"}:
+        raise ValueError("provider must be one of: mock, live")
+    manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
+    output = Path(output_dir).expanduser().resolve()
+    manifest = _load_snapshot_manifest(manifest_path)
+    if manifest.get("target") != target:
+        raise ValueError(f"snapshot manifest target is {manifest.get('target')!r}, not {target!r}")
+
+    endpoint_url = f"http://127.0.0.1:{endpoint_port}"
+    endpoint = _endpoint_config(
+        endpoint_url=endpoint_url,
+        protocol=protocol,
+        model=model,
+        api_key_env=api_key_env,
+        stream=stream,
+    )
+    validate_endpoint_url(endpoint["url"], allow_localhost=True)
+    output.mkdir(parents=True, exist_ok=True)
+    sandbox_root = _stage_snapshot(manifest_path=manifest_path, manifest=manifest, output_dir=output)
+    state_path = output / "sandbox_state.json"
+    config_path = output / "endpoint_target.yaml"
+    rampart_path = Path(rampart_root).expanduser().resolve() if rampart_root else None
+    state = {
+        "schema_version": 1,
+        "target": target,
+        "backend": "docker",
+        "status": "planned" if dry_run else "not_started",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "snapshot": {
+            "manifest": _path_value(manifest_path, redact_paths=redact_paths),
+            "snapshot_root": str(manifest.get("snapshot_root")),
+            "copied_roots": manifest.get("copied_roots", []),
+        },
+        "sandbox_root": "sandbox" if redact_paths else str(sandbox_root),
+        "endpoint": endpoint,
+        "plan": {
+            "sandbox_name": sandbox_name,
+            "provider": provider,
+            "model_ref": model_ref,
+            "endpoint_port": endpoint_port,
+            "runner": "openclaw-docker-sandbox",
+            "runner_root": _path_value(rampart_path, redact_paths=redact_paths),
+            "steps": _openclaw_docker_plan_steps(provider=provider),
+        },
+        "processes": [],
+        "cleanup": {
+            "sandbox_name": sandbox_name,
+            "required": not dry_run,
+        },
+        "safety": {
+            "live_home_mount": False,
+            "snapshot_staged": True,
+            "endpoint_local_dev": True,
+            "external_services_proxied_or_mocked": True,
+        },
+    }
+    write_json(state_path, state)
+    _write_endpoint_target_config(config_path, endpoint)
+    if not dry_run:
+        raise ValueError("docker backend execution is not wired yet; rerun with --dry-run")
+    return LocalSandboxStartResult(
+        state_path=state_path,
+        config_path=config_path,
+        sandbox_root=sandbox_root,
+        endpoint_url=endpoint_url,
+        process=None,
+    )
 
 
 def smoke_local_sandbox(
