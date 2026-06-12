@@ -648,9 +648,9 @@ def local_discover(
                     click.echo(f"     {reference['kind']} from {reference['source']}: {reference['path']}")
         copy_roots = agent.get("suggested_copy_roots") or []
         if copy_roots:
-            click.echo("   suggested copy roots:")
+            click.echo("   suggested extra roots:")
             for root in copy_roots:
-                click.echo(f"     --copy-root {root['source']}:{root['dest']}")
+                click.echo(f"     --include-root {root['source']}")
         click.echo(f"   status: {agent.get('summary') or agent.get('status')}")
         click.echo("")
 

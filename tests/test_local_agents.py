@@ -218,7 +218,7 @@ def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     assert "runtime: codex (not found)" in result.output
 
 
-def test_cli_local_discover_prints_copy_root_suggestions_for_external_references(tmp_path: Path) -> None:
+def test_cli_local_discover_prints_include_root_suggestions_for_external_references(tmp_path: Path) -> None:
     runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
     external_repo = tmp_path / "project-context"
     external_repo.mkdir()
@@ -243,8 +243,9 @@ def test_cli_local_discover_prints_copy_root_suggestions_for_external_references
 
     assert result.exit_code == 0, result.output
     assert "external references: 1" in result.output
-    assert "suggested copy roots:" in result.output
-    assert "--copy-root [LOCAL_PATH]:external/project-context" in result.output
+    assert "suggested extra roots:" in result.output
+    assert "--include-root [LOCAL_PATH]" in result.output
+    assert "--copy-root" not in result.output
 
 
 def test_cli_local_discover_writes_reviewable_manifest(tmp_path: Path) -> None:
