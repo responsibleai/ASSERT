@@ -677,6 +677,111 @@ def local_snapshot_create(
     click.echo(f"  excluded files: {excluded_count}")
 
 
+@local.group("sandbox", cls=SuggestingGroup, short_help="Start local-agent sandbox endpoints")
+def local_sandbox():
+    """Start sandboxed local-agent endpoints from copied snapshots."""
+
+
+@local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
+@click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
+@click.option("--target", required=True, help="Agent ID expected in the snapshot manifest.")
+@click.option("--backend", type=click.Choice(["command"], case_sensitive=False), default="command", show_default=True, help="Sandbox backend to use.")
+@click.option("--command", "command_text", required=True, help="Long-running command that starts the sandbox endpoint. If URL templates use {port}, print the port on the first stdout line.")
+@click.option("--endpoint-url", required=True, help="Endpoint URL or URL template. Use {port} when the command prints a dynamic port.")
+@click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.")
+@click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config.")
+@click.option("--model", default=None, help="Model name for openai_chat endpoint targets.")
+@click.option("--api-key-env", default=None, help="Environment variable name containing endpoint auth; the value is not written to artifacts.")
+@click.option("--stream/--no-stream", default=False, show_default=True, help="Whether the generated endpoint target config should request streaming.")
+@click.option("--output-dir", required=True, type=click.Path(path_type=Path), help="Directory where sandbox state, staged snapshot, logs, and target config will be written.")
+@click.option("--show-paths", is_flag=True, help="Write local absolute paths in state instead of redacted placeholders.")
+def local_sandbox_start(
+    snapshot_manifest: Path,
+    target: str,
+    backend: str,
+    command_text: str,
+    endpoint_url: str,
+    health_url: str | None,
+    protocol: str,
+    model: str | None,
+    api_key_env: str | None,
+    stream: bool,
+    output_dir: Path,
+    show_paths: bool,
+):
+    """Stage a copied snapshot and start a local sandbox endpoint."""
+    from assert_ai.local_sandbox import start_local_sandbox
+
+    try:
+        result = start_local_sandbox(
+            snapshot_manifest_path=snapshot_manifest,
+            target=target,
+            backend=backend,
+            command=command_text,
+            endpoint_url=endpoint_url,
+            health_url=health_url,
+            protocol=protocol,
+            model=model,
+            api_key_env=api_key_env,
+            stream=stream,
+            output_dir=output_dir,
+            redact_paths=not show_paths,
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    click.echo("Started local-agent sandbox")
+    click.echo(f"  target: {target}")
+    click.echo(f"  backend: {backend}")
+    click.echo(f"  endpoint: {result.endpoint_url}")
+    click.echo(f"  state: {result.state_path}")
+    click.echo(f"  target config: {result.config_path}")
+    click.echo(f"  pid: {result.process.pid}")
+
+
+@local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")
+@click.option("--state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--message", default="Reply exactly: ok", show_default=True, help="Smoke-test message to send to the sandbox endpoint.")
+@click.option("--timeout", "timeout_seconds", default=240.0, show_default=True, type=float, help="HTTP timeout in seconds for the smoke request.")
+def local_sandbox_smoke(state_path: Path, message: str, timeout_seconds: float):
+    """Send a simple POST to a started sandbox endpoint."""
+    from assert_ai.local_sandbox import smoke_local_sandbox
+
+    try:
+        result = smoke_local_sandbox(state_path, message=message, timeout_seconds=timeout_seconds)
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    raw_events = result.get("events")
+    events = raw_events if isinstance(raw_events, list) else []
+    click.echo(f"Sandbox smoke: {result.get('status')}")
+    click.echo(f"  endpoint: {result.get('agent_endpoint')}")
+    click.echo(f"  response: {result.get('response')}")
+    click.echo(f"  events: {len(events)}")
+
+
+@local_sandbox.command("stop", short_help="Stop a started sandbox endpoint")
+@click.option("--state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--timeout", "timeout_seconds", default=5.0, show_default=True, type=float, help="Seconds to wait before force-killing sandbox processes.")
+def local_sandbox_stop(state_path: Path, timeout_seconds: float):
+    """Terminate processes recorded in a sandbox state file."""
+    from assert_ai.local_sandbox import stop_local_sandbox
+
+    try:
+        result = stop_local_sandbox(state_path, timeout_seconds=timeout_seconds)
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    raw_processes = result.get("processes")
+    processes = raw_processes if isinstance(raw_processes, list) else []
+    click.echo("Stopped local-agent sandbox")
+    click.echo(f"  state: {state_path}")
+    click.echo(f"  processes: {len(processes)}")
+
+
 # -- init (design an eval config with an LLM assistant) ---------------------
 from assert_ai.init._command import init  # noqa: E402
 
