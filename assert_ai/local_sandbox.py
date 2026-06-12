@@ -930,6 +930,10 @@ class OpenClawDockerLaunchDescriptor:
                 "runtime_archive": _path_value(runtime_archive, redact_paths=context.redact_paths),
                 "workspace": _path_value(workspace, redact_paths=context.redact_paths),
                 "source_bundle": _path_value(workspace / "source-bundle.json", redact_paths=context.redact_paths),
+                "workspace_fidelity": {
+                    "active_workspace": "/home/agent/.openclaw/workspace",
+                    "verified_by": "endpoint_bridge_sentinel_hashes",
+                },
                 "auth_proxy_config": _path_value(resolved_auth_proxy_config, redact_paths=context.redact_paths),
             },
             prepare=lambda: _write_runtime_archive(runtime_path, runtime_archive),

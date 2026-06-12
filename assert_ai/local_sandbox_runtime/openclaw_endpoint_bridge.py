@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib
+import io
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
+import tarfile
 import time
 from typing import Any
 
@@ -34,6 +38,17 @@ _SAFE_METADATA_KEYS = {
     "node_version",
     "llm_request_failed",
 }
+_ACTIVE_OPENCLAW_WORKSPACE = "/home/agent/.openclaw/workspace"
+_IGNORED_WORKSPACE_PARTS = {".git", "node_modules", "tmp"}
+_SENTINEL_WORKSPACE_FILES = (
+    "AGENTS.md",
+    "USER.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "MEMORY.md",
+    "IDENTITY.md",
+    ".openclaw/workspace-state.json",
+)
 
 
 def _safe_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -46,30 +61,62 @@ def _ensure_rampart_openclaw_importable(rampart_root: Path) -> None:
         sys.path.insert(0, str(src))
 
 
-async def _seed_workspace_async(adapter: Any, workspace: Path, *, max_files: int = 50, max_bytes: int = 1_000_000) -> None:
+def _should_seed_workspace_path(path: Path, workspace: Path) -> bool:
+    if not path.is_file():
+        return False
+    rel = path.relative_to(workspace)
+    return not set(rel.parts).intersection(_IGNORED_WORKSPACE_PARTS)
+
+
+def _workspace_tar_bytes(workspace: Path) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted(workspace.rglob("*")):
+            if not _should_seed_workspace_path(path, workspace):
+                continue
+            archive.add(path, arcname=path.relative_to(workspace).as_posix(), recursive=False)
+    return buffer.getvalue()
+
+
+def _sentinel_hashes(workspace: Path) -> dict[str, str]:
+    sentinels: dict[str, str] = {}
+    for rel in _SENTINEL_WORKSPACE_FILES:
+        path = workspace / rel
+        if path.is_file():
+            sentinels[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return sentinels
+
+
+async def _seed_workspace_async(adapter: Any, workspace: Path) -> None:
+    """Replace OpenClaw's active workspace with the copied snapshot workspace."""
+
     client = adapter.sandbox_client
-    copied_files = 0
-    copied_bytes = 0
-    for path in sorted(workspace.rglob("*")):
-        if copied_files >= max_files or copied_bytes >= max_bytes:
-            break
-        if not path.is_file():
-            continue
-        rel = path.relative_to(workspace).as_posix()
-        if rel.startswith(".") or any(part in {"tmp", "node_modules", ".git"} for part in Path(rel).parts):
-            continue
-        size = path.stat().st_size
-        if size > 512_000 or copied_bytes + size > max_bytes:
-            continue
-        data = path.read_bytes()
-        parent = Path(rel).parent.as_posix()
-        await client.exec_async(
-            command=f"mkdir -p /home/agent/workspace/{parent} && cat > /home/agent/workspace/{rel}",
-            stdin_data=data,
-            timeout=30,
+    archive = _workspace_tar_bytes(workspace)
+    await client.exec_async(
+        command=f"rm -rf {_ACTIVE_OPENCLAW_WORKSPACE} && mkdir -p {_ACTIVE_OPENCLAW_WORKSPACE}",
+        timeout=60,
+    )
+    await client.exec_async(
+        command=f"tar -xzf - -C {_ACTIVE_OPENCLAW_WORKSPACE}",
+        stdin_data=archive,
+        timeout=180,
+    )
+
+
+async def _verify_workspace_fidelity_async(adapter: Any, workspace: Path) -> None:
+    """Verify key copied workspace files are active inside the sandbox."""
+
+    client = adapter.sandbox_client
+    for rel, expected_hash in _sentinel_hashes(workspace).items():
+        active_path = f"{_ACTIVE_OPENCLAW_WORKSPACE}/{rel}"
+        script = (
+            "import hashlib, pathlib, sys\n"
+            f"path = pathlib.Path({active_path!r})\n"
+            f"expected = {expected_hash!r}\n"
+            "ok = path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected\n"
+            "sys.exit(0 if ok else 1)\n"
         )
-        copied_files += 1
-        copied_bytes += size
+        await client.exec_async(command=f"python3 -c {shlex.quote(script)}", timeout=30)
 
 
 class OpenClawEndpoint:
@@ -83,6 +130,7 @@ class OpenClawEndpoint:
         self.rampart_types = importlib.import_module("rampart.core.types")
         self.adapter = self.openclaw_mod.OpenClawAdapter(sandbox_name=sandbox_name, docker_command=docker_command)
         asyncio.run(_seed_workspace_async(self.adapter, workspace))
+        asyncio.run(_verify_workspace_fidelity_async(self.adapter, workspace))
 
     async def _send_async(self, message: str) -> dict[str, Any]:
         request_type = self.rampart_types.Request

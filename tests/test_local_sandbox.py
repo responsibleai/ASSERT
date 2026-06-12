@@ -724,6 +724,10 @@ def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) 
 
     state = json.loads(result.state_path.read_text(encoding="utf-8"))
     assert state["plan"]["runner"] == "openclaw-docker-sandbox"
+    assert state["plan"]["workspace_fidelity"] == {
+        "active_workspace": "/home/agent/.openclaw/workspace",
+        "verified_by": "endpoint_bridge_sentinel_hashes",
+    }
     assert [step["name"] for step in state["plan"]["steps"]] == [
         "preflight",
         "prepare_openclaw_runtime_archive",
