@@ -598,17 +598,17 @@ class LiveOTelExporter:
         # Piggyback on existing provider if one is set (e.g., by Phoenix register())
         existing = otel_trace.get_tracer_provider()
         if isinstance(existing, TracerProvider):
-            log.info("Attaching ASSERT span collector to existing TracerProvider")
+            log.debug("Attaching ASSERT span collector to existing TracerProvider")
             _add_processor_preserving(existing, processor)
         else:
             # Unwrap ProxyTracerProvider if needed
             real = getattr(existing, "_real_provider", None)
             if isinstance(real, TracerProvider):
-                log.info("Attaching ASSERT span collector to existing TracerProvider")
+                log.debug("Attaching ASSERT span collector to existing TracerProvider")
                 _add_processor_preserving(real, processor)
             else:
                 # No SDK provider exists — create one as fallback
-                log.info("No existing TracerProvider — creating a minimal one for ASSERT")
+                log.debug("No existing TracerProvider — creating a minimal one for ASSERT")
                 provider = TracerProvider()
                 provider.add_span_processor(processor)
                 otel_trace.set_tracer_provider(provider)

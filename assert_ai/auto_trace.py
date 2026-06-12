@@ -39,11 +39,11 @@ def _collector_available(*, timeout: float = 0.1) -> bool:
 
     for name in ("PHOENIX_COLLECTOR_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"):
         if os.environ.get(name):
-            log.info("%s is set; enabling Phoenix export", name)
+            log.debug("%s is set; enabling Phoenix export", name)
             return True
 
     if os.environ.get("ASSERT_EXPORT_TRACES", "").strip() == "1":
-        log.info("ASSERT_EXPORT_TRACES=1; enabling Phoenix export")
+        log.debug("ASSERT_EXPORT_TRACES=1; enabling Phoenix export")
         return True
 
     ports: list[int] = []
@@ -97,7 +97,7 @@ def enable(
         return True
 
     if os.environ.get("PHOENIX_DISABLE_AUTO_INSTRUMENT") == "1":
-        log.info("PHOENIX_DISABLE_AUTO_INSTRUMENT=1; skipping auto-tracing")
+        log.debug("PHOENIX_DISABLE_AUTO_INSTRUMENT=1; skipping auto-tracing")
         return False
 
     if auto_instrument:
@@ -105,14 +105,14 @@ def enable(
 
     should_export = _collector_available(timeout=timeout) if export is None else export
     if not should_export:
-        log.info("No Phoenix/OTLP collector detected; skipping Phoenix export")
+        log.debug("No Phoenix/OTLP collector detected; skipping Phoenix export")
         _enabled = _instrumentors_enabled
         return _enabled
 
     try:
         from phoenix.otel import register
     except ImportError:
-        log.info("Phoenix tracing dependencies are not installed; skipping Phoenix export")
+        log.debug("Phoenix tracing dependencies are not installed; skipping Phoenix export")
         _enabled = _instrumentors_enabled
         return _enabled
 
