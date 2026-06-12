@@ -468,11 +468,9 @@ def test_cli_local_sandbox_start_live_copilot_does_not_require_manual_auth_confi
             "--backend",
             "docker",
             "--provider",
-            "live",
-            "--provider-route",
             "copilot",
-            "--model-ref",
-            "copilot/gpt-5.5=GPT 5.5 via Copilot",
+            "--model",
+            "gpt-5.5",
             "--rampart-root",
             str(rampart_root),
             "--dry-run",
@@ -487,6 +485,68 @@ def test_cli_local_sandbox_start_live_copilot_does_not_require_manual_auth_confi
     assert state["plan"]["provider"] == "live"
     assert state["plan"]["provider_route"] == "copilot"
     assert (tmp_path / "sandbox-out" / "live-auth-proxy.json").exists()
+
+
+
+def test_cli_local_sandbox_start_help_is_product_shaped() -> None:
+    result = CliRunner().invoke(cli, ["local", "sandbox", "start", "-h"])
+
+    assert result.exit_code == 0, result.output
+    assert "--provider [mock|copilot]" in result.output
+    assert "live" not in result.output
+    assert "--model-ref" not in result.output
+    assert "--backend" not in result.output
+    assert "--output-dir" not in result.output
+
+def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        cwd = Path.cwd()
+        manifest_path = _write_snapshot_manifest(cwd / "input")
+        rampart_root = cwd / "rampart-openclaw"
+        (rampart_root / "scripts").mkdir(parents=True)
+        (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+        (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+
+        import assert_ai.local_sandbox as local_sandbox
+
+        monkeypatch.setattr(local_sandbox, "_default_rampart_root", lambda: rampart_root)
+
+        result = runner.invoke(
+            cli,
+            [
+                "local",
+                "sandbox",
+                "start",
+                "--snapshot",
+                str(manifest_path),
+                "--target",
+                "openclaw",
+                "--provider",
+                "copilot",
+                "--model",
+                "gpt-5.5",
+                "--dry-run",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Prepared local-agent sandbox" in result.output
+        assert "backend: docker" in result.output
+        assert "model-ref" not in result.output
+        assert "provider-route" not in result.output
+        state_line = next(line for line in result.output.splitlines() if "state:" in line)
+        state_path = Path(state_line.split("state:", 1)[1].strip())
+        assert state_path.exists()
+        assert "artifacts/local-agents/sandboxes/openclaw-" in state_path.as_posix()
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["backend"] == "docker"
+        assert state["plan"]["provider"] == "live"
+        assert state["plan"]["provider_route"] == "copilot"
+        assert state["plan"]["model_ref"] == "copilot/gpt-5.5=GPT 5.5 via Copilot"
+        assert state["cleanup"]["sandbox_name"].startswith("oc-")
+        assert (state_path.parent / "live-auth-proxy.json").exists()
 
 
 def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(tmp_path: Path) -> None:

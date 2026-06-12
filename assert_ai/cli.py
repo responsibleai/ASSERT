@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 
 from datetime import datetime, timezone
@@ -72,6 +73,35 @@ def _load_test_set_metrics():
         _TEST_SET_METRICS_MODULE = test_set_metrics
     return _TEST_SET_METRICS_MODULE
 
+
+
+
+def _local_sandbox_run_dir(*, target: str, snapshot_manifest: Path) -> Path:
+    """Return the default local sandbox run directory for a start command."""
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    digest = hashlib.sha256(str(snapshot_manifest.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path("artifacts") / "local-agents" / "sandboxes" / f"{target}-{timestamp}-{digest}"
+
+
+def _local_sandbox_name(*, target: str, snapshot_manifest: Path) -> str:
+    """Return a short Docker Sandbox-safe name for a local-agent run."""
+
+    digest = hashlib.sha256(str(snapshot_manifest.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    prefix = "oc" if target == "openclaw" else "la"
+    return f"{prefix}-{digest}"
+
+
+def _local_sandbox_display_model(provider_route: str, model: str) -> str:
+    parts = model.split("-")
+    pretty_model = " ".join([parts[0].upper(), *parts[1:]]) if parts else model
+    if provider_route == "copilot":
+        return f"{pretty_model} via Copilot"
+    return pretty_model
+
+
+def _local_sandbox_model_ref(*, provider_route: str, model: str) -> str:
+    return f"{provider_route}/{model}={_local_sandbox_display_model(provider_route, model)}"
 
 def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
     missing = getattr(exc, "name", "") or "analysis extras"
@@ -685,29 +715,29 @@ def local_sandbox():
 @local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
 @click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
 @click.option("--target", required=True, help="Agent ID expected in the snapshot manifest.")
-@click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use.")
-@click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.")
-@click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.")
-@click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.")
-@click.option("--rampart-root", default=None, type=click.Path(path_type=Path), help="Path to the existing OpenClaw Docker sandbox runner. Advanced option.")
-@click.option("--runner-root", default=None, type=click.Path(path_type=Path), help="Path to ASSERT local sandbox helper scripts. Advanced option.")
-@click.option("--sandbox-name", default="oc-local-agent", show_default=True, help="Name for the local sandbox instance.")
-@click.option("--provider", type=click.Choice(["mock", "live"], case_sensitive=False), default="mock", show_default=True, help="Model provider route for the sandboxed runtime.")
-@click.option("--provider-route", type=click.Choice(["copilot"], case_sensitive=False), default="copilot", show_default=True, help="Live provider route to generate when using --provider live.")
-@click.option("--model-ref", default="openai/mock-model=Mock Model", show_default=True, help="Provider/model mapping for the sandboxed runtime.")
-@click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker.")
-@click.option("--auth-proxy-port", default=12435, show_default=True, type=int, help="Loopback auth proxy port when using --backend docker.")
-@click.option("--mock-openai-port", default=18080, show_default=True, type=int, help="Loopback mock OpenAI provider port when using --backend docker --provider mock.")
-@click.option("--docker-command", default="docker.exe", show_default=True, help="Docker CLI command for Docker Sandbox operations.")
-@click.option("--auth-proxy-config", default=None, type=click.Path(path_type=Path), help="Auth proxy config for --provider live. Advanced option.")
-@click.option("--skip-build", is_flag=True, help="Skip Docker Sandbox build/install phase when reusing an existing sandbox.")
+@click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
+@click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.", hidden=True)
+@click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.", hidden=True)
+@click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.", hidden=True)
+@click.option("--rampart-root", default=None, type=click.Path(path_type=Path), help="Path to the existing OpenClaw Docker sandbox runner. Advanced option.", hidden=True)
+@click.option("--runner-root", default=None, type=click.Path(path_type=Path), help="Path to ASSERT local sandbox helper scripts. Advanced option.", hidden=True)
+@click.option("--sandbox-name", default=None, type=str, help="Name for the local sandbox instance. Advanced option.", hidden=True)
+@click.option("--provider", type=click.Choice(["mock", "copilot"], case_sensitive=False), default="mock", show_default=True, help="Model provider for the sandboxed runtime.")
+@click.option("--provider-route", type=click.Choice(["copilot"], case_sensitive=False), default="copilot", show_default=True, help="Live provider route to generate. Advanced option.", hidden=True)
+@click.option("--model-ref", default=None, help="Provider/model mapping for the sandboxed runtime. Advanced option.", hidden=True)
+@click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker. Advanced option.", hidden=True)
+@click.option("--auth-proxy-port", default=12435, show_default=True, type=int, help="Loopback auth proxy port when using --backend docker. Advanced option.", hidden=True)
+@click.option("--mock-openai-port", default=18080, show_default=True, type=int, help="Loopback mock OpenAI provider port when using --backend docker --provider mock. Advanced option.", hidden=True)
+@click.option("--docker-command", default="docker.exe", show_default=True, help="Docker CLI command for Docker Sandbox operations. Advanced option.", hidden=True)
+@click.option("--auth-proxy-config", default=None, type=click.Path(path_type=Path), help="Auth proxy config for --provider live. Advanced option.", hidden=True)
+@click.option("--skip-build", is_flag=True, help="Skip Docker Sandbox build/install phase when reusing an existing sandbox. Advanced option.", hidden=True)
 @click.option("--dry-run", is_flag=True, help="Prepare state/config and show the sandbox plan without launching Docker.")
-@click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config.")
-@click.option("--model", default=None, help="Model name for openai_chat endpoint targets.")
-@click.option("--api-key-env", default=None, help="Environment variable name containing endpoint auth; the value is not written to artifacts.")
-@click.option("--stream/--no-stream", default=False, show_default=True, help="Whether the generated endpoint target config should request streaming.")
-@click.option("--output-dir", required=True, type=click.Path(path_type=Path), help="Directory where sandbox state, staged snapshot, logs, and target config will be written.")
-@click.option("--show-paths", is_flag=True, help="Write local absolute paths in state instead of redacted placeholders.")
+@click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config. Advanced option.", hidden=True)
+@click.option("--model", default=None, help="Model name for the sandboxed target runtime.")
+@click.option("--api-key-env", default=None, help="Environment variable name containing endpoint auth; the value is not written to artifacts. Advanced option.", hidden=True)
+@click.option("--stream/--no-stream", default=False, show_default=True, help="Whether the generated endpoint target config should request streaming. Advanced option.", hidden=True)
+@click.option("--output-dir", default=None, type=click.Path(path_type=Path), help="Directory where sandbox state, staged snapshot, logs, and target config will be written. Advanced option.", hidden=True)
+@click.option("--show-paths", is_flag=True, help="Write local absolute paths in state instead of redacted placeholders. Advanced option.", hidden=True)
 def local_sandbox_start(
     snapshot_manifest: Path,
     target: str,
@@ -717,10 +747,10 @@ def local_sandbox_start(
     health_url: str | None,
     rampart_root: Path | None,
     runner_root: Path | None,
-    sandbox_name: str,
+    sandbox_name: str | None,
     provider: str,
     provider_route: str,
-    model_ref: str,
+    model_ref: str | None,
     endpoint_port: int,
     auth_proxy_port: int,
     mock_openai_port: int,
@@ -732,11 +762,14 @@ def local_sandbox_start(
     model: str | None,
     api_key_env: str | None,
     stream: bool,
-    output_dir: Path,
+    output_dir: Path | None,
     show_paths: bool,
 ):
     """Stage a copied snapshot and start a local sandbox endpoint."""
     from assert_ai.local_sandbox import start_local_sandbox, start_openclaw_docker_sandbox
+
+    run_dir = output_dir or _local_sandbox_run_dir(target=target, snapshot_manifest=snapshot_manifest)
+    generated_sandbox_name = sandbox_name or _local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest)
 
     try:
         if backend == "command":
@@ -753,21 +786,34 @@ def local_sandbox_start(
                 model=model,
                 api_key_env=api_key_env,
                 stream=stream,
-                output_dir=output_dir,
+                output_dir=run_dir,
                 redact_paths=not show_paths,
             )
             prepared_only = False
         else:
+            requested_provider = provider.lower()
+            docker_provider = "live" if requested_provider == "copilot" else requested_provider
+            docker_provider_route = "copilot" if requested_provider == "copilot" else provider_route
+            docker_model_ref = model_ref
+            if docker_provider == "live" and docker_model_ref is None:
+                if model is None:
+                    raise ValueError("--model is required when --provider copilot")
+                docker_model_ref = _local_sandbox_model_ref(provider_route=docker_provider_route, model=model)
+            if docker_provider == "mock" and docker_model_ref is None:
+                docker_model_ref = "openai/mock-model=Mock Model"
+            if docker_model_ref is None:
+                raise ValueError("--model-ref is required for the selected provider")
+            endpoint_model = model if protocol == "openai_chat" else None
             result = start_openclaw_docker_sandbox(
                 snapshot_manifest_path=snapshot_manifest,
                 target=target,
-                output_dir=output_dir,
+                output_dir=run_dir,
                 runner_root=runner_root,
                 rampart_root=rampart_root,
-                sandbox_name=sandbox_name,
-                provider=provider,
-                provider_route=provider_route,
-                model_ref=model_ref,
+                sandbox_name=generated_sandbox_name,
+                provider=docker_provider,
+                provider_route=docker_provider_route,
+                model_ref=docker_model_ref,
                 endpoint_port=endpoint_port,
                 auth_proxy_port=auth_proxy_port,
                 mock_openai_port=mock_openai_port,
@@ -775,7 +821,7 @@ def local_sandbox_start(
                 auth_proxy_config=auth_proxy_config,
                 skip_build=skip_build,
                 protocol=protocol,
-                model=model,
+                model=endpoint_model,
                 api_key_env=api_key_env,
                 stream=stream,
                 redact_paths=not show_paths,
