@@ -94,6 +94,21 @@ def test_build_local_agent_spec_auto_discovers_common_behavior_files(tmp_path: P
     assert config["pipeline"]["inference"]["max_turns"] == 4
 
 
+def test_build_local_agent_spec_emits_config_that_current_parser_accepts(tmp_path: Path):
+    from assert_ai.config import parse_pipeline_config
+    from assert_ai.local_specs import build_local_agent_spec
+
+    state_path = _write_sandbox_state(tmp_path)
+    result = build_local_agent_spec(state_path=state_path, output_dir=tmp_path / "spec")
+    config = yaml.safe_load(result.eval_config_path.read_text(encoding="utf-8"))
+
+    pipeline = parse_pipeline_config(config)
+
+    assert pipeline is not None
+    assert pipeline.evaluation is not None
+    assert pipeline.evaluation.tester is not None
+
+
 def test_build_local_agent_spec_supports_product_docker_state_shape(tmp_path: Path):
     from assert_ai.local_specs import build_local_agent_spec
 

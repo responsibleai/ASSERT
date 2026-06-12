@@ -203,6 +203,7 @@ def _build_eval_config(*, target: str, endpoint_url: str, sources: list[dict[str
             "description": _build_behavior_description(target, sources),
         },
         "context": _build_context(sources),
+        "default_model": {"name": "azure/gpt-5.4-mini"},
         "pipeline": {
             "systematize": {"behavior_category_count": 12},
             "test_set": {
