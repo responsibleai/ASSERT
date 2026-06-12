@@ -45,9 +45,9 @@ references:
     year: 2025
     url: "https://github.com/safety-research/bloom"
     notes: >-
-      ASSERT's staged evaluation pipeline is modeled on Bloom's design; adapted
-      material is used under the MIT License (Copyright (c) 2025 Safety
-      Research). See THIRD_PARTY_NOTICES.md.
+      ASSERT's staged evaluation pipeline is modeled on Bloom's design. Bloom's
+      MIT license notice is retained in THIRD_PARTY_NOTICES.md as good-faith
+      attribution.
     authors:
       - family-names: Gupta
         given-names: Isha

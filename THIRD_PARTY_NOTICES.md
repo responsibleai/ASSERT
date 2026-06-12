@@ -1,20 +1,22 @@
 # Third-Party Notices
 
-ASSERT incorporates and adapts material from the third-party open-source
-projects listed below. We are grateful to their authors and maintainers. The
-original copyright and license notices are reproduced here as required by their
-licenses.
+ASSERT builds on and credits the third-party open-source work listed below. We
+are grateful to their authors and maintainers, and reproduce their original
+copyright and license notices here as good-faith attribution.
 
 ---
 
 ## Bloom
 
-ASSERT's automated behavioral-evaluation pipeline — its staged
-"generate scenarios, run them against a target, and judge the results against a
-specified behavior" design, along with parts of the associated configuration
-schema and prompt design — was adapted from **Bloom**, an open-source framework
-for automated behavioral evaluations of LLMs originally developed by the
-Anthropic alignment team and released under the "Safety Research" organization.
+ASSERT's automated behavioral-evaluation pipeline — its staged design of
+generating scenarios from a specified behavior, running them against a target,
+and judging the results — is **modeled on the design of Bloom**, an open-source
+framework for automated behavioral evaluations of LLMs originally developed by
+the Anthropic alignment team and released under the "Safety Research"
+organization. ASSERT's own implementation (code, prompts, and configuration
+schema) is independently written; this notice is provided as good-faith
+attribution to the project whose design ASSERT follows, and to retain Bloom's
+license notice.
 
 - **Project:** Bloom — Automated Behavioral Evaluations for LLMs
 - **Source:** https://github.com/safety-research/bloom
