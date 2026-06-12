@@ -610,6 +610,17 @@ def local_discover(
         excluded_count = len(agent.get("excluded_files") or [])
         if excluded_count:
             click.echo(f"   excluded files: {excluded_count} secret-looking file{'s' if excluded_count != 1 else ''}")
+        external_count = len(agent.get("external_references") or [])
+        if external_count:
+            click.echo(f"   external references: {external_count}")
+            if show_paths:
+                for reference in (agent.get("external_references") or [])[:5]:
+                    click.echo(f"     {reference['kind']} from {reference['source']}: {reference['path']}")
+        copy_roots = agent.get("suggested_copy_roots") or []
+        if copy_roots:
+            click.echo("   suggested copy roots:")
+            for root in copy_roots:
+                click.echo(f"     --copy-root {root['source']}:{root['dest']}")
         click.echo(f"   status: {agent.get('summary') or agent.get('status')}")
         click.echo("")
 

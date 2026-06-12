@@ -85,6 +85,84 @@ def test_discover_local_agents_reports_common_agent_config_dirs(tmp_path: Path) 
     assert agents["gemini"]["config"]["path"] == "[LOCAL_PATH]"
 
 
+def test_discover_openclaw_surfaces_external_symlinks_and_path_references(tmp_path: Path) -> None:
+    runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
+    external_knowledge = tmp_path / "context-repo"
+    external_knowledge.mkdir()
+    (external_knowledge / "project.md").write_text("Important project context.\n", encoding="utf-8")
+    (workspace / "linked-context").symlink_to(external_knowledge, target_is_directory=True)
+    (workspace / "TOOLS.md").write_text(
+        f"Context root: {external_knowledge}\nRelative path: ./memory\n",
+        encoding="utf-8",
+    )
+
+    payload = discover_local_agents(
+        target="openclaw",
+        runtime_path=runtime,
+        workspace_path=workspace,
+        source_bundle_path=manifest,
+        redact_paths=True,
+    ).to_json()
+
+    agent = payload["agents"][0]
+    external_refs = agent["external_references"]
+    assert {
+        (ref["source"], ref["kind"], ref["path"])
+        for ref in external_refs
+    } == {
+        ("linked-context", "symlink", "[LOCAL_PATH]"),
+        ("TOOLS.md", "path_value", "[LOCAL_PATH]"),
+    }
+    assert agent["suggested_copy_roots"] == [
+        {
+            "source": "[LOCAL_PATH]",
+            "dest": "external/context-repo",
+            "reason": "external_reference",
+        }
+    ]
+
+
+def test_discover_openclaw_does_not_suggest_generic_system_or_home_roots(tmp_path: Path) -> None:
+    runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
+    home_like = tmp_path / "home" / "person"
+    home_like.mkdir(parents=True)
+    project_dir = tmp_path / "work" / "customer-project"
+    project_dir.mkdir(parents=True)
+    repo_dir = home_like / "source" / "CustomerThing"
+    (repo_dir / ".git").mkdir(parents=True)
+    (workspace / "TOOLS.md").write_text(
+        f"Home root: {home_like}\n"
+        f"System binary dir: /usr/bin\n"
+        f"Filesystem root: /\n"
+        f"Project checkout: {project_dir}\n"
+        f"Git repo checkout: {repo_dir}\n",
+        encoding="utf-8",
+    )
+
+    payload = discover_local_agents(
+        target="openclaw",
+        runtime_path=runtime,
+        workspace_path=workspace,
+        source_bundle_path=manifest,
+        redact_paths=False,
+    ).to_json()
+
+    agent = payload["agents"][0]
+    assert {ref["path"] for ref in agent["external_references"]} >= {str(home_like), str(project_dir), str(repo_dir)}
+    assert agent["suggested_copy_roots"] == [
+        {
+            "source": str(repo_dir),
+            "dest": "external/CustomerThing",
+            "reason": "external_reference",
+        },
+        {
+            "source": str(project_dir),
+            "dest": "external/customer-project",
+            "reason": "external_reference",
+        },
+    ]
+
+
 def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / ".hermes").mkdir(parents=True)
@@ -100,6 +178,35 @@ def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     assert "config: [LOCAL_PATH]" in result.output
     assert "found local config or executable" in result.output
     assert "runtime: codex (not found)" in result.output
+
+
+def test_cli_local_discover_prints_copy_root_suggestions_for_external_references(tmp_path: Path) -> None:
+    runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
+    external_repo = tmp_path / "project-context"
+    external_repo.mkdir()
+    (workspace / "project-context").symlink_to(external_repo, target_is_directory=True)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "local",
+            "discover",
+            "--target",
+            "openclaw",
+            "--runtime-path",
+            str(runtime),
+            "--workspace",
+            str(workspace),
+            "--source-bundle",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "external references: 1" in result.output
+    assert "suggested copy roots:" in result.output
+    assert "--copy-root [LOCAL_PATH]:external/project-context" in result.output
 
 
 def test_cli_local_discover_writes_reviewable_manifest(tmp_path: Path) -> None:

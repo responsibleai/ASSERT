@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Iterable
 
@@ -34,6 +35,17 @@ DEFAULT_OPENCLAW_INCLUDE = (
     "MEMORY.md",
 )
 
+REFERENCE_FILE_NAMES = set(DEFAULT_OPENCLAW_INCLUDE) | {
+    "config.json",
+    "config.toml",
+    "config.yaml",
+    "config.yml",
+    "settings.json",
+    "source-bundle.json",
+}
+REFERENCE_FILE_SUFFIXES = {".json", ".jsonc", ".md", ".toml", ".yaml", ".yml"}
+MAX_REFERENCE_FILE_BYTES = 64 * 1024
+ABSOLUTE_PATH_RE = re.compile(r"(?:[A-Za-z]:\\[^\s'\"<>]+|/[A-Za-z0-9._~+\-/]+)")
 _COMMON_AGENT_IDS = {"openclaw", "hermes", "claude-code", "codex", "opencode", "gemini"}
 
 
@@ -52,6 +64,80 @@ def _path_value(path: Path | None, *, redact_paths: bool) -> str | None:
     if path is None:
         return None
     return "[LOCAL_PATH]" if redact_paths else str(path)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _safe_copy_root_dest(path: Path) -> str:
+    name = path.name or "external-root"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-") or "external-root"
+    return f"external/{safe}"
+
+
+def _path_parts(path: Path) -> tuple[str, ...]:
+    return tuple(part.lower() for part in path.parts if part not in {path.anchor, "/"})
+
+
+def _is_low_value_copy_root(path: Path) -> bool:
+    parts = _path_parts(path)
+    if not parts:
+        return True
+    if str(path) == "/":
+        return True
+    system_prefixes = (
+        ("bin",),
+        ("boot",),
+        ("dev",),
+        ("etc",),
+        ("lib",),
+        ("lib64",),
+        ("proc",),
+        ("run",),
+        ("sbin",),
+        ("sys",),
+        ("usr",),
+        ("var",),
+        ("mnt", "c", "users"),
+    )
+    if any(parts[: len(prefix)] == prefix for prefix in system_prefixes):
+        return True
+    if len(parts) >= 2 and parts[-2] in {"home", "users"}:
+        return True
+    return False
+
+
+def _is_high_confidence_copy_root(*, kind: str, target: Path) -> bool:
+    if kind == "symlink" and not _is_low_value_copy_root(target):
+        return True
+    if (target / ".git").exists():
+        return True
+    if _is_low_value_copy_root(target):
+        return False
+    name = target.name.lower()
+    parts = set(_path_parts(target))
+    signal_words = {
+        "context",
+        "contexts",
+        "knowledge",
+        "memory",
+        "memories",
+        "project",
+        "projects",
+        "repo",
+        "repos",
+        "workspace",
+        "workspaces",
+        "work",
+    }
+    if any(word in parts for word in signal_words):
+        return True
+    return any(word in name for word in signal_words)
 
 
 def _safe_relative(pattern: str) -> bool:
@@ -126,6 +212,105 @@ def _candidate_and_excluded_files(
     return candidate_files, excluded_files, exclude_patterns
 
 
+def _external_references(
+    *,
+    workspace: Path,
+    exclude_patterns: Iterable[str],
+    redact_paths: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Find shallow out-of-root references without following or copying them.
+
+    This is intentionally generic: symlinks that leave the workspace and obvious
+    absolute path values in small root-level config/instruction files are surfaced
+    as hints for later ``--copy-root`` selection. Discovery does not crawl the
+    referenced roots and does not decide that they must be copied.
+    """
+
+    if not workspace.exists() or not workspace.is_dir():
+        return [], []
+
+    workspace_root = workspace.resolve()
+    references: list[dict[str, Any]] = []
+    seen_references: set[tuple[str, str, str]] = set()
+    suggested_roots: dict[str, dict[str, Any]] = {}
+
+    def add_reference(*, source: str, kind: str, target: Path) -> None:
+        try:
+            resolved = target.expanduser().resolve(strict=False)
+        except OSError:
+            resolved = target.expanduser().absolute()
+        if not resolved.is_absolute():
+            return
+        if resolved == workspace_root or _is_relative_to(resolved, workspace_root):
+            return
+        key = (source, kind, str(resolved))
+        if key in seen_references:
+            return
+        seen_references.add(key)
+        references.append(
+            {
+                "source": source,
+                "kind": kind,
+                "path": _path_value(resolved, redact_paths=redact_paths),
+                "exists": resolved.exists(),
+            }
+        )
+        if _is_high_confidence_copy_root(kind=kind, target=resolved):
+            suggested_roots.setdefault(
+                str(resolved),
+                {
+                    "source": _path_value(resolved, redact_paths=redact_paths),
+                    "dest": _safe_copy_root_dest(resolved),
+                    "reason": "external_reference",
+                },
+            )
+
+    # Symlink scan stays inside the selected workspace tree. ``rglob`` lists the
+    # symlink itself but does not require reading or copying the target root.
+    try:
+        workspace_paths = list(workspace.rglob("*"))
+    except OSError:
+        workspace_paths = []
+    for path in sorted(workspace_paths):
+        if not path.is_symlink():
+            continue
+        try:
+            source = path.relative_to(workspace).as_posix()
+        except ValueError:
+            source = path.name
+        add_reference(source=source, kind="symlink", target=path.resolve(strict=False))
+
+    # Path-value detection is deliberately shallow: only small root-level files
+    # that look like instructions or config are read, and secret-looking files are
+    # skipped by name.
+    try:
+        root_files = sorted(workspace.iterdir())
+    except OSError:
+        root_files = []
+    for path in root_files:
+        if not path.is_file() or path.is_symlink():
+            continue
+        if _matches_any(path, workspace, exclude_patterns):
+            continue
+        if path.name not in REFERENCE_FILE_NAMES and path.suffix.lower() not in REFERENCE_FILE_SUFFIXES:
+            continue
+        try:
+            if path.stat().st_size > MAX_REFERENCE_FILE_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        source = path.relative_to(workspace).as_posix()
+        for match in ABSOLUTE_PATH_RE.findall(text):
+            candidate = Path(match.rstrip(".,;:)]}"))
+            if candidate.exists():
+                add_reference(source=source, kind="path_value", target=candidate)
+
+    references.sort(key=lambda item: (item["source"], item["kind"], item["path"] or ""))
+    copy_roots = sorted(suggested_roots.values(), key=lambda item: (item["dest"], item["source"] or ""))
+    return references, copy_roots
+
+
 def _read_package_version(runtime_path: Path) -> str | None:
     package_json = runtime_path / "package.json"
     if not package_json.exists():
@@ -159,6 +344,11 @@ def _openclaw_agent(
         workspace=workspace,
         source_bundle_path=source_bundle if source_bundle_exists else None,
     )
+    external_references, suggested_copy_roots = _external_references(
+        workspace=workspace,
+        exclude_patterns=exclude_patterns,
+        redact_paths=redact_paths,
+    )
     status = "ready" if runtime_valid and workspace_exists else "found"
     return {
         "id": "openclaw",
@@ -184,6 +374,8 @@ def _openclaw_agent(
         "candidate_files": candidate_files,
         "excluded_files": excluded_files,
         "excluded_patterns": list(exclude_patterns),
+        "external_references": external_references,
+        "suggested_copy_roots": suggested_copy_roots,
     }
 
 
