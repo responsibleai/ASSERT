@@ -707,6 +707,39 @@ def local_snapshot_create(
     click.echo(f"  excluded files: {excluded_count}")
 
 
+@local.group("spec", cls=SuggestingGroup, short_help="Build ASSERT specs from sandbox snapshots")
+def local_spec():
+    """Build ASSERT eval specs from copied local-agent sandbox state."""
+
+
+@local_spec.command("build", short_help="Build ASSERT config from sandbox state")
+@click.option("--sandbox-state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--include", "include_patterns", multiple=True, help="Extra sandbox-relative glob to include as behavior/context source. Repeatable.")
+@click.option("--output-dir", type=click.Path(path_type=Path), default=None, help="Directory for agent-spec.json, agent-spec.md, and eval_config.yaml. Defaults next to the sandbox state.")
+def local_spec_build(state_path: Path, include_patterns: tuple[str, ...], output_dir: Path | None):
+    """Build a normal ASSERT eval config from the copied sandbox snapshot."""
+    from assert_ai.local_specs import build_local_agent_spec
+
+    resolved_output_dir = output_dir or (state_path.parent / "spec")
+    try:
+        result = build_local_agent_spec(
+            state_path=state_path,
+            output_dir=resolved_output_dir,
+            include=list(include_patterns),
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    click.echo("Built local-agent ASSERT spec")
+    click.echo(f"  sources: {result.source_count}")
+    click.echo(f"  spec: {result.spec_json_path}")
+    click.echo(f"  summary: {result.spec_markdown_path}")
+    click.echo(f"  config: {result.eval_config_path}")
+    click.echo("Next:")
+    click.echo(f"  assert-ai run --config {result.eval_config_path}")
+
+
 @local.group("sandbox", cls=SuggestingGroup, short_help="Start local-agent sandbox endpoints")
 def local_sandbox():
     """Start sandboxed local-agent endpoints from copied snapshots."""
