@@ -592,8 +592,9 @@ def local_discover(
         workspace = agent.get("workspace") or {}
         if runtime.get("version"):
             click.echo(f"   runtime: {agent.get('display_name', agent['id'])} {runtime['version']}")
-        elif runtime.get("binary") and runtime.get("valid"):
-            click.echo(f"   runtime: {runtime['binary']} (found)")
+        elif runtime.get("binary"):
+            binary_state = "found" if runtime.get("valid") else "not found"
+            click.echo(f"   runtime: {runtime['binary']} ({binary_state})")
         if runtime.get("path"):
             click.echo(f"   runtime path: {runtime['path']}")
         if config.get("path"):
