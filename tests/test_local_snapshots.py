@@ -76,6 +76,29 @@ def test_create_local_agent_snapshot_copies_explicit_roots_and_excludes_secrets(
     assert str(tmp_path) not in manifest_path.read_text(encoding="utf-8")
 
 
+def test_snapshot_excludes_secret_data_without_dropping_runtime_code_names(tmp_path: Path) -> None:
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(discovery)
+    source = tmp_path / "runtime"
+    (source / "dist").mkdir(parents=True)
+    (source / "dist" / "channel-secret-runtime.js").write_text("export const name = 'secret-tool';\n", encoding="utf-8")
+    (source / "client_secret_123.apps.googleusercontent.com.json").write_text("{}\n", encoding="utf-8")
+    (source / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+
+    create_local_agent_snapshot(
+        discovery_path=discovery,
+        target="hermes",
+        copy_root_specs=[f"{source}:runtime"],
+        output_dir=tmp_path / "snapshot-out",
+        redact_paths=True,
+    )
+
+    snapshot_root = tmp_path / "snapshot-out" / "snapshot"
+    assert (snapshot_root / "runtime" / "dist" / "channel-secret-runtime.js").exists()
+    assert not (snapshot_root / "runtime" / "client_secret_123.apps.googleusercontent.com.json").exists()
+    assert not (snapshot_root / "runtime" / ".env").exists()
+
+
 def test_cli_local_snapshot_create_writes_manifest(tmp_path: Path) -> None:
     discovery = tmp_path / "discovery.json"
     _write_discovery(discovery, target="openclaw")

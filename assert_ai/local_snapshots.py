@@ -18,7 +18,8 @@ from pathlib import Path
 import shutil
 from typing import Any, Iterable
 
-from assert_ai.local_agents import DEFAULT_EXCLUDE_PATTERNS
+
+SECRET_DATA_SUFFIXES = {"", ".env", ".json", ".pem", ".key", ".p12", ".pfx", ".txt", ".yaml", ".yml"}
 
 
 @dataclass(frozen=True)
@@ -54,9 +55,16 @@ def _parse_copy_root_spec(spec: str) -> tuple[Path, Path]:
     return source, dest
 
 
-def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str]) -> bool:
+def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str] = ()) -> bool:
     lower_rel = rel.lower()
     lower_name = name.lower()
+    suffix = Path(lower_name).suffix
+    if lower_name == ".env" or lower_name.endswith(".env") or "/.env" in lower_rel:
+        return True
+    if "credential" in lower_name or "token" in lower_name:
+        return True
+    if "secret" in lower_name and suffix in SECRET_DATA_SUFFIXES:
+        return True
     for pattern in patterns:
         lower_pattern = pattern.lower()
         if fnmatch(lower_rel, lower_pattern) or fnmatch(lower_name, lower_pattern):
@@ -157,7 +165,7 @@ def create_local_agent_snapshot(
             source=source,
             dest=dest,
             snapshot_root=snapshot_root,
-            exclude_patterns=DEFAULT_EXCLUDE_PATTERNS,
+            exclude_patterns=(),
         )
         copied_roots.append(
             {
