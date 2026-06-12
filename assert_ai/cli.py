@@ -628,7 +628,53 @@ def local_discover(
         click.echo(f"Wrote discovery manifest: {output_path}")
     if any(agent.get("status") == "ready" for agent in agents):
         click.echo("Next:")
-        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id>")
+        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id> --copy-root <source>:<dest>")
+
+
+@local.group("snapshot", cls=SuggestingGroup, short_help="Create copied local-agent snapshots")
+def local_snapshot():
+    """Create copied snapshots from explicit local roots."""
+
+
+@local_snapshot.command("create", short_help="Copy explicit roots into a snapshot directory")
+@click.option("--from", "discovery_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Discovery JSON manifest from `assert-ai local discover`.")
+@click.option("--target", required=True, help="Agent ID from the discovery manifest.")
+@click.option("--copy-root", "copy_roots", multiple=True, required=True, help="Root to copy as SOURCE:DEST. Repeat for multiple roots.")
+@click.option("--output-dir", required=True, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written.")
+@click.option("--show-paths", is_flag=True, help="Write local absolute paths in the manifest instead of redacted placeholders.")
+def local_snapshot_create(
+    discovery_path: Path,
+    target: str,
+    copy_roots: tuple[str, ...],
+    output_dir: Path,
+    show_paths: bool,
+):
+    """Copy user-approved roots into a reviewable local-agent snapshot."""
+    from assert_ai.local_snapshots import create_local_agent_snapshot
+
+    try:
+        result = create_local_agent_snapshot(
+            discovery_path=discovery_path,
+            target=target,
+            copy_root_specs=copy_roots,
+            output_dir=output_dir,
+            redact_paths=not show_paths,
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    manifest = result.manifest
+    copied_count = len(manifest.get("copied_roots") or [])
+    excluded_count = len(manifest.get("excluded_files") or [])
+    files_copied = sum(int(root.get("files_copied") or 0) for root in manifest.get("copied_roots") or [])
+    click.echo("Created local-agent snapshot")
+    click.echo(f"  target: {manifest.get('target')}")
+    click.echo(f"  snapshot root: {result.snapshot_root}")
+    click.echo(f"  manifest: {result.manifest_path}")
+    click.echo(f"  copied roots: {copied_count}")
+    click.echo(f"  files copied: {files_copied}")
+    click.echo(f"  excluded files: {excluded_count}")
 
 
 # -- init (design an eval config with an LLM assistant) ---------------------
