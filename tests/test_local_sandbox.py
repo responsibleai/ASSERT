@@ -383,13 +383,14 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
         "stream": False,
         "local_dev": True,
     }
+    assert state["plan"]["harness"] == "rampart-docker"
     assert [step["name"] for step in state["plan"]["steps"]] == [
         "preflight",
         "prepare_openclaw_runtime_archive",
         "start_mock_openai",
         "start_auth_proxy",
-        "launch_openclaw_sandbox",
-        "start_openclaw_endpoint_bridge",
+        "launch_rampart_sandbox",
+        "start_endpoint_bridge",
     ]
     assert all(step["name"] != "run_behavior_suite" for step in state["plan"]["steps"])
     assert state["safety"]["live_home_mount"] is False
@@ -429,8 +430,8 @@ def test_openclaw_docker_live_copilot_dry_run_generates_no_secret_auth_config(tm
         "preflight",
         "prepare_openclaw_runtime_archive",
         "start_auth_proxy",
-        "launch_openclaw_sandbox",
-        "start_openclaw_endpoint_bridge",
+        "launch_rampart_sandbox",
+        "start_endpoint_bridge",
     ]
     assert "start_mock_openai" not in {step["name"] for step in state["plan"]["steps"]}
     assert "gho_should_not_be_written" not in state_text
@@ -633,6 +634,59 @@ def test_docker_backend_runs_runtime_descriptor_without_openclaw_assumptions(tmp
     assert "openclaw" not in result.state_path.read_text(encoding="utf-8").lower()
 
 
+def test_rampart_harness_builds_reusable_launch_steps_without_openclaw_assumptions(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import RampartDockerHarness, RampartRuntimeDescriptor
+
+    descriptor = RampartRuntimeDescriptor(
+        runner_id="toy-agent",
+        runtime_profile="toy-profile",
+        required_paths=("toy/home",),
+        endpoint_bridge_module="assert_ai.local_sandbox_helpers.toy_endpoint_bridge",
+        endpoint_bridge_args=("--state", "toy"),
+        launch_command=("python", "-m", "toy.launch", "--sandbox", "toy-sandbox"),
+        cleanup_labels=("toy-stop",),
+    )
+    context = LocalSandboxLaunchContext(
+        manifest_path=tmp_path / "snapshot_manifest.json",
+        manifest={"target": "toy-agent"},
+        output_dir=tmp_path / "run",
+        sandbox_root=tmp_path / "run" / "sandbox",
+        logs_dir=tmp_path / "run" / "logs",
+        endpoint_url="http://127.0.0.1:18081",
+        endpoint_port=18081,
+        endpoint={"url": "http://127.0.0.1:18081", "protocol": "assert", "local_dev": True},
+        provider="mock",
+        provider_route=None,
+        model_ref="openai/mock-model=Mock Model",
+        auth_proxy_port=12435,
+        mock_openai_port=18080,
+        auth_proxy_config=None,
+        runner_root=tmp_path / "runner",
+        rampart_root=tmp_path / "rampart",
+        docker_command="docker.exe",
+        sandbox_name="toy-sandbox",
+        docker_timeout_seconds=60,
+        dry_run=True,
+    )
+
+    plan = RampartDockerHarness(descriptor=descriptor).build_plan(context)
+
+    assert plan.runner == "toy-agent"
+    assert plan.runtime_profile == "toy-profile"
+    assert [step.name for step in plan.steps] == [
+        "preflight",
+        "start_mock_openai",
+        "start_auth_proxy",
+        "launch_rampart_sandbox",
+        "start_endpoint_bridge",
+    ]
+    launch_step = next(step for step in plan.steps if step.name == "launch_rampart_sandbox")
+    assert launch_step.command == ["python", "-m", "toy.launch", "--sandbox", "toy-sandbox"]
+    assert all("openclaw" not in " ".join(step.command).lower() for step in plan.steps)
+    assert plan.cleanup_commands
+    assert plan.cleanup_commands[0].name == "toy-stop"
+
+
 def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     runner_root = _make_runner_root(tmp_path)
@@ -675,8 +729,8 @@ def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) 
         "prepare_openclaw_runtime_archive",
         "start_mock_openai",
         "start_auth_proxy",
-        "launch_openclaw_sandbox",
-        "start_openclaw_endpoint_bridge",
+        "launch_rampart_sandbox",
+        "start_endpoint_bridge",
     ]
 
 
@@ -738,8 +792,8 @@ def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(t
         "run:prepare_openclaw_runtime_archive",
         "service:start_mock_openai",
         "service:start_auth_proxy",
-        "run:launch_openclaw_sandbox",
-        "service:start_openclaw_endpoint_bridge",
+        "run:launch_rampart_sandbox",
+        "service:start_endpoint_bridge",
     ]
     assert cleanup_commands == []
     state = json.loads(result.state_path.read_text(encoding="utf-8"))
@@ -749,10 +803,10 @@ def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(t
     assert [process["name"] for process in state["processes"]] == [
         "start_mock_openai",
         "start_auth_proxy",
-        "start_openclaw_endpoint_bridge",
+        "start_endpoint_bridge",
     ]
     assert [command["name"] for command in state["cleanup"]["commands"]] == ["sandbox_stop", "sandbox_rm"]
-    assert state["plan"]["steps"][-1]["name"] == "start_openclaw_endpoint_bridge"
+    assert state["plan"]["steps"][-1]["name"] == "start_endpoint_bridge"
     assert state["plan"]["steps"][-1]["health_url"] == "http://127.0.0.1:19091/health"
     assert "run_behavior_suite" not in {step["name"] for step in state["plan"]["steps"]}
 
@@ -769,8 +823,8 @@ def test_openclaw_docker_backend_cleans_started_services_when_later_step_fails(t
     def run_step(step: LocalSandboxStep, log_path: Path) -> int:
         events.append(f"run:{step.name}")
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("boom\n" if step.name == "launch_openclaw_sandbox" else "ok\n", encoding="utf-8")
-        return 7 if step.name == "launch_openclaw_sandbox" else 0
+        log_path.write_text("boom\n" if step.name == "launch_rampart_sandbox" else "ok\n", encoding="utf-8")
+        return 7 if step.name == "launch_rampart_sandbox" else 0
 
     def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
         events.append(f"service:{step.name}")
@@ -788,7 +842,7 @@ def test_openclaw_docker_backend_cleans_started_services_when_later_step_fails(t
         log_path.write_text("clean\n", encoding="utf-8")
         return 0
 
-    with pytest.raises(ValueError, match="launch_openclaw_sandbox failed with exit code 7"):
+    with pytest.raises(ValueError, match="launch_rampart_sandbox failed with exit code 7"):
         start_openclaw_docker_sandbox(
             snapshot_manifest_path=manifest_path,
             target="openclaw",
