@@ -13,7 +13,14 @@ import yaml
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
-from assert_ai.local_sandbox import smoke_local_sandbox, start_local_sandbox, stop_local_sandbox
+from assert_ai.local_sandbox import (
+    LocalSandboxManagedProcess,
+    LocalSandboxStep,
+    smoke_local_sandbox,
+    start_local_sandbox,
+    start_openclaw_docker_sandbox,
+    stop_local_sandbox,
+)
 
 
 def _write_snapshot_manifest(base: Path, *, target: str = "openclaw") -> Path:
@@ -22,6 +29,7 @@ def _write_snapshot_manifest(base: Path, *, target: str = "openclaw") -> Path:
     (snapshot_root / ".openclaw" / "workspace" / "AGENTS.md").write_text("agent instructions\n", encoding="utf-8")
     (snapshot_root / "runtime" / "openclaw-package").mkdir(parents=True)
     (snapshot_root / "runtime" / "openclaw-package" / "package.json").write_text('{"name":"openclaw"}\n', encoding="utf-8")
+    (snapshot_root / "runtime" / "openclaw-package" / "openclaw.mjs").write_text("#!/usr/bin/env node\n", encoding="utf-8")
     manifest = {
         "schema_version": 1,
         "target": target,
@@ -41,6 +49,15 @@ def _write_snapshot_manifest(base: Path, *, target: str = "openclaw") -> Path:
     manifest_path = base / "snapshot_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
+
+
+def _make_runner_root(base: Path) -> Path:
+    runner_root = base / "runner"
+    runner_root.mkdir()
+    (runner_root / "start_openclaw_sandbox.ps1").write_text("# wrapper\n", encoding="utf-8")
+    (runner_root / "mock_openai_server.py").write_text("# mock\n", encoding="utf-8")
+    (runner_root / "openclaw_endpoint_bridge.py").write_text("# bridge\n", encoding="utf-8")
+    return runner_root
 
 
 def _server_command() -> str:
@@ -250,6 +267,37 @@ def test_stop_local_sandbox_terminates_process_and_updates_state(tmp_path: Path)
     assert state["stopped_at"]
 
 
+def test_stop_local_sandbox_runs_docker_cleanup_commands(tmp_path: Path) -> None:
+    state_path = tmp_path / "sandbox_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "target": "openclaw",
+                "backend": "docker",
+                "status": "running",
+                "endpoint": {"url": "http://127.0.0.1:18081"},
+                "processes": [],
+                "cleanup": {
+                    "commands": [
+                        {"name": "sandbox_stop", "command": ["python", "-c", "print('stop')"], "timeout_seconds": 5},
+                        {"name": "sandbox_rm", "command": ["python", "-c", "print('rm')"], "timeout_seconds": 5},
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = stop_local_sandbox(state_path)
+
+    assert result["status"] == "stopped"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "stopped"
+    assert [item["name"] for item in state["cleanup_results"]] == ["sandbox_stop", "sandbox_rm"]
+    assert state["cleanup_results"][0]["exit_code"] == 0
+
+
 def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     start_result = start_local_sandbox(
@@ -286,7 +334,9 @@ def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> N
 def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart_label(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     rampart_root = tmp_path / "rampart-openclaw"
-    rampart_root.mkdir()
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
 
     result = CliRunner().invoke(
         cli,
@@ -316,6 +366,8 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
     assert "target config:" in result.output
 
     state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    state_text = (tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8")
+    assert str(tmp_path) not in state_text
     assert state["target"] == "openclaw"
     assert state["backend"] == "docker"
     assert state["status"] == "planned"
@@ -337,6 +389,136 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
     assert state["safety"]["live_home_mount"] is False
     config = yaml.safe_load((tmp_path / "sandbox-out" / "endpoint_target.yaml").read_text(encoding="utf-8"))
     assert config["pipeline"]["inference"]["target"]["endpoint"]["local_dev"] is True
+
+
+def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    runner_root = _make_runner_root(tmp_path)
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+    executed: list[str] = []
+    cleanup_commands: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+            self.returncode = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    def run_step(step: LocalSandboxStep, log_path: Path) -> int:
+        executed.append(f"run:{step.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+        return 0
+
+    def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
+        executed.append(f"service:{step.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ready\n", encoding="utf-8")
+        return LocalSandboxManagedProcess(name=step.name, pid=1000 + len(executed), log_path=log_path)
+
+    def cleanup(command: list[str], log_path: Path, timeout_seconds: int) -> int:
+        cleanup_commands.append(command)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("clean\n", encoding="utf-8")
+        return 0
+
+    result = start_openclaw_docker_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        output_dir=tmp_path / "sandbox-out",
+        runner_root=runner_root,
+        rampart_root=rampart_root,
+        sandbox_name="oc-test",
+        provider="mock",
+        model_ref="openai/mock-model=Mock Model",
+        endpoint_port=19091,
+        protocol="assert",
+        dry_run=False,
+        run_step=run_step,
+        start_step=start_step,
+        cleanup_step=cleanup,
+    )
+
+    assert executed == [
+        "run:preflight",
+        "run:prepare_openclaw_runtime_archive",
+        "service:start_mock_openai",
+        "service:start_auth_proxy",
+        "run:launch_openclaw_sandbox",
+        "service:start_openclaw_endpoint_bridge",
+    ]
+    assert cleanup_commands == []
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["backend"] == "docker"
+    assert state["endpoint"]["url"] == "http://127.0.0.1:19091"
+    assert [process["name"] for process in state["processes"]] == [
+        "start_mock_openai",
+        "start_auth_proxy",
+        "start_openclaw_endpoint_bridge",
+    ]
+    assert [command["name"] for command in state["cleanup"]["commands"]] == ["sandbox_stop", "sandbox_rm"]
+    assert state["plan"]["steps"][-1]["name"] == "start_openclaw_endpoint_bridge"
+    assert state["plan"]["steps"][-1]["health_url"] == "http://127.0.0.1:19091/health"
+    assert "run_behavior_suite" not in {step["name"] for step in state["plan"]["steps"]}
+
+
+def test_openclaw_docker_backend_cleans_started_services_when_later_step_fails(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    runner_root = _make_runner_root(tmp_path)
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+    events: list[str] = []
+
+    def run_step(step: LocalSandboxStep, log_path: Path) -> int:
+        events.append(f"run:{step.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("boom\n" if step.name == "launch_openclaw_sandbox" else "ok\n", encoding="utf-8")
+        return 7 if step.name == "launch_openclaw_sandbox" else 0
+
+    def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
+        events.append(f"service:{step.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ready\n", encoding="utf-8")
+        return LocalSandboxManagedProcess(name=step.name, pid=2000 + len(events), log_path=log_path)
+
+    def stop_process(pid: int, timeout_seconds: float) -> str:
+        events.append(f"stop:{pid}")
+        return "stopped"
+
+    def cleanup(command: list[str], log_path: Path, timeout_seconds: int) -> int:
+        events.append(f"cleanup:{command[-1]}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("clean\n", encoding="utf-8")
+        return 0
+
+    with pytest.raises(ValueError, match="launch_openclaw_sandbox failed with exit code 7"):
+        start_openclaw_docker_sandbox(
+            snapshot_manifest_path=manifest_path,
+            target="openclaw",
+            output_dir=tmp_path / "sandbox-out",
+            runner_root=runner_root,
+            rampart_root=rampart_root,
+            sandbox_name="oc-test",
+            provider="mock",
+            dry_run=False,
+            run_step=run_step,
+            start_step=start_step,
+            stop_process=stop_process,
+            cleanup_step=cleanup,
+        )
+
+    assert "stop:2004" in events
+    assert "stop:2003" in events
+    assert events.index("stop:2004") < events.index("stop:2003")
+    assert "cleanup:oc-test" in events
 
 
 def test_cli_local_sandbox_start_writes_state_and_config(tmp_path: Path) -> None:

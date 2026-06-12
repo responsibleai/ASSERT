@@ -690,10 +690,16 @@ def local_sandbox():
 @click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.")
 @click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.")
 @click.option("--rampart-root", default=None, type=click.Path(path_type=Path), help="Path to the existing OpenClaw Docker sandbox runner. Advanced option.")
+@click.option("--runner-root", default=None, type=click.Path(path_type=Path), help="Path to ASSERT local sandbox helper scripts. Advanced option.")
 @click.option("--sandbox-name", default="oc-local-agent", show_default=True, help="Name for the local sandbox instance.")
 @click.option("--provider", type=click.Choice(["mock", "live"], case_sensitive=False), default="mock", show_default=True, help="Model provider route for the sandboxed runtime.")
 @click.option("--model-ref", default="openai/mock-model=Mock Model", show_default=True, help="Provider/model mapping for the sandboxed runtime.")
 @click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker.")
+@click.option("--auth-proxy-port", default=12435, show_default=True, type=int, help="Loopback auth proxy port when using --backend docker.")
+@click.option("--mock-openai-port", default=18080, show_default=True, type=int, help="Loopback mock OpenAI provider port when using --backend docker --provider mock.")
+@click.option("--docker-command", default="docker.exe", show_default=True, help="Docker CLI command for Docker Sandbox operations.")
+@click.option("--auth-proxy-config", default=None, type=click.Path(path_type=Path), help="Auth proxy config for --provider live. Advanced option.")
+@click.option("--skip-build", is_flag=True, help="Skip Docker Sandbox build/install phase when reusing an existing sandbox.")
 @click.option("--dry-run", is_flag=True, help="Prepare state/config and show the sandbox plan without launching Docker.")
 @click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config.")
 @click.option("--model", default=None, help="Model name for openai_chat endpoint targets.")
@@ -709,10 +715,16 @@ def local_sandbox_start(
     endpoint_url: str,
     health_url: str | None,
     rampart_root: Path | None,
+    runner_root: Path | None,
     sandbox_name: str,
     provider: str,
     model_ref: str,
     endpoint_port: int,
+    auth_proxy_port: int,
+    mock_openai_port: int,
+    docker_command: str,
+    auth_proxy_config: Path | None,
+    skip_build: bool,
     dry_run: bool,
     protocol: str,
     model: str | None,
@@ -748,11 +760,17 @@ def local_sandbox_start(
                 snapshot_manifest_path=snapshot_manifest,
                 target=target,
                 output_dir=output_dir,
+                runner_root=runner_root,
                 rampart_root=rampart_root,
                 sandbox_name=sandbox_name,
                 provider=provider,
                 model_ref=model_ref,
                 endpoint_port=endpoint_port,
+                auth_proxy_port=auth_proxy_port,
+                mock_openai_port=mock_openai_port,
+                docker_command=docker_command,
+                auth_proxy_config=auth_proxy_config,
+                skip_build=skip_build,
                 protocol=protocol,
                 model=model,
                 api_key_env=api_key_env,

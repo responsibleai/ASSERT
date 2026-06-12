@@ -82,6 +82,8 @@ def test_snapshot_excludes_secret_data_without_dropping_runtime_code_names(tmp_p
     source = tmp_path / "runtime"
     (source / "dist").mkdir(parents=True)
     (source / "dist" / "channel-secret-runtime.js").write_text("export const name = 'secret-tool';\n", encoding="utf-8")
+    (source / "dist" / "credential-planner-runtime.js").write_text("export const name = 'credential-planner';\n", encoding="utf-8")
+    (source / "dist" / "token-counter-runtime.js").write_text("export const name = 'token-counter';\n", encoding="utf-8")
     (source / "client_secret_123.apps.googleusercontent.com.json").write_text("{}\n", encoding="utf-8")
     (source / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
 
@@ -95,6 +97,8 @@ def test_snapshot_excludes_secret_data_without_dropping_runtime_code_names(tmp_p
 
     snapshot_root = tmp_path / "snapshot-out" / "snapshot"
     assert (snapshot_root / "runtime" / "dist" / "channel-secret-runtime.js").exists()
+    assert (snapshot_root / "runtime" / "dist" / "credential-planner-runtime.js").exists()
+    assert (snapshot_root / "runtime" / "dist" / "token-counter-runtime.js").exists()
     assert not (snapshot_root / "runtime" / "client_secret_123.apps.googleusercontent.com.json").exists()
     assert not (snapshot_root / "runtime" / ".env").exists()
 

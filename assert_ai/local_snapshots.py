@@ -61,7 +61,7 @@ def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str] = ()) -
     suffix = Path(lower_name).suffix
     if lower_name == ".env" or lower_name.endswith(".env") or "/.env" in lower_rel:
         return True
-    if "credential" in lower_name or "token" in lower_name:
+    if ("credential" in lower_name or "token" in lower_name) and suffix in SECRET_DATA_SUFFIXES:
         return True
     if "secret" in lower_name and suffix in SECRET_DATA_SUFFIXES:
         return True
