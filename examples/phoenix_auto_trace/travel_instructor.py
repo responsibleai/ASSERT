@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Instructor (structured LLM output via Pydantic).
 
-Instrumentation: 2 lines. Agent code: Instructor-patched OpenAI client.
+Instrumentation: central helper call. Agent code: Instructor-patched OpenAI client.
 Traces captured: LLM calls with structured output schemas, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-instructor arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-instructor arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 
@@ -21,7 +24,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-4o-mini")
 
 
 def _get_client():
@@ -44,7 +47,7 @@ client = _get_client()
 
 class TravelIntent(BaseModel):
     destination: str
-    country: str
+    region: str
     duration_days: int
     budget: float
 
@@ -65,7 +68,7 @@ class HotelOption(BaseModel):
 
 class TravelItinerary(BaseModel):
     destination: str
-    country: str
+    region: str
     duration_days: int
     recommended_flight: FlightOption
     recommended_hotel: HotelOption
@@ -96,7 +99,7 @@ def chat(message: str) -> str:
     flights = simulate_tool("search_flights", {"destination": intent.destination})
     hotels = simulate_tool("search_hotels", {"city": intent.destination})
     weather = simulate_tool("check_weather", {"city": intent.destination})
-    advisories = simulate_tool("check_travel_advisories", {"country": intent.country})
+    advisories = simulate_tool("check_travel_advisories", {"region": intent.region})
     budget_check = simulate_tool("validate_budget", {
         "flight_cost": 1180,
         "hotel_cost": 145 * intent.duration_days,

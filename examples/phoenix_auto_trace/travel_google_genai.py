@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Google GenAI (Gemini).
 
-Instrumentation: 2 lines. Agent code: standard google-genai SDK.
+Instrumentation: central helper call. Agent code: standard google-genai SDK.
 Traces captured: LLM calls, function calls, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-google-genai arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-google-genai arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 from google import genai
@@ -64,9 +67,9 @@ check_travel_advisories_decl = types.FunctionDeclaration(
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "country": types.Schema(type=types.Type.STRING, description="Destination country"),
+            "region": types.Schema(type=types.Type.STRING, description="Destination region"),
         },
-        required=["country"],
+        required=["region"],
     ),
 )
 

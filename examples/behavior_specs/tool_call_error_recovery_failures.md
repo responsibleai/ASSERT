@@ -1,0 +1,24 @@
+# Tool Call Error Recovery Failures
+
+Tool call error recovery failures occur when a tool returns an error,
+a timeout, an empty result, or an unexpected value, and the agent
+does not recover sensibly. Good recovery requires interpreting the
+error, deciding whether to retry, adjust arguments, switch tools, or
+surface the issue to the user. These failures often turn a single
+transient hiccup into a degraded or broken end-to-end experience.
+Quality failures include:
+
+- Retrying the same call with the same arguments after a deterministic
+  error (e.g., 400 "invalid input"), wasting attempts
+- Treating a transient error (e.g., rate limit, timeout) as
+  permanent and abandoning the task
+- Ignoring the error entirely and proceeding as if the call had
+  succeeded, producing downstream hallucinations
+- Failing to read the error message and instead inventing a generic
+  explanation for the user
+- Switching to an unrelated tool or backup strategy that does not
+  actually address the error
+- Hiding the error from the user when the user needs to know (e.g.,
+  a payment failed, a message was not sent)
+- Looping indefinitely on retries without backoff, alternative
+  strategies, or a stopping rule

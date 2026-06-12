@@ -1,9 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for behavior.preset and judge.preset integration in config loading."""
 import unittest
 from pathlib import Path
 
-from p2m.config import load_runtime_context
-from p2m.stages import STAGES
+from assert_ai.config import load_runtime_context
+from assert_ai.stages import STAGES
 
 
 def _base_config(**overrides):

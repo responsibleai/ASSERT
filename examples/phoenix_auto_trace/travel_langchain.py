@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LangChain/LangGraph (multi-node graph).
 
-Instrumentation: 2 lines. Agent code: standard LangGraph.
+Instrumentation: central helper call. Agent code: standard LangGraph.
 Traces captured: graph node executions, LLM calls per node, tool invocations,
 routing decisions, token counts, latency per node.
 
@@ -11,11 +14,11 @@ architecture, no MCP dependency, self-contained with simulated tools.
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-langchain arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-langchain arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard LangGraph
@@ -42,13 +45,13 @@ def _get_llm():
     """Return AzureChatOpenAI when Azure env vars are set, else ChatOpenAI."""
     if os.environ.get("AZURE_API_KEY") and os.environ.get("AZURE_API_BASE"):
         return AzureChatOpenAI(
-            azure_deployment=os.environ.get("P2M_AZURE_DEPLOYMENT", "gpt-5.4-mini"),
+            azure_deployment=os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini"),
             azure_endpoint=os.environ["AZURE_API_BASE"],
             api_key=os.environ["AZURE_API_KEY"],
             api_version="2024-12-01-preview",
             temperature=0,
         )
-    return ChatOpenAI(model=os.environ.get("P2M_TARGET_MODEL", "gpt-4o"), temperature=0)
+    return ChatOpenAI(model=os.environ.get("ASSERT_TARGET_MODEL", "gpt-4o"), temperature=0)
 
 
 # ── Tools (simulated via shared module) ───────────────────────
@@ -72,9 +75,9 @@ def check_weather(city: str) -> str:
 
 
 @tool
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 @tool
@@ -151,7 +154,7 @@ async def _chat_async(message: str) -> str:
 
 
 def chat(message: str) -> str:
-    """Synchronous entry point for P2M callable integration."""
+    """Synchronous entry point for ASSERT callable integration."""
     return asyncio.run(_chat_async(message))
 
 

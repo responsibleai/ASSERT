@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Anthropic Claude (native tool use).
 
-Instrumentation: 2 lines. Agent code: standard Anthropic SDK.
+Instrumentation: central helper call. Agent code: standard Anthropic SDK.
 Traces captured: LLM calls, tool use blocks, token counts, latency.
 """
 
-# pip install openinference-instrumentation-anthropic arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-anthropic arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 import anthropic

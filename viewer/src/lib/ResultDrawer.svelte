@@ -1,3 +1,6 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import {
 		getJudgeError,
@@ -10,7 +13,13 @@
 		parseCitationReferences
 	} from '$lib/citation-resolution';
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
+	import { citationWarningLabel } from '$lib/citation-warnings.js';
 	import { formatFactorLabel } from '$lib/grouping.js';
+	import {
+		stopReasonChipClass,
+		stopReasonLabel,
+		stopReasonTitle
+	} from '$lib/result-view.js';
 	import type {
 		AuditCitation,
 		AuditCitationPart,
@@ -139,12 +148,13 @@
 	}
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		const spaced = metric.replace(/_/g, ' ');
+		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 	}
 
 	function metricOutcomeText(flag: boolean | null): string {
-		if (flag === null) return 'n/a';
-		return flag ? 'flagged' : 'clear';
+		if (flag === null) return 'N/A';
+		return flag ? 'Flagged' : 'Pass';
 	}
 
 	function metricOutcomeClass(flag: boolean | null): string {
@@ -162,10 +172,10 @@
 
 	function judgmentWarningLabel(warning: string): string {
 		if (warning === 'policy_violation_without_violated_node') {
-			return 'top-level taxonomy violation is flagged, but no taxonomy node is marked violated';
+			return 'top-level policy violation is flagged, but no policy node is marked violated';
 		}
 		if (warning === 'violated_node_without_policy_violation') {
-			return 'a taxonomy node is marked violated, but the top-level taxonomy verdict is clear';
+			return 'a policy node is marked violated, but the top-level policy verdict is clear';
 		}
 		return warning.replace(/_/g, ' ');
 	}
@@ -175,7 +185,7 @@
 		if (runtimeMode === 'tool_module') return 'tools';
 		if (runtimeMode === 'simulated') return 'simulated tools';
 		if (runtimeMode === 'external') return 'external tools';
-		return hasAgenticTranscript ? 'agentic' : null;
+		return hasAgenticTranscript ? 'agentic transcript' : null;
 	}
 
 	function isStructuredCitation(value: unknown): value is AuditCitation {
@@ -275,7 +285,7 @@
 		for (let index = 0; index < references.length; index += 1) {
 			const ref = references[index];
 			withTokens += text.slice(cursor, ref.startPos);
-			const token = `@@P2M_CIT_REF_${index}@@`;
+			const token = `@@ASSERT_CIT_REF_${index}@@`;
 			replacementEntries.push([token, getCitationButtonHtml(ref.indices, ref.originalText)]);
 			withTokens += token;
 			cursor = ref.endPos;
@@ -337,7 +347,7 @@
 	}
 
 	function fallbackTurnLabel(messages: InteractionMessage[], messageIndex: number): number {
-		// Mirrors the materializer: only tester (user) and target (assistant)
+		// Mirrors the materializer: only auditor (user) and target (assistant)
 		// emit turns. Tool calls and tool messages inherit the surrounding
 		// assistant turn — they don't get their own number, but they DO show
 		// the assistant's turn label so the viewer can group them under it.
@@ -433,25 +443,15 @@
 	}
 
 	function getMessageDebugView(
-		message: InteractionMessage,
-		{ toolCallIndex = 0 }: { toolCallIndex?: number } = {}
+		_message: InteractionMessage,
+		_options: { toolCallIndex?: number } = {}
 	): MessageDebugView | null {
-		if (getMessageLlmCall(message, { toolCallIndex })) return null;
-		const raw = readDebugObject(message.raw);
-		if (!raw) return null;
-		return {
-			label: 'dbg',
-			buttonTitle: 'View stored event debug payload',
-			panelTitle: 'Stored event debug payload',
-			description:
-				'This is raw event debug data captured during inference. For external connectors it may be the only payload available.',
-			payload: raw
-		};
+		return null;
 	}
 
 	function llmSourceLabel(source: string): string {
 		if (source === 'target') return 'Target model';
-		if (source === 'tester') return 'Tester model';
+		if (source === 'auditor') return 'Tester model';
 		if (source === 'tool_simulator') return 'Tool simulator';
 		return source || 'LLM';
 	}
@@ -606,12 +606,20 @@
 		const part =
 			(citation.parts ?? []).find((entry) => entry.resolution?.status === 'resolved') ??
 			(citation.parts ?? [])[0];
-		if (!part) return 'message';
+		if (!part) return 'transcript';
 		if (part.source_kind === 'tool_arg') {
 			return part.tool_arg ? `tool arg: ${part.tool_arg}` : 'tool arg';
 		}
 		if (part.source_kind === 'tool_result') return 'tool result';
-		return 'message';
+		const turn = citationTurnNumber(part.message_id);
+		return turn !== null ? `turn ${turn}` : 'message';
+	}
+
+	function citationTurnNumber(messageId?: string | null): number | null {
+		if (!messageId) return null;
+		const idx = item.messages.findIndex((m) => m.id === messageId);
+		if (idx < 0) return null;
+		return fallbackTurnLabel(item.messages, idx);
 	}
 
 	function citationStatusLabel(citation: AuditCitation): string | null {
@@ -671,6 +679,12 @@
 		Array.isArray(activeVerdict?.citation_warnings)
 			? activeVerdict.citation_warnings.filter((warning): warning is string => typeof warning === 'string' && warning.length > 0)
 			: []
+	);
+	const activeDegradedCitationWarnings = $derived(
+		activeCitationWarnings.filter((warning) => warning.startsWith('citation_'))
+	);
+	const activeDegradedCitationWarningLabels = $derived(
+		activeDegradedCitationWarnings.map(citationWarningLabel)
 	);
 	const activeJudgmentWarnings = $derived(
 		Array.isArray(activeVerdict?.judgment_warnings)
@@ -753,66 +767,47 @@
 <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity" onclick={onClose}></div>
 
 <div class="fixed inset-4 z-50 mx-auto flex max-w-7xl flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
-	<div class="flex items-center gap-3 border-b border-border px-6 py-3 flex-shrink-0">
-		<button
-			aria-label="Close details"
-			class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text"
-			onclick={onClose}
-		>
-			<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
-		</button>
-		<div class="flex items-center gap-0.5">
-			<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx <= 0} onclick={onPrev} title="Previous (←)">
-				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7"/></svg>
+	<div class="flex flex-col gap-2 border-b border-border px-6 py-3 flex-shrink-0">
+		<div class="flex items-center gap-3">
+			<button
+				aria-label="Close details"
+				class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text"
+				onclick={onClose}
+			>
+				<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"/></svg>
 			</button>
-			<span class="min-w-[3rem] text-center text-[10px] tabular-nums text-text-muted">{navIdx + 1} / {navTotal}</span>
-			<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx >= navTotal - 1} onclick={onNext} title="Next (→)">
-				<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-			</button>
-		</div>
-		<div class="flex-1 min-w-0">
-			<h2 class="truncate text-sm font-medium text-text" title={item.header_title}>{item.header_title}</h2>
-			<div class="mt-0.5 flex flex-wrap items-center gap-2">
-				{#if item.kind === 'scenario'}
-					<span class="text-xs text-text-muted">{conversationTurnCount(item.messages)} turns</span>
-					<span class="text-xs text-text-muted">·</span>
-				{/if}
-				{#if item.kind === 'scenario' && item.context.stop_reason}
-					<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{item.context.stop_reason}</span>
-					<span class="text-xs text-text-muted">·</span>
-				{/if}
-
-				{#if runtimeLabel}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface text-text-muted">{runtimeLabel}</span>
-				{/if}
-				{#if judgeStatus(item) === 'judge_failed'}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">judge failed</span>
-				{:else if judgeStatus(item) === 'unjudged'}
-					<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
-				{/if}
-				{#if item.dimensions}
-					<span class="flex flex-wrap items-center gap-1.5">
-						{#each Object.entries(item.dimensions) as [name, value]}
-							<span class="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
-								{formatFactorLabel(name)}: {value}
-							</span>
-						{/each}
-					</span>
-				{/if}
+			<div class="flex shrink-0 items-center gap-0.5">
+				<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx <= 0} onclick={onPrev} title="Previous (←)">
+					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7"/></svg>
+				</button>
+				<span class="min-w-[3rem] text-center text-[10px] tabular-nums text-text-muted">{navIdx + 1} / {navTotal}</span>
+				<button class="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text disabled:opacity-25 disabled:pointer-events-none" disabled={navIdx >= navTotal - 1} onclick={onNext} title="Next (→)">
+					<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+				</button>
 			</div>
-		</div>
-		<div class="flex items-center gap-1.5">
-			{#each metricNames as m}
-				{@const v = getRecordFlag(item, m)}
-				{#if v !== null}
-					<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-2 py-1 text-xs">
-						<span class="text-text-muted">{metricLabel(m)}</span>
-						<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
-					</span>
-				{/if}
-			{/each}
+			<div class="flex-1 min-w-0">
+				<h2 class="truncate text-sm font-medium text-text" title={item.header_title}>{item.header_title}</h2>
+				<div class="mt-0.5 flex flex-wrap items-center gap-2">
+					{#if item.kind === 'scenario'}
+						<span class="text-xs text-text-muted">{conversationTurnCount(item.messages)} turns</span>
+						<span class="text-xs text-text-muted">·</span>
+					{/if}
+					{#if item.kind === 'scenario' && item.context.stop_reason}
+						<span class={stopReasonChipClass(item.context.stop_reason_display)} title={stopReasonTitle(item.context.stop_reason, item.context.stop_reason_display)}>
+							{stopReasonLabel(item.context.stop_reason, item.context.stop_reason_display)}
+						</span>
+						<span class="text-xs text-text-muted">·</span>
+					{/if}
+
+					{#if judgeStatus(item) === 'judge_failed'}
+						<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400">judge failed</span>
+					{:else if judgeStatus(item) === 'unjudged'}
+						<span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-2 text-text-muted">unjudged</span>
+					{/if}
+				</div>
+			</div>
 			{#if item.multi_judge}
-				<div class="flex items-center gap-0.5 ml-1">
+				<div class="flex shrink-0 items-center gap-0.5">
 					{#each item.multi_judge.votes?.[primaryMetric] ?? [] as vote}
 						{@const agreed = vote === getRecordFlag(item, primaryMetric)}
 						<span class="inline-block size-[7px] rounded-full" style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}></span>
@@ -820,6 +815,28 @@
 				</div>
 			{/if}
 		</div>
+		{#if metricNames.some((m) => getRecordFlag(item, m) !== null)}
+			<div class="flex flex-wrap items-center gap-1.5">
+				{#each metricNames as m}
+					{@const v = getRecordFlag(item, m)}
+					{#if v !== null}
+						<span class="inline-flex items-center gap-1 whitespace-nowrap rounded bg-surface-2 px-2 py-1 text-xs">
+							<span class="text-text-muted">{metricLabel(m)}</span>
+							<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
+						</span>
+					{/if}
+				{/each}
+			</div>
+		{/if}
+		{#if item.dimensions && Object.keys(item.dimensions).length > 0}
+			<div class="flex flex-wrap items-center gap-1.5">
+				{#each Object.entries(item.dimensions) as [name, value]}
+					<span class="inline-flex items-center whitespace-nowrap rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
+						{formatFactorLabel(name)}: {value}
+					</span>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<div class="flex flex-1 min-h-0">
@@ -833,9 +850,9 @@
 			onmouseout={handleReferenceMouseOut}
 		>
 			{#if item.kind === 'scenario' && item.context.description}
+				<h3 class="mb-2 text-[24px] font-semibold text-text">Scenario</h3>
 				<div class="mb-4 rounded-lg border border-border/50 bg-surface/50">
 					<button class="flex w-full items-center gap-2 px-4 py-3 text-left" onclick={() => contextExpanded = !contextExpanded}>
-						<h3 class="text-[24px] font-semibold text-text">Scenario</h3>
 						<span class="flex-1 truncate text-sm font-medium text-text">{item.header_title}</span>
 						<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform {contextExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
 					</button>
@@ -852,7 +869,7 @@
 									<div class="hidden mt-2 space-y-2">
 										{#each item.context.tools as tool}
 											<div class="rounded border border-border/30 bg-bg/50 px-3 py-2">
-												<span class="font-mono text-xs font-semibold text-purple-300">{tool.name}</span>
+												<span class="font-mono text-xs font-semibold text-text">{tool.name}</span>
 												{#if tool.description}
 													<p class="mt-0.5 text-xs text-text-secondary">{tool.description}</p>
 												{/if}
@@ -880,7 +897,7 @@
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-text-muted">Unjudged preview</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							This conversation finished inference and is available for inspection, but the judge has not scored it yet.
+							This conversation finished rollout and is available for inspection, but the judge has not scored it yet.
 						</p>
 					</div>
 				{/if}
@@ -896,15 +913,15 @@
 					<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Judgment inconsistent</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but parts of it disagree internally. Node-level taxonomy findings and the top-level taxonomy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
+							The judgment was kept, but parts of it disagree internally. Node-level policy findings and the top-level policy decision do not fully match for: {activeJudgmentWarningLabels.join('; ')}.
 						</p>
 					</div>
 				{/if}
-				{#if activeCitationWarnings.length > 0}
+				{#if activeDegradedCitationWarnings.length > 0}
 					<div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
 						<div class="text-xs font-semibold uppercase tracking-wider text-sky-400">Evidence degraded</div>
 						<p class="mt-2 text-sm text-text-secondary leading-relaxed">
-							The judgment was kept, but some cited evidence could not be grounded cleanly. Citation links or transcript highlights may be incomplete for: {activeCitationWarnings.join(', ')}.
+							The judgment was kept, but some cited evidence could not be grounded cleanly. Citation links or transcript highlights may be incomplete for: {activeDegradedCitationWarningLabels.join(', ')}.
 						</p>
 					</div>
 				{/if}
@@ -933,13 +950,13 @@
 							{/each}
 						</div>
 						<p class="px-3 py-2 text-xs leading-relaxed text-zinc-400">
-							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, taxonomy reasoning, and transcript highlights follow this verdict.
+							Inspecting Judge {activeJudgeIndex + 1}. Dimension explanations, policy reasoning, and transcript highlights follow this verdict.
 						</p>
 					</div>
 				{/if}
 				{#if activeVerdict?.narrative}
 					<div class="rounded-lg border border-border bg-surface p-4">
-						<div class="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">Result summary</div>
+						<div class="mb-2 text-xs font-semibold text-text-muted">Conversation summary</div>
 						<p class="text-sm text-text-secondary leading-relaxed">{activeVerdict.narrative}</p>
 					</div>
 				{/if}
@@ -949,7 +966,7 @@
 					{#if v !== null}
 						<div class="rounded-lg border border-border bg-surface p-4">
 							<div class="mb-2 flex items-center justify-between">
-								<span class="text-xs font-semibold uppercase tracking-wider text-text-muted">{metricLabel(m)}</span>
+								<span class="text-[16px] font-semibold text-text">{metricLabel(m)}</span>
 								<div class="flex items-center gap-2">
 									{#if item.multi_judge && item.multi_judge.votes?.[m]}
 										<div class="flex items-center gap-0.5">
@@ -958,9 +975,9 @@
 												<span class="inline-block size-[7px] rounded-full" style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}></span>
 											{/each}
 										</div>
-										<span class="text-[10px] text-text-muted tabular-nums">flagged {metricRateText(item.multi_judge.means?.[m] ?? 0)}</span>
+										<span class="text-[10px] text-text-muted tabular-nums">Flagged {metricRateText(item.multi_judge.means?.[m] ?? 0)}</span>
 									{/if}
-									<span class="text-xl font-bold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
+									<span class="text-[16px] font-bold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
 								</div>
 							</div>
 							{#if dimensionJustification}
@@ -977,18 +994,36 @@
 												<div class="flex items-start justify-between gap-2">
 													<div class="min-w-0 flex-1">
 														<div
-															class="truncate text-xs font-semibold text-text"
-															title={nodeName ?? 'Unnamed taxonomy node'}
+															class="truncate text-xs font-semibold text-text-muted"
+															title={nodeName ?? 'Unnamed policy node'}
 														>
-															{nodeName ?? 'Unnamed taxonomy node'}
+															{nodeName ?? 'Unnamed policy node'}
 														</div>
 													</div>
 													<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
 														<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {violated ? 'bg-score-fail/10 text-score-fail' : violated === null ? 'bg-surface-2 text-text-muted' : 'bg-score-pass/10 text-score-pass'}">
-															{violated === null ? 'not assessed' : violated ? 'violated' : 'clear'}
+															{violated === null ? 'Not assessed' : violated ? 'Flagged' : 'Pass'}
 														</span>
 														{#if node.confidence}
-															<span class="text-[10px] text-text-muted">{node.confidence} confidence</span>
+															{@const conf = node.confidence}
+															{@const confColor = conf === 'high' ? 'var(--color-score-pass, #1a7f37)' : conf === 'medium' ? '#d29922' : 'var(--color-score-fail, #cf222e)'}
+															<span class="inline-flex items-center gap-1 text-[10px] text-text-muted" title="{conf} confidence">
+																{#if conf === 'high'}
+																	<!-- Outline circle with check -->
+																	<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke={confColor} stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+																		<circle cx="8" cy="8" r="6.5"/>
+																		<path d="M5 8.25 7.25 10.5l4-4.5"/>
+																	</svg>
+																{:else}
+																	<!-- Outline triangle with exclamation -->
+																	<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke={confColor} stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+																		<path d="M8 2.25 14.25 13H1.75L8 2.25Z"/>
+																		<path d="M8 6.5v3"/>
+																		<circle cx="8" cy="11.4" r="0.55" fill={confColor} stroke="none"/>
+																	</svg>
+																{/if}
+																<span>{conf} confidence</span>
+															</span>
 														{/if}
 													</div>
 												</div>
@@ -1043,7 +1078,7 @@
 
 		<div class="w-3/5 overflow-y-auto p-5">
 			<h3 class="mb-4 text-[24px] font-semibold text-text">
-				Result · {conversationTurnCount(item.messages)} turns
+				Conversation · {conversationTurnCount(item.messages)} turns
 			</h3>
 			{#if agentTimeline.length >= 2}
 				<div class="mb-4 flex flex-wrap items-center gap-1 rounded-md border border-border/60 bg-surface-2/40 px-3 py-2 text-[11px] text-text-muted">
@@ -1061,6 +1096,32 @@
 							{segment.agent}
 						</button>
 					{/each}
+				</div>
+			{/if}
+			{#if item.kind === 'scenario' && item.context.stop_reason_display}
+				{@const display = item.context.stop_reason_display}
+				{@const calloutBoxClass =
+					display.tone === 'error'
+						? 'mb-4 rounded-lg border border-rose-500/20 bg-rose-500/5 px-4 py-3'
+						: display.tone === 'info'
+						? 'mb-4 rounded-lg border border-border bg-surface-2/40 px-4 py-3'
+						: 'mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3'}
+				{@const calloutLabelClass =
+					display.tone === 'error'
+						? 'text-xs font-semibold uppercase tracking-wide text-rose-400'
+						: display.tone === 'info'
+						? 'text-xs font-semibold uppercase tracking-wide text-text-secondary'
+						: 'text-xs font-semibold uppercase tracking-wide text-amber-400'}
+				<div class={calloutBoxClass}>
+					<div class={calloutLabelClass}>
+						{display.label}
+					</div>
+					<p class="mt-1 text-sm text-text-secondary">{display.description}</p>
+					{#if item.context.stop_reason}
+						<p class="mt-2 text-[11px] text-text-muted">
+							Stop reason: <code class="rounded bg-black/20 px-1 py-0.5">{item.context.stop_reason}</code>
+						</p>
+					{/if}
 				</div>
 			{/if}
 			<div class="space-y-3">
@@ -1084,30 +1145,30 @@
 							data-message-body-key={bodyKey}
 						>
 							<div class="flex-shrink-0 mt-1">
-								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-yellow-500/15 text-yellow-400">S</div>
+								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-zinc-500/15 text-zinc-400">S</div>
 							</div>
-							<div class="w-[85%] rounded-lg bg-yellow-500/8 border border-yellow-500/20 {isHighlighted ? 'ring-2 ring-interactive' : ''} overflow-hidden">
+							<div class="w-[85%] rounded-lg bg-zinc-500/8 border border-zinc-500/25 {isHighlighted ? 'ring-2 ring-interactive' : ''} overflow-hidden">
 								<button
-									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-yellow-500/5 transition-colors"
+									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-zinc-500/10 transition-colors"
 									onclick={() => toggleMessageBody(bodyKey)}
 								>
-									<svg class="chevron h-3 w-3 text-yellow-400/60 transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-									<span class="text-xs font-semibold text-yellow-400">{isSystemPromptSet ? 'System Prompt Set' : 'System Prompt'}</span>
+									<svg class="chevron h-3 w-3 text-zinc-400/70 transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+									<span class="text-xs font-semibold text-text-muted">{isSystemPromptSet ? 'System prompt set' : 'System prompt'}</span>
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
 									{/if}
 									{#if messageLlmCall}
-										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-yellow-400/60">llm</span>
+										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-zinc-400/70">llm</span>
 									{:else if messageDebug}
-										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-yellow-400/60">{messageDebug.label}</span>
+										<span class="ml-auto text-[10px] font-medium text-zinc-400/70">{messageDebug.label}</span>
 									{/if}
 								</button>
 								{#if hasExpandedBody(bodyKey)}
-									<div data-message-collapse-body class="px-4 pb-3 border-t border-yellow-500/10">
+									<div data-message-collapse-body class="px-4 pb-3 border-t border-zinc-500/15">
 										<div class="text-sm text-text-secondary leading-relaxed prose max-w-none pt-2.5">{@html renderMessageHtml(message, messageCitations)}</div>
 										{#if messageLlmCall}
-											<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
-												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">
+											<div class="mt-3 rounded border border-zinc-500/20 bg-black/20 p-3">
+												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400/80">
 													<span>LLM Call</span>
 													<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
 												</div>
@@ -1115,14 +1176,14 @@
 													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
 													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
 												</div>
-												<div class="mt-3 border-t border-yellow-500/10 pt-3">
+												<div class="mt-3 border-t border-zinc-500/15 pt-3">
 													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
 													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
 												</div>
 											</div>
 										{:else if messageDebug}
-											<div class="mt-3 rounded border border-yellow-500/15 bg-black/20 p-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-yellow-400/70">{messageDebug.panelTitle}</div>
+											<div class="mt-3 rounded border border-zinc-500/20 bg-black/20 p-3">
+												<div class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400/80">{messageDebug.panelTitle}</div>
 												<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
 												<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
 											</div>
@@ -1147,15 +1208,15 @@
 								data-message-body-key={toolCallBodyKey}
 							>
 								<div class="flex-shrink-0 mt-1">
-									<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-purple-500/15 text-purple-400">⚡</div>
+									<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-text-muted/20 text-text">⚡</div>
 								</div>
-								<div class="w-[85%] rounded-lg bg-purple-500/8 border border-purple-500/20 overflow-hidden">
+								<div class="w-[85%] rounded-lg bg-text-muted/12 border border-border/60 overflow-hidden">
 									<button
-										class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors"
+										class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-text-muted/15 transition-colors"
 										onclick={() => toggleMessageBody(toolCallBodyKey)}
 									>
-										<svg class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150 {hasExpandedBody(toolCallBodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-										<span class="text-xs font-semibold text-purple-400">Tool Call</span>
+										<svg class="chevron h-3 w-3 text-text-muted transition-transform duration-150 {hasExpandedBody(toolCallBodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+										<span class="text-xs font-semibold text-text-muted">Tool call</span>
 										<span class="text-xs font-mono text-text-muted">{toolCall.function}</span>
 										{#if toolCallIndex === 0 && assistantAgentBadge}
 											<span
@@ -1164,17 +1225,17 @@
 											>{assistantAgentBadge}</span>
 										{/if}
 										{#if toolCallLlmCall}
-											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">llm</span>
+											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted">llm</span>
 										{:else if toolCallDebug}
-											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">{toolCallDebug.label}</span>
+											<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted">{toolCallDebug.label}</span>
 										{/if}
 									</button>
 									{#if hasExpandedBody(toolCallBodyKey)}
-										<div data-message-collapse-body class="px-4 pb-3 border-t border-purple-500/10">
+										<div data-message-collapse-body class="px-4 pb-3 border-t border-border/50">
 											<pre class="pt-2.5 text-xs text-text-secondary bg-bg/50 rounded p-2 overflow-x-auto {highlightedToolFocus?.messageId === message.id && highlightedToolFocus?.sourceKind === 'tool_arg' && (!highlightedToolFocus.toolCallId || highlightedToolFocus.toolCallId === toolCall.id) ? 'citation-tool-arg-focus citation-focused-block' : ''}">{JSON.stringify(toolCall.arguments, null, 2)}</pre>
 											{#if toolCallLlmCall}
-												<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-													<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
+												<div class="mt-3 rounded border border-border/50 bg-bg/50 p-3">
+													<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
 														<span>LLM Call</span>
 														<span class="text-text-muted">{llmSourceLabel(toolCallLlmCall.source)} · {llmApiModeLabel(toolCallLlmCall.api_mode)}</span>
 													</div>
@@ -1182,14 +1243,14 @@
 														<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
 														<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.request, null, 2)}</pre>
 													</div>
-													<div class="mt-3 border-t border-purple-500/10 pt-3">
+													<div class="mt-3 border-t border-border/50 pt-3">
 														<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
 														<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallLlmCall.response, null, 2)}</pre>
 													</div>
 												</div>
 											{:else if toolCallDebug}
-												<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-													<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{toolCallDebug.panelTitle}</div>
+												<div class="mt-3 rounded border border-border/50 bg-bg/50 p-3">
+													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{toolCallDebug.panelTitle}</div>
 													<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{toolCallDebug.description}</p>
 													<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(toolCallDebug.payload, null, 2)}</pre>
 												</div>
@@ -1207,15 +1268,15 @@
 							data-message-body-key={bodyKey}
 						>
 							<div class="flex-shrink-0 mt-1">
-								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-purple-500/15 text-purple-400">⚙</div>
+								<div class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold bg-text-muted/20 text-text">⚙</div>
 							</div>
-							<div class="w-[85%] rounded-lg bg-purple-500/5 border border-purple-500/15 {isHighlighted ? 'ring-2 ring-interactive' : ''} {highlightedToolFocus?.messageId === message.id ? (highlightedToolFocus?.sourceKind === 'tool_arg' ? 'citation-tool-arg-focus' : highlightedToolFocus?.sourceKind === 'tool_result' ? 'citation-tool-result-focus' : 'citation-tool-message-focus') : ''} overflow-hidden">
+							<div class="w-[85%] rounded-lg bg-text-muted/12 border border-border/60 {isHighlighted ? 'ring-2 ring-interactive' : ''} {highlightedToolFocus?.messageId === message.id ? (highlightedToolFocus?.sourceKind === 'tool_arg' ? 'citation-tool-arg-focus' : highlightedToolFocus?.sourceKind === 'tool_result' ? 'citation-tool-result-focus' : 'citation-tool-message-focus') : ''} overflow-hidden">
 								<button
-									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-purple-500/5 transition-colors"
+									class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-text-muted/15 transition-colors"
 									onclick={() => toggleMessageBody(bodyKey)}
 								>
-									<svg class="chevron h-3 w-3 text-purple-400/60 transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
-									<span class="text-xs font-semibold text-purple-400">Tool Result{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
+									<svg class="chevron h-3 w-3 text-text-muted transition-transform duration-150 {hasExpandedBody(bodyKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M9 5l7 7-7 7"/></svg>
+									<span class="text-xs font-semibold text-text-muted">Tool result{turnLabel != null ? ` · Turn ${turnLabel}` : ''}</span>
 									{#if isCited}
 										<span class="inline-flex items-center rounded-full bg-score-border/15 px-2 py-0.5 text-[10px] font-semibold text-score-border">cited</span>
 									{/if}
@@ -1223,17 +1284,17 @@
 										<span class="text-xs font-mono text-text-muted">{message.function}</span>
 									{/if}
 									{#if messageLlmCall}
-										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">llm</span>
+										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted">llm</span>
 									{:else if messageDebug}
-										<span class="ml-auto text-[10px] font-mono font-bold uppercase tracking-wide text-purple-400/60">{messageDebug.label}</span>
+										<span class="ml-auto text-[10px] font-medium text-text-muted">{messageDebug.label}</span>
 									{/if}
 								</button>
 								{#if hasExpandedBody(bodyKey)}
-									<div data-message-collapse-body class="px-4 pb-3 border-t border-purple-500/10">
+									<div data-message-collapse-body class="px-4 pb-3 border-t border-border/50">
 										<div class="text-sm text-text leading-relaxed prose max-w-none pt-2.5 {highlightedToolFocus?.messageId === message.id ? 'citation-focused-block' : ''}">{@html renderMessageHtml(message, messageCitations)}</div>
 										{#if messageLlmCall}
-											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">
+											<div class="mt-3 rounded border border-border/50 bg-bg/50 p-3">
+												<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
 													<span>LLM Call</span>
 													<span class="text-text-muted">{llmSourceLabel(messageLlmCall.source)} · {llmApiModeLabel(messageLlmCall.api_mode)}</span>
 												</div>
@@ -1241,14 +1302,14 @@
 													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Request</div>
 													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.request, null, 2)}</pre>
 												</div>
-												<div class="mt-3 border-t border-purple-500/10 pt-3">
+												<div class="mt-3 border-t border-border/50 pt-3">
 													<div class="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Response</div>
 													<pre class="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageLlmCall.response, null, 2)}</pre>
 												</div>
 											</div>
 										{:else if messageDebug}
-											<div class="mt-3 rounded border border-purple-500/15 bg-black/20 p-3">
-												<div class="text-[11px] font-semibold uppercase tracking-wide text-purple-400/70">{messageDebug.panelTitle}</div>
+											<div class="mt-3 rounded border border-border/50 bg-bg/50 p-3">
+												<div class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{messageDebug.panelTitle}</div>
 												<p class="mt-1 text-[11px] leading-relaxed text-text-muted">{messageDebug.description}</p>
 												<pre class="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap break-all text-[11px] font-mono text-text-muted">{JSON.stringify(messageDebug.payload, null, 2)}</pre>
 											</div>
@@ -1283,7 +1344,7 @@
 									{/if}
 									{#if messageLlmCall}
 										<button
-											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors"
+											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide transition-colors {isRawPanelOpen(rawPanelKey) ? 'bg-interactive/15 text-interactive ring-1 ring-interactive/30' : 'text-text-muted/70 hover:text-text-muted hover:bg-surface'}"
 											title="View owned LLM request and response"
 											onclick={() =>
 												toggleRawPanel(rawPanelKey, {
@@ -1295,7 +1356,7 @@
 										</button>
 									{:else if messageDebug}
 										<button
-											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wide text-text-muted/70 hover:text-text-muted hover:bg-surface transition-colors"
+											class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors {isRawPanelOpen(rawPanelKey) ? 'bg-interactive/15 text-interactive ring-1 ring-interactive/30' : 'text-text-muted/70 hover:text-text-muted hover:bg-surface'}"
 											title={messageDebug.buttonTitle}
 											onclick={() =>
 												toggleRawPanel(rawPanelKey, {
@@ -1338,7 +1399,9 @@
 					{/if}
 				{/each}
 				{#if item.messages.length === 0}
-					<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{#if !(item.kind === 'scenario' && item.context.stop_reason_display)}
+						<p class="text-sm text-text-muted italic">No transcript available for this result.</p>
+					{/if}
 				{/if}
 			</div>
 		</div>

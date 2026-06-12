@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - name: Upload dist (PR build, short retention)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Upload dist (main / dispatch, long retention)
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 90
+          if-no-files-found: error
+
+  test-install:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.11', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # Checkout to a subdirectory so the workspace root does not contain
+      # `assert_ai/`. This prevents pytest from importing the source tree
+      # instead of the installed wheel.
+      - uses: actions/checkout@v4
+        with:
+          path: source
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: pip install $(ls dist/*.whl) pytest
+        shell: bash
+      - run: assert-ai --help
+      - name: Test installed wheel
+        # Runs a small subset of the unit tests against the installed wheel
+        # (not the source tree). --import-mode=importlib avoids sys.path
+        # manipulation so `assert_ai` always resolves to the wheel. This
+        # catches packaging regressions like missing data files (e.g. library
+        # YAMLs) or missing modules at import time.
+        run: pytest source/tests/test_import_smoke.py source/tests/test_library_loader.py -v --import-mode=importlib
+        shell: bash

@@ -1,13 +1,40 @@
 [project]
-name = "p2m-policy"
+name = "assert-ai"
 version = "0.1.0"
 description = "YAML-driven safety evaluation pipeline with LiteLLM-backed stages"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "ASSERT contributors" },
+]
+keywords = [
+  "safety",
+  "evaluation",
+  "llm",
+  "agent",
+  "responsible-ai",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+]
 dependencies = [
   "click>=8.0",
   "litellm>=1.79.1",
   "matplotlib>=3.10.8",
+  "opentelemetry-api>=1.39.0",
+  "opentelemetry-sdk>=1.39.0",
   "pydantic>=2.0",
   "python-dotenv>=1.2.2",
   "PyYAML>=6.0",
@@ -20,13 +47,19 @@ otel = [
   "arize-phoenix>=15.0.0",
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
-  "opentelemetry-api>=1.39.0",
-  "opentelemetry-sdk>=1.39.0",
 ]
 langgraph = [
   "langchain-core>=1.3.3",
   "langchain-openai>=1.1.14",
   "langgraph>=1.1.8",
+]
+dspy = [
+  # Pinned for the incident-triage demo'
+  # optimize_with_gepa.ipynb notebooks, which use dspy.GEPA (Agrawal et al.,
+  # arXiv:2507.19457). GEPA landed in DSPy ~2.7; cap at <3 until the API
+  # stabilizes. The four eval configs themselves do NOT import DSPy at
+  # runtime, so the base install works without this extra.
+  "dspy-ai>=2.7,<3",
 ]
 analysis = [
   "markdown-it-py>=3.0.0",
@@ -58,7 +91,7 @@ examples = [
   "pydantic-ai>=0.8.1",
   "smolagents>=1.22.0",
   # Framework-specific OpenInference instrumentors used by the
-  # examples/phoenix_auto_trace/* demos. `phoenix.otel.register(auto_instrument=True)`
+  # examples/phoenix_auto_trace/* demos. `assert_ai.auto_trace.enable()`
   # auto-loads every installed `openinference-instrumentation-*` package and a
   # single version mismatch crashes the whole call, so the upper bounds below
   # match the framework versions pinned above. The crewai instrumentor pin is
@@ -72,29 +105,39 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
-  "p2m-policy[otel,langgraph,analysis,examples,regression]",
+  "assert-ai[otel,langgraph,analysis,examples,regression]",
 ]
 dev = [
   "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
 ]
 
-[tool.uv]
-index-url = "https://pypi.org/simple"
-
 [project.scripts]
-p2m = "p2m.cli:cli"
-assert = "p2m.cli:cli"
+assert-ai = "assert_ai.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/responsibleai/ASSERT"
+Repository = "https://github.com/responsibleai/ASSERT"
+Issues = "https://github.com/responsibleai/ASSERT/issues"
+Documentation = "https://github.com/responsibleai/ASSERT#readme"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"assert_ai.internal_pipeline_prompts" = ["*.md"]
+"assert_ai.library.judges" = ["*.yaml", "*.md"]
+"assert_ai.library.behaviors" = ["*.yaml", "*.md"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "p2m-policy[otel,langgraph,examples]",
+    "assert-ai[otel,langgraph,examples]",
 ]
 
 [tool.setuptools.packages.find]
-include = ["p2m*", "examples*"]
+include = ["assert_ai*"]

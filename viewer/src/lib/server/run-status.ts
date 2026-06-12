@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { listSubdirectories, readJsonFile, isSafeArtifactId, runDirPath, RUN_MANIFEST_FILE } from './artifacts.js';
 import { ARTIFACTS_ROOT } from './config.js';
 import type { Manifest } from '$lib/types.js';

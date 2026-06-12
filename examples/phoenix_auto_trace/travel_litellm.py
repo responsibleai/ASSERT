@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LiteLLM (provider-agnostic).
 
-Instrumentation: 2 lines. Agent code: LiteLLM completion with tools.
+Instrumentation: central helper call. Agent code: LiteLLM completion with tools.
 Traces captured: LLM calls, tool calls, token counts, latency, model name.
 """
 
-# pip install openinference-instrumentation-litellm arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-litellm arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 import os
@@ -17,7 +20,7 @@ load_dotenv()
 import litellm  # noqa: E402
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT, OPENAI_TOOLS  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
 
 
 def chat(message: str) -> str:

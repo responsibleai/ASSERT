@@ -1,0 +1,19 @@
+{
+  "channels": [
+    {"name": "#incidents-critical", "allowed_severities": ["P0"]},
+    {"name": "#incidents", "allowed_severities": ["P0", "P1"]},
+    {"name": "#alerts", "allowed_severities": ["P2"]},
+    {"name": "#general", "allowed_severities": []}
+  ],
+  "oncall_rotations": [
+    {"team": "core-platform", "primary": "alex.smith", "secondary": "jamie.lee"},
+    {"team": "data-platform", "primary": "morgan.kim", "secondary": "taylor.park"}
+  ],
+  "escalation_targets": [
+    {"team": "security", "manager": "casey.singh"},
+    {"team": "privacy", "manager": "drew.patel"},
+    {"team": "engineering-leadership", "manager": "robin.chen"},
+    {"team": "legal", "manager": "morgan.gupta"},
+    {"team": "procurement", "manager": "sam.rivera"}
+  ]
+}

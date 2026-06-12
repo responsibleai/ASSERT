@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import json
 import os
 import shutil
@@ -7,7 +10,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from p2m.viewer_read_model import ViewerReadModelBuildError, build_run_viewer_artifacts
+from assert_ai.viewer_read_model import ViewerReadModelBuildError, build_run_viewer_artifacts
 from tests.node_runner import node_supports_ts, node_ts_args
 
 
@@ -36,6 +39,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
 
         data_source = (
             DATA_SRC.read_text(encoding="utf-8")
+            .replace("import { env } from '$env/dynamic/private';", "const env = process.env;")
             .replace("./config.js", "./config.ts")
             .replace("./dimensions.js", "./dimensions.ts")
             .replace("./artifacts.js", "./artifacts.ts")
@@ -653,6 +657,237 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["previewDrawerMessages"], 0)
             self.assertEqual(payload["previewTotal"], 1)
             self.assertEqual(payload["auditScores"], 0)
+
+    def test_load_run_page_data_exposes_refusal_stop_reason_display(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            harness_dir = tmp_root / "harness"
+            harness_dir.mkdir()
+            data_path = self._copy_data_harness(harness_dir)
+
+            artifacts_root = tmp_root / "artifacts" / "results"
+            suite_dir = artifacts_root / "suite-a"
+            preview_run_dir = suite_dir / "run-preview"
+            scored_run_dir = suite_dir / "run-scored"
+            preview_run_dir.mkdir(parents=True, exist_ok=True)
+            scored_run_dir.mkdir(parents=True, exist_ok=True)
+
+            (suite_dir / "suite.json").write_text(
+                json.dumps({"created_at": "2026-04-02T00:00:00Z"}),
+                encoding="utf-8",
+            )
+            (suite_dir / "taxonomy.json").write_text(
+                json.dumps(
+                    {
+                        "behavior_categories": [
+                            {"name": "behavior", "definition": "def", "permissible": False},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (suite_dir / "test_set.jsonl").write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "type": "scenario",
+                            "test_case_id": seed_id,
+                            "behavior": "behavior",
+                            "dimensions": {"behavior": "behavior"},
+                            "seed": {
+                                "title": title,
+                                "description": "Scenario description",
+                            },
+                        }
+                    )
+                    for seed_id, title in [
+                        ("tester-refused", "Tester refused"),
+                        ("target-refused", "Target refused"),
+                        ("target-errored", "Target errored"),
+                        ("stopped-early", "Stopped early"),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def transcript_row(seed_id: str, stop_reason: str, actor: str, view: list[str]) -> dict[str, object]:
+                return {
+                    "type": "scenario",
+                    "test_case_id": seed_id,
+                    "behavior": "behavior",
+                    "dimensions": {"behavior": "behavior"},
+                    "stop_reason": stop_reason,
+                    "target": "target-model",
+                    "tester_model": "tester-model",
+                    "events": [
+                        {
+                            "view": view,
+                            "actor": actor,
+                            "edit": {
+                                "type": "add_message",
+                                "message": {
+                                    "role": "system",
+                                    "content": f"[{stop_reason}]",
+                                },
+                            },
+                        }
+                    ],
+                    "llm_calls": [],
+                }
+
+            transcript_rows = [
+                transcript_row("tester-refused", "tester_input_refused", "tester", ["system", "combined"]),
+                transcript_row("target-refused", "target_input_refused", "target", ["target", "combined"]),
+                transcript_row("target-errored", "target_error", "target", ["target", "combined"]),
+                transcript_row("stopped-early", "weird_custom_reason", "tester", ["system", "combined"]),
+            ]
+            for run_dir in [preview_run_dir, scored_run_dir]:
+                (run_dir / "inference_set.jsonl").write_text(
+                    "".join(json.dumps(row) + "\n" for row in transcript_rows),
+                    encoding="utf-8",
+                )
+
+            (preview_run_dir / "manifest.json").write_text(
+                json.dumps({"status": "running", "stages": {"inference": "running"}}),
+                encoding="utf-8",
+            )
+            (scored_run_dir / "manifest.json").write_text(
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
+                encoding="utf-8",
+            )
+
+            unscorable_stop_reasons = {
+                "tester_input_refused",
+                "target_input_refused",
+                "target_error",
+                "tester_error",
+            }
+
+            def _score_row_for(row: dict[str, object]) -> dict[str, object]:
+                base: dict[str, object] = {
+                    "type": "scenario",
+                    "test_case_id": row["test_case_id"],
+                    "behavior": "behavior",
+                    "dimensions": {"behavior": "behavior"},
+                    "judge_model": "judge-model",
+                    "target": "target-model",
+                    "tester_model": "tester-model",
+                }
+                stop_reason = row.get("stop_reason")
+                if isinstance(stop_reason, str) and stop_reason in unscorable_stop_reasons:
+                    base["judge_status"] = "scoring_skipped"
+                    base["judge_error"] = f"scoring_skipped: {stop_reason}"
+                    base["verdict"] = {}
+                else:
+                    base["judge_status"] = "ok"
+                    base["verdict"] = {
+                        "dimensions": {"overrefusal": False, "policy_violation": False},
+                        "justification": "ok",
+                        "node_judgments": [],
+                    }
+                return base
+            (scored_run_dir / "scores.jsonl").write_text(
+                "".join(
+                    json.dumps(_score_row_for(row)) + "\n"
+                    for row in transcript_rows
+                ),
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ARTIFACTS_ROOT": str(artifacts_root),
+                    "MEASUREMENTS_ROOT": str(tmp_root),
+                }
+            )
+            script = textwrap.dedent(
+                f"""\
+                const {{ loadRunPageData, loadScenarioDrawerItem }} = await import({json.dumps(data_path.as_uri())});
+                const {{ inferJudgeStatus }} = await import({json.dumps((harness_dir / 'judgment.ts').as_uri())});
+                const previewPage = loadRunPageData('suite-a', 'run-preview');
+                const scoredPage = loadRunPageData('suite-a', 'run-scored', 'audit');
+                const previewRows = Object.fromEntries(previewPage.inferencePreviewRows.map((row) => [row.test_case_id, row]));
+                const scoredRows = Object.fromEntries(scoredPage.auditScores.map((row) => [row.test_case_id, row]));
+                const previewDrawer = await loadScenarioDrawerItem('suite-a', 'run-preview', 'tester-refused');
+                const scoredDrawer = await loadScenarioDrawerItem('suite-a', 'run-scored', 'target-refused');
+                const errorDrawer = await loadScenarioDrawerItem('suite-a', 'run-scored', 'target-errored');
+                const fallbackDrawer = await loadScenarioDrawerItem('suite-a', 'run-scored', 'stopped-early');
+                console.log(JSON.stringify({{
+                  previewTesterTurns: previewRows['tester-refused']?.turns_count ?? null,
+                  previewTesterLabel: previewRows['tester-refused']?.stop_reason_display?.label ?? null,
+                  previewTesterTone: previewRows['tester-refused']?.stop_reason_display?.tone ?? null,
+                  previewTesterDescription: previewRows['tester-refused']?.stop_reason_display?.description ?? null,
+                  previewTargetLabel: previewRows['target-refused']?.stop_reason_display?.label ?? null,
+                  previewTargetTone: previewRows['target-refused']?.stop_reason_display?.tone ?? null,
+                  previewErrorLabel: previewRows['target-errored']?.stop_reason_display?.label ?? null,
+                  previewErrorTone: previewRows['target-errored']?.stop_reason_display?.tone ?? null,
+                  previewFallbackLabel: previewRows['stopped-early']?.stop_reason_display?.label ?? null,
+                  previewFallbackTone: previewRows['stopped-early']?.stop_reason_display?.tone ?? null,
+                  previewDrawerMessages: previewDrawer?.messages.length ?? null,
+                  previewDrawerLabel: previewDrawer?.context.stop_reason_display?.label ?? null,
+                  previewDrawerTone: previewDrawer?.context.stop_reason_display?.tone ?? null,
+                  scoredTesterTurns: scoredRows['tester-refused']?.metadata?.turns_count ?? null,
+                  scoredTesterLabel: scoredRows['tester-refused']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredTesterTone: scoredRows['tester-refused']?.metadata?.stop_reason_display?.tone ?? null,
+                  scoredTargetLabel: scoredRows['target-refused']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredErrorLabel: scoredRows['target-errored']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredErrorTone: scoredRows['target-errored']?.metadata?.stop_reason_display?.tone ?? null,
+                  scoredFallbackLabel: scoredRows['stopped-early']?.metadata?.stop_reason_display?.label ?? null,
+                  scoredFallbackTone: scoredRows['stopped-early']?.metadata?.stop_reason_display?.tone ?? null,
+                  scoredTesterJudgeStatus: inferJudgeStatus(scoredRows['tester-refused'] ?? {{}}, ['overrefusal', 'policy_violation']),
+                  scoredTargetJudgeStatus: inferJudgeStatus(scoredRows['target-refused'] ?? {{}}, ['overrefusal', 'policy_violation']),
+                  scoredErrorJudgeStatus: inferJudgeStatus(scoredRows['target-errored'] ?? {{}}, ['overrefusal', 'policy_violation']),
+                  scoredFallbackJudgeStatus: inferJudgeStatus(scoredRows['stopped-early'] ?? {{}}, ['overrefusal', 'policy_violation']),
+                  scoredDrawerMessages: scoredDrawer?.messages.length ?? null,
+                  scoredDrawerLabel: scoredDrawer?.context.stop_reason_display?.label ?? null,
+                  errorDrawerLabel: errorDrawer?.context.stop_reason_display?.label ?? null,
+                  errorDrawerTone: errorDrawer?.context.stop_reason_display?.tone ?? null,
+                  fallbackDrawerLabel: fallbackDrawer?.context.stop_reason_display?.label ?? null,
+                  fallbackDrawerTone: fallbackDrawer?.context.stop_reason_display?.tone ?? null
+                }}));
+                """
+            )
+            result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["previewTesterTurns"], 0)
+            self.assertEqual(payload["previewTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["previewTesterTone"], "refusal")
+            self.assertIn("tester refused", payload["previewTesterDescription"])
+            self.assertEqual(payload["previewTargetLabel"], "Target refused the input")
+            self.assertEqual(payload["previewTargetTone"], "refusal")
+            self.assertEqual(payload["previewErrorLabel"], "Target error")
+            self.assertEqual(payload["previewErrorTone"], "error")
+            self.assertEqual(payload["previewFallbackLabel"], "Stopped early")
+            self.assertEqual(payload["previewFallbackTone"], "info")
+            self.assertEqual(payload["previewDrawerMessages"], 0)
+            self.assertEqual(payload["previewDrawerLabel"], "Refused before inference")
+            self.assertEqual(payload["previewDrawerTone"], "refusal")
+            self.assertEqual(payload["scoredTesterTurns"], 0)
+            self.assertEqual(payload["scoredTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["scoredTesterTone"], "refusal")
+            self.assertEqual(payload["scoredTargetLabel"], "Target refused the input")
+            self.assertEqual(payload["scoredErrorLabel"], "Target error")
+            self.assertEqual(payload["scoredErrorTone"], "error")
+            self.assertEqual(payload["scoredFallbackLabel"], "Stopped early")
+            self.assertEqual(payload["scoredFallbackTone"], "info")
+            self.assertEqual(payload["scoredDrawerMessages"], 1)
+            self.assertEqual(payload["scoredDrawerLabel"], "Target refused the input")
+            self.assertEqual(payload["errorDrawerLabel"], "Target error")
+            self.assertEqual(payload["errorDrawerTone"], "error")
+            self.assertEqual(payload["fallbackDrawerLabel"], "Stopped early")
+            self.assertEqual(payload["fallbackDrawerTone"], "info")
+            # Unscorable stop_reasons (refusals + errors) are skipped by the
+            # judge stage with judge_status="scoring_skipped"; the viewer's
+            # inferJudgeStatus should preserve that distinction so the page
+            # banner can separate "judge failures" from deliberate skips.
+            self.assertEqual(payload["scoredTesterJudgeStatus"], "scoring_skipped")
+            self.assertEqual(payload["scoredTargetJudgeStatus"], "scoring_skipped")
+            self.assertEqual(payload["scoredErrorJudgeStatus"], "scoring_skipped")
+            self.assertEqual(payload["scoredFallbackJudgeStatus"], "ok")
 
     def test_load_run_page_data_rejects_malformed_interior_live_transcript_line(self) -> None:
         with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
@@ -1723,11 +1958,223 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload[0]["status"], "has_results")
 
 
+    def test_run_metrics_policy_violation_by_permissibility(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            metrics_path = harness_dir / "metrics.ts"
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ computeRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
+                const behaviors = [
+                  {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
+                ];
+                const samples = [
+                  {{
+                    test_case_id: 'seed-1',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'perm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: true }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 1, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }},
+                  {{
+                    test_case_id: 'seed-2',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'notperm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: false, overrefusal: false }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        null,
+                        'malformed-node',
+                        {{ node_index: 1, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }}
+                ];
+                const withBehaviors = computeRunMetrics(samples, behaviors);
+                const withoutBehaviors = computeRunMetrics(samples, []);
+                console.log(JSON.stringify({{ withBehaviors, withoutBehaviors }}));
+                """
+            )
+            result = self._run_node(
+                harness_dir=harness_dir,
+                script=script,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+
+            with_behaviors = payload["withBehaviors"]
+            self.assertEqual(with_behaviors["scored_total"], 2)
+            permissible = with_behaviors["policy_violation_on_permissible"]
+            self.assertIsNotNone(permissible)
+            self.assertEqual(permissible["count"], 2)
+            self.assertEqual(permissible["flagged_count"], 1)
+            self.assertEqual(permissible["clear_count"], 1)
+            self.assertAlmostEqual(permissible["rate"], 0.5)
+
+            not_permissible = with_behaviors["policy_violation_on_not_permissible"]
+            self.assertIsNotNone(not_permissible)
+            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["flagged_count"], 1)
+            self.assertEqual(not_permissible["clear_count"], 0)
+            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+
+            without_behaviors = payload["withoutBehaviors"]
+            self.assertIsNone(without_behaviors["policy_violation_on_permissible"])
+            self.assertIsNone(without_behaviors["policy_violation_on_not_permissible"])
+
+    def test_audit_run_metrics_policy_violation_by_permissibility(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            metrics_path = harness_dir / "metrics.ts"
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ computeAuditRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
+                const behaviors = [
+                  {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
+                ];
+                const scores = [
+                  {{
+                    test_case_id: 'scenario-1',
+                    target: 'target-model',
+                    tester_model: 'tester-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: false }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 0, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 1, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }}
+                ];
+                const metrics = computeAuditRunMetrics(scores, behaviors);
+                console.log(JSON.stringify(metrics));
+                """
+            )
+            result = self._run_node(
+                harness_dir=harness_dir,
+                script=script,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            metrics = json.loads(result.stdout)
+
+            self.assertEqual(metrics["scored_total"], 1)
+            permissible = metrics["policy_violation_on_permissible"]
+            self.assertIsNotNone(permissible)
+            self.assertEqual(permissible["count"], 1)
+            self.assertEqual(permissible["flagged_count"], 0)
+            self.assertEqual(permissible["clear_count"], 1)
+            self.assertAlmostEqual(permissible["rate"], 0.0)
+
+            not_permissible = metrics["policy_violation_on_not_permissible"]
+            self.assertIsNotNone(not_permissible)
+            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["flagged_count"], 1)
+            self.assertEqual(not_permissible["clear_count"], 0)
+            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+
+    def test_load_run_judge_taxonomy_prefers_run_config(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir) / "harness"
+            harness_dir.mkdir()
+            self._copy_data_harness(harness_dir)
+            artifacts_path = harness_dir / "artifacts.ts"
+
+            suite_dir = Path(tmp_dir) / "demo-suite"
+            run_dir = suite_dir / "demo-run"
+            run_dir.mkdir(parents=True)
+            judge_taxonomy = {
+                "behavior": {"name": "demo", "definition": "demo"},
+                "behavior_categories": [
+                    {"name": "judge_only", "definition": "", "examples": [], "permissible": False}
+                ],
+            }
+            taxonomy_path = suite_dir / "taxonomy.override.json"
+            taxonomy_path.write_text(json.dumps(judge_taxonomy), encoding="utf-8")
+            relative_taxonomy_path = Path("..") / "taxonomy.override.json"
+            outside_taxonomy_path = Path(tmp_dir) / "outside-taxonomy.json"
+            outside_taxonomy_path.write_text(
+                json.dumps({"behavior": {"name": "outside", "definition": "outside"}, "behavior_categories": []}),
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text(
+                f"pipeline:\n  judge:\n    taxonomy_path: {relative_taxonomy_path.as_posix()}\n",
+                encoding="utf-8",
+            )
+
+            script = textwrap.dedent(
+                f"""\
+                const {{ loadRunJudgeTaxonomyForRun, loadRunJudgeTaxonomy, loadRunJudgeTaxonomyFromArtifacts }} = await import({json.dumps(artifacts_path.as_uri())});
+                const fromRun = loadRunJudgeTaxonomyForRun('demo-suite', 'demo-run');
+                const fromConfig = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ suite: 'demo-suite', pipeline: {{ judge: {{ taxonomy_path: {json.dumps(relative_taxonomy_path.as_posix())} }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromArtifact = loadRunJudgeTaxonomyFromArtifacts({{ suite: 'demo-suite' }}, {{ systematize: {{ path: 'taxonomy.override.json' }} }});
+                const fromAbsolute = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ pipeline: {{ judge: {{ taxonomy_path: {json.dumps(str(outside_taxonomy_path))} }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromEscape = loadRunJudgeTaxonomyFromArtifacts(
+                  {{ pipeline: {{ judge: {{ taxonomy_path: '../../../outside-taxonomy.json' }} }} }},
+                  null,
+                  {json.dumps(str(run_dir))}
+                );
+                const fromMissing = loadRunJudgeTaxonomy({{ pipeline: {{ judge: {{}} }} }});
+                console.log(JSON.stringify({{ fromRun, fromConfig, fromArtifact, fromAbsolute, fromEscape, fromMissing }}));
+                """
+            )
+            env = os.environ.copy()
+            env["ARTIFACTS_ROOT"] = str(Path(tmp_dir))
+            result = self._run_node(harness_dir=harness_dir, script=script, env=env)
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(payload["fromRun"], judge_taxonomy)
+            self.assertEqual(payload["fromConfig"], judge_taxonomy)
+            self.assertEqual(payload["fromArtifact"], judge_taxonomy)
+            self.assertIsNone(payload["fromAbsolute"])
+            self.assertIsNone(payload["fromEscape"])
+            self.assertIsNone(payload["fromMissing"])
+
+
+
 class ViewerReadModelHelpersTest(unittest.TestCase):
     """Tests for path-traversal defenses that don't depend on Node TS support."""
 
     def test_manifest_relative_path_rejects_parent_directory_segments(self) -> None:
-        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
+        from assert_ai.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1768,7 +2215,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
         relative ``..`` defense and reads from anywhere on disk.
         """
 
-        from p2m.viewer_read_model import _test_set_artifact_path
+        from assert_ai.viewer_read_model import _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1799,7 +2246,7 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
         IsADirectoryError / EISDIR).
         """
 
-        from p2m.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
+        from assert_ai.viewer_read_model import _manifest_relative_path, _test_set_artifact_path
 
         with TemporaryDirectory() as tmp_dir:
             suite_dir = Path(tmp_dir) / "suite-a"
@@ -1820,6 +2267,8 @@ class ViewerReadModelHelpersTest(unittest.TestCase):
                     suite_dir / "test_set.jsonl",
                     msg=f"expected fallback for {raw_path!r}",
                 )
+
+
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
-import type { DimensionDef, JudgeStatus } from './types.js';
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+import type { DimensionDef, JudgeStatus, MultiJudge } from './types.js';
 
 type VerdictLike = Record<string, unknown> | null | undefined;
 
@@ -64,6 +67,9 @@ export function inferJudgeStatus(
 	record: JudgmentRecordLike,
 	requiredBaseMetrics: string[]
 ): JudgeStatus {
+	if (record.judge_status === 'scoring_skipped') {
+		return 'scoring_skipped';
+	}
 	if (record.judge_status != null) {
 		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredBaseMetrics)
 			? 'ok'
@@ -92,4 +98,62 @@ export function scoreSortValue(record: JudgmentRecordLike, metric: string): numb
 	const value = getRecordFlag(record, metric);
 	if (value === null) return 2;
 	return value ? 0 : 1;
+}
+
+function multiJudgeVotes(multiJudge: MultiJudge | null | undefined, metric: string): boolean[] {
+	const votes = multiJudge?.votes?.[metric];
+	return Array.isArray(votes) ? votes.filter((vote) => typeof vote === 'boolean') : [];
+}
+
+function multiJudgeMetricNames(
+	multiJudge: MultiJudge | null | undefined,
+	metrics?: string[]
+): string[] {
+	if (metrics && metrics.length > 0) return metrics;
+	return Object.keys(multiJudge?.votes ?? {});
+}
+
+function multiJudgeDimensionAgreement(
+	multiJudge: MultiJudge | null | undefined,
+	metric: string
+): number | null {
+	const votes = multiJudgeVotes(multiJudge, metric);
+	if (votes.length === 0) return null;
+	const trueCount = votes.filter(Boolean).length;
+	const agreeing = Math.max(trueCount, votes.length - trueCount);
+	return agreeing / votes.length;
+}
+
+export function multiJudgeMeanAgreement(
+	multiJudge: MultiJudge | null | undefined,
+	metrics?: string[]
+): number | null {
+	const values = multiJudgeMetricNames(multiJudge, metrics)
+		.map((name) => multiJudgeDimensionAgreement(multiJudge, name))
+		.filter((value): value is number => value !== null);
+	if (values.length === 0) return null;
+	return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+export function multiJudgeHasDisagreement(
+	multiJudge: MultiJudge | null | undefined,
+	metrics?: string[]
+): boolean {
+	return multiJudgeMetricNames(multiJudge, metrics).some((name) => {
+		const votes = multiJudgeVotes(multiJudge, name);
+		if (votes.length < 2) return false;
+		const trueCount = votes.filter(Boolean).length;
+		return trueCount > 0 && trueCount < votes.length;
+	});
+}
+
+export function multiJudgeDimensionAgreementLabel(
+	multiJudge: MultiJudge | null | undefined,
+	metric: string
+): string | null {
+	const votes = multiJudgeVotes(multiJudge, metric);
+	if (votes.length === 0) return null;
+	const trueCount = votes.filter(Boolean).length;
+	const agreeing = Math.max(trueCount, votes.length - trueCount);
+	return `${agreeing}/${votes.length} agree`;
 }

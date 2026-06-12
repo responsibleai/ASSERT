@@ -1,5 +1,5 @@
 # Environments and local config
-.venv/
+.venv*/
 .env
 .env.*
 !.env.example
@@ -19,10 +19,22 @@ build/
 logs/
 plots/
 artifacts/
+# Allow the incident-triage trade-off chart artifact to be checked in
+# so the README can reference it before any live n=200 run.
+!examples/incident_triage_agent/artifacts/
+!examples/incident_triage_agent/artifacts/**
+# ...but never the per-test-case judge rows: ~5 MB each, regenerated on every
+# run. The curated summaries (metrics.json, manifest.json, config.yaml) and the
+# trade_off.png chart are kept; render_trade_off.py falls back to the documented
+# case-study numbers when scores.jsonl is absent.
+examples/incident_triage_agent/artifacts/**/scores.jsonl
 
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/
 !viewer/src/routes/**/logs/**
+
+# Chainlit local config
+.chainlit/
 
 # PyRIT data
 .pyrit_data/
@@ -43,14 +55,18 @@ node_modules/
 # Local viewer run configs
 .viewer_configs/
 
-p2m-experiments/
+ASSERT-experiments/
 
 # Build artifacts
 *.egg-info/
-p2m_policy.*
+assert_ai_policy.*
 
 # Internal Copilot CLI instructions (per-repo, never committed)
 .github/instructions/preview-boundary.instructions.md
+.github/instructions/session-hygiene.instructions.md
 
 # Code Security Assessment artifacts
 .security-assessment/
+
+# Local preannounce draft
+README_preannounce.md

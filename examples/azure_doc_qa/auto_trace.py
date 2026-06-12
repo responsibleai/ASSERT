@@ -1,0 +1,16 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""OpenInference auto-instrumentation for the Azure Doc QA agent.
+
+Central helper installs available OpenInference instrumentors without starting
+Phoenix unless a collector is configured or reachable.
+"""
+
+from __future__ import annotations
+
+# pip install openinference-instrumentation-langchain arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: F401
+auto_trace.enable()
+
+from examples.azure_doc_qa.agent import chat_sync  # noqa: E402

@@ -1,16 +1,31 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
 <script lang="ts">
 	import type {
 		JudgedSample,
 		AuditScore,
 		BinaryCounts,
+		DimensionMetrics,
 		DimensionDef,
 		GroupAxis,
 		MultiJudge,
+		StopReasonDisplay,
 		ViewerResultItem
 	} from '$lib/types.js';
 	import { AUDIT_GROUP_AXES, PROMPT_GROUP_AXES, buildFactorAxes, groupByAxis } from '$lib/grouping.js';
 	import ResultDrawer from '$lib/ResultDrawer.svelte';
-	import { normalizePromptResult } from '$lib/result-view.js';
+	import RateForestPlot from '$lib/RateForestPlot.svelte';
+	import { buildOutcomeOptions, buildOutcomePlotRows, type OutcomeRecord } from '$lib/outcome-plot.js';
+	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
+	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
+	import ExpandableText from '$lib/ExpandableText.svelte';
+	import {
+		normalizePromptResult,
+		stopReasonChipClass,
+		stopReasonLabel,
+		stopReasonTitle
+	} from '$lib/result-view.js';
 	import {
 		getRecordFlag,
 		getRequiredBaseMetricNames,
@@ -30,7 +45,8 @@
 		test_case_id: string;
 		behavior: string;
 		turns_count: number;
-		stop_reason: string;
+		stop_reason: string | null;
+		stop_reason_display: StopReasonDisplay | null;
 	};
 
 	function judgeStatus(record: {
@@ -44,12 +60,17 @@
 		return inferJudgeStatus(record, requiredBaseMetrics);
 	}
 
-	// --- Tab state ---
+	// --- Result availability state ---
 	let hasPromptEval = $derived((data.promptCount ?? data.samples.length) > 0);
 	let hasAuditEval = $derived((data.auditCount ?? data.auditScores.length) > 0);
 	let hasAuditPreview = $derived((data.inferencePreviewRows?.length ?? 0) > 0);
 	let hasAuditContent = $derived(data.hasAuditContent ?? (hasAuditEval || hasAuditPreview));
-	let activeTab = $derived((data.activeTab ?? (page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts')) as 'prompts' | 'audit');
+	let activeTab = $derived.by<'prompts' | 'audit'>(() => {
+		const requested = page.url.searchParams.get('tab') === 'audit' ? 'audit' : 'prompts';
+		if (requested === 'prompts' && !hasPromptEval && hasAuditContent) return 'audit';
+		if (requested === 'audit' && !hasAuditContent && hasPromptEval) return 'prompts';
+		return requested;
+	});
 
 	function setActiveTab(tab: 'prompts' | 'audit') {
 		if (tab === activeTab) return;
@@ -82,19 +103,60 @@
 	// Totals for judge failures banner
 	let promptTotal = $derived(data.samples.length);
 	let promptScored = $derived(data.samples.filter(s => judgeStatus(s) === 'ok').length);
-	let promptJudgeFailures = $derived(promptTotal - promptScored);
+	let promptJudgeFailures = $derived(
+		data.samples.filter(s => judgeStatus(s) === 'judge_failed').length
+	);
 
 	let auditTotal = $derived(data.auditScores.length);
 	let auditScored = $derived(data.auditScores.filter(s => judgeStatus(s) === 'ok').length);
-	let auditJudgeFailures = $derived(auditTotal - auditScored);
+	// Count only true judge breakdowns — scoring_skipped rows are deliberate
+	// pipeline skips (refusals/errors) and are reported in their own lines
+	// below to avoid double-counting in the "judge failures" banner.
+	let auditJudgeFailures = $derived(
+		data.auditScores.filter(s => judgeStatus(s) === 'judge_failed').length
+	);
+
+	type SkippedStopReasonKind = 'refusal' | 'error';
+
+	const SCORING_SKIPPED_STOP_REASON_KIND: Record<string, SkippedStopReasonKind> = {
+		tester_input_refused: 'refusal',
+		target_input_refused: 'refusal',
+		target_error: 'error',
+		tester_error: 'error'
+	};
+
+	function skippedStopReasonKind(stopReason: string | null | undefined): SkippedStopReasonKind | null {
+		if (!stopReason) return null;
+		return SCORING_SKIPPED_STOP_REASON_KIND[stopReason] ?? null;
+	}
+
+	// Counts refused/errored rows that are skipped by the judge and excluded from rates.
+	function countSkippedStopReasonKind(kind: SkippedStopReasonKind): number {
+		const testCaseIds = new Set<string>();
+		for (const score of data.auditScores) {
+			if (
+				judgeStatus(score) === 'scoring_skipped' &&
+				skippedStopReasonKind(score.metadata?.stop_reason) === kind
+			) {
+				testCaseIds.add(score.test_case_id);
+			}
+		}
+		for (const row of data.inferencePreviewRows ?? []) {
+			if (skippedStopReasonKind(row.stop_reason) === kind) testCaseIds.add(row.test_case_id);
+		}
+		return testCaseIds.size;
+	}
+
+	let auditRefusedCount = $derived(countSkippedStopReasonKind('refusal'));
+	let auditErroredCount = $derived(countSkippedStopReasonKind('error'));
 
 	function metricLabel(metric: string): string {
 		return metric.replace(/_/g, ' ');
 	}
 
 	function metricOutcomeText(flag: boolean | null): string {
-		if (flag === null) return 'n/a';
-		return flag ? 'flagged' : 'Pass';
+		if (flag === null) return 'N/A';
+		return flag ? 'Flagged' : 'Pass';
 	}
 
 	function metricOutcomeClass(flag: boolean | null): string {
@@ -139,14 +201,52 @@
 	}
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		test_set: 'Test Set Generation',
+		seeds: 'Seed Generation',
 		inference: 'Inference',
 		judge: 'Scoring',
 	};
 
+	const STAGE_TOOLTIPS: Record<string, string> = {
+		inference: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
+		judge: 'Target responses or behaviors are scored for each judge dimension.',
+	};
+
+	function formatDurationSecs(secs: number | null | undefined): string | null {
+		if (secs == null || !Number.isFinite(secs)) return null;
+		if (secs < 1) return `${Math.max(0, Math.round(secs * 1000))}ms`;
+		if (secs < 60) return `${secs < 10 ? secs.toFixed(1) : Math.round(secs)}s`;
+		const mins = Math.floor(secs / 60);
+		const rem = Math.round(secs % 60);
+		return `${mins}m ${rem}s`;
+	}
+
+	function stageDurationLabel(stage: string, info: string): string | null {
+		const timing = data.manifest?.stage_timings?.[stage];
+		if (timing?.duration_secs != null) return formatDurationSecs(timing.duration_secs);
+		if (timing?.started_at && timing?.ended_at) {
+			const secs = (new Date(timing.ended_at).getTime() - new Date(timing.started_at).getTime()) / 1000;
+			return formatDurationSecs(secs);
+		}
+		if (info === 'running' && timing?.started_at) {
+			const secs = (Date.now() - new Date(timing.started_at).getTime()) / 1000;
+			const label = formatDurationSecs(secs);
+			return label ? `${label}…` : null;
+		}
+		return null;
+	}
+
 	let dimensionNames = $derived(Object.keys(data.metrics.dimensions ?? {}));
 	let metricNames = $derived(dimensionNames);
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
+
+	// Lookup map: behavior name -> permissible boolean (from policy)
+	let behaviorPermissibleMap = $derived.by(() => {
+		const map: Record<string, boolean> = {};
+		for (const b of data.taxonomy?.behavior_categories ?? []) {
+			if (b?.name) map[b.name] = !!b.permissible;
+		}
+		return map;
+	});
 
 	// Active metrics use server-computed dimensions
 	let activePromptDimensions = $derived(data.metrics.dimensions);
@@ -210,6 +310,37 @@
 	let primaryAuditMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
 	let activeAuditDimensions = $derived(data.auditMetrics.dimensions);
+
+	// --- Active result-set metrics and outcome plot ---
+	let combinedOutcomeRecords = $derived([
+		...((activeTab === 'audit' ? data.auditScores : data.samples) as OutcomeRecord[])
+	]);
+	let combinedMetricNames = $derived(activeTab === 'audit' ? auditMetricNames : metricNames);
+	let combinedDimensions = $derived.by(() => {
+		const dimensions: Record<string, DimensionMetrics> = {};
+		const sourceDimensions = activeTab === 'audit' ? activeAuditDimensions : activePromptDimensions;
+		for (const name of combinedMetricNames) {
+			const metric = sourceDimensions[name] ?? null;
+			if (metric) dimensions[name] = metric;
+		}
+		return dimensions;
+	});
+	let combinedOutcomePanelOpen = $state(true);
+	let combinedOutcomeId = $state('');
+	let combinedOutcomeOptions = $derived(
+		buildOutcomeOptions(combinedOutcomeRecords, data.taxonomy?.behavior_categories ?? [])
+	);
+	let combinedOutcomeGroups = $derived([
+		...new Set(combinedOutcomeOptions.map((option) => option.groupLabel))
+	]);
+	let activeCombinedOutcome = $derived(
+		combinedOutcomeOptions.find((option) => option.id === combinedOutcomeId) ??
+			combinedOutcomeOptions[0] ??
+			null
+	);
+	let combinedOutcomeRows = $derived(
+		activeCombinedOutcome ? buildOutcomePlotRows(combinedOutcomeRecords, activeCombinedOutcome) : []
+	);
 
 	let auditFactorAxes = $derived(buildFactorAxes(data.auditScores));
 	let availableAxes = $derived([...auditFactorAxes, ...AUDIT_GROUP_AXES]);
@@ -330,7 +461,7 @@
 
 	async function openSampleModal(sample: JudgedSample) {
 		if (!sample.test_case_id) {
-			promptDrawerError = 'Prompt is missing a test case id.';
+			promptDrawerError = 'Prompt is missing a seed id.';
 			return;
 		}
 		const token = bumpPromptDrawerLoadToken();
@@ -681,74 +812,128 @@
 
 <!-- Header -->
 <div class="mb-8">
-	<div class="flex items-center gap-1.5 text-xs text-text-muted">
-		<a href="/" class="transition-colors hover:text-interactive">Measurement Suites</a>
-		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-		<a href="/suite/{data.suite_id}" class="transition-colors hover:text-interactive">{data.taxonomy?.behavior?.name ?? data.suite_id}</a>
-		<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
-		<span class="text-text-secondary">{data.run_id}</span>
-	</div>
-	<div class="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-		<div class="min-w-0">
-			<div class="flex flex-wrap items-center gap-2.5">
-				<h1 class="text-xl font-semibold tracking-tight">{data.run_id}</h1>
+	<nav aria-label="Breadcrumb">
+		<ol class="Breadcrumb">
+			<li class="Breadcrumb-item"><a href="/">Evaluation suites</a></li>
+			<li class="Breadcrumb-item"><a href="/suite/{data.suite_id}">{data.taxonomy?.behavior?.name ?? data.suite_id}</a></li>
+			<li class="Breadcrumb-item" aria-current="page">{data.run_id}</li>
+		</ol>
+	</nav>
+	<div class="mt-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+		<div class="min-w-0 flex-1">
+			<div class="text-[12px] font-medium text-text-muted">Run name</div>
+			<h1 class="break-words text-2xl font-semibold leading-tight text-text" style="margin-top:2px;" title={data.run_id}>{data.run_id}</h1>
+			<div class="mt-1.5 flex flex-wrap items-center gap-2">
 				{#if data.manifest?.status === 'completed'}
-					<span class="inline-flex items-center gap-1 rounded-full bg-score-pass/10 px-2 py-0.5 text-xs text-score-pass">
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-score-pass/10 px-2.5 py-1 text-xs text-score-pass">
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
 						Completed
 					</span>
 				{:else if data.manifest?.status === 'failed'}
-					<span class="inline-flex items-center gap-1 rounded-full bg-score-fail/10 px-2 py-0.5 text-xs text-score-fail">
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-score-fail/10 px-2.5 py-1 text-xs text-score-fail">
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
 						Failed
 					</span>
 				{:else if hasPromptEval || hasAuditEval}
-					<span class="inline-flex items-center gap-1 rounded-full bg-score-pass/10 px-2 py-0.5 text-xs text-score-pass">
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-score-pass/10 px-2.5 py-1 text-xs text-score-pass">
 						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
 						Completed
 					</span>
 				{/if}
+				{#if data.manifest?.started_at}
+					<span class="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs text-text-muted">
+						<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+						Started {new Date(data.manifest.started_at).toLocaleString()}
+					</span>
+				{/if}
 			</div>
-			<div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-				<span class="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-text-muted">{data.run_id}</span>
+			<div class="mt-2 text-sm text-text-muted">
+				Evaluation target: <span class="font-mono text-text">{data.metrics?.target || data.auditMetrics?.target || '—'}</span>
+				<span class="mx-2 text-text-muted/50">·</span>
+				Judge: <span class="font-mono text-text">{data.metrics?.judge_model || data.auditMetrics?.judge_model || '—'}</span>
 			</div>
-			{#if data.manifest?.started_at}
-				<p class="mt-2 text-xs text-text-muted">Started {new Date(data.manifest.started_at).toLocaleString()}</p>
+			{#if data.manifest?.stages}
+				<button
+					type="button"
+					class="mt-2 text-sm text-interactive hover:text-interactive-hover hover:underline"
+					onclick={() => runMetaOpen = !runMetaOpen}
+				>{runMetaOpen ? 'Show less' : 'Run details'}</button>
+				{#if runMetaOpen}
+					<div class="mt-3 max-w-2xl rounded-lg border border-border bg-surface p-4">
+						<div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+							<h3 class="text-sm font-semibold text-text">Evaluation pipeline</h3>
+							{#if data.manifest.started_at && data.manifest.ended_at}
+								{@const totalSecs = (new Date(data.manifest.ended_at).getTime() - new Date(data.manifest.started_at).getTime()) / 1000}
+								<span class="ml-auto text-xs text-text-muted">Total Duration: {formatDurationSecs(totalSecs)}</span>
+							{/if}
+						</div>
+						<ul class="run-timeline">
+							{#each Object.entries(data.manifest.stages) as [stage, info]}
+								{@const durationLabel = stageDurationLabel(stage, info)}
+								<li class="run-timeline__item">
+									<span class="run-timeline__badge run-timeline__badge--{info}" aria-hidden="true">
+										{#if info === 'completed'}
+											<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>
+										{:else if info === 'failed'}
+											<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+										{:else if info === 'running'}
+											<span class="run-timeline__pulse"></span>
+										{/if}
+									</span>
+									<div class="run-timeline__body">
+										<span class="run-timeline__title">
+											{RUN_STAGE_LABELS[stage] ?? stage}
+											{#if STAGE_TOOLTIPS[stage]}
+												<InfoTooltip label={STAGE_TOOLTIPS[stage]} direction="se" />
+											{/if}
+										</span>
+										{#if durationLabel}
+											<span class="run-timeline__duration">Duration: {durationLabel}</span>
+										{/if}
+										<span class="run-timeline__status run-timeline__status--{info}">
+											{info.charAt(0).toUpperCase() + info.slice(1)}
+										</span>
+									</div>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 			{/if}
 		</div>
-		{#if data.manifest?.stages}
-			<button
-				class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-interactive/40 hover:text-text-secondary"
-				onclick={() => runMetaOpen = !runMetaOpen}
-				title="Run metadata"
-			>
-				<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-				{runMetaOpen ? 'Hide details' : 'Run details'}
-			</button>
-		{/if}
-	</div>
-	{#if runMetaOpen && data.manifest?.stages}
-	<div class="mt-3 max-w-2xl rounded-lg border border-border bg-surface p-4">
-		<h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted">Run Pipeline</h3>
-		<div class="grid gap-2">
-			{#each Object.entries(data.manifest.stages) as [stage, info]}
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border bg-background px-3 py-2">
-				<span class="inline-flex h-5 w-5 items-center justify-center rounded-full text-xs {info === 'completed' ? 'bg-score-pass/10 text-score-pass' : info === 'failed' ? 'bg-score-fail/10 text-score-fail' : 'bg-surface-2 text-text-muted'}">
-					{info === 'completed' ? '✓' : info === 'failed' ? '✗' : '○'}
-				</span>
-				<span class="text-xs font-medium text-text-secondary">{RUN_STAGE_LABELS[stage] ?? stage}</span>
-				<span class="ml-auto text-xs text-text-muted">{info}</span>
+		{#if hasPromptEval && hasAuditContent}
+			<div class="shrink-0 self-start" style="margin-top:2px;">
+				<div class="SegmentedControl" role="tablist" aria-label="Result type">
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTab === 'prompts'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeTab === 'prompts'}
+						onclick={() => setActiveTab('prompts')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Prompts</span>
+							<span class="Counter">{data.promptCount ?? data.samples.length}</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTab === 'audit'}
+						class="SegmentedControl-item"
+						class:SegmentedControl-item--selected={activeTab === 'audit'}
+						onclick={() => setActiveTab('audit')}
+					>
+						<span class="SegmentedControl-content">
+							<span>Conversations</span>
+							<span class="Counter">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span>
+						</span>
+					</button>
+				</div>
 			</div>
-			{/each}
-		</div>
-		{#if data.manifest.started_at && data.manifest.ended_at}
-		{@const durationSecs = (new Date(data.manifest.ended_at).getTime() - new Date(data.manifest.started_at).getTime()) / 1000}
-		<div class="mt-3 border-t border-border pt-3 text-xs text-text-muted">
-			Duration: {Math.round(durationSecs / 60)}m {Math.round(durationSecs % 60)}s
-		</div>
 		{/if}
 	</div>
-	{/if}
 </div>
 
 {#if !hasPromptEval && !hasAuditContent}
@@ -768,79 +953,129 @@
 			</div>
 		{/if}
 		<p class="mt-4 font-mono text-xs text-text-muted">
-			uv run p2m run --config &lt;config&gt;
+			uv run assert-ai run --config &lt;config&gt;
 		</p>
 	</div>
 {:else}
-	<!-- Toggle (only show if both types exist) -->
-	{#if hasPromptEval && hasAuditContent}
-		<div class="mb-6 flex justify-center">
-		<div class="flex items-center gap-1 rounded-lg bg-surface p-1">
-			<button
-				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'prompts' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
-				onclick={() => setActiveTab('prompts')}
-				title="Single-turn prompt results"
-			>Prompts <span class="ml-1 font-mono text-text-muted">{data.promptCount ?? data.samples.length}</span></button>
-			<button
-				class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {activeTab === 'audit' ? 'bg-surface-2 text-text shadow-sm' : 'text-text-muted hover:text-text-secondary'}"
-				onclick={() => setActiveTab('audit')}
-				title="Multi-turn scenario results"
-			>Scenarios <span class="ml-1 font-mono text-text-muted">{hasAuditEval ? (data.auditCount ?? data.auditScores.length) : data.inferencePreviewRows.length}</span></button>
+	{@const allRunMetrics = combinedMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: combinedDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
+	<div class="mb-4 border-b border-border pb-2">
+		<div class="flex items-center gap-3">
+			<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
+			<div class="flex shrink-0 items-center gap-2">
+				<span class="text-xs text-text-muted">{allRunMetrics.length} test set dimensions</span>
+				<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/suite/{data.suite_id}/{data.run_id}/export" target="_blank" rel="noopener" title="Open standalone HTML export">Export HTML</a>
+			</div>
 		</div>
+		<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Headline outcome for {activeTab === 'audit' ? 'conversations' : 'prompts'} in this run. Detailed dimension breakdowns are shown below.</p>
+	</div>
+	{@const headlineMetric = allRunMetrics.find((m) => m.key === 'policy_violation') ?? allRunMetrics[0]}
+	{#if headlineMetric}
+		{@const pct = binaryBar(headlineMetric.summary?.counts ?? { 0: 0, 1: 0 })}
+		{@const total = headlineMetric.summary?.count ?? 0}
+		{@const flagged = headlineMetric.summary?.flagged_count ?? 0}
+		{@const passed = headlineMetric.summary?.clear_count ?? 0}
+		<div class="mb-8 rounded-lg border border-border bg-surface px-5 py-4">
+			<div class="flex items-start justify-between gap-3">
+				<div>
+					<h3 class="!text-[16px] !font-medium text-text">{headlineMetric.name.charAt(0).toUpperCase() + headlineMetric.name.slice(1).toLowerCase()}</h3>
+					{#if headlineMetric.description}
+						<ExpandableText text={headlineMetric.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
+					{/if}
+				</div>
+				<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{total} {activeTab === 'audit' ? 'conversations' : 'prompts'}</span>
+			</div>
+			<div class="mt-3 flex items-baseline gap-1.5">
+				<span class="text-3xl font-bold tabular-nums {metricRateClass(headlineMetric.summary?.rate ?? 0)}">{metricRateText(headlineMetric.summary?.rate ?? 0)}</span>
+				<span class="text-sm text-text-muted">Flagged</span>
+			</div>
+			{#if total > 0}
+				<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+					{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+					{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+				</div>
+				<div class="mt-1 flex justify-between text-[12px] tabular-nums text-text-muted">
+					<span>{flagged}/{total} Flagged</span>
+					<span>{passed}/{total} Pass</span>
+				</div>
+			{/if}
 		</div>
+	{/if}
+
+	{#if (activeTab === 'prompts' && promptJudgeFailures > 0) || (activeTab === 'audit' && (auditJudgeFailures > 0 || auditRefusedCount > 0 || auditErroredCount > 0))}
+		<div class="mb-6 space-y-1 text-xs text-amber-400">
+			{#if activeTab === 'prompts' && promptJudgeFailures > 0}
+				<p>
+					Scored {promptScored} of {promptTotal} prompts. {promptJudgeFailures} judge failures were excluded from the rates.
+				</p>
+			{:else if activeTab === 'audit' && auditJudgeFailures > 0}
+				<p>
+					Scored {auditScored} of {auditTotal} conversations. {auditJudgeFailures} judge failures were excluded from the rates.
+				</p>
+			{/if}
+			{#if activeTab === 'audit' && auditRefusedCount > 0}
+				<p>{auditRefusedCount} {auditRefusedCount === 1 ? 'scenario was' : 'scenarios were'} refused before producing a transcript.</p>
+			{/if}
+			{#if activeTab === 'audit' && auditErroredCount > 0}
+				<p>{auditErroredCount} {auditErroredCount === 1 ? 'scenario' : 'scenarios'} hit an inference error and {auditErroredCount === 1 ? 'was' : 'were'} excluded from the rates.</p>
+			{/if}
+		</div>
+	{/if}
+
+	{#if combinedOutcomeOptions.length > 0}
+		<section class="mb-8">
+			<button
+				type="button"
+				class="flex w-full items-center justify-between gap-3 border-b border-border pb-2 text-left"
+				aria-expanded={combinedOutcomePanelOpen}
+				onclick={() => (combinedOutcomePanelOpen = !combinedOutcomePanelOpen)}
+			>
+				<div>
+					<h2 class="text-lg font-semibold text-text">Average score by dimension</h2>
+					<p class="mt-1 text-sm leading-5 text-text-muted">Flagged rate for the selected outcome across each test set dimension level, with 95% confidence intervals.</p>
+				</div>
+				<span class="inline-flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
+					{combinedOutcomePanelOpen ? 'Hide' : 'Show'}
+					<svg class="h-3 w-3 transition-transform {combinedOutcomePanelOpen ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg>
+				</span>
+			</button>
+			{#if combinedOutcomePanelOpen && activeCombinedOutcome}
+				<div class="mt-3 mb-3 flex flex-wrap items-center justify-end gap-3">
+					<label class="flex w-full flex-col items-stretch gap-1 text-[10px] uppercase tracking-wider text-text-muted sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+						Outcome
+						<select
+							class="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs normal-case tracking-normal text-text outline-none focus:border-interactive sm:min-w-64"
+							value={activeCombinedOutcome.id}
+							onchange={(event) => (combinedOutcomeId = event.currentTarget.value)}
+						>
+							{#each combinedOutcomeGroups as group}
+								<optgroup label={group}>
+									{#each combinedOutcomeOptions.filter((option) => option.groupLabel === group) as option (option.id)}
+										<option value={option.id}>{option.label}</option>
+									{/each}
+								</optgroup>
+							{/each}
+						</select>
+					</label>
+				</div>
+				<RateForestPlot rows={combinedOutcomeRows} denominatorLabel={activeCombinedOutcome.denominatorLabel} />
+			{/if}
+		</section>
 	{/if}
 
 	<!-- ==================== QUERY EVAL TAB ==================== -->
 	{#if activeTab === 'prompts' && hasPromptEval}
-		<!-- Metrics -->
-		{@const allMetrics = metricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activePromptDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
-		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(allMetrics.length, 4)}, minmax(0, 1fr))">
-			{#each allMetrics as m}
-				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
-				<div class="rounded-lg border border-border bg-surface px-5 py-4">
-					<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{m.name}</div>
-					{#if m.description}
-					<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
-					{/if}
-					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
-						<span class="text-sm text-text-muted">flagged</span>
-					</div>
-					{#if (m.summary?.count ?? 0) > 0}
-					<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
-						{#if pct.clear > 0}
-						<div class="bg-score-pass" style="width: {pct.clear}%"></div>
-						{/if}
-						{#if pct.flagged > 0}
-						<div class="bg-score-fail" style="width: {pct.flagged}%"></div>
-						{/if}
-					</div>
-					<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-						<span>{m.summary?.clear_count ?? 0} pass</span>
-						<span>{m.summary?.flagged_count ?? 0} flagged</span>
-						<span>{m.summary?.count ?? 0} total</span>
-					</div>
-					{/if}
-				</div>
-			{/each}
-		</div>
-
-		{#if promptJudgeFailures > 0}
-			<p class="mb-6 text-xs text-amber-400">
-				Scored {promptScored} of {promptTotal} prompts. {promptJudgeFailures} judge failures were excluded from the rates.
-			</p>
-		{/if}
-
 		<!-- Category Accordion -->
 		<section class="mb-8">
-			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">{promptGroupBy === 'none' ? 'All Results' : `Results by ${activePromptAxis.label}`}</h2>
-				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
+			<div class="mb-4 border-b border-border pb-2">
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{promptGroupBy === 'none' ? 'All evaluation results' : `Results by ${activePromptAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.samples.length} prompts{#if promptGroupBy !== 'none'} · {promptGroups.length} groups{/if}</span>
+				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-prompt judgements with verdicts, evidence, and target responses.</p>
 			</div>
 
-			<!-- Controls row: multi-judge filter + group-by dropdown + sort -->
-			<div class="mb-3 flex items-center gap-3 flex-wrap">
+			<!-- Controls row: search + filter -->
+			<div class="mb-3 flex flex-wrap items-center gap-3">
 				{#if data.multiJudgeStats}
 					{@const mjDisagreementCount = data.samples.filter(s => s.multi_judge && s.multi_judge.agreement < 1).length}
 					<div class="flex rounded-lg bg-surface p-0.5 border border-border">
@@ -854,63 +1089,69 @@
 						>Disagreements <span class="ml-1 text-zinc-600">{mjDisagreementCount}</span></button>
 					</div>
 				{/if}
-				<div class="relative min-w-[220px] flex-1 max-w-sm">
-					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path d="M21 21l-4.35-4.35m1.1-5.4a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+				<div class="relative" style="flex: 1 1 auto; max-width: 480px; min-width: 240px;">
+					<label for="prompt-search" class="sr-only">Search</label>
+					<svg class="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+						<path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z" />
 					</svg>
 					<input
-						type="search"
-						class="w-full rounded border border-border bg-surface py-1.5 pl-8 pr-2 text-xs text-text outline-none placeholder:text-text-muted focus:border-interactive"
-						placeholder="Search prompts or behavior_categories"
+						id="prompt-search"
+						type="text"
+						placeholder="Search prompts or categories…"
 						bind:value={promptSearchQuery}
+						class="form-control w-full"
+						style="padding-left: 2rem;"
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					{#if promptGroupBy === 'none'}
-						<span class="text-[10px] text-text-muted">Sort by</span>
-						<select
-							class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
-							value={promptSortMetric}
-							onchange={(e) => promptSortMetric = e.currentTarget.value}
-						>
-							{#each metricNames as m}
-								<option value={m}>{metricLabel(m)}</option>
-							{/each}
-						</select>
-					{/if}
-					<span class="text-[10px] text-text-muted">Group by</span>
-					<select
-						class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
-						value={promptGroupBy}
-						onchange={(e) => setPromptGroupBy(e.currentTarget.value)}
-					>
-						{#each availablePromptAxes as axis}
-							<option value={axis.key}>{axis.label}</option>
-						{/each}
-						<option value="none">None (flat)</option>
-					</select>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availablePromptAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={promptGroupBy}
+						onSelect={(v) => setPromptGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Filter by metric"
+						options={metricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						selected={promptSortMetric}
+						onSelect={(v) => promptSortMetric = v}
+					/>
 				</div>
 			</div>
 
 			{#if promptGroupBy !== 'none'}
 			<!-- Grouped accordion -->
 			<div class="overflow-hidden rounded-lg border border-border">
+				<div class="grid items-center gap-3 border-b border-border bg-surface-2/60 px-4 py-2 text-left text-xs font-medium text-text-muted" style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;">
+					<span class="text-left">Behavior category</span>
+					<span class="text-left">Policy status</span>
+					<span class="text-left">Metrics</span>
+					<span class="sr-only">Count</span>
+					<span class="sr-only">Expand</span>
+				</div>
 				{#each promptGroups as group, gIdx (group.key)}
 					<div class="{gIdx > 0 ? 'border-t border-border' : ''}">
 						<!-- Group header -->
 						<button
-							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedBehavior === group.key ? 'bg-surface' : ''}"
+							class="grid w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedBehavior === group.key ? 'bg-surface' : ''}"
+							style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;"
 							onclick={() => toggleBehavior(group.key)}
 						>
-							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
-							<div class="flex items-center gap-2">
-								{#if group.avgs['behavior_violation'] !== undefined}
-									{@const bv = group.avgs['behavior_violation']}
-									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
-										<span class="text-text-muted">behavior violated</span>
-										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
+							<span class="truncate text-sm font-medium text-text">{group.label}</span>
+							<span class="flex">
+								{#if behaviorPermissibleMap[group.key] !== undefined}
+									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
 									</span>
+								{:else}
+									<span class="text-[10px] text-text-muted">—</span>
 								{/if}
+							</span>
+							<div class="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
 								{#each metricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
@@ -921,7 +1162,7 @@
 									{/if}
 								{/each}
 							</div>
-							<span class="rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
+							<span class="justify-self-end rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
 							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedBehavior === group.key ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path d="M9 5l7 7-7 7"/>
 							</svg>
@@ -984,14 +1225,22 @@
 			{:else}
 			<!-- Flat list sorted by metric -->
 			<div class="overflow-hidden rounded-lg border border-border">
+				<div class="grid items-center gap-3 border-b border-border bg-surface-2/60 px-5 py-2 text-left text-xs font-medium text-text-muted" style="grid-template-columns: minmax(0,1fr) minmax(0,2fr) minmax(0,2fr) 16px;">
+											<span class="text-left">Test prompt</span>
+					<span class="text-left">Target response</span>
+					<span class="text-left">Evaluation results</span>
+					<span class="sr-only">Open</span>
+				</div>
 				{#each flatPromptSamples as sample, sIdx}
 					<div class="{sIdx > 0 ? 'border-t border-border/50' : ''}">
 						<button
-							class="flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActivePromptSample(sample) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+							class="grid w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface/50 {isActivePromptSample(sample) ? 'bg-interactive/8 border-l-2 border-l-interactive' : ''}"
+							style="grid-template-columns: minmax(0,1fr) minmax(0,2fr) minmax(0,2fr) 16px;"
 							onclick={() => void openSampleModal(sample)}
 						>
-							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{(sample.test_case_id && data.promptSeedTitleMap?.[sample.test_case_id]) || sample.prompt}</span>
-							<div class="flex items-center gap-1.5 flex-shrink-0">
+							<span class="truncate text-sm text-text-secondary">{(sample.test_case_id && data.promptSeedTitleMap?.[sample.test_case_id]) || sample.prompt}</span>
+							<span class="truncate text-sm text-text-muted">{sample.response ?? ''}</span>
+							<div class="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
 								{#each metricNames as m}
 									{@const v = getRecordFlag(sample, m)}
 									{#if v !== null}
@@ -1032,51 +1281,18 @@
 
 	<!-- ==================== AUDIT EVAL TAB ==================== -->
 	{#if activeTab === 'audit' && hasAuditEval}
-		<!-- Audit Metrics -->
-		{@const auditAllMetrics = auditMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: activeAuditDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
-		<div class="mb-4 grid gap-3" style="grid-template-columns: repeat({Math.min(auditAllMetrics.length, 4)}, minmax(0, 1fr))">
-			{#each auditAllMetrics as m}
-				{@const pct = binaryBar(m.summary?.counts ?? { 0: 0, 1: 0 })}
-				<div class="rounded-lg border border-border bg-surface px-5 py-4">
-					<div class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{m.name}</div>
-					{#if m.description}
-					<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
-					{/if}
-					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
-						<span class="text-sm text-text-muted">flagged</span>
-					</div>
-					{#if (m.summary?.count ?? 0) > 0}
-					<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
-						{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
-						{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
-					</div>
-					<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-						<span>{m.summary?.clear_count ?? 0} pass</span>
-						<span>{m.summary?.flagged_count ?? 0} flagged</span>
-						<span>{m.summary?.count ?? 0} total</span>
-					</div>
-					{/if}
-				</div>
-			{/each}
-		</div>
-
-		{#if auditJudgeFailures > 0}
-			<p class="mb-6 text-xs text-amber-400">
-				Scored {auditScored} of {auditTotal} scenarios. {auditJudgeFailures} judge failures were excluded from the rates.
-			</p>
-		{/if}
-
 		<!-- Audit Category Accordion -->
 		<section class="mb-8">
-			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">{auditGroupBy === 'none' ? 'All Results' : `Results by ${activeAuditAxis.label}`}</h2>
-				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.auditScores.length} results{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
+			<div class="mb-4 border-b border-border pb-2">
+				<div class="flex items-baseline gap-3">
+					<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">{auditGroupBy === 'none' ? 'All evaluation results' : `Results by ${activeAuditAxis.label.toLowerCase()}`}</h2>
+					<span class="shrink-0 text-xs text-text-muted">{data.auditScores.length} conversations{#if auditGroupBy !== 'none'} · {auditGroups.length} groups{/if}</span>
+				</div>
+				<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Per-scenario judgements across multi-turn conversations.</p>
 			</div>
 
-			<!-- Controls: multi-judge filter + group-by dropdown + sort -->
-			<div class="mb-3 flex items-center gap-3 flex-wrap">
+			<!-- Controls row: search + filter -->
+			<div class="mb-3 flex flex-wrap items-center gap-3">
 				{#if hasAuditMultiJudge}
 					{@const auditMjDisagreementCount = data.auditScores.filter(s => s.multi_judge && s.multi_judge.agreement < 1).length}
 					<div class="flex rounded-lg bg-surface p-0.5 border border-border">
@@ -1090,62 +1306,68 @@
 						>Disagreements <span class="ml-1 text-zinc-600">{auditMjDisagreementCount}</span></button>
 					</div>
 				{/if}
-				<div class="relative min-w-[220px] flex-1 max-w-sm">
-					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path d="M21 21l-4.35-4.35m1.1-5.4a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+				<div class="relative" style="flex: 1 1 auto; max-width: 480px; min-width: 240px;">
+					<label for="audit-search" class="sr-only">Search</label>
+					<svg class="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+						<path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z" />
 					</svg>
 					<input
-						type="search"
-						class="w-full rounded border border-border bg-surface py-1.5 pl-8 pr-2 text-xs text-text outline-none placeholder:text-text-muted focus:border-interactive"
-						placeholder="Search scenarios or behavior_categories"
+						id="audit-search"
+						type="text"
+						placeholder="Search scenarios or categories…"
 						bind:value={auditSearchQuery}
+						class="form-control w-full"
+						style="padding-left: 2rem;"
 					/>
 				</div>
 				<div class="ml-auto flex items-center gap-2">
-					{#if auditGroupBy === 'none'}
-						<span class="text-[10px] text-text-muted">Sort by</span>
-						<select
-							class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
-							value={auditSortMetric}
-							onchange={(e) => auditSortMetric = e.currentTarget.value}
-						>
-							{#each auditMetricNames as m}
-								<option value={m}>{metricLabel(m)}</option>
-							{/each}
-						</select>
-					{/if}
-					<span class="text-[10px] text-text-muted">Group by</span>
-					<select
-						class="rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-interactive"
-						value={auditGroupBy}
-						onchange={(e) => setAuditGroupBy(e.currentTarget.value)}
-					>
-						{#each availableAxes as axis}
-							<option value={axis.key}>{axis.label}</option>
-						{/each}
-						<option value="none">None (flat)</option>
-					</select>
+					<span class="text-xs text-text-muted">Group by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Group by"
+						options={[{ value: 'none', label: 'Flat view' }, ...availableAxes.map(a => ({ value: a.key, label: a.label }))]}
+						selected={auditGroupBy}
+						onSelect={(v) => setAuditGroupBy(v)}
+					/>
+					<span class="ml-2 text-xs text-text-muted">Filter by</span>
+					<PrimerDropdown
+						label=""
+						ariaLabel="Filter by metric"
+						options={auditMetricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						selected={auditSortMetric}
+						onSelect={(v) => auditSortMetric = v}
+					/>
 				</div>
 			</div>
 
 			{#if auditGroupBy !== 'none'}
 			<div class="overflow-hidden rounded-lg border border-border">
+				<div class="grid items-center gap-3 border-b border-border bg-surface-2/60 px-4 py-2 text-left text-xs font-medium text-text-muted" style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;">
+					<span class="text-left">Behavior category</span>
+					<span class="text-left">Policy status</span>
+					<span class="text-left">Metrics</span>
+					<span class="sr-only">Count</span>
+					<span class="sr-only">Expand</span>
+				</div>
 				{#each auditGroups as group, gIdx (group.key)}
 					<div class="{gIdx > 0 ? 'border-t border-border' : ''}">
 						<!-- Group header -->
 						<button
-							class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedAuditBehavior === group.key ? 'bg-surface' : ''}"
+							class="grid w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface {expandedAuditBehavior === group.key ? 'bg-surface' : ''}"
+							style="grid-template-columns: minmax(0,1.5fr) 130px minmax(0,2fr) 40px 16px;"
 							onclick={() => toggleAuditBehavior(group.key)}
 						>
-							<span class="flex-1 truncate text-sm font-medium text-text">{group.label}</span>
-							<div class="flex items-center gap-2">
-								{#if group.avgs['behavior_violation'] !== undefined}
-									{@const bv = group.avgs['behavior_violation']}
-									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title="Violation rate for this specific behavior">
-										<span class="text-text-muted">behavior violated</span>
-										<span class="font-semibold tabular-nums {metricRateClass(bv)}">{metricRateText(bv)}</span>
+							<span class="truncate text-sm font-medium text-text">{group.label}</span>
+							<span class="flex">
+								{#if behaviorPermissibleMap[group.key] !== undefined}
+									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
 									</span>
+								{:else}
+									<span class="text-[10px] text-text-muted">—</span>
 								{/if}
+							</span>
+							<div class="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
 								{#each auditMetricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
@@ -1156,7 +1378,7 @@
 									{/if}
 								{/each}
 							</div>
-							<span class="rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
+							<span class="justify-self-end rounded bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-muted">{group.total}</span>
 							<svg class="h-3.5 w-3.5 flex-shrink-0 text-text-muted transition-transform duration-200 {expandedAuditBehavior === group.key ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 								<path d="M9 5l7 7-7 7"/>
 							</svg>
@@ -1173,7 +1395,11 @@
 										>
 											<span class="flex-1 truncate text-sm text-text-secondary">{seedInfo?.title ?? auditScore.test_case_id}</span>
 											<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-											<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+											{#if auditScore.metadata.stop_reason}
+												<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+													{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+												</span>
+											{/if}
 											<div class="flex items-center gap-1.5 flex-shrink-0">
 												{#if getBehaviorViolated(auditScore, group.key) !== null}
 													<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
@@ -1231,7 +1457,11 @@
 						>
 							<span class="truncate text-sm text-text-secondary" style="flex: 1 1 0; min-width: 0">{seedInfo?.title ?? auditScore.test_case_id}</span>
 							<span class="text-[10px] text-text-muted tabular-nums">{auditScore.metadata.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{auditScore.metadata.stop_reason}</span>
+							{#if auditScore.metadata.stop_reason}
+								<span class={stopReasonChipClass(auditScore.metadata.stop_reason_display)} title={stopReasonTitle(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}>
+									{stopReasonLabel(auditScore.metadata.stop_reason, auditScore.metadata.stop_reason_display)}
+								</span>
+							{/if}
 							<div class="flex items-center gap-1.5 flex-shrink-0">
 								{#each auditMetricNames as m}
 									{@const v = getRecordFlag(auditScore, m)}
@@ -1273,17 +1503,17 @@
 
 	{#if activeTab === 'audit' && !hasAuditEval && hasAuditPreview}
 		<div class="mb-6 rounded-lg border border-interactive/20 bg-interactive/5 px-5 py-4">
-			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Inference Preview</div>
+			<div class="text-[11px] font-semibold uppercase tracking-wider text-interactive">Rollout Preview</div>
 			<p class="mt-1 text-sm text-text-secondary">
-				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} results are available. Judgments will appear after inference completes.
+				{data.inferencePreviewRows.length} / {data.inferencePreviewTotal} conversations are available. Judgments will appear after rollout completes.
 			</p>
 		</div>
 
 		<section class="mb-8">
 			<div class="mb-4 flex items-center gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Inference set</h2>
+				<h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted">Available Conversations</h2>
 				<div class="h-px flex-1 bg-border"></div>
-				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} results</span>
+				<span class="text-xs text-text-muted">{data.inferencePreviewRows.length} conversations</span>
 			</div>
 
 			<div class="overflow-hidden rounded-lg border border-border">
@@ -1299,7 +1529,11 @@
 								<div class="mt-0.5 truncate text-[10px] text-text-muted" title={preview.behavior}>{preview.behavior}</div>
 							</div>
 							<span class="text-[10px] text-text-muted tabular-nums">{preview.turns_count} turns</span>
-							<span class="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">{preview.stop_reason}</span>
+							{#if preview.stop_reason}
+								<span class={stopReasonChipClass(preview.stop_reason_display)} title={stopReasonTitle(preview.stop_reason, preview.stop_reason_display)}>
+									{stopReasonLabel(preview.stop_reason, preview.stop_reason_display)}
+								</span>
+							{/if}
 							<span class="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
 								unjudged
 							</span>
@@ -1319,7 +1553,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
 			<div class="text-sm font-semibold text-text">Loading prompt</div>
-			<p class="mt-2 text-sm text-text-secondary">Fetching the result for {promptDrawerLoadingSeedId}.</p>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {promptDrawerLoadingSeedId}.</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Cancel
 			</button>
@@ -1342,8 +1576,8 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerLoadingSeedId}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Loading result</div>
-			<p class="mt-2 text-sm text-text-secondary">Fetching the result for {scenarioDrawerLoadingSeedId}.</p>
+			<div class="text-sm font-semibold text-text">Loading conversation</div>
+			<p class="mt-2 text-sm text-text-secondary">Fetching the transcript for {scenarioDrawerLoadingSeedId}.</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Cancel
 			</button>
@@ -1354,7 +1588,7 @@
 {#if (drawerAuditScore || drawerPreviewSeedId) && !drawerItem && scenarioDrawerError}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
 		<div class="w-full max-w-sm rounded-xl border border-border bg-surface p-5 text-center shadow-2xl">
-			<div class="text-sm font-semibold text-text">Could not load result</div>
+			<div class="text-sm font-semibold text-text">Could not load conversation</div>
 			<p class="mt-2 text-sm text-text-secondary">{scenarioDrawerError}</p>
 			<button class="mt-4 rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-colors hover:text-text" onclick={closeActiveDrawer}>
 				Close

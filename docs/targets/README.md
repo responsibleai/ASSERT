@@ -1,15 +1,18 @@
 # Target Support Overview
 
-Adaptive Eval can evaluate any agent or multi-agent system. Pick the path that matches how your agent is built.
+ASSERT can evaluate any hosted model, agent or multi-agent system. Pick the path that matches how your AI system is built.
 
-## Who owns the tool-call loop?
+## Choose your target
 
-Two questions decide which target you want:
+Pick a target based on how your agent is built.
 
-1. **Have you written orchestration code** — tool routing, sub-agents, multi-step planning? If yes, use the callable target. Your code owns the loop; p2m calls your function and (recommended) reads the OTel spans you emit.
-2. **Or do you just have a system prompt and a tool schema** and want p2m to run the loop for you? That is the **Prompt Agent target**. You declare in YAML; the runtime orchestrates (up to 10 tool-call rounds, real Python tools or LLM-simulated tool responses).
+| Your target looks like... | Use this path | Start here |
+|---|---|---|
+| A system prompt + tool schema, no orchestration code yet | **Prompt Agent target** (`target.model`, `target.system_prompt`, `target.tools`): the runtime owns the tool-call loop (up to 10 rounds, real or simulated tools). Best for test-driven prompt + toolset design before any agent is implemented | [Prompt Agent Target (model + tools)](model-and-tools.md) |
+| Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, and others) | **Callable target with OTel traces (recommended)**: point `target.callable` at your entry function and add `target.trace` so Phoenix/OpenInference (or your own OTel SDK spans) feed tool calls, routing, model calls, and latency to the judge | [Callable Target](callable.md) |
+| A black-box API you cannot instrument | **Plain callable (customization fallback, not recommended)**: `target.callable` with no `target.trace`. The judge sees only the final response; use only when instrumentation is impossible | [Callable Target (without traces)](callable.md#customization-without-traces) |
 
-The third path — plain callable without traces — is a customization fallback for black-box APIs you cannot instrument.
+**Use simulated tools intentionally:** simulated tools are helpful for Prompt Agents when real backends are not ready. They are not a substitute for tracing a real multi-agent framework.
 
 ## Recommended path: callable target with OTel traces
 
@@ -18,19 +21,19 @@ For any agent or multi-agent system you can invoke from Python — LangGraph, Cr
 For 33+ supported frameworks the instrumentation is two lines:
 
 ```python
-from phoenix.otel import register
-register(auto_instrument=True)
+from assert_ai import auto_trace
+auto_trace.enable()
 ```
 
 For unsupported frameworks or custom orchestration, emit your own OTel spans with the OpenTelemetry SDK; `target.trace` reads the same span data either way.
 
-→ See [`callable.md`](callable.md).
+→ See [Callable Target](callable.md).
 
-## Alternate path: Prompt Agent (model + tools)
+## Simple path: Prompt Agent (model + tools)
 
 Use the **Prompt Agent target** (`target.model` + `target.system_prompt` + optional `target.tools`) when you have a system prompt and a tool schema but no orchestration code yet. The runtime owns the tool-call loop. Real Python tools or LLM-simulated tool responses both work. Useful for test-driven prompt + toolset design *before* any agent is implemented.
 
-→ See [`model-and-tools.md`](model-and-tools.md).
+→ See [Prompt Agent Target](model-and-tools.md).
 
 ## Customization: plain callable without traces
 
@@ -40,10 +43,10 @@ The callable target also accepts a plain Python function with no `target.trace` 
 
 | Path | Who owns the tool-call loop? | Best for | Config anchor |
 |---|---|---|---|
-| Callable target with OTel traces (recommended) | You (your callable runs the loop; p2m reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
-| Prompt Agent (model + tools) | p2m runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
-| Plain callable (customization fallback) | Whoever (p2m doesn't see inside) | Black-box APIs you cannot instrument; pipeline smoke tests | `target.callable` (no `target.trace`) |
+| Callable target with OTel traces (recommended) | You (your callable runs the loop; ASSERT reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
+| Prompt Agent (model + tools) | ASSERT runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
+| Plain callable (customization fallback) | Whoever (ASSERT doesn't see inside) | Black-box APIs you cannot instrument; pipeline smoke tests | `target.callable` (no `target.trace`) |
 
-## What is not a preview-first path
+## Current support
 
-The customer preview docs do not lead with an external connector path. For most agents, the OTel-traced callable target is simpler, easier to debug, and closer to how developers already run local code.
+The current documentation does not lead with an external connector path. For most agents, the OTel-traced callable target is simpler, easier to debug, and closer to how developers already run local code.

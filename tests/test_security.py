@@ -1,4 +1,7 @@
-"""Tests for p2m.core.security — input validation, SSRF prevention, and credential sanitization."""
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""Tests for assert_ai.core.security — input validation, SSRF prevention, and credential sanitization."""
 
 from __future__ import annotations
 
@@ -9,14 +12,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.security import (
+from assert_ai.core.security import (
     sanitize_payload,
     validate_callable_ref,
     validate_endpoint_url,
     validate_module_ref,
     validate_sys_path_addition,
 )
-from p2m.core.session import _sanitize_response_text
+from assert_ai.core.session import _sanitize_response_text
 
 
 # ── validate_callable_ref ──────────────────────────────────────
@@ -90,7 +93,7 @@ class ValidateSysPathAdditionTest(unittest.TestCase):
             cwd = Path(tmp)
             child = cwd / "subdir"
             child.mkdir()
-            with patch("p2m.core.security.Path.cwd", return_value=cwd):
+            with patch("assert_ai.core.security.Path.cwd", return_value=cwd):
                 validate_sys_path_addition(child)
 
     def test_config_dir_child_passes(self) -> None:
@@ -101,11 +104,11 @@ class ValidateSysPathAdditionTest(unittest.TestCase):
             tool_dir.mkdir()
             config_path = config_dir / "eval.yaml"
             # cwd is elsewhere
-            with patch("p2m.core.security.Path.cwd", return_value=Path("/tmp/other")):
+            with patch("assert_ai.core.security.Path.cwd", return_value=Path("/tmp/other")):
                 validate_sys_path_addition(tool_dir, config_path=config_path)
 
     def test_system_path_raises(self) -> None:
-        with patch("p2m.core.security.Path.cwd", return_value=Path("/tmp/workspace")):
+        with patch("assert_ai.core.security.Path.cwd", return_value=Path("/tmp/workspace")):
             with self.assertRaises(ValueError, msg="Refusing"):
                 validate_sys_path_addition(Path("/usr/lib/python3/dist-packages"))
 
@@ -168,7 +171,7 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         fake_addrinfo = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0)),
         ]
-        with patch("p2m.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
+        with patch("assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
             with self.assertRaises(ValueError, msg="blocked IP range"):
                 validate_endpoint_url("http://evil-rebind.attacker.com/api")
 
@@ -176,13 +179,13 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         fake_addrinfo = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0)),
         ]
-        with patch("p2m.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
+        with patch("assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
             with self.assertRaises(ValueError, msg="blocked IP range"):
                 validate_endpoint_url("http://evil-rebind.attacker.com/api")
 
     def test_dns_failure_allows_passthrough(self) -> None:
         with patch(
-            "p2m.core.security.socket.getaddrinfo",
+            "assert_ai.core.security.socket.getaddrinfo",
             side_effect=socket.gaierror("Name resolution failed"),
         ):
             # Should not raise — will fail at connection time
@@ -197,7 +200,7 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         fake_addrinfo = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
         ]
-        with patch("p2m.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
+        with patch("assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
             validate_endpoint_url("https://api.example.com/v1/chat")
 
     def test_localhost_skips_dns_resolution(self) -> None:
@@ -208,7 +211,7 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         # _BLOCKED_HOSTNAMES, so it passes the hostname check.
         # The IP literal check only fires for actual IP addresses.
         # Net: localhost passes because it's in _LOCAL_DEV_HOSTNAMES.
-        with patch("p2m.core.security.socket.getaddrinfo") as mock_dns:
+        with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
             validate_endpoint_url("http://localhost:8080/api")
             mock_dns.assert_not_called()
 
@@ -216,7 +219,7 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         validate_endpoint_url("http://127.0.0.1/api", allow_private=True)
 
     def test_allow_private_env_var_skips_all_checks(self) -> None:
-        with patch.dict("os.environ", {"P2M_ALLOW_PRIVATE_ENDPOINTS": "1"}):
+        with patch.dict("os.environ", {"ASSERT_ALLOW_PRIVATE_ENDPOINTS": "1"}):
             validate_endpoint_url("http://10.0.0.1/api")
 
 

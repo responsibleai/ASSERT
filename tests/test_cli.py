@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from p2m.cli import cli
+from assert_ai.cli import cli
 
 
 class CliTest(unittest.TestCase):
@@ -48,7 +51,7 @@ class CliTest(unittest.TestCase):
             config.write_text("suite: test\nstages: []\n", encoding="utf-8")
             resolved_config = str(config.resolve())
 
-            with patch("p2m.runner.run_pipeline", return_value=0) as run_pipeline:
+            with patch("assert_ai.runner.run_pipeline", return_value=0) as run_pipeline:
                 result = self.runner.invoke(
                     cli,
                     [
@@ -75,6 +78,25 @@ class CliTest(unittest.TestCase):
             },
         )
 
+
+    def test_run_concurrency_forwarded(self) -> None:
+        with self.runner.isolated_filesystem():
+            config = Path("eval.yaml")
+            config.write_text("suite: test\nstages: []\n", encoding="utf-8")
+
+            import unittest.mock
+
+            mock_runner = unittest.mock.MagicMock()
+            mock_runner.run_pipeline.return_value = 0
+            with patch("assert_ai.cli._load_runner_module", return_value=mock_runner):
+                result = self.runner.invoke(
+                    cli,
+                    ["run", "--config", str(config), "--concurrency", "5"],
+                )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        mock_runner.run_pipeline.assert_called_once()
+        self.assertEqual(mock_runner.run_pipeline.call_args.kwargs["concurrency"], 5)
 
     def test_verbose_flag_accepted(self) -> None:
         result = self.runner.invoke(cli, ["-v", "--help"])

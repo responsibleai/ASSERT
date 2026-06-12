@@ -1,13 +1,16 @@
-"""Phoenix OTel auto-instrumentation for the LangGraph travel planner.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
-2 lines to instrument, then run the agent unchanged. Phoenix auto-discovers
-LangChain, LangGraph, OpenAI, and MCP tool calls.
+"""OpenInference auto-instrumentation for the LangGraph travel planner.
+
+Central helper installs available OpenInference instrumentors without starting
+Phoenix unless a collector is configured or reachable.
 """
 
 from __future__ import annotations
 
 # pip install openinference-instrumentation-langchain arize-phoenix-otel
-from phoenix.otel import register  # noqa: F401
-register(auto_instrument=True)
+from assert_ai import auto_trace  # noqa: F401
+auto_trace.enable()
 
 from examples.travel_planner_langgraph.agent import chat_sync  # noqa: E402

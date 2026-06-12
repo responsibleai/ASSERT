@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — OpenAI direct (function calling).
 
-Instrumentation: 2 lines. Agent code: standard OpenAI SDK.
+Instrumentation: central helper call. Agent code: standard OpenAI SDK.
 Traces captured: LLM calls, tool calls with args/results, token counts, latency.
 """
 
-# pip install openinference-instrumentation-openai arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-openai arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 import os
@@ -17,7 +20,7 @@ load_dotenv()
 from openai import AzureOpenAI, OpenAI  # noqa: E402
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT, OPENAI_TOOLS  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "gpt-4o-mini")
 
 
 def _get_client():

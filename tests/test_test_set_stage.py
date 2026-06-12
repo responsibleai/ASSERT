@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import json
 import unittest
 import warnings
@@ -5,10 +8,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from p2m.core.config_model import TargetConfig, ToolsConfig
-from p2m.core.model_client import LLMRateLimitError, ModelResponse
-from p2m.stages.stratification import normalize_stratification
-from p2m.stages.test_set import (
+from assert_ai.core.config_model import TargetConfig, ToolsConfig
+from assert_ai.core.model_client import LLMRateLimitError, ModelResponse
+from assert_ai.stages.stratification import normalize_stratification
+from assert_ai.stages.test_set import (
     TOOL_SOURCE_PER_TEST_CASE,
     _normalize_tool_source,
     run as run_stage,
@@ -105,7 +108,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 result = await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -168,7 +171,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -260,7 +263,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -309,7 +312,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 result = await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -363,7 +366,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "generated_test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 result = await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -412,7 +415,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             run_test_set_mock = AsyncMock(return_value={"test_set_path": str(suite_root / "test_set.jsonl"), "saved_count": 1})
-            with patch("p2m.stages.test_set.run_test_set", run_test_set_mock):
+            with patch("assert_ai.stages.test_set.run_test_set", run_test_set_mock):
                 result = await run_stage(
                     {
                         "suite_root": suite_root,
@@ -455,7 +458,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             (suite_root / "taxonomy.json").write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
             run_test_set_mock = AsyncMock(return_value={"test_set_path": str(suite_root / "test_set.jsonl"), "saved_count": 1})
-            with patch("p2m.stages.test_set.run_test_set", run_test_set_mock):
+            with patch("assert_ai.stages.test_set.run_test_set", run_test_set_mock):
                 result = await run_stage(
                     {
                         "suite_root": suite_root,
@@ -538,7 +541,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 with self.assertRaisesRegex(ValueError, "generated test case contains invalid tool definitions"):
                     await run_test_set(
                         taxonomy_path=str(taxonomy_path),
@@ -599,7 +602,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 result = await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),
@@ -653,7 +656,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 with self.assertRaisesRegex(ValueError, "invalid test_set payload"):
                     await run_test_set(
                         taxonomy_path=str(taxonomy_path),
@@ -705,7 +708,7 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
             test_set_path = tmp_path / "test_set.jsonl"
             taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
 
-            with patch("p2m.stages.test_set.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured):
                 result = await run_test_set(
                     taxonomy_path=str(taxonomy_path),
                     save_path=str(test_set_path),

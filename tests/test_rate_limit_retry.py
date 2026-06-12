@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the per-model adaptive rate limiter and retry logic."""
 
 import asyncio
@@ -6,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from p2m.core.model_client import (
+from assert_ai.core.model_client import (
     LLMProviderError,
     LLMRateLimitError,
     _DECAY_AFTER_SUCCESSES,
@@ -202,13 +205,13 @@ def _make_litellm_module():
 class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         # Reset the global rate limiter state between tests
-        from p2m.core import model_client
+        from assert_ai.core import model_client
         model_client._rate_limiter = _ModelRateLimiter()
         self.fake_litellm = _make_litellm_module()
 
     async def test_success_on_first_attempt(self) -> None:
         call_fn = AsyncMock(return_value="ok")
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             result = await _with_retries(call_fn, model="m")
         self.assertEqual(result, "ok")
         call_fn.assert_called_once()
@@ -217,7 +220,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         rate_exc = self.fake_litellm.RateLimitError("429")
         call_fn = AsyncMock(side_effect=[rate_exc, rate_exc, "ok"])
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 result = await _with_retries(call_fn, model="m")
 
@@ -228,7 +231,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         api_exc = self.fake_litellm.APIError("500")
         call_fn = AsyncMock(side_effect=[api_exc, "ok"])
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 result = await _with_retries(call_fn, model="m")
 
@@ -239,7 +242,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         rate_exc = self.fake_litellm.RateLimitError("429")
         call_fn = AsyncMock(side_effect=rate_exc)
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 with self.assertRaises(LLMRateLimitError):
                     await _with_retries(call_fn, model="m")
@@ -251,7 +254,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         auth_exc = self.fake_litellm.AuthenticationError("bad key")
         call_fn = AsyncMock(side_effect=auth_exc)
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with self.assertRaises(Exception) as ctx:
                 await _with_retries(call_fn, model="m")
 
@@ -263,7 +266,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         rate_exc.headers = {"Retry-After": "5"}
         call_fn = AsyncMock(side_effect=[rate_exc, "ok"])
 
-        from p2m.core import model_client
+        from assert_ai.core import model_client
         observed_base: list[float | None] = []
         original_success = model_client._rate_limiter.report_success
 
@@ -274,7 +277,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
 
         model_client._rate_limiter.report_success = spy_success  # type: ignore[assignment]
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 result = await _with_retries(call_fn, model="m")
 
@@ -284,7 +287,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_label_does_not_affect_behavior(self) -> None:
         call_fn = AsyncMock(return_value="ok")
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             result = await _with_retries(call_fn, model="m", label="test_set:prompt:slug")
         self.assertEqual(result, "ok")
 
@@ -296,7 +299,7 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
         async def track_sleep(s: float) -> None:
             sleep_delays.append(s)
 
-        with patch("p2m.core.model_client._get_litellm_module", return_value=self.fake_litellm):
+        with patch("assert_ai.core.model_client._get_litellm_module", return_value=self.fake_litellm):
             with patch("asyncio.sleep", side_effect=track_sleep):
                 with patch("random.uniform", return_value=0.0):
                     result = await _with_retries(call_fn, model="m")
@@ -312,12 +315,12 @@ class WithRetriesTest(unittest.IsolatedAsyncioTestCase):
 
 class GenerateWithRetriesTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        from p2m.core import model_client
+        from assert_ai.core import model_client
         model_client._rate_limiter = _ModelRateLimiter()
         self.fake_litellm = _make_litellm_module()
 
     async def test_generate_retries_on_rate_limit(self) -> None:
-        from p2m.core import model_client
+        from assert_ai.core import model_client
 
         rate_exc = self.fake_litellm.RateLimitError("429")
         call_count = 0

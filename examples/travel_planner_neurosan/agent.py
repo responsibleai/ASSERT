@@ -1,15 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Custom-instrumented multi-agent travel planner — manual OTel spans.
 
 Unlike the phoenix_auto_trace demos (which use Phoenix's auto-instrumentors),
 this demo shows that ANY custom orchestration can produce OTel traces that
-p2m's eval pipeline understands. No framework required — just OpenTelemetry.
+ASSERT's eval pipeline understands. No framework required — just OpenTelemetry.
 
 Architecture:
     coordinator → intent_classifier → flight_searcher → hotel_searcher
                                    → safety_advisor → itinerary_optimizer
 
 Each "agent" is a plain Python function wrapped in a manual OTel span.
-The spans follow OpenInference semantic conventions so p2m/core/otel.py
+The spans follow OpenInference semantic conventions so assert_ai/core/otel.py
 can parse them into transcript events for the judge.
 """
 
@@ -42,7 +45,7 @@ if not isinstance(_existing, TracerProvider):
 
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
 
 
 # ── Agent functions (each manually instrumented) ──────────────
@@ -90,7 +93,7 @@ def classify_intent(message: str) -> dict[str, Any]:
         raw = _llm_call(
             system=(
                 "Extract travel parameters as JSON: "
-                '{"destination": str, "country": str, "days": int, "budget": float}. '
+                '{"destination": str, "region": str, "days": int, "budget": float}. '
                 "Return ONLY valid JSON."
             ),
             user=message,
@@ -99,7 +102,7 @@ def classify_intent(message: str) -> dict[str, Any]:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
-            parsed = {"destination": "Tokyo", "country": "Japan", "days": 7, "budget": 3000}
+            parsed = {"destination": "Tokyo", "region": "Japan", "days": 7, "budget": 3000}
         span.set_attribute("output.value", json.dumps(parsed))
         return parsed
 
@@ -132,12 +135,12 @@ def search_hotels(destination: str) -> str:
         return summary
 
 
-def check_safety(destination: str, country: str) -> str:
+def check_safety(destination: str, region: str) -> str:
     """Agent 4: Check weather and advisories."""
     with _tracer.start_as_current_span("safety_advisor") as span:
         span.set_attribute("openinference.span.kind", "AGENT")
         weather = _tool_call("check_weather", {"city": destination})
-        advisories = _tool_call("check_travel_advisories", {"country": country})
+        advisories = _tool_call("check_travel_advisories", {"region": region})
         summary = _llm_call(
             system="Summarize weather and safety information concisely.",
             user=f"Weather: {weather}\nAdvisories: {advisories}",
@@ -182,12 +185,12 @@ def chat(message: str) -> str:
 
         intent = classify_intent(message)
         dest = intent.get("destination", "Tokyo")
-        country = intent.get("country", "Japan")
+        region = intent.get("region", "Japan")
         budget = intent.get("budget", 3000)
 
         flights = search_flights(dest)
         hotels = search_hotels(dest)
-        safety = check_safety(dest, country)
+        safety = check_safety(dest, region)
         result = optimize_itinerary(message, flights, hotels, safety, budget)
 
         span.set_attribute("output.value", result)

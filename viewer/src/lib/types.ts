@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Suite-level types (from suite.json, taxonomy.json, test_set.jsonl)
 
 export interface Suite {
@@ -88,11 +91,18 @@ export interface ViewerSeedGroup {
 
 export type StageStatus = 'running' | 'completed' | 'failed';
 
+export interface StageTiming {
+	started_at?: string;
+	ended_at?: string;
+	duration_secs?: number;
+}
+
 export interface Manifest {
 	status?: 'running' | 'completed' | 'failed';
 	started_at?: string;
 	ended_at?: string;
 	stages?: Record<string, StageStatus>;
+	stage_timings?: Record<string, StageTiming>;
 	pid?: number;
 	host?: string;
 	heartbeat_at?: string;
@@ -133,7 +143,7 @@ export interface JudgmentErrorVerdict {
 	[key: string]: unknown;
 }
 
-export type JudgeStatus = 'ok' | 'judge_failed';
+export type JudgeStatus = 'ok' | 'judge_failed' | 'scoring_skipped';
 
 export interface MultiJudge {
 	n: number;
@@ -201,6 +211,7 @@ export interface ViewerResultContext {
 	tools?: SeedPayload['tools'];
 	turns_count?: number | null;
 	stop_reason?: string | null;
+	stop_reason_display?: StopReasonDisplay | null;
 }
 
 export interface ViewerResultItem {
@@ -222,7 +233,7 @@ export interface ViewerResultItem {
 
 // Aggregated types for views
 
-export type SuiteStatus = 'systematized' | 'test_set_ready' | 'has_results';
+export type SuiteStatus = 'empty' | 'systematized' | 'test_set_ready' | 'has_results';
 
 export interface SuiteListItem {
 	suite_id: string;
@@ -266,6 +277,8 @@ export interface RunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	target: string;
 	judge_model: string;
 	dimensions: Record<string, DimensionMetrics>;
@@ -294,6 +307,8 @@ export interface AuditRunMetrics {
 	counts: BinaryCounts;
 	policy_violation_rate: number;
 	overrefusal_rate: number;
+	policy_violation_on_permissible: DimensionMetrics | null;
+	policy_violation_on_not_permissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
 	target: string;
 	tester_model: string;
@@ -417,9 +432,18 @@ export interface AuditScore {
 	metadata: {
 		turns_count: number;
 		stop_reason: string;
+		stop_reason_display?: StopReasonDisplay | null;
 	};
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
+}
+
+export type StopReasonTone = 'refusal' | 'error' | 'info';
+
+export interface StopReasonDisplay {
+	label: string;
+	description: string;
+	tone: StopReasonTone;
 }
 
 // --- Grouping types ---

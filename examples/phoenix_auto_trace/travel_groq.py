@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Groq (fast inference).
 
-Instrumentation: 2 lines. Agent code: standard Groq SDK (OpenAI-compatible).
+Instrumentation: central helper call. Agent code: standard Groq SDK (OpenAI-compatible).
 Traces captured: LLM calls, tool calls, token counts, latency.
 """
 
-# pip install openinference-instrumentation-groq arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-groq arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 from groq import Groq

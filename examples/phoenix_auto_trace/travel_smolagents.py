@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — smolagents (HuggingFace tool-calling agent).
 
-Instrumentation: 2 lines. Agent code: standard smolagents.
+Instrumentation: central helper call. Agent code: standard smolagents.
 Traces captured: agent steps, tool calls, LLM calls, reasoning traces, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-smolagents arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-smolagents arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 
@@ -19,7 +22,7 @@ from smolagents import ToolCallingAgent, tool, LiteLLMModel  # noqa: E402
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL", "azure/gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
 
 model = LiteLLMModel(model_id=_MODEL)
 
@@ -59,13 +62,13 @@ def check_weather(city: str) -> str:
 
 
 @tool
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions.
 
     Args:
-        country: Destination country.
+        region: Destination region.
     """
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 @tool

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for the runtime-safety layer: heartbeat, watchdog, bounded teardown.
 
 The motivating bug: a multi-agent LangGraph travel-planner target leaked
@@ -27,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from p2m.core.runtime_safety import (
+from assert_ai.core.runtime_safety import (
     ManifestHeartbeat,
     PipelineWatchdog,
     run_stage_coro,
@@ -83,10 +86,12 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
     that leaks a worker and asserting the subprocess still exits.
     """
     release = threading.Event()
+    started = threading.Event()
 
     def _hang_forever() -> str:
         # Mimic an unclosed httpx client whose finalizer is wedged on a
         # closed event loop: a blocking wait that won't naturally complete.
+        started.set()
         release.wait(timeout=120.0)
         return "released-by-test-cleanup"
 
@@ -97,10 +102,15 @@ def test_run_stage_coro_bounded_teardown_returns_when_worker_hangs(
         # active when the coroutine returns -- exactly the leak shape
         # we're defending against.
         asyncio.get_running_loop().run_in_executor(None, _hang_forever)
-        await asyncio.sleep(0.01)
+        # Wait until the worker thread is actually running so that
+        # executor.shutdown(cancel_futures=True) cannot cancel a
+        # not-yet-started future — which would let cleanup finish
+        # instantly and skip the timeout warning we assert below.
+        while not started.is_set():
+            await asyncio.sleep(0.01)
         return "main-coro-done"
 
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     start = time.monotonic()
     try:
         # 2s timeout so the test runs fast; in production it's 300s.
@@ -135,7 +145,7 @@ def test_run_stage_coro_clean_shutdown_logs_no_warning(
         await asyncio.to_thread(lambda: time.sleep(0.01))
         return 42
 
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     assert run_stage_coro(_coro(), cleanup_timeout_s=10.0) == 42
     assert not any(
         "Stage cleanup exceeded" in r.message for r in caplog.records
@@ -176,6 +186,7 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
     If the dual-detach is correct, the subprocess exits within the
     timeout. If not, ``subprocess.run`` raises ``TimeoutExpired``.
     """
+    import os
     import subprocess
     import sys
     import textwrap
@@ -184,7 +195,7 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
         '''
         import asyncio
         import threading
-        from p2m.core.runtime_safety import run_stage_coro
+        from assert_ai.core.runtime_safety import run_stage_coro
 
         never_released = threading.Event()
 
@@ -208,12 +219,27 @@ def test_run_stage_coro_does_not_block_subprocess_exit_when_worker_leaked(
     script_path = tmp_path / "leaked_worker_subprocess_probe.py"
     script_path.write_text(script, encoding="utf-8")
 
+    # Propagate the parent interpreter's import paths to the subprocess.
+    # pytest's rootdir hook puts the repo root on sys.path of the test
+    # runner, but a fresh `sys.executable` subprocess only sees its own
+    # site-packages — so without ``pip install -e .``, ``import assert_ai``
+    # would ModuleNotFoundError even though sys.executable is correct.
+    # Merging sys.path into PYTHONPATH makes the test pass regardless of
+    # whether the package is editable-installed or discovered via pytest.
+    env = os.environ.copy()
+    extra_paths = [p for p in sys.path if p]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        extra_paths.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(extra_paths)
+
     try:
         proc = subprocess.run(
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
             timeout=15.0,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout if isinstance(exc.stdout, str) else (
@@ -344,7 +370,7 @@ def test_heartbeat_swallows_write_errors(
         call_count[0] += 1
         raise OSError("disk full (simulated)")
 
-    caplog.set_level(logging.DEBUG, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.DEBUG, logger="assert_ai.core.runtime_safety")
     hb = ManifestHeartbeat(manifest, tmp_path, _flaky_write, interval_s=0.05)
     hb.start()
     try:
@@ -363,7 +389,7 @@ def test_watchdog_dumps_stacks_after_idle_threshold(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Watchdog must dump thread stacks when no tick fires for >threshold."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.1, check_interval_s=0.05)
     wd.start()
     try:
@@ -381,7 +407,7 @@ def test_watchdog_does_not_dump_twice_for_same_idle_period(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Single hang -> single dump, not one per check interval."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.1, check_interval_s=0.05)
     wd.start()
     try:
@@ -401,7 +427,7 @@ def test_watchdog_tick_resets_idle_clock(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A tick before the threshold prevents (or resets) the dump."""
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     wd = PipelineWatchdog(idle_threshold_s=0.2, check_interval_s=0.05)
     wd.start()
     try:
@@ -430,7 +456,7 @@ def test_heartbeat_ticks_watchdog_when_attached(
     hb = ManifestHeartbeat(manifest, tmp_path, _noop_write, interval_s=0.05)
     wd = PipelineWatchdog(idle_threshold_s=0.15, check_interval_s=0.05)
     hb.attach_watchdog(wd)
-    caplog.set_level(logging.WARNING, logger="p2m.core.runtime_safety")
+    caplog.set_level(logging.WARNING, logger="assert_ai.core.runtime_safety")
     wd.start()
     hb.start()
     try:

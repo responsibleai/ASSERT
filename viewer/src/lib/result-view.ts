@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import type {
 	AuditScore,
 	AuditTranscriptMessage,
@@ -5,8 +8,92 @@ import type {
 	JudgedSample,
 	LlmCallTrace,
 	ScenarioSeedInfo,
+	StopReasonDisplay,
 	ViewerResultItem
 } from '$lib/types.js';
+
+export function scenarioStopReasonDisplay(stopReason: string | null | undefined): StopReasonDisplay | null {
+	if (stopReason == null || stopReason === '') return null;
+	if (stopReason === 'completed' || stopReason === 'max_turns') return null;
+	if (stopReason === 'tester_input_refused') {
+		return {
+			label: 'Refused before inference',
+			description:
+				'The tester refused to generate input for this scenario, so no target conversation was produced.',
+			tone: 'refusal'
+		};
+	}
+	if (stopReason === 'target_input_refused') {
+		return {
+			label: 'Target refused the input',
+			description: 'The target refused to respond to the generated tester input.',
+			tone: 'refusal'
+		};
+	}
+	if (stopReason === 'target_error') {
+		return {
+			label: 'Target error',
+			description: 'The target raised an error before completing the conversation.',
+			tone: 'error'
+		};
+	}
+	if (stopReason === 'tester_error') {
+		return {
+			label: 'Tester error',
+			description: 'The tester raised an error before producing target input.',
+			tone: 'error'
+		};
+	}
+	if (stopReason === 'runtime_close_error') {
+		// The conversation completed and remains scorable; the error tone flags cleanup failure.
+		return {
+			label: 'Runtime close error',
+			description: 'The target runtime failed to close cleanly after the conversation ended.',
+			tone: 'error'
+		};
+	}
+	if (stopReason === 'invalid_tester_turn') {
+		return {
+			label: 'Invalid tester turn',
+			description: 'The tester produced an invalid turn, so the scenario stopped before completing.',
+			tone: 'error'
+		};
+	}
+	return {
+		label: 'Stopped early',
+		description: 'The scenario ended before producing a normal completion.',
+		tone: 'info'
+	};
+}
+
+export function stopReasonLabel(
+	stopReason: string | null | undefined,
+	display?: StopReasonDisplay | null
+): string {
+	return display?.label ?? stopReason ?? '';
+}
+
+export function stopReasonTitle(
+	stopReason: string | null | undefined,
+	display?: StopReasonDisplay | null
+): string {
+	if (!stopReason) return display?.description ?? '';
+	if (!display) return stopReason;
+	return `${display.description} Stop reason: ${stopReason}`;
+}
+
+export function stopReasonChipClass(display?: StopReasonDisplay | null): string {
+	if (display?.tone === 'refusal') {
+		return 'rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400';
+	}
+	if (display?.tone === 'error') {
+		return 'rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400';
+	}
+	if (display?.tone === 'info') {
+		return 'rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-secondary';
+	}
+	return 'rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted';
+}
 
 function normalizeMessageRole(role: string): InteractionMessage['role'] {
 	if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
@@ -161,7 +248,9 @@ export function normalizeScenarioResult(
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,
 			turns_count: countConversationMessages(interactionMessages),
-			stop_reason: score.metadata.stop_reason
+			stop_reason: score.metadata.stop_reason,
+			stop_reason_display:
+				score.metadata.stop_reason_display ?? scenarioStopReasonDisplay(score.metadata.stop_reason)
 		}
 	};
 }

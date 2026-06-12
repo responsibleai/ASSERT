@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest a new feature or improvement for ASSERT
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please search existing issues and discussions before opening a new request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem you're trying to solve
+      description: What problem or limitation are you running into today?
+      placeholder: When I evaluate a multi-agent system, I can't ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution or behavior
+      description: Describe the behavior you'd like to see. Sketches of YAML, CLI flags, or API shapes are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've thought about and why they don't quite work.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Use case context
+      description: |
+        Which target type (callable, model, model+tools)? Which framework (LangGraph, CrewAI, OpenAI Agents SDK, custom, etc.)?
+        Production vs. prototyping? Any other relevant context.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues and discussions and did not find a duplicate.
+          required: true
+        - label: I'd be willing to contribute a PR for this (optional).
+          required: false

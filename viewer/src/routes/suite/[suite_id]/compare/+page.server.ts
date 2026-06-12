@@ -1,6 +1,10 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { loadComparePageData } from '$lib/server/data.js';
 import { isSafeArtifactId } from '$lib/server/artifacts.js';
 import { error } from '@sveltejs/kit';
+import type { JudgedSample } from '$lib/types.js';
 import type { PageServerLoad } from './$types.js';
 
 export const load: PageServerLoad = async ({ params, url }) => {
@@ -19,7 +23,29 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		if (!isSafeArtifactId(runId)) throw error(400, `Invalid run ID: ${runId}`);
 	}
 
-	const payload = loadComparePageData(suite_id, runIds);
-	if (!payload) throw error(404, 'One or more runs had no judged samples');
-	return payload;
+	const kind: 'prompts' | 'scenarios' =
+		url.searchParams.get('kind') === 'scenarios' ? 'scenarios' : 'prompts';
+
+	const payload = loadComparePageData(suite_id, runIds, kind);
+	if (payload) return payload;
+
+	// Scenarios-mode empty state: when one or more runs have no scenario
+	// samples, we still want to render the toggle so the user can switch back
+	// to Prompts. Reuse the prompts payload for the shared metadata (runs,
+	// taxonomy, dimensionDefs) and blank out the comparison data so the page
+	// can show a "No scenarios in these runs" message.
+	if (kind === 'scenarios') {
+		const promptsPayload = loadComparePageData(suite_id, runIds, 'prompts');
+		if (!promptsPayload) throw error(404, 'One or more runs had no judged samples');
+		return {
+			...promptsPayload,
+			kind: 'scenarios' as const,
+			emptyKind: true,
+			comparisons: [] as typeof promptsPayload.comparisons,
+			samplesByBehavior: {} as Record<string, Record<string, JudgedSample[]>>,
+			allMetrics: [] as string[]
+		};
+	}
+
+	throw error(404, 'One or more runs had no judged samples');
 };

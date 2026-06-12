@@ -1,6 +1,6 @@
 # Support
 
-Adaptive Eval is currently a customer preview / POC distribution. This repository is the primary place to track setup issues, documentation gaps, and product feedback during preview.
+ASSERT is currently a customer preview / POC distribution. This repository is the primary place to track setup issues, documentation gaps, and product feedback during preview.
 
 ## Getting help
 

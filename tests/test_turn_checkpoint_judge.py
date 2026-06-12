@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import asyncio
 import importlib.util
 import json
@@ -9,7 +12,7 @@ from unittest.mock import patch
 
 import yaml
 
-from p2m.core.transcript import (
+from assert_ai.core.transcript import (
     AddMessageEdit,
     Message,
     SetSystemMessageEdit,

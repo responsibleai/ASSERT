@@ -37,7 +37,7 @@ tools:
   parameters:
   - name: destination
     type: string
-    description: Destination country or city
+    description: Destination region or city
 - name: validate_budget
   description: Check if a travel plan fits within the specified budget.
   parameters:

@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — Haystack (pipeline with tool-calling loop).
 
-Instrumentation: 2 lines. Agent code: standard Haystack 2.x.
+Instrumentation: central helper call. Agent code: standard Haystack 2.x.
 Traces captured: pipeline runs, LLM calls, tool invocations, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-haystack arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-haystack arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import os
 
@@ -24,7 +27,7 @@ from examples.phoenix_auto_trace._tools import (  # noqa: E402
     simulate_tool, SYSTEM_PROMPT, OPENAI_TOOLS,
 )
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-4o-mini")
 
 
 # ── Build Haystack Tool objects from shared OPENAI_TOOLS ──────

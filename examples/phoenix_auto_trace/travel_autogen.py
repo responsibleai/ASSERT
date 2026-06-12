@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — AutoGen AgentChat (multi-agent conversation).
 
-Instrumentation: 2 lines. Agent code: standard AutoGen AgentChat.
+Instrumentation: central helper call. Agent code: standard AutoGen AgentChat.
 Traces captured: agent messages, tool calls, LLM calls, team orchestration, token counts.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-autogen-agentchat arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-autogen-agentchat arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import asyncio
 import os
@@ -23,7 +26,7 @@ from autogen_ext.models.openai import AzureOpenAIChatCompletionClient, OpenAICha
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT  # noqa: E402
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-4o-mini")
 
 
 _MODEL_INFO = {
@@ -64,9 +67,9 @@ def check_weather(city: str) -> str:
     return simulate_tool("check_weather", {"city": city})
 
 
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 def validate_budget(flight_cost: float, hotel_cost: float, other_costs: float = 0, budget: float = 0) -> str:

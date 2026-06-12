@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import json
 import unittest
 import pytest
@@ -5,9 +8,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from p2m.core.config_model import ModelConfig
-from p2m.core.model_client import ModelResponse
-from p2m.stages.systematization import run_systematization
+from assert_ai.core.config_model import ModelConfig
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.stages.systematization import run_systematization
 
 
 FINAL_SYSTEMATIZATION = """# Systematization
@@ -125,7 +128,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
-            with patch("p2m.stages.systematization.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured):
                 written_path = await run_systematization(
                     behavior="harmful advice",
                     behavior_text="Harmful advice",
@@ -169,7 +172,7 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
-            with patch("p2m.stages.systematization.generate_structured", new=fake_generate_structured):
+            with patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured):
                 await run_systematization(
                     behavior="harmful advice",
                     behavior_text="Risk body",
@@ -253,7 +256,7 @@ Avoid over-flagging educational content.
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
             with (
-                patch("p2m.stages.systematization.generate_structured", new=fake_generate_structured),
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
                 self.assertRaisesRegex(ValueError, "Variables"),
             ):
                 await run_systematization(
@@ -263,6 +266,114 @@ Avoid over-flagging educational content.
                     model_cfg=ModelConfig(name="azure/gpt-5.4", reasoning_effort="high"),
                     mode="research",
                 )
+
+
+class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
+    """Issue #131: when the response exhausts the model's output budget,
+    the stage must raise a clear truncation-specific error instead of the
+    opaque generic JSONDecodeError. Detection must cross-recognise both the
+    Chat Completions (`length`) and Responses API (`max_output_tokens`)
+    finish-reason variants — the latter was the original repro path."""
+
+    async def test_responses_api_truncation_raises_clear_error(self) -> None:
+        """The travel-planner failure mode: web_search routes through the
+        Responses API which surfaces truncation as `max_output_tokens`."""
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del model, prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model="azure/gpt-5.4",
+                text='{"systematization":"# Systematization\\n\\n## Scope\\nDetect when',
+                finish_reason="max_output_tokens",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(ValueError, "truncated.*max_output_tokens.*max_tokens=8000"),
+            ):
+                await run_systematization(
+                    behavior="harmful advice",
+                    behavior_text="Harmful advice",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                )
+
+    async def test_chat_completions_length_truncation_raises_clear_error(self) -> None:
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del model, prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model="azure/gpt-5.4",
+                text='{"systematization":"partial',
+                finish_reason="length",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(ValueError, "truncated.*length"),
+            ):
+                await run_systematization(
+                    behavior="harmful advice",
+                    behavior_text="Harmful advice",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                )
+
+    async def test_non_truncation_parse_failure_keeps_original_error(self) -> None:
+        """Prior to issue #131, the parse-failure path raised this exact message.
+        That behavior is preserved verbatim for non-truncation parse failures."""
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del model, prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model="azure/gpt-5.4",
+                text="this is not json",
+                finish_reason="stop",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(ValueError, "unparseable output"),
+            ):
+                await run_systematization(
+                    behavior="harmful advice",
+                    behavior_text="Harmful advice",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                )
+
+    async def test_single_attempt_no_retry(self) -> None:
+        """Behavioural guarantee: the systematize stage makes exactly one
+        model call. Issue #131 must not introduce retry-driven token spend."""
+        call_count = 0
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            nonlocal call_count
+            call_count += 1
+            return ModelResponse(
+                model=model,
+                text='{"systematization":"truncated',
+                finish_reason="max_output_tokens",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaises(ValueError),
+            ):
+                await run_systematization(
+                    behavior="harmful advice",
+                    behavior_text="Harmful advice",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                )
+
+        self.assertEqual(call_count, 1)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — LlamaIndex (ReAct agent).
 
-Instrumentation: 2 lines. Agent code: standard LlamaIndex.
+Instrumentation: central helper call. Agent code: standard LlamaIndex.
 Traces captured: LLM calls, tool invocations,
 response synthesis, token counts.
 """
@@ -8,11 +11,11 @@ response synthesis, token counts.
 from __future__ import annotations
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2 lines of instrumentation
+# Central helper instrumentation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# pip install openinference-instrumentation-llama-index arize-phoenix-otel
-from phoenix.otel import register  # noqa: E402
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-llama-index arize-phoenix-otel
+from assert_ai import auto_trace  # noqa: E402
+auto_trace.enable()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Agent code — standard LlamaIndex
@@ -30,7 +33,7 @@ from llama_index.llms.openai import OpenAI
 
 from examples.phoenix_auto_trace._tools import simulate_tool, SYSTEM_PROMPT
 
-_MODEL = os.environ.get("P2M_TARGET_MODEL_SHORT", "gpt-5.4-mini")
+_MODEL = os.environ.get("ASSERT_TARGET_MODEL_SHORT", "gpt-4o-mini")
 
 Settings.llm = OpenAI(
     model=_MODEL,
@@ -57,9 +60,9 @@ def check_weather(city: str) -> str:
     return simulate_tool("check_weather", {"city": city})
 
 
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 
 def validate_budget(flight_cost: float, hotel_cost: float, other_costs: float = 0, budget: float = 0) -> str:

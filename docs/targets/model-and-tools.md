@@ -17,19 +17,19 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 0.0
       system_prompt: |
         You are a helpful assistant. Follow the product taxonomy and ask clarifying
         questions when user constraints are missing.
       tools:
         toolset: examples/agents/health_assistant_tools.yaml
-        simulator: azure/gpt-5.4-mini
+        simulator: azure/gpt-4o-mini
 ```
 
 The eval runs end-to-end: taxonomy → test cases → inference (with simulated tools) → judge verdicts on tool selection, argument correctness, and constraint handling. When the prompt and toolset look right, swap the simulator for real tool implementations (next section) without touching the rest of the config.
 
-## Prompt Agent with real Python tools
+## Prompt Agent (hosted model + real Python tools)
 
 Once tools are implemented, point at the Python module that exposes them:
 
@@ -38,14 +38,14 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
       tools:
         module: examples.agents.health_assistant
 ```
 
 The toolset, system prompt, and rest of the eval config stay the same — only `tools.toolset` + `tools.simulator` are replaced by `tools.module`. This makes the TDD-then-real progression a one-line change.
 
-## Hosted model only (smoke)
+## Hosted model only (simple, no tools)
 
 The smallest configuration — model + system prompt, no tools — for sanity-checking the eval pipeline against a Prompt Agent with no tool surface:
 
@@ -54,7 +54,7 @@ pipeline:
   inference:
     target:
       model:
-        name: azure/gpt-5.4-mini
+        name: azure/gpt-4o-mini
         temperature: 0.0
         max_tokens: 8000
       system_prompt: |

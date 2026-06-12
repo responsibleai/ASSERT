@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Generic grouping system for scored results.
  * New grouping axes can be added by pushing to GROUP_AXES.
@@ -88,7 +91,7 @@ function observedNodeSort(a: GroupEntry<ScoredRecord>, b: GroupEntry<ScoredRecor
 // ---------------------------------------------------------------------------
 
 const GROUP_AXES: GroupAxis<ScoredRecord>[] = [
-	{ key: 'observed_node', label: 'Observed behavior (judge)', accessor: observedNodeAccessor, sortGroups: observedNodeSort },
+	{ key: 'observed_node', label: 'Behavior category', accessor: observedNodeAccessor, sortGroups: observedNodeSort },
 ];
 
 export const AUDIT_GROUP_AXES: GroupAxis<AuditScore>[] = GROUP_AXES;
@@ -110,22 +113,6 @@ export function buildFactorAxes<T extends { dimensions?: Record<string, string> 
 		label: formatFactorLabel(name),
 		accessor: (item) => item.dimensions?.[name]
 	}));
-
-	for (let index = 0; index < orderedFactorNames.length; index += 1) {
-		for (let otherIndex = index + 1; otherIndex < orderedFactorNames.length; otherIndex += 1) {
-			const first = orderedFactorNames[index];
-			const second = orderedFactorNames[otherIndex];
-			axes.push({
-				key: `dimension:${first}:${second}`,
-				label: `${formatFactorLabel(first)} × ${formatFactorLabel(second)}`,
-				accessor: (item) => {
-					const a = item.dimensions?.[first];
-					const b = item.dimensions?.[second];
-					return a && b ? `${formatFactorLabel(first)}: ${a} · ${formatFactorLabel(second)}: ${b}` : undefined;
-				}
-			});
-		}
-	}
 
 	return axes;
 }

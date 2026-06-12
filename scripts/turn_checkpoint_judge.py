@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Judge transcript prefixes at fixed inference-turn checkpoints and plot flagged rate."""
 
 from __future__ import annotations
@@ -12,12 +15,12 @@ from typing import Any
 
 import yaml
 
-from p2m.core.config_model import (
+from assert_ai.core.config_model import (
     DEFAULT_JUDGE_MAX_TOKENS,
     DEFAULT_JUDGE_TEMPERATURE,
     DEFAULT_INFERENCE_CONCURRENCY,
 )
-from p2m.core.io import (
+from assert_ai.core.io import (
     append_jsonl_row,
     load_jsonl,
     permissible_by_behavior,
@@ -28,15 +31,15 @@ from p2m.core.io import (
     row_behavior,
     row_factors,
 )
-from p2m.core.judge import (
+from assert_ai.core.judge import (
     build_judge_contract,
     get_verdict_dimension,
     infer_judge_status,
     is_valid_event_flag,
     run_transcript_judge,
 )
-from p2m.core.transcript import AddMessageEdit, Transcript, TranscriptEvent, TranscriptMetadata
-from p2m.stages.judge import JUDGE_SYSTEM_PROMPT
+from assert_ai.core.transcript import AddMessageEdit, Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.stages.judge import JUDGE_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)

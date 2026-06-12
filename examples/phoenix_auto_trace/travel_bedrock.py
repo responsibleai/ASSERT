@@ -1,14 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Travel planner — AWS Bedrock (Anthropic Claude on AWS).
 
-Instrumentation: 2 lines. Agent code: standard Bedrock via boto3.
+Instrumentation: central helper call. Agent code: standard Bedrock via boto3.
 Traces captured: LLM calls, tool use, token counts, latency.
 """
 
 from __future__ import annotations
 
-# pip install openinference-instrumentation-bedrock arize-phoenix-otel
-from phoenix.otel import register
-register(auto_instrument=True)
+# Optional Phoenix export: pip install openinference-instrumentation-bedrock arize-phoenix-otel
+from assert_ai import auto_trace
+auto_trace.enable()
 
 import json
 import boto3
@@ -75,9 +78,9 @@ TOOLS = [
                 "json": {
                     "type": "object",
                     "properties": {
-                        "country": {"type": "string", "description": "Destination country"},
+                        "region": {"type": "string", "description": "Destination region"},
                     },
-                    "required": ["country"],
+                    "required": ["region"],
                 }
             },
         }

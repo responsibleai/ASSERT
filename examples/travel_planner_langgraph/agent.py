@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Multi-agent travel planner built with LangGraph.
 
 Multi-node graph with conditional routing, tool calling, and shared state.
@@ -6,7 +9,7 @@ Architecture:
                                    → safety_advisor → itinerary_optimizer
 
 Usage:
-    uv run p2m run --config examples/travel_planner_langgraph/eval_config.yaml
+    assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from langgraph.prebuilt import ToolNode
 
 from examples.phoenix_auto_trace._tools import simulate_tool
 
-_DEPLOYMENT = os.environ.get("P2M_AZURE_DEPLOYMENT", "gpt-5.4-mini")
+_DEPLOYMENT = os.environ.get("ASSERT_AZURE_DEPLOYMENT", "gpt-4o-mini")
 
 
 def _get_llm(temperature: float = 0) -> AzureChatOpenAI:
@@ -60,9 +63,9 @@ def check_weather(city: str) -> str:
     return simulate_tool("check_weather", {"city": city})
 
 @lc_tool
-def check_travel_advisories(country: str) -> str:
+def check_travel_advisories(region: str) -> str:
     """Check visa requirements, safety advisories, and health precautions."""
-    return simulate_tool("check_travel_advisories", {"country": country})
+    return simulate_tool("check_travel_advisories", {"region": region})
 
 @lc_tool
 def validate_budget(flight_cost: float, hotel_cost: float, other_costs: float = 0, budget: float = 5000) -> str:
@@ -209,7 +212,7 @@ async def chat(message: str) -> str:
 
 
 def chat_sync(message: str) -> str:
-    """Synchronous wrapper for p2m callable integration."""
+    """Synchronous wrapper for ASSERT callable integration."""
     return asyncio.run(chat(message))
 
 

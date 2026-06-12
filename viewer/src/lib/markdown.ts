@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { marked, type RendererThis, type Tokens } from 'marked';
 import type { CitationDisplayRange } from '$lib/citation-resolution.js';
 
@@ -176,8 +179,8 @@ function injectHighlightPlaceholders(text: string, ranges: CitationDisplayRange[
 			if (segment.start > cursor) {
 				result += text.slice(cursor, segment.start);
 			}
-			const startToken = `@@P2M_CIT_HL_S_${nonce}_${insertedCount}@@`;
-			const endToken = `@@P2M_CIT_HL_E_${nonce}_${insertedCount}@@`;
+			const startToken = `@@ASSERT_CIT_HL_S_${nonce}_${insertedCount}@@`;
+			const endToken = `@@ASSERT_CIT_HL_E_${nonce}_${insertedCount}@@`;
 			result += startToken + text.slice(segment.start, segment.end) + endToken;
 			cursor = segment.end;
 			insertedCount += 1;
@@ -194,9 +197,9 @@ function replaceHighlightPlaceholders(html: string, count: number, nonce: number
 	let highlighted = html;
 	for (let index = 0; index < count; index += 1) {
 		highlighted = highlighted
-			.split(`@@P2M_CIT_HL_S_${nonce}_${index}@@`)
+			.split(`@@ASSERT_CIT_HL_S_${nonce}_${index}@@`)
 			.join('<mark class="citation-hl">')
-			.split(`@@P2M_CIT_HL_E_${nonce}_${index}@@`)
+			.split(`@@ASSERT_CIT_HL_E_${nonce}_${index}@@`)
 			.join('</mark>');
 	}
 	return highlighted;
