@@ -97,7 +97,10 @@ def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     assert "Found local agents" in result.output
     assert "hermes" in result.output
     assert "codex" in result.output
+    assert "config: [LOCAL_PATH]" in result.output
     assert "found local config or executable" in result.output
+    assert "codex (not found)" not in result.output
+    assert "runtime: codex" not in result.output
 
 
 def test_cli_local_discover_writes_reviewable_manifest(tmp_path: Path) -> None:
