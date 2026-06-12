@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: >-
+  If you use ASSERT, please cite it as below. Please also consider citing the
+  prior work it builds on (see the references section).
+title: "ASSERT: Adaptive Spec-driven Scoring for Evaluation and Regression Testing"
+abstract: >-
+  ASSERT is an open-source framework for turning natural-language behavior
+  specifications into executable evaluations for AI models, applications, and
+  agents.
+type: software
+authors:
+  - name: "Microsoft Responsible AI"
+repository-code: "https://github.com/responsibleai/ASSERT"
+url: "https://github.com/responsibleai/ASSERT"
+license: MIT
+references:
+  - type: software
+    title: "Bloom: an open source tool for automated behavioral evaluations"
+    year: 2025
+    url: "https://github.com/safety-research/bloom"
+    notes: >-
+      ASSERT's automated behavioral-evaluation pipeline was adapted from Bloom
+      (MIT, Copyright (c) 2025 Safety Research). See THIRD_PARTY_NOTICES.md.
+    authors:
+      - family-names: Gupta
+        given-names: Isha
+      - family-names: Fronsdal
+        given-names: Kai
+      - family-names: Sheshadri
+        given-names: Abhay
+      - family-names: Michala
+        given-names: Jonathan
+      - family-names: Tay
+        given-names: Jacqueline
+      - family-names: Wang
+        given-names: Rowan
+      - family-names: Bowman
+        given-names: "Samuel R."
+      - family-names: Price
+        given-names: Sara
