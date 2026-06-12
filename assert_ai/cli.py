@@ -693,6 +693,7 @@ def local_sandbox():
 @click.option("--runner-root", default=None, type=click.Path(path_type=Path), help="Path to ASSERT local sandbox helper scripts. Advanced option.")
 @click.option("--sandbox-name", default="oc-local-agent", show_default=True, help="Name for the local sandbox instance.")
 @click.option("--provider", type=click.Choice(["mock", "live"], case_sensitive=False), default="mock", show_default=True, help="Model provider route for the sandboxed runtime.")
+@click.option("--provider-route", type=click.Choice(["copilot"], case_sensitive=False), default="copilot", show_default=True, help="Live provider route to generate when using --provider live.")
 @click.option("--model-ref", default="openai/mock-model=Mock Model", show_default=True, help="Provider/model mapping for the sandboxed runtime.")
 @click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker.")
 @click.option("--auth-proxy-port", default=12435, show_default=True, type=int, help="Loopback auth proxy port when using --backend docker.")
@@ -718,6 +719,7 @@ def local_sandbox_start(
     runner_root: Path | None,
     sandbox_name: str,
     provider: str,
+    provider_route: str,
     model_ref: str,
     endpoint_port: int,
     auth_proxy_port: int,
@@ -764,6 +766,7 @@ def local_sandbox_start(
                 rampart_root=rampart_root,
                 sandbox_name=sandbox_name,
                 provider=provider,
+                provider_route=provider_route,
                 model_ref=model_ref,
                 endpoint_port=endpoint_port,
                 auth_proxy_port=auth_proxy_port,
@@ -812,6 +815,14 @@ def local_sandbox_smoke(state_path: Path, message: str, timeout_seconds: float):
     click.echo(f"Sandbox smoke: {result.get('status')}")
     click.echo(f"  endpoint: {result.get('agent_endpoint')}")
     click.echo(f"  response: {result.get('response')}")
+    raw_metadata = result.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    provider_value = metadata.get("provider")
+    model_value = metadata.get("model")
+    if provider_value:
+        click.echo(f"  provider: {provider_value}")
+    if model_value:
+        click.echo(f"  model: {model_value}")
     click.echo(f"  events: {len(events)}")
 
 

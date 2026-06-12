@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get('Content-Length', '0'))
         self.rfile.read(length)
-        body = json.dumps({'response': 'ok', 'events': [], 'metadata': {'runtime': 'fake'}}).encode()
+        body = json.dumps({'response': 'ok', 'events': [], 'metadata': {'runtime': 'fake', 'provider': 'copilot', 'model': 'gpt-5.5'}}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -179,7 +179,7 @@ def test_smoke_local_sandbox_posts_message_and_returns_response(tmp_path: Path) 
     assert smoke["agent_endpoint"] == result.endpoint_url
     assert smoke["response"] == "ok"
     assert smoke["events"] == []
-    assert smoke["metadata"] == {"runtime": "fake"}
+    assert smoke["metadata"] == {"runtime": "fake", "provider": "copilot", "model": "gpt-5.5"}
 
 
 def test_start_local_sandbox_requires_model_for_openai_chat(tmp_path: Path) -> None:
@@ -238,6 +238,8 @@ def test_cli_local_sandbox_smoke_posts_to_started_endpoint(tmp_path: Path) -> No
     assert result.exit_code == 0, result.output
     assert "Sandbox smoke: ok" in result.output
     assert "response: ok" in result.output
+    assert "provider: copilot" in result.output
+    assert "model: gpt-5.5" in result.output
     assert "events: 0" in result.output
 
 
@@ -389,6 +391,102 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
     assert state["safety"]["live_home_mount"] is False
     config = yaml.safe_load((tmp_path / "sandbox-out" / "endpoint_target.yaml").read_text(encoding="utf-8"))
     assert config["pipeline"]["inference"]["target"]["endpoint"]["local_dev"] is True
+
+
+def test_openclaw_docker_live_copilot_dry_run_generates_no_secret_auth_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "gho_should_not_be_written")
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    runner_root = _make_runner_root(tmp_path)
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+
+    result = start_openclaw_docker_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        output_dir=tmp_path / "sandbox-out",
+        runner_root=runner_root,
+        rampart_root=rampart_root,
+        sandbox_name="oc-live-test",
+        provider="live",
+        provider_route="copilot",
+        model_ref="copilot/gpt-5.5=GPT 5.5 via Copilot",
+        endpoint_port=19092,
+        dry_run=True,
+    )
+
+    state_text = result.state_path.read_text(encoding="utf-8")
+    state = json.loads(state_text)
+    assert state["status"] == "planned"
+    assert state["plan"]["provider"] == "live"
+    assert state["plan"]["provider_route"] == "copilot"
+    assert [step["name"] for step in state["plan"]["steps"]] == [
+        "preflight",
+        "prepare_openclaw_runtime_archive",
+        "start_auth_proxy",
+        "launch_openclaw_sandbox",
+        "start_openclaw_endpoint_bridge",
+    ]
+    assert "start_mock_openai" not in {step["name"] for step in state["plan"]["steps"]}
+    assert "gho_should_not_be_written" not in state_text
+
+    auth_config_path = tmp_path / "sandbox-out" / "live-auth-proxy.json"
+    auth_config_text = auth_config_path.read_text(encoding="utf-8")
+    auth_config = json.loads(auth_config_text)
+    assert auth_config == {
+        "_comment": "No credential values are stored here. auth=copilot resolves a GitHub token host-side from env vars or gh CLI and injects it in the auth proxy.",
+        "providers": {
+            "copilot": {
+                "enabled": True,
+                "base_url": "https://api.githubcopilot.com",
+                "auth": "copilot",
+                "path_prefix": "/copilot",
+            }
+        },
+    }
+    assert "gho_should_not_be_written" not in auth_config_text
+
+
+def test_cli_local_sandbox_start_live_copilot_does_not_require_manual_auth_config(tmp_path: Path) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "sandbox",
+            "start",
+            "--snapshot",
+            str(manifest_path),
+            "--target",
+            "openclaw",
+            "--backend",
+            "docker",
+            "--provider",
+            "live",
+            "--provider-route",
+            "copilot",
+            "--model-ref",
+            "copilot/gpt-5.5=GPT 5.5 via Copilot",
+            "--rampart-root",
+            str(rampart_root),
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "sandbox-out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared local-agent sandbox" in result.output
+    state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert state["plan"]["provider"] == "live"
+    assert state["plan"]["provider_route"] == "copilot"
+    assert (tmp_path / "sandbox-out" / "live-auth-proxy.json").exists()
 
 
 def test_openclaw_docker_backend_executes_setup_steps_and_writes_running_state(tmp_path: Path) -> None:

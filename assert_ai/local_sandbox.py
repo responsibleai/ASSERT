@@ -311,6 +311,24 @@ def _write_mock_auth_proxy_config(path: Path, *, mock_openai_port: int) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_live_auth_proxy_config(path: Path, *, provider_route: str) -> None:
+    if provider_route != "copilot":
+        raise ValueError("live provider route must be one of: copilot")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "_comment": "No credential values are stored here. auth=copilot resolves a GitHub token host-side from env vars or gh CLI and injects it in the auth proxy.",
+        "providers": {
+            "copilot": {
+                "enabled": True,
+                "base_url": "https://api.githubcopilot.com",
+                "auth": "copilot",
+                "path_prefix": "/copilot",
+            }
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _default_run_step(step: LocalSandboxStep, log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -429,6 +447,7 @@ def start_openclaw_docker_sandbox(
     rampart_root: str | Path | None = None,
     sandbox_name: str = "oc-local-agent",
     provider: str = "mock",
+    provider_route: str = "copilot",
     model_ref: str = "openai/mock-model=Mock Model",
     endpoint_port: int = 18081,
     auth_proxy_port: int = 12435,
@@ -453,8 +472,8 @@ def start_openclaw_docker_sandbox(
         raise ValueError("the docker backend currently supports target openclaw only")
     if provider not in {"mock", "live"}:
         raise ValueError("provider must be one of: mock, live")
-    if provider == "live" and auth_proxy_config is None:
-        raise ValueError("provider live requires --auth-proxy-config")
+    if provider == "live" and provider_route != "copilot":
+        raise ValueError("live provider route must be one of: copilot")
 
     run_step_fn = run_step or _default_run_step
     start_step_fn = start_step or _default_start_step
@@ -489,7 +508,8 @@ def start_openclaw_docker_sandbox(
     runner_path = Path(runner_root).expanduser().resolve() if runner_root else _default_runner_root()
     rampart_path = Path(rampart_root).expanduser().resolve() if rampart_root else _default_rampart_root()
     mock_config_path = output / "mock-auth-proxy.json"
-    resolved_auth_proxy_config = Path(auth_proxy_config).expanduser().resolve() if auth_proxy_config else mock_config_path
+    live_config_path = output / "live-auth-proxy.json"
+    resolved_auth_proxy_config = Path(auth_proxy_config).expanduser().resolve() if auth_proxy_config else (mock_config_path if provider == "mock" else live_config_path)
     rampart_python = _rampart_python(rampart_path)
     launcher = runner_path / "start_openclaw_sandbox.ps1"
     mock_server = runner_path / "mock_openai_server.py"
@@ -506,6 +526,8 @@ def start_openclaw_docker_sandbox(
         raise ValueError(f"OpenClaw auth proxy runner not found under: {rampart_path}")
     if provider == "mock" and not auth_proxy_config:
         _write_mock_auth_proxy_config(mock_config_path, mock_openai_port=mock_openai_port)
+    if provider == "live" and not auth_proxy_config:
+        _write_live_auth_proxy_config(live_config_path, provider_route=provider_route)
 
     model_json = _models_json(model_ref)
     steps: list[LocalSandboxStep] = [
@@ -625,6 +647,7 @@ def start_openclaw_docker_sandbox(
         "plan": {
             "sandbox_name": sandbox_name,
             "provider": provider,
+            "provider_route": provider_route if provider == "live" else None,
             "model_ref": model_ref,
             "endpoint_port": endpoint_port,
             "auth_proxy_port": auth_proxy_port,
