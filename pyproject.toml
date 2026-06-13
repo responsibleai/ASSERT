@@ -76,6 +76,14 @@ regression = [
   "scipy>=1.11.0",
   "numpy>=2.0.0",
 ]
+acs = [
+  # Bridge ASSERT findings to Agent Governance Toolkit's ACS policy runtime.
+  # `acs-generator` (pure Python) synthesizes the manifest + Rego from a
+  # guardrail prompt; `agent-control-specification` is the native SDK used to
+  # round-trip validate the generated policy and to wrap a guarded target.
+  "acs-generator>=0.3.1b0",
+  "agent-control-specification>=0.3.1b0",
+]
 examples = [
   "autogen-agentchat>=0.7.5",
   "autogen-ext>=0.7.5",
@@ -105,7 +113,7 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
-  "assert-ai[otel,langgraph,analysis,examples,regression]",
+  "assert-ai[otel,langgraph,analysis,examples,regression,acs]",
 ]
 dev = [
   "pytest>=9.0.3",
