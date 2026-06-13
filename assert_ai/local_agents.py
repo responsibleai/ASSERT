@@ -469,12 +469,13 @@ def _config_agent(
         redact_paths=redact_paths,
         home=home,
     )
+    snapshot_ready = config_exists
     return {
         "id": agent_id,
         "display_name": display_name,
         "kind": agent_id,
-        "status": "found",
-        "summary": "found local config or executable; snapshot support is not implemented yet",
+        "status": "ready" if snapshot_ready else "found",
+        "summary": "ready for generic snapshot" if snapshot_ready else "found executable; provide roots to snapshot",
         "config": {
             "path": _path_value(config_path, redact_paths=redact_paths),
             "exists": config_exists,

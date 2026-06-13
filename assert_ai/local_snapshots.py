@@ -3,10 +3,10 @@
 
 """Local agent snapshot helpers for sandboxed endpoint eval setup.
 
-Snapshots copy user-approved local roots into a disposable directory. The copy
-step is intentionally generic: callers provide explicit ``source:dest`` roots;
-this module preserves directory structure under the snapshot, skips obvious
-secret/credential-looking files, and writes a reviewable manifest.
+Snapshots copy discovered and user-approved local roots into a disposable directory. The copy
+step is intentionally generic: discovered home/config/workspace roots are copied by
+default, callers can add extra roots with ``--include-root``, and advanced callers
+can still provide explicit ``source:dest`` mappings.
 """
 
 from __future__ import annotations
@@ -92,6 +92,45 @@ def _default_openclaw_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
     if runtime is not None and runtime.exists():
         defaults.append((runtime, Path("runtime/openclaw-package")))
     return defaults
+
+
+def _safe_hidden_dest(path: Path) -> Path:
+    name = path.name
+    if name.startswith(".") and name not in {".", ".."}:
+        return _safe_relative_dest(name)
+    return _safe_default_dest(path)
+
+
+def _known_config_root(agent_id: str) -> Path | None:
+    home = Path.home()
+    return {
+        "hermes": home / ".hermes",
+        "claude-code": home / ".claude",
+        "codex": home / ".codex",
+        "opencode": home / ".config" / "opencode",
+        "gemini": home / ".gemini",
+    }.get(agent_id)
+
+
+def _default_discovered_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
+    """Return generic default roots from shallow discovery evidence."""
+
+    roots: list[tuple[Path, Path]] = []
+    seen: set[Path] = set()
+    agent_id = str(agent.get("id") or "")
+    for section in ("home", "config", "workspace"):
+        section_payload = agent.get(section)
+        if not isinstance(section_payload, dict):
+            continue
+        source = _agent_path(agent, section, "path")
+        exists = bool(section_payload.get("exists", True))
+        if source is None and section == "config" and exists:
+            source = _known_config_root(agent_id)
+        if source is None or not exists or not source.exists() or source in seen:
+            continue
+        roots.append((source, _safe_hidden_dest(source)))
+        seen.add(source)
+    return roots
 
 
 def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str] = ()) -> bool:
@@ -195,11 +234,15 @@ def create_local_agent_snapshot(
     copy_root_values = tuple(copy_root_specs)
     include_root_values = tuple(include_root_specs)
     used_default_runtime_roots = False
+    default_roots = _default_discovered_roots(agent)
     if target == "openclaw":
-        default_roots = _default_openclaw_roots(agent)
-        if default_roots:
-            copy_roots.extend(default_roots)
-            used_default_runtime_roots = True
+        # OpenClaw discovery distinguishes workspace and runtime package roots;
+        # keep those stable snapshot destinations instead of the generic folder
+        # names so the OpenClaw launch descriptor can find them.
+        default_roots = _default_openclaw_roots(agent) or default_roots
+    if default_roots:
+        copy_roots.extend(default_roots)
+        used_default_runtime_roots = True
     copy_roots.extend(_parse_copy_root_spec(spec) for spec in copy_root_values)
     copy_roots.extend(_parse_include_root_spec(spec) for spec in include_root_values)
     if not copy_roots:

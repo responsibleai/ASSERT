@@ -85,6 +85,14 @@ def _local_sandbox_run_dir(*, target: str, snapshot_manifest: Path) -> Path:
     return Path("artifacts") / "local-agents" / "sandboxes" / f"{target}-{timestamp}-{digest}"
 
 
+def _local_snapshot_output_dir(*, target: str, discovery_path: Path) -> Path:
+    """Return the default local snapshot output directory for a create command."""
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    digest = hashlib.sha256(str(discovery_path.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path("artifacts") / "local-agents" / "snapshots" / f"{target}-{timestamp}-{digest}"
+
+
 def _local_sandbox_name(*, target: str, snapshot_manifest: Path) -> str:
     """Return a short Docker Sandbox-safe name for a local-agent run."""
 
@@ -689,27 +697,28 @@ def local_snapshot():
 @click.option("--target", required=True, help="Agent ID from the discovery manifest.")
 @click.option("--include-root", "include_roots", multiple=True, help="Extra root to include. Destination is derived from the folder name. Repeat for multiple roots.")
 @click.option("--copy-root", "copy_roots", multiple=True, help="Advanced root mapping as SOURCE:DEST. Repeat for multiple roots.")
-@click.option("--output-dir", required=True, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written.")
+@click.option("--output-dir", default=None, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written. Defaults to artifacts/local-agents/snapshots/.")
 @click.option("--show-paths", is_flag=True, help="Write local absolute paths in the manifest instead of redacted placeholders.")
 def local_snapshot_create(
     discovery_path: Path,
     target: str,
     include_roots: tuple[str, ...],
     copy_roots: tuple[str, ...],
-    output_dir: Path,
+    output_dir: Path | None,
     show_paths: bool,
 ):
     """Copy user-approved roots into a reviewable local-agent snapshot."""
     from assert_ai.local_snapshots import create_local_agent_snapshot
 
     started_at = time.perf_counter()
+    resolved_output_dir = output_dir or _local_snapshot_output_dir(target=target, discovery_path=discovery_path)
     try:
         result = create_local_agent_snapshot(
             discovery_path=discovery_path,
             target=target,
             copy_root_specs=copy_roots,
             include_root_specs=include_roots,
-            output_dir=output_dir,
+            output_dir=resolved_output_dir,
             redact_paths=not show_paths,
         )
     except ValueError as exc:

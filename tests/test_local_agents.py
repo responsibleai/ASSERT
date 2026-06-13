@@ -78,9 +78,9 @@ def test_discover_local_agents_reports_common_agent_config_dirs(tmp_path: Path) 
     payload = discover_local_agents(home=home, redact_paths=True).to_json()
     agents = {agent["id"]: agent for agent in payload["agents"]}
 
-    assert agents["codex"]["status"] == "found"
-    assert agents["gemini"]["status"] == "found"
-    assert agents["opencode"]["status"] == "found"
+    assert agents["codex"]["status"] == "ready"
+    assert agents["gemini"]["status"] == "ready"
+    assert agents["opencode"]["status"] == "ready"
     assert agents["codex"]["config"]["path"] == "[LOCAL_PATH]"
     assert agents["gemini"]["config"]["path"] == "[LOCAL_PATH]"
 
@@ -215,7 +215,7 @@ def test_cli_local_discover_lists_multiple_found_agents(tmp_path: Path) -> None:
     assert "codex" in result.output
     assert "elapsed:" in result.output
     assert "config: [LOCAL_PATH]" in result.output
-    assert "found local config or executable" in result.output
+    assert "ready for generic snapshot" in result.output
     assert "runtime: codex (not found)" in result.output
 
 

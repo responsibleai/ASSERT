@@ -183,6 +183,126 @@ def test_create_local_agent_snapshot_uses_openclaw_home_defaults_when_discovery_
     assert (result.snapshot_root / "runtime" / "openclaw-package" / "openclaw.mjs").exists()
 
 
+def test_create_local_agent_snapshot_uses_detected_config_root_by_default(tmp_path: Path) -> None:
+    hermes_home = tmp_path / ".hermes"
+    memories = hermes_home / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("Hermes memory pointer\n", encoding="utf-8")
+    (hermes_home / ".env").write_text("API_SERVER_KEY=secret\n", encoding="utf-8")
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(
+        discovery,
+        target="hermes",
+        agent={
+            "id": "hermes",
+            "display_name": "Hermes",
+            "kind": "hermes",
+            "status": "found",
+            "summary": "found local config or executable",
+            "config": {"path": str(hermes_home), "exists": True},
+            "runtime": {"binary": "hermes", "valid": True},
+        },
+    )
+
+    result = create_local_agent_snapshot(
+        discovery_path=discovery,
+        target="hermes",
+        copy_root_specs=[],
+        include_root_specs=[],
+        output_dir=tmp_path / "snapshot-out",
+        redact_paths=True,
+    )
+
+    assert (result.snapshot_root / ".hermes" / "memories" / "MEMORY.md").exists()
+    assert not (result.snapshot_root / ".hermes" / ".env").exists()
+    assert [root["dest"] for root in result.manifest["copied_roots"]] == [".hermes"]
+    assert result.manifest["safety"]["default_runtime_roots"] is True
+
+
+def test_create_local_agent_snapshot_uses_known_config_root_when_discovery_path_is_redacted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    hermes_home = home / ".hermes"
+    memories = hermes_home / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("Hermes memory pointer\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(
+        discovery,
+        target="hermes",
+        agent={
+            "id": "hermes",
+            "display_name": "Hermes",
+            "kind": "hermes",
+            "status": "ready",
+            "summary": "ready for generic snapshot",
+            "config": {"path": "[LOCAL_PATH]", "exists": True},
+            "runtime": {"binary": "hermes", "valid": True},
+        },
+    )
+
+    result = create_local_agent_snapshot(
+        discovery_path=discovery,
+        target="hermes",
+        copy_root_specs=[],
+        include_root_specs=[],
+        output_dir=tmp_path / "snapshot-out",
+        redact_paths=True,
+    )
+
+    assert (result.snapshot_root / ".hermes" / "memories" / "MEMORY.md").exists()
+    assert result.manifest["copied_roots"][0]["dest"] == ".hermes"
+
+
+def test_cli_local_snapshot_create_defaults_output_dir_and_detected_config_root(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    hermes_home = home / ".hermes"
+    memories = hermes_home / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("Hermes memory pointer\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(
+        discovery,
+        target="hermes",
+        agent={
+            "id": "hermes",
+            "display_name": "Hermes",
+            "kind": "hermes",
+            "status": "ready",
+            "summary": "ready for generic snapshot",
+            "config": {"path": "[LOCAL_PATH]", "exists": True},
+            "runtime": {"binary": "hermes", "valid": True},
+        },
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "snapshot",
+            "create",
+            "--from",
+            str(discovery),
+            "--target",
+            "hermes",
+        ],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Created local-agent snapshot" in result.output
+    assert "copied roots: 1" in result.output
+    assert "elapsed:" in result.output
+    assert "artifacts/local-agents/snapshots/hermes-" in result.output
+    manifest_line = next(line for line in result.output.splitlines() if line.strip().startswith("manifest:"))
+    manifest_path = Path(manifest_line.split("manifest:", 1)[1].strip())
+    assert manifest_path.exists()
+    assert (manifest_path.parent / "snapshot" / ".hermes" / "memories" / "MEMORY.md").exists()
+
+
 def test_create_local_agent_snapshot_assigns_dest_for_include_roots(tmp_path: Path) -> None:
     discovery = tmp_path / "discovery.json"
     _write_discovery(discovery)
