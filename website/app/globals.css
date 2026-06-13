@@ -213,6 +213,7 @@ p { margin: 0; }
   border: 1px solid var(--borderColor-default);
   color: #fff;
   background: transparent;
+  cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 .nav-btn-secondary:hover {
