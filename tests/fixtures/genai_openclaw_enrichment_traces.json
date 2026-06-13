@@ -1,0 +1,121 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "oc_t1",
+              "spanId": "oc_s01",
+              "name": "chat gpt-5.5",
+              "startTimeUnixNano": 1000000000,
+              "endTimeUnixNano": 2500000000,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-5.5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "300"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "80"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "sess_openclaw"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv_openclaw"
+                  }
+                },
+                {
+                  "key": "openclaw.content.output_messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"content\": \"I booked your flight to NRT for $1180.\"}]"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "oc_t1",
+              "spanId": "oc_s02",
+              "name": "execute_tool book_flight",
+              "startTimeUnixNano": 2600000000,
+              "endTimeUnixNano": 3900000000,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "book_flight"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_oc1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "sess_openclaw"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv_openclaw"
+                  }
+                },
+                {
+                  "key": "openclaw.content.tool_input",
+                  "value": {
+                    "stringValue": "{\"flight\": \"ANA123\", \"passenger\": \"J. Present\"}"
+                  }
+                },
+                {
+                  "key": "openclaw.content.tool_output",
+                  "value": {
+                    "stringValue": "{\"confirmation\": \"AB12CD\", \"price\": 1180}"
+                  }
+                }
+              ],
+              "parentSpanId": "oc_s01"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
