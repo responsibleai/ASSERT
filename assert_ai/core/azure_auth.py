@@ -43,6 +43,21 @@ ENV_USE_AAD_FLAG = "ASSERT_AZURE_USE_AAD"
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
+# Maps the azure-identity credential class name to a short, friendly
+# label so users see "az login" instead of "AzureCliCredential" in the
+# one-line provenance log. Anything not in this map falls back to the
+# raw class name — better than silence, and unlikely in practice.
+_FRIENDLY_CRED_LABELS: Mapping[str, str] = {
+    "AzureCliCredential": "az login",
+    "AzureDeveloperCliCredential": "azd login",
+    "AzurePowerShellCredential": "Azure PowerShell",
+    "ManagedIdentityCredential": "managed identity",
+    "WorkloadIdentityCredential": "workload identity",
+    "EnvironmentCredential": "service principal (env vars)",
+    "SharedTokenCacheCredential": "shared token cache",
+    "VisualStudioCodeCredential": "VS Code",
+}
+
 # DefaultAzureCredential is expensive to construct repeatedly and
 # azure-identity already handles its own in-process token caching, so
 # the provider callable is built lazily once and reused for the
@@ -106,9 +121,54 @@ def get_azure_token_provider() -> Callable[[], str] | None:
         exclude_interactive_browser_credential=True,
         exclude_visual_studio_code_credential=True,
     )
-    _CACHED_PROVIDER = get_bearer_token_provider(credential, AZURE_OPENAI_SCOPE)
+    raw_provider = get_bearer_token_provider(credential, AZURE_OPENAI_SCOPE)
+    _CACHED_PROVIDER = _wrap_provider_with_provenance_log(credential, raw_provider)
     _CACHE_POPULATED = True
     return _CACHED_PROVIDER
+
+
+def _wrap_provider_with_provenance_log(
+    credential: object,
+    raw_provider: Callable[[], str],
+) -> Callable[[], str]:
+    """Emit one INFO line naming the credential that won the chain.
+
+    azure-identity's ``ChainedTokenCredential`` (which
+    ``DefaultAzureCredential`` extends) sets ``_successful_credential``
+    after a successful ``get_token``. We read it once after the first
+    successful token to give users a single, friendly provenance line
+    (``"Azure OpenAI auth: AAD token acquired via AzureCliCredential
+    (az login)."``) without flooding logs with the SDK's per-step
+    chain trace.
+
+    The underscore-prefixed attribute is internal but has been stable
+    across azure-identity versions; we read it defensively with
+    ``getattr`` so a future rename degrades to a generic
+    "credential chain" label instead of crashing.
+    """
+    logged: dict[str, bool] = {"done": False}
+
+    def provider() -> str:
+        token = raw_provider()
+        if not logged["done"]:
+            successful = getattr(credential, "_successful_credential", None)
+            cls_name = type(successful).__name__ if successful is not None else None
+            label = _FRIENDLY_CRED_LABELS.get(cls_name or "", "credential chain")
+            if cls_name:
+                log.info(
+                    "Azure OpenAI auth: AAD token acquired via %s (%s).",
+                    cls_name,
+                    label,
+                )
+            else:
+                # Token came back but we couldn't identify the inner
+                # credential — still tell the user AAD succeeded so
+                # they're not left guessing.
+                log.info("Azure OpenAI auth: AAD token acquired.")
+            logged["done"] = True
+        return token
+
+    return provider
 
 
 def _reset_cache_for_tests() -> None:

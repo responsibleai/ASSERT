@@ -1735,7 +1735,7 @@ def _configure_azure_auth_mode() -> None:
         if azure_auth.get_azure_token_provider() is None:
             _AZURE_AAD_DEP_MISSING = True
     else:
-        log.debug("Azure OpenAI auth mode: API key.")
+        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
 
 
 _configure_azure_auth_mode()

@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import unittest
 from types import ModuleType
+from typing import Callable
 from unittest.mock import patch
 
 from assert_ai.core import azure_auth
@@ -147,6 +148,103 @@ class GetAzureTokenProviderTest(unittest.TestCase):
             azure_auth.get_azure_token_provider()
 
         self.assertEqual(attempt_count["n"], 1)
+
+
+# ── provenance logging ────────────────────────────────────────
+
+
+def _install_fake_identity(successful_cred_cls_name: str | None) -> ModuleType:
+    """Build a fake azure.identity module whose credential mimics
+    ChainedTokenCredential by exposing ``_successful_credential`` after
+    the bearer provider is called. ``None`` simulates a future
+    azure-identity that drops the attribute.
+    """
+
+    class FakeSuccessfulCred:
+        pass
+
+    # Dynamically name the inner class so type(...).__name__ matches
+    # the credential we want to test the friendly-label mapping for.
+    if successful_cred_cls_name:
+        FakeSuccessfulCred.__name__ = successful_cred_cls_name
+
+    class FakeChainedCred:
+        def __init__(self, **kwargs: object) -> None:
+            self._successful_credential: object | None = None
+
+        def _mark_success(self) -> None:
+            if successful_cred_cls_name:
+                self._successful_credential = FakeSuccessfulCred()
+
+    def fake_get_bearer_token_provider(cred: FakeChainedCred, scope: str) -> Callable[[], str]:
+        def provider() -> str:
+            cred._mark_success()
+            return "stub-token"
+
+        return provider
+
+    fake_identity = ModuleType("azure.identity")
+    fake_identity.DefaultAzureCredential = FakeChainedCred  # type: ignore[attr-defined]
+    fake_identity.get_bearer_token_provider = fake_get_bearer_token_provider  # type: ignore[attr-defined]
+    return fake_identity
+
+
+class ProvenanceLoggingTest(unittest.TestCase):
+    """The wrapped provider must emit exactly one INFO line naming the
+    credential that won the chain — so users get auth-path provenance
+    without azure.identity's full per-step chain trace.
+    """
+
+    def setUp(self) -> None:
+        azure_auth._reset_cache_for_tests()
+
+    def tearDown(self) -> None:
+        azure_auth._reset_cache_for_tests()
+
+    def _get_provider_with_fake_identity(self, cls_name: str | None) -> Callable[[], str]:
+        fake_identity = _install_fake_identity(cls_name)
+        with patch.dict(
+            sys.modules,
+            {"azure": ModuleType("azure"), "azure.identity": fake_identity},
+        ):
+            provider = azure_auth.get_azure_token_provider()
+        assert provider is not None
+        return provider
+
+    def test_logs_friendly_label_for_known_credential(self) -> None:
+        provider = self._get_provider_with_fake_identity("AzureCliCredential")
+        with self.assertLogs(azure_auth.log, level="INFO") as captured:
+            self.assertEqual(provider(), "stub-token")
+        joined = "\n".join(captured.output)
+        self.assertIn("AzureCliCredential", joined)
+        self.assertIn("az login", joined)
+
+    def test_logs_class_name_when_friendly_label_unknown(self) -> None:
+        provider = self._get_provider_with_fake_identity("SomeFutureCredential")
+        with self.assertLogs(azure_auth.log, level="INFO") as captured:
+            provider()
+        joined = "\n".join(captured.output)
+        self.assertIn("SomeFutureCredential", joined)
+        # Defensive fallback label so users still know it's the chain.
+        self.assertIn("credential chain", joined)
+
+    def test_logs_generic_message_when_successful_credential_attr_missing(self) -> None:
+        # Simulates a future azure-identity that no longer exposes
+        # ``_successful_credential``. We must not crash and must still
+        # tell the user AAD succeeded.
+        provider = self._get_provider_with_fake_identity(None)
+        with self.assertLogs(azure_auth.log, level="INFO") as captured:
+            provider()
+        joined = "\n".join(captured.output)
+        self.assertIn("AAD token acquired", joined)
+
+    def test_logs_only_once_across_many_calls(self) -> None:
+        provider = self._get_provider_with_fake_identity("AzureCliCredential")
+        with self.assertLogs(azure_auth.log, level="INFO") as captured:
+            for _ in range(5):
+                provider()
+        info_lines = [line for line in captured.output if line.startswith("INFO")]
+        self.assertEqual(len(info_lines), 1)
 
 
 if __name__ == "__main__":
