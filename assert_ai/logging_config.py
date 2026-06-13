@@ -109,6 +109,16 @@ def configure_logging(
     # TracerProvider ("Overriding of current TracerProvider is not allowed").
     logging.getLogger("opentelemetry").setLevel(logging.WARNING)
 
+    # azure-identity logs each step of its credential chain at INFO and
+    # azure.core dumps every HTTP request/response (including IMDS probes
+    # that return 400 outside Azure VMs, which look like errors but are
+    # expected fallthroughs). Quiet these by default — auth failures still
+    # surface via model_client._classify_llm_error with actionable hints.
+    logging.getLogger("azure.identity").setLevel(logging.WARNING)
+    logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+        logging.WARNING
+    )
+
 
 def _make_stderr_console():
     """Build a Rich Console on the unwrapped stderr."""
