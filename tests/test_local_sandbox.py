@@ -20,6 +20,8 @@ from assert_ai.local_sandbox import (
     LocalSandboxManagedProcess,
     LocalSandboxStep,
     OpenClawDockerLaunchDescriptor,
+    RuntimeLaunchRecipe,
+    build_descriptor_from_launch_recipe,
     smoke_local_sandbox,
     start_local_sandbox,
     start_openclaw_docker_sandbox,
@@ -579,6 +581,65 @@ def test_cli_local_sandbox_start_help_is_product_shaped() -> None:
     assert "--backend" not in result.output
     assert "--output-dir" not in result.output
 
+def test_cli_local_sandbox_start_accepts_runtime_launch_recipe(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    recipe_path = tmp_path / "toy-recipe.yaml"
+    recipe_path.write_text(
+        """
+id: toy-agent
+harness: rampart-docker
+runtime_profile: profile
+required_paths:
+  - profile/AGENTS.md
+launch_command:
+  - python
+  - -c
+  - print('launch {sandbox_name} {endpoint_port}')
+endpoint_port: 19000
+sandbox_name: toy-sandbox
+cleanup_labels:
+  - toy-stop
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "sandbox",
+            "start",
+            "--snapshot",
+            str(manifest_path),
+            "--target",
+            "toy-agent",
+            "--recipe",
+            str(recipe_path),
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "sandbox-out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared local-agent sandbox" in result.output
+    assert "elapsed:" in result.output
+    state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert state["target"] == "toy-agent"
+    assert state["plan"]["runner"] == "toy-agent"
+    assert state["plan"]["runtime_profile"] == "profile"
+    assert [step["name"] for step in state["plan"]["steps"]] == [
+        "preflight",
+        "start_mock_openai",
+        "start_auth_proxy",
+        "launch_rampart_sandbox",
+    ]
+    launch = next(step for step in state["plan"]["steps"] if step["name"] == "launch_rampart_sandbox")
+    assert launch["command"] == ["python", "-c", "print('launch toy-sandbox 19000')"]
+    assert "openclaw" not in (tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8").lower()
+
+
+
 def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -655,14 +716,14 @@ class FakeDockerLaunchDescriptor:
         )
 
 
-def _write_fake_snapshot_manifest(base: Path) -> Path:
+def _write_fake_snapshot_manifest(base: Path, *, target: str = "fake-agent") -> Path:
     snapshot_root = base / "snapshot"
     (snapshot_root / "profile").mkdir(parents=True)
     (snapshot_root / "profile" / "AGENTS.md").write_text("fake runtime instructions\n", encoding="utf-8")
     manifest = {
         "schema_version": 1,
-        "target": "fake-agent",
-        "agent": {"id": "fake-agent", "display_name": "Fake Agent", "kind": "fake", "status": "ready"},
+        "target": target,
+        "agent": {"id": target, "display_name": "Fake Agent", "kind": "fake", "status": "ready"},
         "snapshot_root": "snapshot",
         "copied_roots": [{"source": "[LOCAL_PATH]", "dest": "profile", "files_copied": 1, "bytes_copied": 20}],
         "excluded_files": [],
@@ -762,6 +823,93 @@ def test_rampart_harness_builds_reusable_launch_steps_without_openclaw_assumptio
     assert all("openclaw" not in " ".join(step.command).lower() for step in plan.steps)
     assert plan.cleanup_commands
     assert plan.cleanup_commands[0].name == "toy-stop"
+
+
+def test_runtime_launch_recipe_builds_rampart_descriptor_without_runtime_class() -> None:
+    recipe = RuntimeLaunchRecipe(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="toy-profile",
+        required_paths=("toy/home",),
+        launch_command=("python", "-m", "toy.launch", "--home", "{sandbox_root}/toy/home", "--port", "{endpoint_port}"),
+        endpoint_bridge_module="assert_ai.local_sandbox_helpers.toy_endpoint_bridge",
+        endpoint_bridge_args=("--sandbox-root", "{sandbox_root}", "--endpoint-port", "{endpoint_port}"),
+        cleanup_labels=("toy-stop",),
+    )
+
+    descriptor = build_descriptor_from_launch_recipe(recipe)
+
+    assert descriptor.runner_id == "toy-agent"
+    assert descriptor.runtime_profile == "toy-profile"
+    assert descriptor.required_paths == ("toy/home",)
+    assert descriptor.launch_command == (
+        "python",
+        "-m",
+        "toy.launch",
+        "--home",
+        "{sandbox_root}/toy/home",
+        "--port",
+        "{endpoint_port}",
+    )
+    assert descriptor.endpoint_bridge_args == ("--sandbox-root", "{sandbox_root}", "--endpoint-port", "{endpoint_port}")
+
+
+def test_docker_backend_runs_launch_recipe_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    recipe = RuntimeLaunchRecipe(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=(sys.executable, "-c", "print('launch {sandbox_name} {endpoint_port}')"),
+        endpoint_bridge_module=None,
+        cleanup_labels=("toy-stop",),
+        endpoint_port=19000,
+        sandbox_name="toy-sandbox",
+    )
+    executed: list[str] = []
+
+    def run_step(step: LocalSandboxStep, log_path: Path) -> int:
+        executed.append(f"run:{step.name}:{' '.join(step.command)}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+        return 0
+
+    def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
+        executed.append(f"service:{step.name}")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ready\n", encoding="utf-8")
+        return LocalSandboxManagedProcess(name=step.name, pid=4100 + len(executed), log_path=log_path)
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_launch_recipe(recipe))
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=tmp_path / "sandbox-out",
+        endpoint_url="http://127.0.0.1:19000",
+        provider="mock",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        redact_paths=True,
+        dry_run=False,
+        run_step=run_step,
+        start_step=start_step,
+    )
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["target"] == "toy-agent"
+    assert state["plan"]["runner"] == "toy-agent"
+    assert state["plan"]["runtime_profile"] == "profile"
+    assert [step["name"] for step in state["plan"]["steps"]] == [
+        "preflight",
+        "start_mock_openai",
+        "start_auth_proxy",
+        "launch_rampart_sandbox",
+    ]
+    assert any("launch toy-sandbox 19000" in item for item in executed)
+    assert "openclaw" not in result.state_path.read_text(encoding="utf-8").lower()
 
 
 def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) -> None:

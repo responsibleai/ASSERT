@@ -484,6 +484,25 @@ def _local_cleanup_json(command: LocalSandboxCleanupCommand, *, redact_paths: bo
 
 
 @dataclass(frozen=True)
+class RuntimeLaunchRecipe:
+    """Data-driven local-agent runtime launch recipe."""
+
+    id: str
+    harness: str
+    runtime_profile: str
+    required_paths: tuple[str, ...] = ()
+    launch_command: tuple[str, ...] | None = None
+    endpoint_bridge_module: str | None = None
+    endpoint_bridge_args: tuple[str, ...] = ()
+    cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
+    endpoint_port: int = 18081
+    auth_proxy_port: int = 12435
+    mock_openai_port: int = 18080
+    sandbox_name: str | None = None
+    docker_command: str = "docker.exe"
+
+
+@dataclass(frozen=True)
 class RampartRuntimeDescriptor:
     """Runtime-neutral inputs for a RAMPART Docker Sandbox launch."""
 
@@ -496,6 +515,109 @@ class RampartRuntimeDescriptor:
     launch_cwd: Path | None = None
     launch_log_name: str = "launch-rampart-sandbox.log"
     cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
+    endpoint_port: int = 18081
+    auth_proxy_port: int = 12435
+    mock_openai_port: int = 18080
+    sandbox_name: str | None = None
+    docker_command: str = "docker.exe"
+    target: str | None = None
+
+    def validate(self, context: LocalSandboxLaunchContext) -> None:
+        missing = [relative for relative in self.required_paths if not (context.sandbox_root / relative).exists()]
+        if missing:
+            raise ValueError(f"snapshot is missing required runtime paths: {', '.join(missing)}")
+
+    def build_plan(self, context: LocalSandboxLaunchContext) -> LocalSandboxLaunchPlan:
+        return RampartDockerHarness(descriptor=self).build_plan(context)
+
+
+def build_descriptor_from_launch_recipe(recipe: RuntimeLaunchRecipe) -> RampartRuntimeDescriptor:
+    """Build a runtime descriptor from a data-only launch recipe."""
+
+    if recipe.harness != "rampart-docker":
+        raise ValueError("runtime launch recipe harness must be one of: rampart-docker")
+    return RampartRuntimeDescriptor(
+        runner_id=recipe.id,
+        runtime_profile=recipe.runtime_profile,
+        required_paths=recipe.required_paths,
+        endpoint_bridge_module=recipe.endpoint_bridge_module,
+        endpoint_bridge_args=recipe.endpoint_bridge_args,
+        launch_command=recipe.launch_command,
+        cleanup_labels=recipe.cleanup_labels,
+        endpoint_port=recipe.endpoint_port,
+        auth_proxy_port=recipe.auth_proxy_port,
+        mock_openai_port=recipe.mock_openai_port,
+        sandbox_name=recipe.sandbox_name,
+        docker_command=recipe.docker_command,
+        target=recipe.id,
+    )
+
+
+def _tuple_from_sequence(value: Any, *, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"runtime launch recipe field {field_name!r} must be a list of strings")
+    return tuple(value)
+
+
+def load_runtime_launch_recipe(path: str | Path) -> RuntimeLaunchRecipe:
+    """Load a data-driven runtime launch recipe from YAML."""
+
+    recipe_path = Path(path).expanduser().resolve()
+    try:
+        payload = yaml.safe_load(recipe_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"could not read runtime launch recipe: {recipe_path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("runtime launch recipe must be a YAML mapping")
+    required = ["id", "harness", "runtime_profile"]
+    missing = [field for field in required if not isinstance(payload.get(field), str) or not payload.get(field)]
+    if missing:
+        raise ValueError(f"runtime launch recipe is missing required fields: {', '.join(missing)}")
+    return RuntimeLaunchRecipe(
+        id=str(payload["id"]),
+        harness=str(payload["harness"]),
+        runtime_profile=str(payload["runtime_profile"]),
+        required_paths=_tuple_from_sequence(payload.get("required_paths"), field_name="required_paths"),
+        launch_command=_tuple_from_sequence(payload.get("launch_command"), field_name="launch_command") or None,
+        endpoint_bridge_module=payload.get("endpoint_bridge_module") if isinstance(payload.get("endpoint_bridge_module"), str) else None,
+        endpoint_bridge_args=_tuple_from_sequence(payload.get("endpoint_bridge_args"), field_name="endpoint_bridge_args"),
+        cleanup_labels=_tuple_from_sequence(payload.get("cleanup_labels"), field_name="cleanup_labels") or ("sandbox_stop", "sandbox_rm"),
+        endpoint_port=int(payload.get("endpoint_port", 18081)),
+        auth_proxy_port=int(payload.get("auth_proxy_port", 12435)),
+        mock_openai_port=int(payload.get("mock_openai_port", 18080)),
+        sandbox_name=payload.get("sandbox_name") if isinstance(payload.get("sandbox_name"), str) else None,
+        docker_command=str(payload.get("docker_command", "docker.exe")),
+    )
+
+
+def _launch_template_values(context: LocalSandboxLaunchContext) -> dict[str, str]:
+    return {
+        "output_dir": str(context.output_dir),
+        "sandbox_root": str(context.sandbox_root),
+        "endpoint_url": context.endpoint_url,
+        "endpoint_port": str(context.endpoint_port),
+        "auth_proxy_port": str(context.auth_proxy_port),
+        "mock_openai_port": str(context.mock_openai_port),
+        "sandbox_name": context.sandbox_name,
+        "provider": context.provider,
+        "provider_route": context.provider_route or "",
+        "model_ref": context.model_ref or "",
+    }
+
+
+def _expand_launch_template_value(value: str, context: LocalSandboxLaunchContext) -> str:
+    rendered = value
+    for key, replacement in _launch_template_values(context).items():
+        rendered = rendered.replace("{" + key + "}", replacement)
+    return rendered
+
+
+def _expand_launch_templates(values: tuple[str, ...] | None, context: LocalSandboxLaunchContext) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    return tuple(_expand_launch_template_value(value, context) for value in values)
 
 
 class RampartDockerHarness:
@@ -507,6 +629,8 @@ class RampartDockerHarness:
         self.descriptor = descriptor
 
     def build_plan(self, context: LocalSandboxLaunchContext) -> LocalSandboxLaunchPlan:
+        launch_command = _expand_launch_templates(self.descriptor.launch_command, context)
+        endpoint_bridge_args = _expand_launch_templates(self.descriptor.endpoint_bridge_args, context) or ()
         steps: list[LocalSandboxStep] = [
             LocalSandboxStep(
                 name="preflight",
@@ -549,7 +673,7 @@ class RampartDockerHarness:
                 ),
                 LocalSandboxStep(
                     name="launch_rampart_sandbox",
-                    command=list(self.descriptor.launch_command or (
+                    command=list(launch_command or (
                         "powershell.exe",
                         "-NoProfile",
                         "-ExecutionPolicy",
@@ -571,7 +695,7 @@ class RampartDockerHarness:
                         _rampart_python(context.rampart_root),
                         "-m",
                         self.descriptor.endpoint_bridge_module,
-                        *self.descriptor.endpoint_bridge_args,
+                        *endpoint_bridge_args,
                     ],
                     cwd=context.output_dir,
                     kind="service",
@@ -671,7 +795,7 @@ class DockerSandboxBackend:
             runner_root=getattr(self.descriptor, "_runner_path", lambda: Path("."))(),
             rampart_root=getattr(self.descriptor, "_rampart_path", lambda: Path("."))(),
             docker_command=str(getattr(self.descriptor, "docker_command", "docker.exe")),
-            sandbox_name=str(getattr(self.descriptor, "sandbox_name", target)),
+            sandbox_name=str(getattr(self.descriptor, "sandbox_name", None) or target),
             docker_timeout_seconds=int(getattr(self.descriptor, "docker_timeout_seconds", 900)),
             dry_run=dry_run,
             redact_paths=redact_paths,

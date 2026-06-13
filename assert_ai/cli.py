@@ -773,6 +773,7 @@ def local_sandbox():
 @local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
 @click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
 @click.option("--target", required=True, help="Agent ID expected in the snapshot manifest.")
+@click.option("--recipe", "recipe_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Runtime launch recipe YAML for non-OpenClaw sandbox targets.")
 @click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
 @click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.", hidden=True)
 @click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.", hidden=True)
@@ -799,6 +800,7 @@ def local_sandbox():
 def local_sandbox_start(
     snapshot_manifest: Path,
     target: str,
+    recipe_path: Path | None,
     backend: str,
     command_text: str | None,
     endpoint_url: str,
@@ -824,7 +826,7 @@ def local_sandbox_start(
     show_paths: bool,
 ):
     """Stage a copied snapshot and start a local sandbox endpoint."""
-    from assert_ai.local_sandbox import start_local_sandbox, start_openclaw_docker_sandbox
+    from assert_ai.local_sandbox import DockerSandboxBackend, build_descriptor_from_launch_recipe, load_runtime_launch_recipe, start_local_sandbox, start_openclaw_docker_sandbox
 
     started_at = time.perf_counter()
     run_dir = output_dir or _local_sandbox_run_dir(target=target, snapshot_manifest=snapshot_manifest)
@@ -850,43 +852,65 @@ def local_sandbox_start(
             )
             prepared_only = False
         else:
-            requested_provider = provider.lower()
-            docker_provider = "live" if requested_provider == "copilot" else requested_provider
-            docker_provider_route = "copilot" if requested_provider == "copilot" else provider_route
-            docker_model_ref = model_ref
-            if docker_provider == "live" and docker_model_ref is None:
-                if model is None:
-                    raise ValueError("--model is required when --provider copilot")
-                docker_model_ref = _local_sandbox_model_ref(provider_route=docker_provider_route, model=model)
-            if docker_provider == "mock" and docker_model_ref is None:
-                docker_model_ref = "openai/mock-model=Mock Model"
-            if docker_model_ref is None:
-                raise ValueError("--model-ref is required for the selected provider")
-            endpoint_model = model if protocol == "openai_chat" else None
-            result = start_openclaw_docker_sandbox(
-                snapshot_manifest_path=snapshot_manifest,
-                target=target,
-                output_dir=run_dir,
-                runner_root=runner_root,
-                rampart_root=rampart_root,
-                sandbox_name=generated_sandbox_name,
-                provider=docker_provider,
-                provider_route=docker_provider_route,
-                model_ref=docker_model_ref,
-                endpoint_port=endpoint_port,
-                auth_proxy_port=auth_proxy_port,
-                mock_openai_port=mock_openai_port,
-                docker_command=docker_command,
-                auth_proxy_config=auth_proxy_config,
-                skip_build=skip_build,
-                protocol=protocol,
-                model=endpoint_model,
-                api_key_env=api_key_env,
-                stream=stream,
-                redact_paths=not show_paths,
-                dry_run=dry_run,
-            )
-            prepared_only = dry_run
+            if recipe_path is not None:
+                recipe = load_runtime_launch_recipe(recipe_path)
+                descriptor = build_descriptor_from_launch_recipe(recipe)
+                recipe_endpoint_url = endpoint_url
+                if endpoint_url == "http://127.0.0.1:18081":
+                    recipe_endpoint_url = f"http://127.0.0.1:{recipe.endpoint_port}"
+                result = DockerSandboxBackend(descriptor=descriptor).start(
+                    snapshot_manifest_path=snapshot_manifest,
+                    target=target,
+                    output_dir=run_dir,
+                    endpoint_url=recipe_endpoint_url,
+                    provider=provider.lower(),
+                    protocol=protocol,
+                    model=model if protocol == "openai_chat" else None,
+                    api_key_env=api_key_env,
+                    stream=stream,
+                    redact_paths=not show_paths,
+                    dry_run=dry_run,
+                )
+                prepared_only = dry_run
+                endpoint_url = recipe_endpoint_url
+            else:
+                requested_provider = provider.lower()
+                docker_provider = "live" if requested_provider == "copilot" else requested_provider
+                docker_provider_route = "copilot" if requested_provider == "copilot" else provider_route
+                docker_model_ref = model_ref
+                if docker_provider == "live" and docker_model_ref is None:
+                    if model is None:
+                        raise ValueError("--model is required when --provider copilot")
+                    docker_model_ref = _local_sandbox_model_ref(provider_route=docker_provider_route, model=model)
+                if docker_provider == "mock" and docker_model_ref is None:
+                    docker_model_ref = "openai/mock-model=Mock Model"
+                if docker_model_ref is None:
+                    raise ValueError("--model-ref is required for the selected provider")
+                endpoint_model = model if protocol == "openai_chat" else None
+                result = start_openclaw_docker_sandbox(
+                    snapshot_manifest_path=snapshot_manifest,
+                    target=target,
+                    output_dir=run_dir,
+                    runner_root=runner_root,
+                    rampart_root=rampart_root,
+                    sandbox_name=generated_sandbox_name,
+                    provider=docker_provider,
+                    provider_route=docker_provider_route,
+                    model_ref=docker_model_ref,
+                    endpoint_port=endpoint_port,
+                    auth_proxy_port=auth_proxy_port,
+                    mock_openai_port=mock_openai_port,
+                    docker_command=docker_command,
+                    auth_proxy_config=auth_proxy_config,
+                    skip_build=skip_build,
+                    protocol=protocol,
+                    model=endpoint_model,
+                    api_key_env=api_key_env,
+                    stream=stream,
+                    redact_paths=not show_paths,
+                    dry_run=dry_run,
+                )
+                prepared_only = dry_run
     except ValueError as exc:
         _error(str(exc))
         return
