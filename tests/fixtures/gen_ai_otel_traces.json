@@ -1,0 +1,85 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "genai_trace_01",
+              "spanId": "gspan_01",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": 1000000000,
+              "endTimeUnixNano": 2240000000,
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                {"key": "gen_ai.provider.name", "value": {"stringValue": "openai"}},
+                {"key": "session.id", "value": {"stringValue": "sess_genai_trip"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gpt-4o-2024-08-06"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "85"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "42"}}
+              ],
+              "events": [
+                {
+                  "timeUnixNano": 1100000000,
+                  "name": "gen_ai.user.message",
+                  "attributes": [
+                    {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                    {"key": "content", "value": {"stringValue": "Book me a week in Tokyo in July for under $3000"}},
+                    {"key": "role", "value": {"stringValue": "user"}}
+                  ]
+                },
+                {
+                  "timeUnixNano": 2200000000,
+                  "name": "gen_ai.choice",
+                  "attributes": [
+                    {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                    {"key": "finish_reason", "value": {"stringValue": "stop"}},
+                    {"key": "index", "value": {"intValue": "0"}},
+                    {"key": "message", "value": {"stringValue": "{\"role\":\"assistant\",\"content\":\"{\\\"intent\\\": \\\"book_trip\\\", \\\"destination\\\": \\\"Tokyo\\\"}\"}"}}
+                  ]
+                }
+              ]
+            },
+            {
+              "traceId": "genai_trace_01",
+              "spanId": "gspan_02",
+              "parentSpanId": "gspan_01",
+              "name": "execute_tool search_flights",
+              "startTimeUnixNano": 2300000000,
+              "endTimeUnixNano": 3500000000,
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "session.id", "value": {"stringValue": "sess_genai_trip"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "search_flights"}},
+                {"key": "gen_ai.tool.type", "value": {"stringValue": "function"}},
+                {"key": "gen_ai.tool.call.id", "value": {"stringValue": "call_flights_001"}},
+                {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": "{\"destination\": \"NRT\", \"max_price\": 1500}"}},
+                {"key": "gen_ai.tool.call.result", "value": {"stringValue": "[{\"airline\": \"ANA\", \"price\": 1180}]"}}
+              ]
+            },
+            {
+              "traceId": "genai_trace_01",
+              "spanId": "gspan_03",
+              "parentSpanId": "gspan_01",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": 3600000000,
+              "endTimeUnixNano": 5700000000,
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                {"key": "session.id", "value": {"stringValue": "sess_genai_trip"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gpt-4o-2024-08-06"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "210"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "95"}},
+                {"key": "gen_ai.output.messages", "value": {"stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"Here is your optimized Tokyo itinerary: ANA flight $1180 + Granbell 7 nights $1015 = $2195 total.\"}], \"finish_reason\": \"stop\"}]"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

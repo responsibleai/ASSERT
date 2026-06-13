@@ -43,6 +43,40 @@ _TOOL_NAME_KEY = "tool.name"
 _LANGGRAPH_NODE_KEY = "langgraph.node"
 
 
+# OTel GenAI semantic conventions (gen_ai.*)
+# https://opentelemetry.io/docs/specs/semconv/gen-ai/
+# These are the newer, increasingly-standard semconv emitted by a growing
+# number of agent runtimes. They coexist with the OpenInference keys above:
+# a span is treated as gen_ai-flavored only when it carries
+# ``gen_ai.operation.name`` and does NOT carry ``openinference.span.kind``.
+
+_GENAI_OPERATION_KEY = "gen_ai.operation.name"
+_GENAI_REQUEST_MODEL_KEY = "gen_ai.request.model"
+_GENAI_RESPONSE_MODEL_KEY = "gen_ai.response.model"
+_GENAI_INPUT_TOKENS_KEY = "gen_ai.usage.input_tokens"
+_GENAI_OUTPUT_TOKENS_KEY = "gen_ai.usage.output_tokens"
+_GENAI_OUTPUT_MESSAGES_KEY = "gen_ai.output.messages"
+_GENAI_TOOL_NAME_KEY = "gen_ai.tool.name"
+_GENAI_TOOL_CALL_ID_KEY = "gen_ai.tool.call.id"
+_GENAI_TOOL_CALL_ARGS_KEY = "gen_ai.tool.call.arguments"
+_GENAI_TOOL_CALL_RESULT_KEY = "gen_ai.tool.call.result"
+_GENAI_AGENT_NAME_KEY = "gen_ai.agent.name"
+
+# Well-known gen_ai.operation.name values, classified by ASSERT event shape.
+_GENAI_LLM_OPERATIONS = frozenset({"chat", "text_completion", "generate_content"})
+_GENAI_TOOL_OPERATIONS = frozenset({"execute_tool"})
+
+# Span-event names that carry message/choice content (event-carried content).
+_GENAI_CHOICE_EVENT = "gen_ai.choice"
+_GENAI_ASSISTANT_MESSAGE_EVENT = "gen_ai.assistant.message"
+
+# Optional vendor enrichment (graceful add-on, never required). When present,
+# these provide higher-fidelity content than the generic gen_ai.* fields.
+_OPENCLAW_TOOL_INPUT_KEY = "openclaw.content.tool_input"
+_OPENCLAW_TOOL_OUTPUT_KEY = "openclaw.content.tool_output"
+_OPENCLAW_OUTPUT_MESSAGES_KEY = "openclaw.content.output_messages"
+
+
 @dataclass
 class OTelSpan:
     """Minimal representation of an OpenTelemetry span."""
@@ -55,10 +89,28 @@ class OTelSpan:
     end_time_ns: int
     attributes: dict[str, Any] = field(default_factory=dict)
     status: str = "OK"
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def latency_ms(self) -> float:
         return (self.end_time_ns - self.start_time_ns) / 1_000_000
+
+    @property
+    def is_gen_ai(self) -> bool:
+        """True when this span uses OTel GenAI semconv (and not OpenInference).
+
+        OpenInference takes precedence when both are present so the existing
+        path is never regressed.
+        """
+        return (
+            _GENAI_OPERATION_KEY in self.attributes
+            and _SPAN_KIND_KEY not in self.attributes
+        )
+
+    @property
+    def operation(self) -> str | None:
+        """The ``gen_ai.operation.name`` value, if any (e.g. ``chat``)."""
+        return self.attributes.get(_GENAI_OPERATION_KEY)
 
 
 def parse_otel_traces(
@@ -116,6 +168,7 @@ def _parse_otlp_json(path: Path) -> list[OTelSpan]:
         for scope_span in resource_span.get("scopeSpans", []):
             for raw in scope_span.get("spans", []):
                 attrs = _flatten_attributes(raw.get("attributes", []))
+                events = _parse_span_events(raw.get("events", []))
                 spans.append(OTelSpan(
                     trace_id=raw.get("traceId", ""),
                     span_id=raw.get("spanId", ""),
@@ -126,8 +179,26 @@ def _parse_otlp_json(path: Path) -> list[OTelSpan]:
                     end_time_ns=int(raw.get("endTimeUnixNano", 0)),
                     attributes=attrs,
                     status=raw.get("status", {}).get("code", "OK"),
+                    events=events,
                 ))
     return spans
+
+
+def _parse_span_events(raw_events: list[dict]) -> list[dict[str, Any]]:
+    """Parse the OTLP span ``events`` array into ``{name, attributes}`` dicts.
+
+    The OTel GenAI semconv carries a lot of message/choice content in span
+    events (``gen_ai.choice``, ``gen_ai.assistant.message``, etc.) rather than
+    span attributes, so the parser must preserve them. OpenInference traces
+    have no span events, so this is a no-op for the existing path.
+    """
+    events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        events.append({
+            "name": raw_event.get("name", ""),
+            "attributes": _flatten_attributes(raw_event.get("attributes", [])),
+        })
+    return events
 
 
 def _flatten_attributes(attrs: list[dict]) -> dict[str, Any]:
@@ -189,6 +260,24 @@ def _spans_to_events(
     llm_call_count = 0
 
     for span in spans:
+        if span.is_gen_ai:
+            # OTel GenAI semconv span — handled by its own mapper so the
+            # OpenInference branches below stay byte-for-byte unchanged.
+            span_events, contribution = _gen_ai_span_to_events(span)
+            events.extend(span_events)
+            total_input_tokens += contribution["input_tokens"]
+            total_output_tokens += contribution["output_tokens"]
+            total_latency_ms += contribution["latency_ms"]
+            if contribution["is_llm_call"]:
+                llm_call_count += 1
+            node_name = contribution["node"]
+            if node_name and node_name not in nodes_visited:
+                nodes_visited.append(node_name)
+            tool_name = contribution["tool_name"]
+            if tool_name and tool_name not in tools_called:
+                tools_called.append(tool_name)
+            continue
+
         if span.kind == "LLM":
             output_text = span.attributes.get(_OUTPUT_VALUE_KEY, "")
             model = span.attributes.get(_LLM_MODEL_KEY, "")
@@ -288,7 +377,243 @@ def _spans_to_events(
     return events, aggregate
 
 
-# ── Span validation ───────────────────────────────────────────────
+# ── GenAI (gen_ai.*) semconv mapping ──────────────────────────────
+#
+# These helpers mirror the OpenInference structure above but read the OTel
+# GenAI semantic conventions. They are dispatched from ``_spans_to_events``
+# only for spans where ``span.is_gen_ai`` is true, so the OpenInference path
+# is never touched. The headline behavior stands on generic ``gen_ai.*``
+# fields alone; ``openclaw.content.*`` is an optional enrichment layer that,
+# when present, supplies higher-fidelity content.
+
+
+def _gen_ai_span_to_events(
+    span: OTelSpan,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Map a single gen_ai.* span to ASSERT events + an aggregate contribution.
+
+    Returns ``(events, contribution)`` where ``contribution`` carries the
+    token/latency/node/tool deltas the caller folds into session aggregates.
+    """
+    operation = (span.operation or "").strip()
+    if operation in _GENAI_TOOL_OPERATIONS:
+        return _gen_ai_tool_span_to_events(span)
+    if operation in _GENAI_LLM_OPERATIONS:
+        return _gen_ai_llm_span_to_events(span)
+    # Unknown/other gen_ai operation (embeddings, invoke_agent, plan, ...).
+    # Degrade gracefully: keep the span visible in node history without
+    # inventing message or tool-call content.
+    return [], _gen_ai_contribution(node=span.attributes.get(_GENAI_AGENT_NAME_KEY, span.name))
+
+
+def _gen_ai_contribution(
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    latency_ms: float = 0.0,
+    is_llm_call: bool = False,
+    node: str | None = None,
+    tool_name: str | None = None,
+) -> dict[str, Any]:
+    """Build the aggregate-contribution dict consumed by ``_spans_to_events``."""
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": latency_ms,
+        "is_llm_call": is_llm_call,
+        "node": node,
+        "tool_name": tool_name,
+    }
+
+
+def _gen_ai_llm_span_to_events(
+    span: OTelSpan,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Map a gen_ai chat/completion span to an ``add_message`` event."""
+    attrs = span.attributes
+    # Prefer the response model (what actually answered) over the request model.
+    model = attrs.get(_GENAI_RESPONSE_MODEL_KEY) or attrs.get(_GENAI_REQUEST_MODEL_KEY, "")
+    input_tokens = attrs.get(_GENAI_INPUT_TOKENS_KEY, 0)
+    output_tokens = attrs.get(_GENAI_OUTPUT_TOKENS_KEY, 0)
+    node_name = attrs.get(_GENAI_AGENT_NAME_KEY, span.name)
+
+    output_text = _gen_ai_assistant_text(span)
+
+    events: list[dict[str, Any]] = []
+    if output_text:
+        events.append({
+            "view": ["target", "combined"],
+            "actor": "target",
+            "edit": {
+                "type": "add_message",
+                "message": {"role": "assistant", "content": output_text},
+            },
+            "raw": {
+                "_node": node_name,
+                "_model": model,
+                "_tokens": {"input": input_tokens, "output": output_tokens},
+                "_latency_ms": span.latency_ms,
+                "_semconv": "gen_ai",
+            },
+        })
+
+    contribution = _gen_ai_contribution(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=span.latency_ms,
+        is_llm_call=True,
+        node=node_name,
+    )
+    return events, contribution
+
+
+def _gen_ai_tool_span_to_events(
+    span: OTelSpan,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Map a gen_ai execute_tool span to a ``tool_call`` event."""
+    attrs = span.attributes
+    tool_name = attrs.get(_GENAI_TOOL_NAME_KEY, span.name)
+    tool_call_id = attrs.get(_GENAI_TOOL_CALL_ID_KEY)
+
+    # Optional openclaw enrichment wins for fidelity; fall back to generic
+    # gen_ai.tool.call.* when it is absent.
+    raw_args = attrs.get(_OPENCLAW_TOOL_INPUT_KEY)
+    if raw_args is None:
+        raw_args = attrs.get(_GENAI_TOOL_CALL_ARGS_KEY, "")
+    tool_args = _coerce_tool_args(raw_args)
+
+    tool_result = attrs.get(_OPENCLAW_TOOL_OUTPUT_KEY)
+    if tool_result is None:
+        tool_result = attrs.get(_GENAI_TOOL_CALL_RESULT_KEY, "")
+    tool_result = _coerce_tool_result(tool_result)
+
+    events = [{
+        "view": ["target", "combined"],
+        "actor": "tool",
+        "edit": {
+            "type": "tool_call",
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "tool_result": tool_result,
+            "tool_call_id": tool_call_id,
+        },
+        "raw": {"_semconv": "gen_ai"},
+    }]
+
+    contribution = _gen_ai_contribution(
+        latency_ms=span.latency_ms,
+        tool_name=tool_name,
+    )
+    return events, contribution
+
+
+def _gen_ai_assistant_text(span: OTelSpan) -> str:
+    """Resolve assistant text from a gen_ai chat span.
+
+    Resolution order (highest fidelity first):
+      1. ``openclaw.content.output_messages`` (optional vendor enrichment)
+      2. ``gen_ai.output.messages`` span attribute (attribute-carried content)
+      3. ``gen_ai.choice`` / ``gen_ai.assistant.message`` span events
+         (event-carried content — where the spec puts most content)
+    """
+    enrichment = span.attributes.get(_OPENCLAW_OUTPUT_MESSAGES_KEY)
+    if enrichment:
+        text = _text_from_messages(enrichment)
+        if text:
+            return text
+
+    attr_messages = span.attributes.get(_GENAI_OUTPUT_MESSAGES_KEY)
+    if attr_messages:
+        text = _text_from_messages(attr_messages)
+        if text:
+            return text
+
+    return _text_from_span_events(span)
+
+
+def _text_from_messages(value: Any) -> str:
+    """Extract assistant text from a gen_ai messages structure.
+
+    Handles both the structured ``[{"role", "parts": [{"type": "text",
+    "content"}]}]`` shape and the simpler ``[{"role", "content"}]`` shape,
+    accepting either a parsed list or a JSON string.
+    """
+    messages = _maybe_load_json(value)
+    if isinstance(messages, str):
+        # Not JSON — treat the raw string as the content itself.
+        return messages
+    if isinstance(messages, dict):
+        messages = [messages]
+    if not isinstance(messages, list):
+        return ""
+
+    parts: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            parts.append(content)
+            continue
+        for part in message.get("parts", []) or []:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text = part.get("content")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+    return "\n".join(parts)
+
+
+def _text_from_span_events(span: OTelSpan) -> str:
+    """Extract assistant text from gen_ai.choice / gen_ai.assistant.message events."""
+    parts: list[str] = []
+    for event in span.events:
+        name = event.get("name", "")
+        event_attrs = event.get("attributes", {})
+        if name == _GENAI_CHOICE_EVENT:
+            message = _maybe_load_json(event_attrs.get("message", ""))
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str) and content:
+                    parts.append(content)
+        elif name == _GENAI_ASSISTANT_MESSAGE_EVENT:
+            content = event_attrs.get("content")
+            if isinstance(content, str) and content:
+                parts.append(content)
+    return "\n".join(parts)
+
+
+def _coerce_tool_args(value: Any) -> dict[str, Any]:
+    """Coerce gen_ai tool-call arguments into a dict (mirrors OpenInference)."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    parsed = _maybe_load_json(value)
+    if isinstance(parsed, dict):
+        return parsed
+    return {"raw": value}
+
+
+def _coerce_tool_result(value: Any) -> str:
+    """Coerce a gen_ai tool-call result into a string for the event row."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _maybe_load_json(value: Any) -> Any:
+    """Best-effort JSON parse; return the original value when it is not JSON."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        return value
 
 
 @dataclass
@@ -311,6 +636,12 @@ def validate_spans(spans: list[OTelSpan]) -> SpanValidationResult:
     warnings: list[str] = []
 
     for span in spans:
+        if span.is_gen_ai:
+            # GenAI semconv span — validate against gen_ai.* recommendations
+            # rather than the OpenInference kind.
+            warnings.extend(_validate_gen_ai_span(span))
+            continue
+
         if span.kind == "UNKNOWN":
             warnings.append(f"span {span.span_id}: missing {_SPAN_KIND_KEY}")
 
@@ -334,6 +665,34 @@ def validate_spans(spans: list[OTelSpan]) -> SpanValidationResult:
         missing_attributes=[],
         warnings=warnings,
     )
+
+
+def _validate_gen_ai_span(span: OTelSpan) -> list[str]:
+    """Informational checks for an OTel GenAI semconv span.
+
+    Mirrors the OpenInference checks (warns, never drops), but keyed on
+    gen_ai.* attributes so gen_ai spans are never flagged as missing the
+    OpenInference ``openinference.span.kind``.
+    """
+    warnings: list[str] = []
+    operation = (span.operation or "").strip()
+
+    if operation in _GENAI_LLM_OPERATIONS:
+        if not (
+            span.attributes.get(_GENAI_RESPONSE_MODEL_KEY)
+            or span.attributes.get(_GENAI_REQUEST_MODEL_KEY)
+        ):
+            warnings.append(f"span {span.span_id}: missing {_GENAI_REQUEST_MODEL_KEY}")
+        if (
+            not span.attributes.get(_GENAI_INPUT_TOKENS_KEY)
+            and not span.attributes.get(_GENAI_OUTPUT_TOKENS_KEY)
+        ):
+            warnings.append(f"span {span.span_id}: missing token counts")
+    elif operation in _GENAI_TOOL_OPERATIONS:
+        if not span.attributes.get(_GENAI_TOOL_NAME_KEY):
+            warnings.append(f"span {span.span_id}: missing {_GENAI_TOOL_NAME_KEY}")
+
+    return warnings
 
 
 # ── Trace compression ────────────────────────────────────────────

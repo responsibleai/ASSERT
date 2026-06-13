@@ -1,0 +1,49 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "genai_oc_trace_01",
+              "spanId": "ocspan_01",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": 1000000000,
+              "endTimeUnixNano": 2240000000,
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.system", "value": {"stringValue": "openclaw"}},
+                {"key": "session.id", "value": {"stringValue": "sess_oc_trip"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gpt-4o-2024-08-06"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "120"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "64"}},
+                {"key": "gen_ai.output.messages", "value": {"stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"GENERIC short answer\"}], \"finish_reason\": \"stop\"}]"}},
+                {"key": "openclaw.content.input_messages", "value": {"stringValue": "[{\"role\": \"user\", \"content\": \"Plan a Tokyo trip with full detail\"}]"}},
+                {"key": "openclaw.content.output_messages", "value": {"stringValue": "[{\"role\": \"assistant\", \"content\": \"OPENCLAW full fidelity Tokyo itinerary: ANA $1180 + Granbell 7 nights $1015 = $2195.\"}]"}}
+              ]
+            },
+            {
+              "traceId": "genai_oc_trace_01",
+              "spanId": "ocspan_02",
+              "parentSpanId": "ocspan_01",
+              "name": "execute_tool search_hotels",
+              "startTimeUnixNano": 2300000000,
+              "endTimeUnixNano": 3500000000,
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "session.id", "value": {"stringValue": "sess_oc_trip"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "search_hotels"}},
+                {"key": "gen_ai.tool.call.id", "value": {"stringValue": "call_hotels_001"}},
+                {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": "{\"city\": \"Tokyo\"}"}},
+                {"key": "gen_ai.tool.call.result", "value": {"stringValue": "[truncated]"}},
+                {"key": "openclaw.content.tool_input", "value": {"stringValue": "{\"city\": \"Tokyo\", \"max_price_per_night\": 250, \"checkin\": \"2025-07-10\"}"}},
+                {"key": "openclaw.content.tool_output", "value": {"stringValue": "[{\"name\": \"Shinjuku Granbell\", \"price_per_night\": 145, \"rating\": 4.5}]"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
