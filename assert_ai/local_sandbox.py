@@ -643,7 +643,7 @@ class RampartDockerHarness:
             steps.append(
                 LocalSandboxStep(
                     name="start_mock_openai",
-                    command=[sys.executable, "-m", "assert_ai.local_sandbox_helpers.mock_openai_server", "--port", str(context.mock_openai_port)],
+                    command=[sys.executable, "-m", "assert_ai.local_sandbox_runtime.mock_openai_server", "--port", str(context.mock_openai_port)],
                     cwd=context.output_dir,
                     kind="service",
                     health_url=f"http://127.0.0.1:{context.mock_openai_port}/health",
@@ -979,7 +979,7 @@ class OpenClawDockerLaunchDescriptor:
             runner_id=self.runner_name,
             runtime_profile="openclaw",
             required_paths=(".openclaw/workspace", "runtime/openclaw-package"),
-            endpoint_bridge_module="assert_ai.local_sandbox_helpers.openclaw_endpoint_bridge",
+            endpoint_bridge_module="assert_ai.local_sandbox_runtime.openclaw_endpoint_bridge",
             launch_command=openclaw_launch_command,
             launch_cwd=runner_path,
         )

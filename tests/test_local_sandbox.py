@@ -825,6 +825,28 @@ def test_rampart_harness_builds_reusable_launch_steps_without_openclaw_assumptio
     assert plan.cleanup_commands[0].name == "toy-stop"
 
 
+def test_harness_module_references_are_importable() -> None:
+    """The harness spawns helper modules by dotted path; they must resolve.
+
+    Regression: the mock-server and openclaw-bridge references used a stale
+    'local_sandbox_helpers' package name that never existed, so any --provider
+    mock run died at start_mock_openai with ModuleNotFoundError. Live (copilot)
+    runs skipped the mock step and never surfaced it.
+    """
+    import importlib.util
+
+    referenced_modules = [
+        "assert_ai.local_sandbox_runtime.mock_openai_server",
+        "assert_ai.local_sandbox_runtime.openclaw_endpoint_bridge",
+    ]
+    for module_name in referenced_modules:
+        assert importlib.util.find_spec(module_name) is not None, f"harness references missing module: {module_name}"
+
+    # And the strings actually used in the harness/descriptor must point at those.
+    source = (Path(__file__).resolve().parent.parent / "assert_ai" / "local_sandbox.py").read_text(encoding="utf-8")
+    assert "local_sandbox_helpers" not in source, "stale local_sandbox_helpers reference in local_sandbox.py"
+
+
 def test_runtime_config_builds_rampart_descriptor_without_runtime_class() -> None:
     runtime_config = RuntimeLaunchConfig(
         id="toy-agent",
