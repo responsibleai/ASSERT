@@ -14,6 +14,31 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "acs-generator"
+version = "0.3.1b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/a8/0163e8ef3be2ab828328ebb876793448a7edff6dc2fee448fd5619c2fab1/acs_generator-0.3.1b0.tar.gz", hash = "sha256:30cc30fbe021ec90306f81a79a360d6a5c6995ad0588d2d24ac36b05aba5169d", size = 26938, upload-time = "2026-06-02T23:47:43.066Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/0f/dce29a050b34492f9212643990a24ccef49b1f7cc2f76d68813223fa4f25/acs_generator-0.3.1b0-py3-none-any.whl", hash = "sha256:d5ac9aa06a1c1249deb7257c99809c135264c54fbdbfccdf56b620e679cd7377", size = 30136, upload-time = "2026-06-02T23:47:44.049Z" },
+]
+
+[[package]]
+name = "agent-control-specification"
+version = "0.3.1b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/1d/1c7ddb9c64c602c30054489772bf8c2e67b58d934d8fd6ad7df0f076fd4c/agent_control_specification-0.3.1b0.tar.gz", hash = "sha256:2dbf77f25c5768d8321401b6a9c85660900f525e777d37fd9bbbdec7704153ac", size = 270604, upload-time = "2026-06-02T23:44:52.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/00/de60f8d82694adbf588d203057fcde7610d345c0270a33044230f4ed6883/agent_control_specification-0.3.1b0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c45ffb572f42247e4c9317539cddbab3eb9009bfce3eccc865fdc764760c60c7", size = 2104993, upload-time = "2026-06-04T18:50:35.085Z" },
+]
+
+[[package]]
 name = "ag-ui-protocol"
 version = "0.1.18"
 source = { registry = "https://pypi.org/simple" }
@@ -4278,7 +4303,13 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+acs = [
+    { name = "acs-generator" },
+    { name = "agent-control-specification" },
+]
 all = [
+    { name = "acs-generator" },
+    { name = "agent-control-specification" },
     { name = "arize-phoenix" },
     { name = "arize-phoenix-otel" },
     { name = "autogen-agentchat" },
@@ -4374,6 +4405,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
+    { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
     { name = "autogen-agentchat", marker = "extra == 'examples'", specifier = ">=0.7.5" },
@@ -4405,7 +4438,7 @@ requires-dist = [
     { name = "openpyxl", marker = "extra == 'analysis'", specifier = ">=3.1.5" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.39.0" },
-    { name = "assert-ai", extras = ["otel", "langgraph", "analysis", "examples", "regression"], marker = "extra == 'all'" },
+    { name = "assert-ai", extras = ["otel", "langgraph", "analysis", "examples", "regression", "acs"], marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'analysis'", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai", marker = "extra == 'examples'", specifier = ">=0.8.1" },
@@ -4422,7 +4455,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'analysis'", specifier = ">=3.0.0" },
     { name = "smolagents", marker = "extra == 'examples'", specifier = ">=1.22.0" },
 ]
-provides-extras = ["otel", "langgraph", "analysis", "regression", "examples", "all", "dev"]
+provides-extras = ["otel", "langgraph", "analysis", "regression", "examples", "acs", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -29,6 +29,8 @@ For unsupported frameworks or custom orchestration, emit your own OTel spans wit
 
 → See [Callable Target](callable.md).
 
+After an eval finds policy violations, see [Securing agents with ACS](../guides/securing-agents-with-acs.md) to generate an ACS guard and re-run the same callable target secured.
+
 ## Simple path: Prompt Agent (model + tools)
 
 Use the **Prompt Agent target** (`target.model` + `target.system_prompt` + optional `target.tools`) when you have a system prompt and a tool schema but no orchestration code yet. The runtime owns the tool-call loop. Real Python tools or LLM-simulated tool responses both work. Useful for test-driven prompt + toolset design *before* any agent is implemented.
