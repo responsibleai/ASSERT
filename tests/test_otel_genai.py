@@ -248,6 +248,9 @@ class TestConventionCoexistence(unittest.TestCase):
         )
         json.dump(doc, tmp)
         tmp.close()
+        # Unlink after the test (even on failure) so fixtures don't leak across
+        # repeated or parallel runs.
+        self.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
         return tmp.name
 
     def test_mixed_conventions_in_one_trace(self):
@@ -362,6 +365,236 @@ class TestGenAISpanValidation(unittest.TestCase):
         result = validate_spans([span])
         self.assertFalse(any("output.value" in w for w in result.warnings))
         self.assertFalse(any("llm.model_name" in w for w in result.warnings))
+
+
+# ── Aggregate consistency across conventions (review follow-ups) ─────
+
+
+def _write_otlp_tempfile(test_case, doc):
+    """Write an OTLP-JSON doc to a temp file that is auto-removed after the test.
+
+    Registers an addCleanup so the file is unlinked even on assertion failure,
+    avoiding leaked fixtures across repeated/parallel test runs.
+    """
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    )
+    json.dump(doc, tmp)
+    tmp.close()
+    test_case.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
+    return tmp.name
+
+
+class TestGenAIAggregateConsistency(unittest.TestCase):
+    """gen_ai aggregate metadata must match the OpenInference conventions:
+    total_latency_ms aggregates LLM-span latency only, and node attribution
+    honors langgraph.node when present.
+    """
+
+    def test_total_latency_excludes_tool_spans(self):
+        # One model span (latency 1000ms) + one tool span (latency 500ms).
+        # OpenInference only accumulates LLM-span latency, so the gen_ai path
+        # must do the same: total_latency_ms == model-span latency only.
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "traceId": "lat", "spanId": "m1", "name": "chat gpt-4o",
+                    "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                        {"key": "session.id", "value": {"stringValue": "lat_sess"}},
+                        {"key": "gen_ai.output.messages",
+                         "value": {"stringValue": "[{\"role\": \"assistant\", \"content\": \"ok\"}]"}},
+                    ],
+                },
+                {
+                    "traceId": "lat", "spanId": "t1", "name": "execute_tool calc",
+                    "startTimeUnixNano": 1_000_000_000, "endTimeUnixNano": 1_500_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                        {"key": "gen_ai.tool.name", "value": {"stringValue": "calc"}},
+                        {"key": "session.id", "value": {"stringValue": "lat_sess"}},
+                    ],
+                },
+            ]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        agg = _row(rows, "lat_sess")["raw"]
+        self.assertEqual(agg["total_latency_ms"], 1000.0)
+
+    def test_langgraph_node_attribution_honored(self):
+        # A gen_ai model span that also carries langgraph.node must attribute
+        # the node by that key (not the span name), matching OpenInference.
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "nd", "spanId": "m1", "name": "chat gpt-4o",
+                "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                    {"key": "langgraph.node", "value": {"stringValue": "planner"}},
+                    {"key": "session.id", "value": {"stringValue": "nd_sess"}},
+                    {"key": "gen_ai.output.messages",
+                     "value": {"stringValue": "[{\"role\": \"assistant\", \"content\": \"hi\"}]"}},
+                ],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        agg = _row(rows, "nd_sess")["raw"]
+        self.assertIn("planner", agg["nodes_visited"])
+        self.assertNotIn("chat gpt-4o", agg["nodes_visited"])
+
+
+class TestGenAIZeroTokenValidation(unittest.TestCase):
+    """Token counts of 0 are valid values, not missing attributes."""
+
+    def _span(self, attrs, kind="LLM", events=None):
+        from assert_ai.core.otel import OTelSpan
+        return OTelSpan(
+            trace_id="t", span_id="s1", parent_span_id=None,
+            name="span", kind=kind,
+            start_time_ns=0, end_time_ns=1_000_000,
+            attributes=attrs, events=events or [],
+        )
+
+    def test_zero_token_counts_not_flagged_missing(self):
+        from assert_ai.core.otel import validate_spans
+        span = self._span({
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.usage.input_tokens": 0,
+            "gen_ai.usage.output_tokens": 0,
+            "gen_ai.output.messages": "[{\"role\": \"assistant\", \"content\": \"hi\"}]",
+        })
+        result = validate_spans([span])
+        self.assertFalse(
+            any("token counts" in w for w in result.warnings),
+            f"0 token counts are present and valid, not missing: {result.warnings}",
+        )
+        self.assertTrue(result.valid, result.warnings)
+
+    def test_truly_missing_token_counts_still_flagged(self):
+        from assert_ai.core.otel import validate_spans
+        span = self._span({
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.output.messages": "[{\"role\": \"assistant\", \"content\": \"hi\"}]",
+        })
+        result = validate_spans([span])
+        self.assertTrue(any("token counts" in w for w in result.warnings))
+
+
+class TestGenAIGracefulDegradation(unittest.TestCase):
+    """Missing optional gen_ai fields must not crash or drop the span."""
+
+    def test_chat_span_without_content_or_usage(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "t_min", "spanId": "s_min", "name": "chat gpt-4o",
+                "startTimeUnixNano": 1_000_000_000, "endTimeUnixNano": 1_100_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                    {"key": "session.id", "value": {"stringValue": "sess_min"}},
+                ],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        self.assertEqual(len(rows), 1)
+        # Counted as an LLM call even though it emitted no message content.
+        self.assertEqual(rows[0]["raw"]["llm_call_count"], 1)
+
+    def test_execute_tool_span_with_only_name(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "t_tool", "spanId": "s_tool", "name": "execute_tool lookup",
+                "startTimeUnixNano": 1_000_000_000, "endTimeUnixNano": 1_100_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                    {"key": "gen_ai.tool.name", "value": {"stringValue": "lookup"}},
+                    {"key": "session.id", "value": {"stringValue": "sess_tool"}},
+                ],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        tool_events = [e for e in rows[0]["events"] if e["actor"] == "tool"]
+        self.assertEqual(len(tool_events), 1)
+        self.assertEqual(tool_events[0]["edit"]["tool_name"], "lookup")
+        self.assertEqual(tool_events[0]["edit"]["tool_args"], {})
+        self.assertEqual(tool_events[0]["edit"]["tool_result"], "")
+
+
+class TestLiveExporterEventCarriedContent(unittest.TestCase):
+    """LiveOTelExporter.export_session must preserve span events so the gen_ai
+    path (which carries tool calls/results in events) is not silently dropped
+    on the in-process live path the way it would be if events were omitted.
+    """
+
+    def _fake_sdk_span(self):
+        from types import SimpleNamespace
+
+        choice_event = SimpleNamespace(
+            name="gen_ai.choice",
+            attributes={
+                "message": json.dumps({
+                    "role": "assistant",
+                    "content": "Looking that up.",
+                    "tool_calls": [{
+                        "id": "call_live1", "type": "function",
+                        "function": {"name": "search", "arguments": "{\"q\": \"x\"}"},
+                    }],
+                }),
+            },
+        )
+        return SimpleNamespace(
+            name="chat gpt-4o",
+            attributes={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "gpt-4o",
+                "session.id": "live_sess",
+            },
+            context=SimpleNamespace(trace_id=0x1, span_id=0x2),
+            parent=None,
+            start_time=0,
+            end_time=1_000_000,
+            events=[choice_event],
+        )
+
+    def test_export_session_preserves_events(self):
+        from assert_ai.core.otel import LiveOTelExporter
+        from types import SimpleNamespace
+
+        holder = SimpleNamespace(spans=[self._fake_sdk_span()])
+        prev = LiveOTelExporter._sdk_exporter
+        LiveOTelExporter._sdk_exporter = holder
+        self.addCleanup(lambda: setattr(LiveOTelExporter, "_sdk_exporter", prev))
+
+        spans = LiveOTelExporter().export_session("live_sess")
+        self.assertEqual(len(spans), 1)
+        self.assertTrue(
+            spans[0].events,
+            "live-exported span dropped its events; event-carried gen_ai "
+            "tool calls/results would be lost",
+        )
+
+    def test_export_session_events_feed_genai_tool_calls(self):
+        from assert_ai.core.otel import LiveOTelExporter, _spans_to_events
+        from types import SimpleNamespace
+
+        holder = SimpleNamespace(spans=[self._fake_sdk_span()])
+        prev = LiveOTelExporter._sdk_exporter
+        LiveOTelExporter._sdk_exporter = holder
+        self.addCleanup(lambda: setattr(LiveOTelExporter, "_sdk_exporter", prev))
+
+        spans = LiveOTelExporter().export_session("live_sess")
+        events, _ = _spans_to_events(spans)
+        tool_names = [e["edit"]["tool_name"] for e in events if e["actor"] == "tool"]
+        self.assertIn("search", tool_names)
 
 
 if __name__ == "__main__":

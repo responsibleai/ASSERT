@@ -238,6 +238,45 @@ def _extract_value(value_obj: dict) -> Any:
     return None
 
 
+def _value_to_otlp(value: Any) -> dict:
+    """Wrap a Python scalar back into an OTLP typed-value object.
+
+    Inverse of ``_extract_value`` for the value shapes the parser reads.
+    ``bool`` is checked before ``int`` because ``bool`` is an ``int`` subclass.
+    """
+    if isinstance(value, bool):
+        return {"boolValue": value}
+    if isinstance(value, int):
+        return {"intValue": str(value)}
+    if isinstance(value, float):
+        return {"doubleValue": value}
+    return {"stringValue": "" if value is None else str(value)}
+
+
+def _sdk_events_to_otlp(events: Any) -> list[dict[str, Any]]:
+    """Convert OTel SDK span events into the OTLP-JSON event shape.
+
+    SDK ``Event`` objects expose ``.name`` and a mapping ``.attributes``, but
+    the parser's GenAI event handling (``_genai_extract_events``) consumes the
+    OTLP-JSON shape: ``{"name", "attributes": [{"key", "value": {...}}]}``.
+    Converting here keeps the in-process live path on equal footing with the
+    file-based parser, so event-carried gen_ai tool calls/results aren't
+    silently dropped. Returns an empty list when there are no events.
+    """
+    if not events:
+        return []
+    converted: list[dict[str, Any]] = []
+    for event in events:
+        name = getattr(event, "name", "") or ""
+        raw_attrs = getattr(event, "attributes", None) or {}
+        attributes = [
+            {"key": key, "value": _value_to_otlp(val)}
+            for key, val in dict(raw_attrs).items()
+        ]
+        converted.append({"name": name, "attributes": attributes})
+    return converted
+
+
 def _group_spans(
     spans: list[OTelSpan],
     group_key: str,
@@ -461,7 +500,9 @@ def _genai_model_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     model = attrs.get(_GENAI_RESPONSE_MODEL_KEY) or attrs.get(_GENAI_REQUEST_MODEL_KEY, "")
     input_tokens = attrs.get(_GENAI_INPUT_TOKENS_KEY, 0) or 0
     output_tokens = attrs.get(_GENAI_OUTPUT_TOKENS_KEY, 0) or 0
-    node_name = span.name
+    # Honor langgraph.node for node attribution when present, mirroring the
+    # OpenInference path, so nodes_visited stays consistent across conventions.
+    node_name = attrs.get(_LANGGRAPH_NODE_KEY, span.name)
 
     acc.total_input_tokens += input_tokens
     acc.total_output_tokens += output_tokens
@@ -521,7 +562,9 @@ def _genai_tool_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
         result_value = attrs.get(_OPENCLAW_TOOL_OUTPUT_KEY)
     tool_result = _genai_tool_result_str(result_value)
 
-    acc.total_latency_ms += span.latency_ms
+    # NOTE: tool-span latency is intentionally NOT added to total_latency_ms.
+    # The OpenInference path aggregates LLM-span latency only, so adding TOOL
+    # latency here would make the aggregate inconsistent across conventions.
     acc.emit_tool_call(tool_name, tool_args, tool_result, call_id)
 
 
@@ -780,9 +823,11 @@ def _validate_genai_span(span: OTelSpan) -> list[str]:
             warnings.append(f"span {span.span_id}: missing {_GENAI_OUTPUT_MESSAGES_KEY}")
         if not attrs.get(_GENAI_REQUEST_MODEL_KEY) and not attrs.get(_GENAI_RESPONSE_MODEL_KEY):
             warnings.append(f"span {span.span_id}: missing {_GENAI_REQUEST_MODEL_KEY}")
+        # Token counts of 0 are valid present values; check key presence, not
+        # truthiness, so a span reporting 0 tokens is not flagged as missing.
         if (
-            not attrs.get(_GENAI_INPUT_TOKENS_KEY)
-            and not attrs.get(_GENAI_OUTPUT_TOKENS_KEY)
+            _GENAI_INPUT_TOKENS_KEY not in attrs
+            and _GENAI_OUTPUT_TOKENS_KEY not in attrs
         ):
             warnings.append(f"span {span.span_id}: missing token counts")
 
@@ -1099,6 +1144,7 @@ class LiveOTelExporter:
                 start_time_ns=sdk_span.start_time or 0,
                 end_time_ns=sdk_span.end_time or 0,
                 attributes=attrs,
+                events=_sdk_events_to_otlp(getattr(sdk_span, "events", None)),
             ))
         return result
 
