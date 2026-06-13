@@ -68,6 +68,30 @@ def test_discover_local_agents_finds_openclaw_from_explicit_paths(tmp_path: Path
     assert "secret.env" in {item["path"] for item in agent["excluded_files"]}
 
 
+def test_discover_openclaw_declares_snapshot_defaults_layout(tmp_path: Path) -> None:
+    runtime, workspace, manifest = _make_openclaw_fixture(tmp_path)
+
+    result = discover_local_agents(
+        target="openclaw",
+        runtime_path=runtime,
+        workspace_path=workspace,
+        source_bundle_path=manifest,
+        redact_paths=True,
+    )
+
+    agent = result.to_json()["agents"][0]
+    # OpenClaw's two-root layout must be declared in the discovery payload,
+    # not inferred from the target id inside generic snapshot code.
+    defaults = agent["snapshot_defaults"]
+    by_dest = {entry["dest"]: entry for entry in defaults}
+    assert set(by_dest) == {".openclaw/workspace", "runtime/openclaw-package"}
+    assert by_dest[".openclaw/workspace"]["source"] == "workspace.path"
+    assert by_dest["runtime/openclaw-package"]["source"] == "runtime.path"
+    # Redacted discovery still drives defaults via a declared home fallback.
+    assert by_dest[".openclaw/workspace"]["home_fallback"] == ".openclaw/workspace"
+    assert by_dest["runtime/openclaw-package"]["home_fallback"] == ".npm-global/lib/node_modules/openclaw"
+
+
 def test_discover_local_agents_reports_common_agent_config_dirs(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)

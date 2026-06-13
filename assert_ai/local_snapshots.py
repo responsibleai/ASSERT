@@ -79,19 +79,46 @@ def _agent_path(agent: dict[str, Any], section: str, field: str) -> Path | None:
     return Path(str(value)).expanduser().resolve()
 
 
-def _default_openclaw_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
-    workspace = _agent_path(agent, "workspace", "path")
-    runtime = _agent_path(agent, "runtime", "path")
-    if workspace is None and (agent.get("workspace") or {}).get("exists"):
-        workspace = Path.home() / ".openclaw" / "workspace"
-    if runtime is None and (agent.get("runtime") or {}).get("valid"):
-        runtime = Path.home() / ".npm-global" / "lib" / "node_modules" / "openclaw"
-    defaults: list[tuple[Path, Path]] = []
-    if workspace is not None and workspace.exists():
-        defaults.append((workspace, Path(".openclaw/workspace")))
-    if runtime is not None and runtime.exists():
-        defaults.append((runtime, Path("runtime/openclaw-package")))
-    return defaults
+def _resolve_source_selector(agent: dict[str, Any], selector: str) -> Path | None:
+    """Resolve a dotted ``section.field`` selector (e.g. ``workspace.path``)."""
+
+    section, _, field = selector.partition(".")
+    if not section or not field:
+        return None
+    return _agent_path(agent, section, field)
+
+
+def _declared_snapshot_default_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
+    """Return default roots from an agent's declared ``snapshot_defaults``.
+
+    Each entry declares a ``source`` selector (``section.field``) plus a stable
+    relative ``dest``. When the source path is redacted, an optional
+    ``home_fallback`` resolves the root against the current home. The snapshot
+    code stays generic: runtimes declare their own required layout instead of
+    being special-cased here.
+    """
+
+    declared = agent.get("snapshot_defaults")
+    if not isinstance(declared, list):
+        return []
+    home = Path.home()
+    roots: list[tuple[Path, Path]] = []
+    for entry in declared:
+        if not isinstance(entry, dict):
+            continue
+        selector = str(entry.get("source") or "")
+        dest_raw = str(entry.get("dest") or "")
+        if not dest_raw:
+            continue
+        source = _resolve_source_selector(agent, selector) if selector else None
+        if source is None:
+            fallback = entry.get("home_fallback")
+            if isinstance(fallback, str) and fallback:
+                source = (home / fallback).expanduser().resolve()
+        if source is None or not source.exists():
+            continue
+        roots.append((source, _safe_relative_dest(dest_raw)))
+    return roots
 
 
 def _safe_hidden_dest(path: Path) -> Path:
@@ -234,12 +261,12 @@ def create_local_agent_snapshot(
     copy_root_values = tuple(copy_root_specs)
     include_root_values = tuple(include_root_specs)
     used_default_runtime_roots = False
-    default_roots = _default_discovered_roots(agent)
-    if target == "openclaw":
-        # OpenClaw discovery distinguishes workspace and runtime package roots;
-        # keep those stable snapshot destinations instead of the generic folder
-        # names so the OpenClaw launch descriptor can find them.
-        default_roots = _default_openclaw_roots(agent) or default_roots
+    # Prefer the runtime's own declared snapshot layout (e.g. OpenClaw's
+    # workspace + runtime-package roots). This keeps the snapshot path generic:
+    # runtimes declare their required roots in discovery, instead of being
+    # special-cased here by target id. Fall back to generic discovered
+    # home/config/workspace roots when nothing is declared.
+    default_roots = _declared_snapshot_default_roots(agent) or _default_discovered_roots(agent)
     if default_roots:
         copy_roots.extend(default_roots)
         used_default_runtime_roots = True

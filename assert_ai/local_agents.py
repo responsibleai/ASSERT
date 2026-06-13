@@ -437,6 +437,22 @@ def _openclaw_agent(
             "path": _path_value(workspace, redact_paths=redact_paths),
             "exists": workspace_exists,
         },
+        # OpenClaw needs two roots at stable sandbox-relative destinations so its
+        # launch descriptor can find the workspace and runtime package. The layout
+        # is declared here so the generic snapshot path can serve it without any
+        # target-id special-casing.
+        "snapshot_defaults": [
+            {
+                "source": "workspace.path",
+                "dest": ".openclaw/workspace",
+                "home_fallback": ".openclaw/workspace",
+            },
+            {
+                "source": "runtime.path",
+                "dest": "runtime/openclaw-package",
+                "home_fallback": ".npm-global/lib/node_modules/openclaw",
+            },
+        ],
         "source_bundle": {
             "path": _path_value(source_bundle if source_bundle_exists else None, redact_paths=redact_paths),
             "exists": source_bundle_exists,

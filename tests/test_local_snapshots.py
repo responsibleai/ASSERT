@@ -122,6 +122,14 @@ def test_create_local_agent_snapshot_uses_openclaw_default_roots_from_discovery(
             "summary": "ready for snapshot",
             "runtime": {"path": str(runtime), "valid": True},
             "workspace": {"path": str(workspace), "exists": True},
+            "snapshot_defaults": [
+                {"source": "workspace.path", "dest": ".openclaw/workspace", "home_fallback": ".openclaw/workspace"},
+                {
+                    "source": "runtime.path",
+                    "dest": "runtime/openclaw-package",
+                    "home_fallback": ".npm-global/lib/node_modules/openclaw",
+                },
+            ],
         },
     )
 
@@ -167,6 +175,14 @@ def test_create_local_agent_snapshot_uses_openclaw_home_defaults_when_discovery_
             "summary": "ready for snapshot",
             "runtime": {"path": "[LOCAL_PATH]", "valid": True},
             "workspace": {"path": "[LOCAL_PATH]", "exists": True},
+            "snapshot_defaults": [
+                {"source": "workspace.path", "dest": ".openclaw/workspace", "home_fallback": ".openclaw/workspace"},
+                {
+                    "source": "runtime.path",
+                    "dest": "runtime/openclaw-package",
+                    "home_fallback": ".npm-global/lib/node_modules/openclaw",
+                },
+            ],
         },
     )
 
@@ -303,6 +319,97 @@ def test_cli_local_snapshot_create_defaults_output_dir_and_detected_config_root(
     assert (manifest_path.parent / "snapshot" / ".hermes" / "memories" / "MEMORY.md").exists()
 
 
+def test_create_local_agent_snapshot_consumes_declared_snapshot_defaults_generically(tmp_path: Path) -> None:
+    # A non-OpenClaw target with a two-root layout declared in the discovery
+    # payload must be served by the GENERIC snapshot path, with no target-id
+    # special-casing in the snapshot code.
+    workspace = tmp_path / ".widget" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("widget instructions\n", encoding="utf-8")
+    runtime = tmp_path / "opt" / "widget-runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "main.js").write_text("console.log('widget');\n", encoding="utf-8")
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(
+        discovery,
+        target="widget",
+        agent={
+            "id": "widget",
+            "display_name": "Widget",
+            "kind": "widget",
+            "status": "ready",
+            "summary": "ready for snapshot",
+            "workspace": {"path": str(workspace), "exists": True},
+            "runtime": {"path": str(runtime), "valid": True},
+            "snapshot_defaults": [
+                {"source": "workspace.path", "dest": ".widget/workspace"},
+                {"source": "runtime.path", "dest": "runtime/widget-package"},
+            ],
+        },
+    )
+
+    result = create_local_agent_snapshot(
+        discovery_path=discovery,
+        target="widget",
+        copy_root_specs=[],
+        include_root_specs=[],
+        output_dir=tmp_path / "snapshot-out",
+        redact_paths=True,
+    )
+
+    assert (result.snapshot_root / ".widget" / "workspace" / "AGENTS.md").exists()
+    assert (result.snapshot_root / "runtime" / "widget-package" / "main.js").exists()
+    assert [root["dest"] for root in result.manifest["copied_roots"]] == [
+        ".widget/workspace",
+        "runtime/widget-package",
+    ]
+    assert result.manifest["safety"]["default_runtime_roots"] is True
+
+
+def test_create_local_agent_snapshot_resolves_snapshot_default_home_fallback_when_redacted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # When discovery redacts source paths, declared home_fallback values resolve
+    # the roots against the current home. Still generic: no target-id branch.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    workspace = tmp_path / ".widget" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("widget instructions\n", encoding="utf-8")
+    runtime = tmp_path / "opt" / "widget-runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "main.js").write_text("console.log('widget');\n", encoding="utf-8")
+    discovery = tmp_path / "discovery.json"
+    _write_discovery(
+        discovery,
+        target="widget",
+        agent={
+            "id": "widget",
+            "display_name": "Widget",
+            "kind": "widget",
+            "status": "ready",
+            "summary": "ready for snapshot",
+            "workspace": {"path": "[LOCAL_PATH]", "exists": True},
+            "runtime": {"path": "[LOCAL_PATH]", "valid": True},
+            "snapshot_defaults": [
+                {"source": "workspace.path", "dest": ".widget/workspace", "home_fallback": ".widget/workspace"},
+                {"source": "runtime.path", "dest": "runtime/widget-package", "home_fallback": "opt/widget-runtime"},
+            ],
+        },
+    )
+
+    result = create_local_agent_snapshot(
+        discovery_path=discovery,
+        target="widget",
+        copy_root_specs=[],
+        include_root_specs=[],
+        output_dir=tmp_path / "snapshot-out",
+        redact_paths=True,
+    )
+
+    assert (result.snapshot_root / ".widget" / "workspace" / "AGENTS.md").exists()
+    assert (result.snapshot_root / "runtime" / "widget-package" / "main.js").exists()
+
+
 def test_create_local_agent_snapshot_assigns_dest_for_include_roots(tmp_path: Path) -> None:
     discovery = tmp_path / "discovery.json"
     _write_discovery(discovery)
@@ -381,6 +488,14 @@ def test_cli_local_snapshot_create_uses_openclaw_defaults_and_include_root(tmp_p
             "summary": "ready for snapshot",
             "runtime": {"path": str(runtime), "valid": True},
             "workspace": {"path": str(workspace), "exists": True},
+            "snapshot_defaults": [
+                {"source": "workspace.path", "dest": ".openclaw/workspace", "home_fallback": ".openclaw/workspace"},
+                {
+                    "source": "runtime.path",
+                    "dest": "runtime/openclaw-package",
+                    "home_fallback": ".npm-global/lib/node_modules/openclaw",
+                },
+            ],
         },
     )
     out = tmp_path / "snapshot"
