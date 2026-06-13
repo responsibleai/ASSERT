@@ -1708,18 +1708,42 @@ _normalize_azure_api_base()
 # Pick the Azure OpenAI auth mode once for the process. Pre-warming the
 # credential here means the first request never pays the
 # DefaultAzureCredential construction cost and any missing-dep error
-# surfaces at import time when the user has explicitly opted into AAD
-# (rather than from inside the first request).
+# surfaces early (rather than from inside the first request).
+#
+# Log emission is intentionally deferred to `log_resolved_azure_auth_mode()`
+# below. This module is imported transitively at CLI startup *before*
+# `configure_logging()` installs handlers — emitting log records here would
+# silently drop them. The CLI calls `log_resolved_azure_auth_mode()` right
+# after `configure_logging()` so users get a reliable startup anchor for
+# whichever auth path is active.
 def _configure_azure_auth_mode() -> None:
     global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
     _AZURE_AUTH_MODE = azure_auth.resolve_azure_auth_mode()
+    if _AZURE_AUTH_MODE in ("aad", "aad-fallback"):
+        if azure_auth.get_azure_token_provider() is None:
+            _AZURE_AAD_DEP_MISSING = True
+
+
+_configure_azure_auth_mode()
+
+
+def log_resolved_azure_auth_mode() -> None:
+    """Emit a single INFO/WARNING line describing the active Azure auth mode.
+
+    Safe to call multiple times — it always logs the currently-resolved
+    state. Intended to be called by entrypoints (CLI, library hosts) once
+    their logging is configured, so users have a reliable startup anchor
+    for which auth path will be used by ``azure/*`` requests. A followup
+    provenance line ("AAD token acquired via …") fires on the first
+    successful token acquisition, but is easy to miss mid-stream without
+    this anchor.
+    """
     if _AZURE_AUTH_MODE == "aad":
         log.info(
             "Azure OpenAI auth mode: AAD (forced via %s).",
             azure_auth.ENV_USE_AAD_FLAG,
         )
-        if azure_auth.get_azure_token_provider() is None:
-            _AZURE_AAD_DEP_MISSING = True
+        if _AZURE_AAD_DEP_MISSING:
             log.warning(
                 "%s is set but azure-identity is not installed; the next "
                 "azure/* request will fail. Install with: "
@@ -1727,18 +1751,19 @@ def _configure_azure_auth_mode() -> None:
                 azure_auth.ENV_USE_AAD_FLAG,
             )
     elif _AZURE_AUTH_MODE == "aad-fallback":
-        # Stay quiet for users who haven't configured Azure yet — the
-        # actionable error only matters when an azure/* request fires.
-        log.debug(
-            "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set).",
-        )
-        if azure_auth.get_azure_token_provider() is None:
-            _AZURE_AAD_DEP_MISSING = True
+        if _AZURE_AAD_DEP_MISSING:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "azure-identity not installed — install with: "
+                "pip install 'assert-ai[azure-aad]').",
+            )
+        else:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "using DefaultAzureCredential).",
+            )
     else:
         log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
-
-
-_configure_azure_auth_mode()
 
 
 # ── Import-time env-var seed ───────────────────────────────────
