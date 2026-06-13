@@ -29,7 +29,7 @@ from assert_ai.local_sandbox import (
 )
 
 
-def _write_snapshot_manifest(base: Path, *, target: str = "openclaw") -> Path:
+def _write_snapshot_manifest(base: Path, *, target: str = "openclaw", source: str | None = None) -> Path:
     snapshot_root = base / "snapshot"
     (snapshot_root / ".openclaw" / "workspace").mkdir(parents=True)
     (snapshot_root / ".openclaw" / "workspace" / "AGENTS.md").write_text("agent instructions\n", encoding="utf-8")
@@ -52,6 +52,8 @@ def _write_snapshot_manifest(base: Path, *, target: str = "openclaw") -> Path:
             "symlinks_not_copied": True,
         },
     }
+    if source is not None:
+        manifest["source"] = source
     manifest_path = base / "snapshot_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
@@ -446,6 +448,40 @@ def test_find_running_sandbox_state_errors_when_multiple_running(tmp_path: Path)
         find_running_sandbox_state(sandboxes_dir=sandboxes)
 
 
+def test_find_staged_openclaw_runtime_accepts_basename_dest(tmp_path: Path) -> None:
+    """A self-introspected config with no explicit dest derives the runtime package
+    to its basename ('openclaw/'). The descriptor must locate it by content
+    (package.json + openclaw.mjs), not only by the canonical 'runtime/openclaw-package'.
+    """
+    from assert_ai.local_sandbox import _find_staged_openclaw_runtime
+
+    sandbox_root = tmp_path / "snapshot"
+    pkg = sandbox_root / "openclaw"
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text('{"name":"openclaw"}\n', encoding="utf-8")
+    (pkg / "openclaw.mjs").write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    found = _find_staged_openclaw_runtime(sandbox_root)
+
+    assert found == pkg
+
+
+def test_find_staged_workspace_accepts_dotopenclaw_workspace(tmp_path: Path) -> None:
+    """A self-introspected config copies ~/.openclaw to dest '.openclaw', so the
+    workspace lands at '.openclaw/workspace' — which the descriptor must accept.
+    """
+    from assert_ai.local_sandbox import _find_staged_workspace
+
+    sandbox_root = tmp_path / "snapshot"
+    ws = sandbox_root / ".openclaw" / "workspace"
+    ws.mkdir(parents=True)
+    (ws / "AGENTS.md").write_text("# workspace\n", encoding="utf-8")
+
+    found = _find_staged_workspace(sandbox_root)
+
+    assert found == ws
+
+
 def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     start_result = start_local_sandbox(
@@ -582,6 +618,48 @@ def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart
     assert state["safety"]["live_home_mount"] is False
     config = yaml.safe_load((tmp_path / "sandbox-out" / "endpoint_target.yaml").read_text(encoding="utf-8"))
     assert config["pipeline"]["inference"]["target"]["endpoint"]["local_dev"] is True
+
+
+def test_docker_backend_accepts_agent_config_manifest_with_free_form_target(tmp_path: Path) -> None:
+    """A self-introspected agent config declares a free-form `id` (e.g.
+    'openclaw-main-jp-desktop') which becomes the manifest `target`. When the
+    manifest was produced by an agent config (source == 'agent_config'), the
+    free-form target must not block selecting the OpenClaw descriptor via
+    `--target openclaw`. Downstream content-validation is the real guard.
+    """
+    manifest_path = _write_snapshot_manifest(
+        tmp_path / "input", target="openclaw-main-jp-desktop", source="agent_config"
+    )
+    rampart_root = tmp_path / "rampart-openclaw"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "openclaw-sandbox.ps1").write_text("# launcher\n", encoding="utf-8")
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# auth proxy\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "sandbox",
+            "start",
+            "--snapshot",
+            str(manifest_path),
+            "--target",
+            "openclaw",
+            "--backend",
+            "docker",
+            "--rampart-root",
+            str(rampart_root),
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "sandbox-out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared local-agent sandbox" in result.output
+    state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert state["target"] == "openclaw"
+    assert state["status"] == "planned"
 
 
 def test_openclaw_docker_live_copilot_dry_run_generates_no_secret_auth_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

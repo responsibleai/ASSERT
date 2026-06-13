@@ -151,6 +151,24 @@ def _load_snapshot_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _check_manifest_target(manifest: dict[str, Any], target: str) -> None:
+    """Validate that a snapshot manifest is compatible with the selected descriptor.
+
+    Discovery-path manifests use the canonical target id (e.g. 'openclaw'), so an
+    exact match is required. Agent-config manifests record a free-form `id` as the
+    target (e.g. 'openclaw-main-jp-desktop'); for those the user explicitly selects
+    the descriptor via --target, and downstream content-validation of the staged
+    snapshot is the real compatibility guard, so the cosmetic id is not required to
+    match.
+    """
+    manifest_target = manifest.get("target")
+    if manifest_target == target:
+        return
+    if manifest.get("source") == "agent_config":
+        return
+    raise ValueError(f"snapshot manifest target is {manifest_target!r}, not {target!r}")
+
+
 def _path_value(path: Path | None, *, redact_paths: bool) -> str | None:
     if path is None:
         return None
@@ -308,6 +326,10 @@ def _find_staged_openclaw_runtime(sandbox_root: Path) -> Path:
     candidates = [
         sandbox_root / "runtime" / "openclaw-package",
         sandbox_root / "openclaw-package",
+        # A config with no explicit dest derives the runtime package to its
+        # source basename ("openclaw/"). Accept it: the package is identified by
+        # content (package.json + openclaw.mjs), not by the directory name.
+        sandbox_root / "openclaw",
     ]
     for candidate in candidates:
         if _path_has_file(candidate, "package.json") and _path_has_file(candidate, "openclaw.mjs"):
@@ -761,8 +783,7 @@ class DockerSandboxBackend:
         manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
         output = Path(output_dir).expanduser().resolve()
         manifest = _load_snapshot_manifest(manifest_path)
-        if manifest.get("target") != target:
-            raise ValueError(f"snapshot manifest target is {manifest.get('target')!r}, not {target!r}")
+        _check_manifest_target(manifest, target)
 
         endpoint = _endpoint_config(
             endpoint_url=endpoint_url,
@@ -1387,8 +1408,7 @@ def start_local_sandbox(
     manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     manifest = _load_snapshot_manifest(manifest_path)
-    if manifest.get("target") != target:
-        raise ValueError(f"snapshot manifest target is {manifest.get('target')!r}, not {target!r}")
+    _check_manifest_target(manifest, target)
 
     # Validate protocol/model before starting any process.
     endpoint_template_needs_port = "{port}" in endpoint_url or (health_url is not None and "{port}" in health_url)
