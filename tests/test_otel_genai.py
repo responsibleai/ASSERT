@@ -597,5 +597,59 @@ class TestLiveExporterEventCarriedContent(unittest.TestCase):
         self.assertIn("search", tool_names)
 
 
+class TestSdkEventValueConversion(unittest.TestCase):
+    """_value_to_otlp must round-trip the value shapes _flatten_attributes reads,
+    including arrayValue, so live-exported event attributes match the file-based
+    OTLP-JSON path instead of stringifying sequences.
+    """
+
+    def test_list_attribute_preserved_as_arrayvalue(self):
+        from assert_ai.core.otel import _value_to_otlp, _flatten_attributes
+
+        otlp = _value_to_otlp(["a", "b", "c"])
+        self.assertIn("arrayValue", otlp)
+        # Round-trip through the consumer the parser actually uses.
+        flat = _flatten_attributes([{"key": "tags", "value": otlp}])
+        self.assertEqual(flat["tags"], ["a", "b", "c"])
+
+    def test_mixed_scalar_list_round_trips(self):
+        from assert_ai.core.otel import _value_to_otlp, _flatten_attributes
+
+        otlp = _value_to_otlp([1, 2, 3])
+        flat = _flatten_attributes([{"key": "nums", "value": otlp}])
+        # _flatten_attributes coerces intValue elements via _extract_value, which
+        # returns the raw string form — matching the file-based path exactly.
+        self.assertEqual(flat["nums"], ["1", "2", "3"])
+
+    def test_scalars_unchanged(self):
+        from assert_ai.core.otel import _value_to_otlp
+
+        self.assertEqual(_value_to_otlp("hi"), {"stringValue": "hi"})
+        self.assertEqual(_value_to_otlp(True), {"boolValue": True})
+        self.assertEqual(_value_to_otlp(7), {"intValue": "7"})
+        self.assertEqual(_value_to_otlp(1.5), {"doubleValue": 1.5})
+
+    def test_live_event_list_attribute_survives_export(self):
+        from types import SimpleNamespace
+        from assert_ai.core.otel import LiveOTelExporter
+
+        evt = SimpleNamespace(name="gen_ai.choice", attributes={"labels": ["x", "y"]})
+        sdk_span = SimpleNamespace(
+            name="chat", attributes={"gen_ai.operation.name": "chat", "session.id": "s"},
+            context=SimpleNamespace(trace_id=0x1, span_id=0x2),
+            parent=None, start_time=0, end_time=1_000_000, events=[evt],
+        )
+        holder = SimpleNamespace(spans=[sdk_span])
+        prev = LiveOTelExporter._sdk_exporter
+        LiveOTelExporter._sdk_exporter = holder
+        self.addCleanup(lambda: setattr(LiveOTelExporter, "_sdk_exporter", prev))
+
+        spans = LiveOTelExporter().export_session("s")
+        # The event attribute survives as a structured list, not a stringified one.
+        from assert_ai.core.otel import _flatten_attributes
+        evt_attrs = _flatten_attributes(spans[0].events[0]["attributes"])
+        self.assertEqual(evt_attrs["labels"], ["x", "y"])
+
+
 if __name__ == "__main__":
     unittest.main()

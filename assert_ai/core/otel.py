@@ -239,10 +239,12 @@ def _extract_value(value_obj: dict) -> Any:
 
 
 def _value_to_otlp(value: Any) -> dict:
-    """Wrap a Python scalar back into an OTLP typed-value object.
+    """Wrap a Python value back into an OTLP typed-value object.
 
-    Inverse of ``_extract_value`` for the value shapes the parser reads.
-    ``bool`` is checked before ``int`` because ``bool`` is an ``int`` subclass.
+    Inverse of the value shapes ``_flatten_attributes`` reads, so live-exported
+    event attributes match the file-based OTLP-JSON path. ``bool`` is checked
+    before ``int`` because ``bool`` is an ``int`` subclass; sequences become
+    ``arrayValue`` (recursing per element) rather than being stringified.
     """
     if isinstance(value, bool):
         return {"boolValue": value}
@@ -250,6 +252,8 @@ def _value_to_otlp(value: Any) -> dict:
         return {"intValue": str(value)}
     if isinstance(value, float):
         return {"doubleValue": value}
+    if isinstance(value, (list, tuple)):
+        return {"arrayValue": {"values": [_value_to_otlp(v) for v in value]}}
     return {"stringValue": "" if value is None else str(value)}
 
 
