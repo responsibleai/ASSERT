@@ -121,6 +121,29 @@ def test_build_local_agent_spec_supports_product_docker_state_shape(tmp_path: Pa
     assert config["pipeline"]["inference"]["target"]["endpoint"]["url"] == "http://127.0.0.1:18081"
 
 
+def test_build_local_agent_spec_preserves_openai_chat_endpoint_settings(tmp_path: Path):
+    from assert_ai.local_specs import build_local_agent_spec
+
+    state_path = _write_docker_sandbox_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["target"] = "hermes"
+    state["endpoint"] = {
+        "url": "http://127.0.0.1:8643/v1/chat/completions",
+        "protocol": "openai_chat",
+        "stream": True,
+        "local_dev": True,
+        "model": "hermes-agent",
+        "api_key_env": "HERMES_ASSERT_AUTH_HEADER",
+    }
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    result = build_local_agent_spec(state_path=state_path, output_dir=tmp_path / "spec")
+
+    config = yaml.safe_load(result.eval_config_path.read_text(encoding="utf-8"))
+    endpoint = config["pipeline"]["inference"]["target"]["endpoint"]
+    assert endpoint == state["endpoint"]
+
+
 def test_build_local_agent_spec_accepts_explicit_extra_include_globs(tmp_path: Path):
     from assert_ai.local_specs import build_local_agent_spec
 
