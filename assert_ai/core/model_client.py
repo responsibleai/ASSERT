@@ -9,6 +9,12 @@ Import side effects (intentional for the ``assert-ai`` CLI):
   time to strip any ``/openai/...`` path suffix, logging at INFO when
   it does so. Library users importing this module will see the env
   var mutated for the rest of the process.
+* ``_configure_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
+  ``AZURE_API_KEY`` once at import time to pick the Azure OpenAI auth
+  mode for the process. When the resolved mode is AAD, it pre-warms
+  the ``azure-identity`` credential so first-request latency stays
+  low and missing-dep errors surface early. The mode is read again
+  per-request only as a cheap module-global lookup, never re-derived.
 * The first activation of the Chat Completions fallback (either via
   ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
   API preference, or a reactive recovery from a region error) calls
@@ -32,6 +38,8 @@ import random
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from typing import Any, Iterator, Mapping, Sequence
+
+from assert_ai.core import azure_auth
 
 log = logging.getLogger(__name__)
 
@@ -349,6 +357,55 @@ def _model_family(model: str) -> str:
     return normalized
 
 
+# Resolved once at import time by ``_configure_azure_auth_mode()``.
+# Kept module-global so per-request lookups stay free (no env reads,
+# no extra function calls in the hot path).
+_AZURE_AUTH_MODE: azure_auth.Mode | None = None
+
+# True when the user's environment selects AAD (explicit or fallback)
+# but the ``azure-identity`` package is not importable. Used by
+# ``_classify_llm_error`` to swap the RBAC hint for an install hint.
+_AZURE_AAD_DEP_MISSING: bool = False
+
+
+def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
+    """Attach an Azure AD token provider to ``azure/*`` payloads when AAD is active.
+
+    No-op for non-Azure models and for the ``key`` auth mode, so existing
+    API-key users are completely unaffected.
+
+    When the resolved mode is ``aad`` (explicit opt-in via
+    ``ASSERT_AZURE_USE_AAD=1``) but ``azure-identity`` is not installed,
+    this raises :class:`LLMAuthError` eagerly so the user gets a clear
+    install hint instead of a confusing 401 from the gateway.
+
+    When the resolved mode is ``aad-fallback`` (opportunistic — no key
+    set, no explicit opt-in) and the dep is missing, we silently skip
+    injection and let LiteLLM surface its own auth error; the friendly
+    install hint is then appended in :func:`_classify_llm_error`.
+
+    Callers must invoke this *before* applying ``extra_kwargs`` so that
+    any explicit user-supplied ``azure_ad_token_provider`` still wins.
+    """
+    if _model_family(model) != "azure":
+        return
+    if _AZURE_AUTH_MODE == "key":
+        return
+    provider = azure_auth.get_azure_token_provider()
+    if provider is None:
+        if _AZURE_AUTH_MODE == "aad":
+            raise LLMAuthError(
+                "Azure managed-identity auth is active but the "
+                "azure-identity package is not installed. Install it "
+                "with `pip install 'assert-ai[azure-aad]'`, or set "
+                "AZURE_API_KEY to use API-key auth."
+            )
+        # aad-fallback path: silently skip — LiteLLM's own auth error
+        # will be augmented with an install hint by _classify_llm_error.
+        return
+    payload["azure_ad_token_provider"] = provider
+
+
 def _supports_web_search_preview(model: str) -> bool:
     """Whether this model can use the Responses API web_search_preview tool.
 
@@ -552,6 +609,7 @@ def _build_chat_payload(
         payload["max_tokens"] = resolved_options.max_output_tokens
     if resolved_options.reasoning_effort is not None:
         payload["reasoning_effort"] = resolved_options.reasoning_effort
+    _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
     return payload
 
@@ -578,6 +636,7 @@ def _build_responses_payload(
         payload["max_output_tokens"] = resolved_options.max_tokens
     if resolved_options.reasoning_effort is not None:
         payload["reasoning_effort"] = resolved_options.reasoning_effort
+    _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
     return payload
 
@@ -831,7 +890,23 @@ def _classify_llm_error(exc: Exception) -> Exception:
     litellm = _get_litellm_module()
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
-        err = LLMAuthError(f"Authentication failed: {exc}")
+        msg = f"Authentication failed: {exc}"
+        if _AZURE_AUTH_MODE in {"aad", "aad-fallback"}:
+            if _AZURE_AAD_DEP_MISSING:
+                msg += (
+                    "\nNo AZURE_API_KEY is set and azure-identity is not "
+                    "installed. Either export AZURE_API_KEY, or install "
+                    "Azure AD support with "
+                    "`pip install 'assert-ai[azure-aad]'`."
+                )
+            else:
+                msg += (
+                    "\nAzure AD auth is active. Verify the caller identity "
+                    "has the 'Cognitive Services OpenAI User' role on the "
+                    "Azure OpenAI resource, or set AZURE_API_KEY to fall "
+                    "back to API-key auth."
+                )
+        err = LLMAuthError(msg)
         err.__cause__ = exc
         return err
     # 403 — insufficient permissions
@@ -1628,6 +1703,67 @@ def _normalize_azure_api_base() -> None:
 
 
 _normalize_azure_api_base()
+
+
+# Pick the Azure OpenAI auth mode once for the process. Pre-warming the
+# credential here means the first request never pays the
+# DefaultAzureCredential construction cost and any missing-dep error
+# surfaces early (rather than from inside the first request).
+#
+# Log emission is intentionally deferred to `log_resolved_azure_auth_mode()`
+# below. This module is imported transitively at CLI startup *before*
+# `configure_logging()` installs handlers — emitting log records here would
+# silently drop them. The CLI calls `log_resolved_azure_auth_mode()` right
+# after `configure_logging()` so users get a reliable startup anchor for
+# whichever auth path is active.
+def _configure_azure_auth_mode() -> None:
+    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    _AZURE_AUTH_MODE = azure_auth.resolve_azure_auth_mode()
+    if _AZURE_AUTH_MODE in ("aad", "aad-fallback"):
+        if azure_auth.get_azure_token_provider() is None:
+            _AZURE_AAD_DEP_MISSING = True
+
+
+_configure_azure_auth_mode()
+
+
+def log_resolved_azure_auth_mode() -> None:
+    """Emit a single INFO/WARNING line describing the active Azure auth mode.
+
+    Safe to call multiple times — it always logs the currently-resolved
+    state. Intended to be called by entrypoints (CLI, library hosts) once
+    their logging is configured, so users have a reliable startup anchor
+    for which auth path will be used by ``azure/*`` requests. A followup
+    provenance line ("AAD token acquired via …") fires on the first
+    successful token acquisition, but is easy to miss mid-stream without
+    this anchor.
+    """
+    if _AZURE_AUTH_MODE == "aad":
+        log.info(
+            "Azure OpenAI auth mode: AAD (forced via %s).",
+            azure_auth.ENV_USE_AAD_FLAG,
+        )
+        if _AZURE_AAD_DEP_MISSING:
+            log.warning(
+                "%s is set but azure-identity is not installed; the next "
+                "azure/* request will fail. Install with: "
+                "pip install 'assert-ai[azure-aad]'",
+                azure_auth.ENV_USE_AAD_FLAG,
+            )
+    elif _AZURE_AUTH_MODE == "aad-fallback":
+        if _AZURE_AAD_DEP_MISSING:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "azure-identity not installed — install with: "
+                "pip install 'assert-ai[azure-aad]').",
+            )
+        else:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "using DefaultAzureCredential).",
+            )
+    else:
+        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
 
 
 # ── Import-time env-var seed ───────────────────────────────────

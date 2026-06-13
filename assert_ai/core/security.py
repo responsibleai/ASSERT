@@ -242,7 +242,8 @@ def _validate_resolved_ips(hostname: str) -> None:
 
 _SENSITIVE_KEYS = re.compile(
     r"(api[_-]?key|auth[_-]?token|secret|password|credential|bearer|authorization|"
-    r"access[_-]?token|refresh[_-]?token|private[_-]?key|client[_-]?secret)",
+    r"access[_-]?token|refresh[_-]?token|private[_-]?key|client[_-]?secret|"
+    r"azure[_-]?ad[_-]?token)",
     re.IGNORECASE,
 )
 
