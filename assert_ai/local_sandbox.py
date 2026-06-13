@@ -484,8 +484,8 @@ def _local_cleanup_json(command: LocalSandboxCleanupCommand, *, redact_paths: bo
 
 
 @dataclass(frozen=True)
-class RuntimeLaunchRecipe:
-    """Data-driven local-agent runtime launch recipe."""
+class RuntimeLaunchConfig:
+    """Data-driven local-agent runtime config for a sandbox launch."""
 
     id: str
     harness: str
@@ -531,25 +531,25 @@ class RampartRuntimeDescriptor:
         return RampartDockerHarness(descriptor=self).build_plan(context)
 
 
-def build_descriptor_from_launch_recipe(recipe: RuntimeLaunchRecipe) -> RampartRuntimeDescriptor:
-    """Build a runtime descriptor from a data-only launch recipe."""
+def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> RampartRuntimeDescriptor:
+    """Build a runtime descriptor from a data-only runtime config."""
 
-    if recipe.harness != "rampart-docker":
-        raise ValueError("runtime launch recipe harness must be one of: rampart-docker")
+    if config.harness != "rampart-docker":
+        raise ValueError("runtime config harness must be one of: rampart-docker")
     return RampartRuntimeDescriptor(
-        runner_id=recipe.id,
-        runtime_profile=recipe.runtime_profile,
-        required_paths=recipe.required_paths,
-        endpoint_bridge_module=recipe.endpoint_bridge_module,
-        endpoint_bridge_args=recipe.endpoint_bridge_args,
-        launch_command=recipe.launch_command,
-        cleanup_labels=recipe.cleanup_labels,
-        endpoint_port=recipe.endpoint_port,
-        auth_proxy_port=recipe.auth_proxy_port,
-        mock_openai_port=recipe.mock_openai_port,
-        sandbox_name=recipe.sandbox_name,
-        docker_command=recipe.docker_command,
-        target=recipe.id,
+        runner_id=config.id,
+        runtime_profile=config.runtime_profile,
+        required_paths=config.required_paths,
+        endpoint_bridge_module=config.endpoint_bridge_module,
+        endpoint_bridge_args=config.endpoint_bridge_args,
+        launch_command=config.launch_command,
+        cleanup_labels=config.cleanup_labels,
+        endpoint_port=config.endpoint_port,
+        auth_proxy_port=config.auth_proxy_port,
+        mock_openai_port=config.mock_openai_port,
+        sandbox_name=config.sandbox_name,
+        docker_command=config.docker_command,
+        target=config.id,
     )
 
 
@@ -557,25 +557,25 @@ def _tuple_from_sequence(value: Any, *, field_name: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"runtime launch recipe field {field_name!r} must be a list of strings")
+        raise ValueError(f"runtime config field {field_name!r} must be a list of strings")
     return tuple(value)
 
 
-def load_runtime_launch_recipe(path: str | Path) -> RuntimeLaunchRecipe:
-    """Load a data-driven runtime launch recipe from YAML."""
+def load_runtime_config(path: str | Path) -> RuntimeLaunchConfig:
+    """Load a data-driven runtime config from YAML."""
 
-    recipe_path = Path(path).expanduser().resolve()
+    config_path = Path(path).expanduser().resolve()
     try:
-        payload = yaml.safe_load(recipe_path.read_text(encoding="utf-8"))
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(f"could not read runtime launch recipe: {recipe_path}") from exc
+        raise ValueError(f"could not read runtime config: {config_path}") from exc
     if not isinstance(payload, dict):
-        raise ValueError("runtime launch recipe must be a YAML mapping")
+        raise ValueError("runtime config must be a YAML mapping")
     required = ["id", "harness", "runtime_profile"]
     missing = [field for field in required if not isinstance(payload.get(field), str) or not payload.get(field)]
     if missing:
-        raise ValueError(f"runtime launch recipe is missing required fields: {', '.join(missing)}")
-    return RuntimeLaunchRecipe(
+        raise ValueError(f"runtime config is missing required fields: {', '.join(missing)}")
+    return RuntimeLaunchConfig(
         id=str(payload["id"]),
         harness=str(payload["harness"]),
         runtime_profile=str(payload["runtime_profile"]),

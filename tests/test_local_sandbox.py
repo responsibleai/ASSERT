@@ -20,8 +20,8 @@ from assert_ai.local_sandbox import (
     LocalSandboxManagedProcess,
     LocalSandboxStep,
     OpenClawDockerLaunchDescriptor,
-    RuntimeLaunchRecipe,
-    build_descriptor_from_launch_recipe,
+    RuntimeLaunchConfig,
+    build_descriptor_from_runtime_config,
     smoke_local_sandbox,
     start_local_sandbox,
     start_openclaw_docker_sandbox,
@@ -581,10 +581,10 @@ def test_cli_local_sandbox_start_help_is_product_shaped() -> None:
     assert "--backend" not in result.output
     assert "--output-dir" not in result.output
 
-def test_cli_local_sandbox_start_accepts_runtime_launch_recipe(tmp_path: Path) -> None:
+def test_cli_local_sandbox_start_accepts_runtime_config(tmp_path: Path) -> None:
     manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
-    recipe_path = tmp_path / "toy-recipe.yaml"
-    recipe_path.write_text(
+    runtime_config_path = tmp_path / "toy-runtime-config.yaml"
+    runtime_config_path.write_text(
         """
 id: toy-agent
 harness: rampart-docker
@@ -613,8 +613,8 @@ cleanup_labels:
             str(manifest_path),
             "--target",
             "toy-agent",
-            "--recipe",
-            str(recipe_path),
+            "--runtime-config",
+            str(runtime_config_path),
             "--dry-run",
             "--output-dir",
             str(tmp_path / "sandbox-out"),
@@ -825,8 +825,8 @@ def test_rampart_harness_builds_reusable_launch_steps_without_openclaw_assumptio
     assert plan.cleanup_commands[0].name == "toy-stop"
 
 
-def test_runtime_launch_recipe_builds_rampart_descriptor_without_runtime_class() -> None:
-    recipe = RuntimeLaunchRecipe(
+def test_runtime_config_builds_rampart_descriptor_without_runtime_class() -> None:
+    runtime_config = RuntimeLaunchConfig(
         id="toy-agent",
         harness="rampart-docker",
         runtime_profile="toy-profile",
@@ -837,7 +837,7 @@ def test_runtime_launch_recipe_builds_rampart_descriptor_without_runtime_class()
         cleanup_labels=("toy-stop",),
     )
 
-    descriptor = build_descriptor_from_launch_recipe(recipe)
+    descriptor = build_descriptor_from_runtime_config(runtime_config)
 
     assert descriptor.runner_id == "toy-agent"
     assert descriptor.runtime_profile == "toy-profile"
@@ -854,9 +854,9 @@ def test_runtime_launch_recipe_builds_rampart_descriptor_without_runtime_class()
     assert descriptor.endpoint_bridge_args == ("--sandbox-root", "{sandbox_root}", "--endpoint-port", "{endpoint_port}")
 
 
-def test_docker_backend_runs_launch_recipe_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:
+def test_docker_backend_runs_runtime_config_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:
     manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
-    recipe = RuntimeLaunchRecipe(
+    runtime_config = RuntimeLaunchConfig(
         id="toy-agent",
         harness="rampart-docker",
         runtime_profile="profile",
@@ -881,7 +881,7 @@ def test_docker_backend_runs_launch_recipe_descriptor_without_openclaw_assumptio
         log_path.write_text("ready\n", encoding="utf-8")
         return LocalSandboxManagedProcess(name=step.name, pid=4100 + len(executed), log_path=log_path)
 
-    backend = DockerSandboxBackend(descriptor=build_descriptor_from_launch_recipe(recipe))
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
     result = backend.start(
         snapshot_manifest_path=manifest_path,
         target="toy-agent",
