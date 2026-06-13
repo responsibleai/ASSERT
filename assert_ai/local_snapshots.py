@@ -19,6 +19,8 @@ import re
 import shutil
 from typing import Any, Iterable
 
+from assert_ai.local_agent_config import AgentRuntimeConfig
+
 
 SECRET_DATA_SUFFIXES = {"", ".env", ".json", ".pem", ".key", ".p12", ".pfx", ".txt", ".yaml", ".yml"}
 
@@ -316,6 +318,105 @@ def create_local_agent_snapshot(
             "default_runtime_roots": used_default_runtime_roots,
             "explicit_include_roots": bool(include_root_values),
             "advanced_copy_roots_used": bool(copy_root_values),
+            "secrets_excluded_by_path": True,
+            "symlinks_not_copied": True,
+        },
+    }
+
+    manifest_path = output / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return LocalAgentSnapshotResult(manifest_path=manifest_path, snapshot_root=snapshot_root, manifest=manifest)
+
+
+# ---- agent-config-driven snapshots ------------------------------------------
+# The config path is the agent-config pivot: an agent declares what to copy in a
+# runtime-config (real-machine paths), and ASSERT translates those into a
+# sandbox snapshot. Reuses the same copy machinery; the difference is the source
+# of roots/excludes and the built-in secret floor applied to every copy.
+
+# Built-in exclude floor: secrets + heavy noise. Always applied on top of
+# config-declared excludes so a config cannot accidentally opt into copying
+# credentials or drag in session/log churn.
+BUILTIN_EXCLUDE_FLOOR: tuple[str, ...] = (
+    "*.env",
+    ".env",
+    "auth.json",
+    "auth.json.bak*",
+    "*.pem",
+    "*.key",
+    "sessions/**",
+    "logs/**",
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/venv/**",
+)
+
+
+def create_snapshot_from_config(
+    *,
+    config: AgentRuntimeConfig,
+    output_dir: str | Path,
+    redact_paths: bool = True,
+) -> LocalAgentSnapshotResult:
+    """Create a snapshot from an agent runtime-config.
+
+    Roots come from ``config.roots`` (real-machine ``source`` paths). Each root's
+    ``dest`` is used verbatim, or derived from the source dir name when omitted.
+    Excludes are the built-in secret floor + global ``config.exclude`` +
+    per-root excludes. ``instruction_files`` are recorded (still source-relative)
+    for spec build to translate after staging.
+    """
+
+    if not config.roots:
+        raise ValueError("agent config must declare at least one root")
+
+    output = Path(output_dir).expanduser().resolve()
+    snapshot_root = output / "snapshot"
+    if snapshot_root.exists():
+        shutil.rmtree(snapshot_root)
+    snapshot_root.mkdir(parents=True, exist_ok=True)
+
+    copied_roots: list[dict[str, Any]] = []
+    excluded_files: list[dict[str, Any]] = []
+    for root in config.roots:
+        source = root.source.expanduser().resolve()
+        if not source.exists():
+            if root.required:
+                raise ValueError(f"required root source does not exist: {root.source}")
+            continue
+        dest = _safe_relative_dest(root.dest) if root.dest else _safe_hidden_dest(source)
+        exclude_patterns = (*BUILTIN_EXCLUDE_FLOOR, *config.exclude, *root.exclude)
+        files_copied, bytes_copied, excluded = _copy_root(
+            source=source,
+            dest=dest,
+            snapshot_root=snapshot_root,
+            exclude_patterns=exclude_patterns,
+        )
+        copied_roots.append(
+            {
+                "source": _path_value(source, redact_paths=redact_paths),
+                "dest": dest.as_posix(),
+                "files_copied": files_copied,
+                "bytes_copied": bytes_copied,
+            }
+        )
+        excluded_files.extend(excluded)
+
+    manifest = {
+        "schema_version": 1,
+        "source": "agent_config",
+        "target": config.id,
+        "agent": {
+            "id": config.id,
+            "display_name": config.display_name,
+        },
+        "snapshot_root": "snapshot",
+        "copied_roots": copied_roots,
+        "instruction_files": list(config.instruction_files),
+        "excluded_files": sorted(excluded_files, key=lambda item: item["dest"]),
+        "safety": {
+            "builtin_secret_floor": True,
+            "config_excludes": list(config.exclude),
             "secrets_excluded_by_path": True,
             "symlinks_not_copied": True,
         },

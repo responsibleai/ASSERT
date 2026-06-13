@@ -693,34 +693,61 @@ def local_snapshot():
 
 
 @local_snapshot.command("create", short_help="Copy local-agent roots into a snapshot directory")
-@click.option("--from", "discovery_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Discovery JSON manifest from `assert-ai local discover`.")
-@click.option("--target", required=True, help="Agent ID from the discovery manifest.")
-@click.option("--include-root", "include_roots", multiple=True, help="Extra root to include. Destination is derived from the folder name. Repeat for multiple roots.")
-@click.option("--copy-root", "copy_roots", multiple=True, help="Advanced root mapping as SOURCE:DEST. Repeat for multiple roots.")
+@click.option("--config", "config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Agent runtime-config YAML (the agent declares what to copy). Primary path. Mutually exclusive with --from/--target.")
+@click.option("--from", "discovery_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Discovery JSON manifest from `assert-ai local discover`. Use with --target.")
+@click.option("--target", default=None, help="Agent ID from the discovery manifest. Use with --from.")
+@click.option("--include-root", "include_roots", multiple=True, help="Extra root to include (discovery path). Destination is derived from the folder name. Repeat for multiple roots.")
+@click.option("--copy-root", "copy_roots", multiple=True, help="Advanced root mapping as SOURCE:DEST (discovery path). Repeat for multiple roots.")
 @click.option("--output-dir", default=None, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written. Defaults to artifacts/local-agents/snapshots/.")
 @click.option("--show-paths", is_flag=True, help="Write local absolute paths in the manifest instead of redacted placeholders.")
 def local_snapshot_create(
-    discovery_path: Path,
-    target: str,
+    config_path: Path | None,
+    discovery_path: Path | None,
+    target: str | None,
     include_roots: tuple[str, ...],
     copy_roots: tuple[str, ...],
     output_dir: Path | None,
     show_paths: bool,
 ):
-    """Copy user-approved roots into a reviewable local-agent snapshot."""
-    from assert_ai.local_snapshots import create_local_agent_snapshot
+    """Copy user-approved roots into a reviewable local-agent snapshot.
+
+    Two modes:
+    - --config <agent.yaml>: the agent declares its own roots (primary path).
+    - --from <discovery.json> --target <id>: discovery-driven (legacy/advanced).
+    """
+    from assert_ai.local_snapshots import create_local_agent_snapshot, create_snapshot_from_config
+
+    if config_path and (discovery_path or target):
+        _error("use either --config or --from/--target, not both")
+        return
+    if not config_path and not (discovery_path and target):
+        _error("provide --config <agent.yaml>, or --from <discovery.json> with --target <id>")
+        return
 
     started_at = time.perf_counter()
-    resolved_output_dir = output_dir or _local_snapshot_output_dir(target=target, discovery_path=discovery_path)
     try:
-        result = create_local_agent_snapshot(
-            discovery_path=discovery_path,
-            target=target,
-            copy_root_specs=copy_roots,
-            include_root_specs=include_roots,
-            output_dir=resolved_output_dir,
-            redact_paths=not show_paths,
-        )
+        if config_path:
+            from assert_ai.local_agent_config import load_agent_config
+
+            config = load_agent_config(config_path)
+            resolved_target = config.id
+            resolved_output_dir = output_dir or _local_snapshot_output_dir(target=resolved_target, discovery_path=config_path)
+            result = create_snapshot_from_config(
+                config=config,
+                output_dir=resolved_output_dir,
+                redact_paths=not show_paths,
+            )
+        else:
+            assert discovery_path is not None and target is not None
+            resolved_output_dir = output_dir or _local_snapshot_output_dir(target=target, discovery_path=discovery_path)
+            result = create_local_agent_snapshot(
+                discovery_path=discovery_path,
+                target=target,
+                copy_root_specs=copy_roots,
+                include_root_specs=include_roots,
+                output_dir=resolved_output_dir,
+                redact_paths=not show_paths,
+            )
     except ValueError as exc:
         _error(str(exc))
         return

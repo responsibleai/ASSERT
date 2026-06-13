@@ -550,3 +550,51 @@ def test_local_snapshot_create_rejects_unsafe_copy_root_dest(tmp_path: Path) -> 
 
     assert result.exit_code != 0
     assert "copy-root destination must be relative and stay inside the snapshot" in result.output
+
+
+def test_cli_local_snapshot_create_from_agent_config(tmp_path: Path) -> None:
+    workspace = tmp_path / ".openclaw" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("agent instructions\n", encoding="utf-8")
+    (tmp_path / ".openclaw" / ".env").write_text("SECRET=x\n", encoding="utf-8")
+    config = tmp_path / "agent.yaml"
+    config.write_text(
+        f"""
+id: openclaw
+display_name: OpenClaw
+roots:
+  - source: {tmp_path / ".openclaw"}
+    dest: .openclaw
+    required: true
+instruction_files:
+  - {workspace / "AGENTS.md"}
+""",
+        encoding="utf-8",
+    )
+    out = tmp_path / "snapshot"
+
+    result = CliRunner().invoke(
+        cli,
+        ["local", "snapshot", "create", "--config", str(config), "--output-dir", str(out)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Created local-agent snapshot" in result.output
+    assert "elapsed:" in result.output
+    assert (out / "snapshot" / ".openclaw" / "workspace" / "AGENTS.md").exists()
+    # built-in secret floor still applies even on the config path
+    assert not (out / "snapshot" / ".openclaw" / ".env").exists()
+    manifest = json.loads((out / "snapshot_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source"] == "agent_config"
+    assert manifest["target"] == "openclaw"
+
+
+def test_cli_local_snapshot_create_requires_config_or_discovery(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["local", "snapshot", "create", "--output-dir", str(tmp_path / "out")],
+    )
+
+    assert result.exit_code != 0
+    assert "config" in result.output.lower() or "from" in result.output.lower()
+
