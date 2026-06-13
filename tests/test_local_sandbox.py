@@ -379,6 +379,73 @@ def test_stop_local_sandbox_runs_docker_cleanup_commands(tmp_path: Path) -> None
     assert state["cleanup_results"][0]["exit_code"] == 0
 
 
+def _write_sandbox_state(
+    sandboxes_dir: Path,
+    name: str,
+    *,
+    status: str,
+    pids: list[int],
+) -> Path:
+    run_dir = sandboxes_dir / name
+    run_dir.mkdir(parents=True)
+    state_path = run_dir / "sandbox_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "target": "openclaw",
+                "backend": "docker",
+                "status": status,
+                "endpoint": {"url": "http://127.0.0.1:18081"},
+                "processes": [{"name": "endpoint", "pid": pid} for pid in pids],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return state_path
+
+
+def test_find_running_sandbox_state_returns_single_live_sandbox(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import find_running_sandbox_state
+
+    sandboxes = tmp_path / "artifacts" / "local-agents" / "sandboxes"
+    # A live process: the current interpreter is guaranteed alive.
+    import os as _os
+
+    live = _write_sandbox_state(sandboxes, "oc-live", status="running", pids=[_os.getpid()])
+    # A stale state: status says running but the pid is long dead.
+    _write_sandbox_state(sandboxes, "oc-stale", status="running", pids=[2_000_000_000])
+    # A stopped state should be ignored.
+    _write_sandbox_state(sandboxes, "oc-stopped", status="stopped", pids=[_os.getpid()])
+
+    found = find_running_sandbox_state(sandboxes_dir=sandboxes)
+
+    assert found == live
+
+
+def test_find_running_sandbox_state_errors_when_none_running(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import find_running_sandbox_state
+
+    sandboxes = tmp_path / "artifacts" / "local-agents" / "sandboxes"
+    _write_sandbox_state(sandboxes, "oc-stale", status="running", pids=[2_000_000_000])
+
+    with pytest.raises(ValueError, match="no running local-agent sandbox"):
+        find_running_sandbox_state(sandboxes_dir=sandboxes)
+
+
+def test_find_running_sandbox_state_errors_when_multiple_running(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import find_running_sandbox_state
+
+    import os as _os
+
+    sandboxes = tmp_path / "artifacts" / "local-agents" / "sandboxes"
+    _write_sandbox_state(sandboxes, "oc-a", status="running", pids=[_os.getpid()])
+    _write_sandbox_state(sandboxes, "oc-b", status="running", pids=[_os.getpid()])
+
+    with pytest.raises(ValueError, match="multiple running local-agent sandboxes"):
+        find_running_sandbox_state(sandboxes_dir=sandboxes)
+
+
 def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     start_result = start_local_sandbox(
@@ -411,6 +478,48 @@ def test_cli_local_sandbox_stop_terminates_started_endpoint(tmp_path: Path) -> N
     assert "Stopped local-agent sandbox" in result.output
     assert "elapsed:" in result.output
     assert start_result.process.poll() is not None
+
+
+def test_cli_local_sandbox_stop_infers_single_running_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import assert_ai.local_sandbox as local_sandbox
+
+    sandboxes_dir = tmp_path / "artifacts" / "local-agents" / "sandboxes"
+    monkeypatch.setattr(local_sandbox, "DEFAULT_SANDBOXES_DIR", sandboxes_dir)
+
+    manifest_path = _write_snapshot_manifest(tmp_path / "input")
+    start_result = start_local_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="openclaw",
+        backend="command",
+        command=_server_command(),
+        endpoint_url="http://127.0.0.1:{port}",
+        health_url="http://127.0.0.1:{port}/health",
+        protocol="assert",
+        model=None,
+        api_key_env=None,
+        stream=False,
+        output_dir=sandboxes_dir / "oc-run",
+        redact_paths=True,
+    )
+
+    # No --state: the command must infer the single running sandbox.
+    result = CliRunner().invoke(cli, ["local", "sandbox", "stop"])
+
+    assert result.exit_code == 0, result.output
+    assert "Stopped local-agent sandbox" in result.output
+    assert start_result.process.poll() is not None
+
+
+def test_cli_local_sandbox_stop_errors_with_no_running_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import assert_ai.local_sandbox as local_sandbox
+
+    sandboxes_dir = tmp_path / "artifacts" / "local-agents" / "sandboxes"
+    monkeypatch.setattr(local_sandbox, "DEFAULT_SANDBOXES_DIR", sandboxes_dir)
+
+    result = CliRunner().invoke(cli, ["local", "sandbox", "stop"])
+
+    assert result.exit_code != 0
+    assert "no running local-agent sandbox" in result.output
 
 
 def test_docker_backend_for_openclaw_writes_product_state_without_public_rampart_label(tmp_path: Path) -> None:

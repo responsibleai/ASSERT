@@ -936,7 +936,7 @@ def local_sandbox_start(
 
 
 @local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")
-@click.option("--state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--state", "state_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`. Defaults to the single running sandbox.")
 @click.option(
     "--message",
     default=None,
@@ -946,13 +946,14 @@ def local_sandbox_start(
     ),
 )
 @click.option("--timeout", "timeout_seconds", default=240.0, show_default=True, type=float, help="HTTP timeout in seconds for the smoke request.")
-def local_sandbox_smoke(state_path: Path, message: str | None, timeout_seconds: float):
+def local_sandbox_smoke(state_path: Path | None, message: str | None, timeout_seconds: float):
     """Send a POST to a started sandbox endpoint."""
-    from assert_ai.local_sandbox import smoke_local_sandbox
+    from assert_ai.local_sandbox import find_running_sandbox_state, smoke_local_sandbox
 
     started_at = time.perf_counter()
     try:
-        result = smoke_local_sandbox(state_path, message=message, timeout_seconds=timeout_seconds)
+        resolved_state = state_path or find_running_sandbox_state()
+        result = smoke_local_sandbox(resolved_state, message=message, timeout_seconds=timeout_seconds)
     except ValueError as exc:
         _error(str(exc))
         return
@@ -985,15 +986,16 @@ def local_sandbox_smoke(state_path: Path, message: str | None, timeout_seconds: 
 
 
 @local_sandbox.command("stop", short_help="Stop a started sandbox endpoint")
-@click.option("--state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--state", "state_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`. Defaults to the single running sandbox.")
 @click.option("--timeout", "timeout_seconds", default=5.0, show_default=True, type=float, help="Seconds to wait before force-killing sandbox processes.")
-def local_sandbox_stop(state_path: Path, timeout_seconds: float):
+def local_sandbox_stop(state_path: Path | None, timeout_seconds: float):
     """Terminate processes recorded in a sandbox state file."""
-    from assert_ai.local_sandbox import stop_local_sandbox
+    from assert_ai.local_sandbox import find_running_sandbox_state, stop_local_sandbox
 
     started_at = time.perf_counter()
     try:
-        result = stop_local_sandbox(state_path, timeout_seconds=timeout_seconds)
+        resolved_state = state_path or find_running_sandbox_state()
+        result = stop_local_sandbox(resolved_state, timeout_seconds=timeout_seconds)
     except ValueError as exc:
         _error(str(exc))
         return
@@ -1001,7 +1003,7 @@ def local_sandbox_stop(state_path: Path, timeout_seconds: float):
     raw_processes = result.get("processes")
     processes = raw_processes if isinstance(raw_processes, list) else []
     click.echo("Stopped local-agent sandbox")
-    click.echo(f"  state: {state_path}")
+    click.echo(f"  state: {resolved_state}")
     click.echo(f"  processes: {len(processes)}")
     click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
 

@@ -1231,6 +1231,57 @@ def _pid_has_exited(pid: int) -> bool:
     return False
 
 
+DEFAULT_SANDBOXES_DIR = Path("artifacts") / "local-agents" / "sandboxes"
+
+
+def _sandbox_state_is_live(state_path: Path) -> bool:
+    """Return True if a sandbox state file marks a running sandbox with a live process."""
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict) or state.get("status") != "running":
+        return False
+    processes = state.get("processes")
+    if not isinstance(processes, list):
+        return False
+    for record in processes:
+        if not isinstance(record, dict):
+            continue
+        pid = record.get("pid")
+        if isinstance(pid, int) and not _pid_has_exited(pid):
+            return True
+    return False
+
+
+def find_running_sandbox_state(*, sandboxes_dir: str | Path | None = None) -> Path:
+    """Find the single running local-agent sandbox state file.
+
+    Scans ``sandboxes_dir/*/sandbox_state.json`` for states that are marked
+    ``running`` AND have at least one process whose pid is still alive. A
+    ``status: running`` state whose processes have all exited (a stale state) is
+    treated as not running. Raises ``ValueError`` if zero or more than one live
+    sandbox is found, so callers can prompt for an explicit ``--state``.
+    """
+    base = Path(sandboxes_dir if sandboxes_dir is not None else DEFAULT_SANDBOXES_DIR).expanduser()
+    live: list[Path] = []
+    if base.is_dir():
+        for state_path in sorted(base.glob("*/sandbox_state.json")):
+            if _sandbox_state_is_live(state_path):
+                live.append(state_path)
+    if not live:
+        raise ValueError(
+            f"no running local-agent sandbox found under {base}; pass --state explicitly "
+            "or start one with `assert-ai local sandbox start`"
+        )
+    if len(live) > 1:
+        names = ", ".join(str(path.parent.name) for path in live)
+        raise ValueError(
+            f"multiple running local-agent sandboxes found ({names}); pass --state to choose one"
+        )
+    return live[0]
+
+
 def stop_local_sandbox(state_path: str | Path, *, timeout_seconds: float = 5.0) -> dict[str, Any]:
     """Terminate processes recorded in a sandbox state file and mark it stopped."""
 
