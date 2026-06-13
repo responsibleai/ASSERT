@@ -1,0 +1,210 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "genai_t1",
+              "spanId": "g_s01",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": 1000000000,
+              "endTimeUnixNano": 2240000000,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "gpt-4o-2024-08-06"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "120"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "45"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv_weather"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"It is sunny in Paris, 22\\u00b0C.\"}], \"finish_reason\": \"stop\"}]"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "genai_t1",
+              "spanId": "g_s02",
+              "name": "execute_tool get_weather",
+              "startTimeUnixNano": 2300000000,
+              "endTimeUnixNano": 3500000000,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "get_weather"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_abc123"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "function"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"location\": \"Paris\", \"unit\": \"celsius\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": {
+                    "stringValue": "{\"temp_c\": 22, \"conditions\": \"sunny\"}"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv_weather"
+                  }
+                }
+              ],
+              "parentSpanId": "g_s01"
+            },
+            {
+              "traceId": "genai_t2",
+              "spanId": "g_s10",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": 10000000000,
+              "endTimeUnixNano": 11200000000,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "200"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "60"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv_tokyo"
+                  }
+                }
+              ],
+              "events": [
+                {
+                  "name": "gen_ai.choice",
+                  "timeUnixNano": "11000000000",
+                  "attributes": [
+                    {
+                      "key": "finish_reason",
+                      "value": {
+                        "stringValue": "tool_calls"
+                      }
+                    },
+                    {
+                      "key": "index",
+                      "value": {
+                        "intValue": "0"
+                      }
+                    },
+                    {
+                      "key": "message",
+                      "value": {
+                        "stringValue": "{\"role\": \"assistant\", \"content\": \"Let me look up flights to Tokyo.\", \"tool_calls\": [{\"id\": \"call_evt1\", \"type\": \"function\", \"function\": {\"name\": \"search_flights\", \"arguments\": \"{\\\"destination\\\": \\\"NRT\\\"}\"}}]}"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "gen_ai.tool.message",
+                  "timeUnixNano": "11100000000",
+                  "attributes": [
+                    {
+                      "key": "id",
+                      "value": {
+                        "stringValue": "call_evt1"
+                      }
+                    },
+                    {
+                      "key": "content",
+                      "value": {
+                        "stringValue": "[{\"airline\": \"ANA\", \"price\": 1180}]"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
