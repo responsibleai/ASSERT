@@ -9,7 +9,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
-from assert_ai.local_snapshots import create_local_agent_snapshot
+from assert_ai.local_snapshots import create_local_agent_snapshot, create_snapshot_from_config
 
 
 def _write_discovery(path: Path, *, target: str = "hermes", agent: dict | None = None) -> None:
@@ -597,4 +597,118 @@ def test_cli_local_snapshot_create_requires_config_or_discovery(tmp_path: Path) 
 
     assert result.exit_code != 0
     assert "config" in result.output.lower() or "from" in result.output.lower()
+
+
+def test_config_snapshot_honors_absolute_path_excludes(tmp_path: Path) -> None:
+    # Decision #2: agents naturally emit REAL (absolute) paths in their exclude list.
+    # An absolute exclude that points under a root must drop that file, even though the
+    # copy loop matches against root-relative paths internally.
+    from assert_ai.local_agent_config import load_agent_config
+
+    home = tmp_path / ".openclaw"
+    (home / "workspace").mkdir(parents=True)
+    (home / "workspace" / "AGENTS.md").write_text("instructions\n", encoding="utf-8")
+    (home / "workspace" / "private-notes.md").write_text("do not copy\n", encoding="utf-8")
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: openclaw
+roots:
+  - source: {home}
+    dest: .openclaw
+exclude:
+  - {home / "workspace" / "private-notes.md"}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot"
+    assert (snap / ".openclaw" / "workspace" / "AGENTS.md").exists()
+    # The absolute-path exclude must have dropped this file.
+    assert not (snap / ".openclaw" / "workspace" / "private-notes.md").exists()
+
+
+def test_config_snapshot_copies_external_dependencies(tmp_path: Path) -> None:
+    # Decision #3: external_dependencies is its own schema section and must be copied
+    # into the snapshot (the agent needs it to run), not silently ignored.
+    from assert_ai.local_agent_config import load_agent_config
+
+    home = tmp_path / ".hermes"
+    home.mkdir(parents=True)
+    (home / "MEMORY.md").write_text("pointer map\n", encoding="utf-8")
+    dep = tmp_path / "ChatWorkspace"
+    (dep / "project").mkdir(parents=True)
+    (dep / "project" / "context.md").write_text("external context\n", encoding="utf-8")
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: hermes
+roots:
+  - source: {home}
+    dest: .hermes
+external_dependencies:
+  - source: {dep}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    result = create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot"
+    assert (snap / ".hermes" / "MEMORY.md").exists()
+    # The external dependency must be present in the snapshot.
+    assert (snap / "ChatWorkspace" / "project" / "context.md").read_text(encoding="utf-8") == "external context\n"
+    # And it should be recorded in the manifest as a copied root.
+    dests = {item["dest"] for item in result.manifest["copied_roots"]}
+    assert "ChatWorkspace" in dests
+
+
+def test_config_snapshot_copies_runtime_dependencies_blindly(tmp_path: Path) -> None:
+    # Decision #1: copy blindly. A runtime's own dependency dirs (node_modules, venv)
+    # are exactly what it needs to run, so the snapshot floor must NOT strip them.
+    # Only secrets and pure churn (sessions/logs/.git) are floored.
+    from assert_ai.local_agent_config import load_agent_config
+
+    pkg = tmp_path / ".npm-global" / "lib" / "node_modules" / "openclaw"
+    (pkg / "node_modules" / "left-pad").mkdir(parents=True)
+    (pkg / "node_modules" / "left-pad" / "index.js").write_text("module.exports=1\n", encoding="utf-8")
+    # A NESTED node_modules — this is what the old floor's "**/node_modules/**" would strip.
+    (pkg / "lib" / "node_modules" / "dep").mkdir(parents=True)
+    (pkg / "lib" / "node_modules" / "dep" / "core.js").write_text("nested dep\n", encoding="utf-8")
+    (pkg / "venv" / "lib").mkdir(parents=True)
+    (pkg / "venv" / "lib" / "runtime.py").write_text("py dep\n", encoding="utf-8")
+    (pkg / "package.json").write_text("{}\n", encoding="utf-8")
+    (pkg / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+    (pkg / "sessions").mkdir()
+    (pkg / "sessions" / "old.log").write_text("churn\n", encoding="utf-8")
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: openclaw
+roots:
+  - source: {pkg}
+    dest: runtime/openclaw-package
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot" / "runtime" / "openclaw-package"
+    # node_modules (top-level AND nested) and venv are runtime dependencies -> copied blindly.
+    assert (snap / "node_modules" / "left-pad" / "index.js").exists()
+    assert (snap / "lib" / "node_modules" / "dep" / "core.js").exists()
+    assert (snap / "venv" / "lib" / "runtime.py").exists()
+    assert (snap / "package.json").exists()
+    # secrets and pure churn are still floored.
+    assert not (snap / ".env").exists()
+    assert not (snap / "sessions" / "old.log").exists()
 

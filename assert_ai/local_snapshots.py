@@ -334,9 +334,13 @@ def create_local_agent_snapshot(
 # sandbox snapshot. Reuses the same copy machinery; the difference is the source
 # of roots/excludes and the built-in secret floor applied to every copy.
 
-# Built-in exclude floor: secrets + heavy noise. Always applied on top of
+# Built-in exclude floor: secrets + pure churn only. Always applied on top of
 # config-declared excludes so a config cannot accidentally opt into copying
-# credentials or drag in session/log churn.
+# credentials. Decision (2026-06-13): we copy dependencies BLINDLY -- node_modules,
+# venv, and other runtime dependency dirs are exactly what a runtime needs to boot,
+# so the floor must NOT strip them. Junk reduction happens at the source (the agent's
+# self-report prompt), never by guessing here. The floor only drops things that can
+# never be a runtime dependency: secrets and pure churn (sessions/logs/.git).
 BUILTIN_EXCLUDE_FLOOR: tuple[str, ...] = (
     "*.env",
     ".env",
@@ -347,9 +351,37 @@ BUILTIN_EXCLUDE_FLOOR: tuple[str, ...] = (
     "sessions/**",
     "logs/**",
     "**/.git/**",
-    "**/node_modules/**",
-    "**/venv/**",
 )
+
+
+def _normalize_excludes_for_root(patterns: Iterable[str], *, source: Path) -> list[str]:
+    """Translate absolute-path excludes that fall under ``source`` into root-relative globs.
+
+    Agents emit REAL (absolute) paths in their exclude lists (decision 2026-06-13),
+    but ``_copy_root`` matches against paths relative to the root source. An absolute
+    pattern like ``/home/me/.openclaw/workspace/notes.md`` would never fire. Here we
+    rewrite it to ``workspace/notes.md`` so it matches. Patterns that are already
+    relative globs, or absolute paths outside this root, pass through unchanged (the
+    latter simply won't match anything in this root, which is correct).
+    """
+
+    try:
+        resolved_source = source.expanduser().resolve()
+    except OSError:
+        resolved_source = source
+    normalized: list[str] = []
+    for pattern in patterns:
+        pattern_path = Path(pattern).expanduser()
+        if pattern_path.is_absolute():
+            try:
+                rel = pattern_path.resolve().relative_to(resolved_source)
+            except (ValueError, OSError):
+                normalized.append(pattern)
+                continue
+            normalized.append(rel.as_posix())
+        else:
+            normalized.append(pattern)
+    return normalized
 
 
 def create_snapshot_from_config(
@@ -378,14 +410,21 @@ def create_snapshot_from_config(
 
     copied_roots: list[dict[str, Any]] = []
     excluded_files: list[dict[str, Any]] = []
-    for root in config.roots:
+    # External dependencies are copy roots too (decision 2026-06-13): the agent needs
+    # them to run, so they must land in the snapshot, not be silently ignored.
+    all_roots = [*config.roots, *config.external_dependencies]
+    for root in all_roots:
         source = root.source.expanduser().resolve()
         if not source.exists():
             if root.required:
                 raise ValueError(f"required root source does not exist: {root.source}")
             continue
         dest = _safe_relative_dest(root.dest) if root.dest else _safe_hidden_dest(source)
-        exclude_patterns = (*BUILTIN_EXCLUDE_FLOOR, *config.exclude, *root.exclude)
+        # Absolute-path excludes (which agents naturally emit) are normalized to
+        # root-relative globs so they actually fire against this root's copy walk.
+        raw_patterns = (*config.exclude, *root.exclude)
+        normalized = _normalize_excludes_for_root(raw_patterns, source=source)
+        exclude_patterns = (*BUILTIN_EXCLUDE_FLOOR, *normalized)
         files_copied, bytes_copied, excluded = _copy_root(
             source=source,
             dest=dest,
@@ -398,6 +437,7 @@ def create_snapshot_from_config(
                 "dest": dest.as_posix(),
                 "files_copied": files_copied,
                 "bytes_copied": bytes_copied,
+                "kind": root.kind,
             }
         )
         excluded_files.extend(excluded)

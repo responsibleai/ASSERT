@@ -114,6 +114,36 @@ roots:
     assert config.roots[0].exclude == ["hermes-agent/venv/**", "sessions/**"]
 
 
+def test_load_agent_config_parses_external_dependencies_as_roots(tmp_path: Path) -> None:
+    # External deps live in their own schema section, but they are copy roots too:
+    # the agent depends on them to run, so they must end up in the snapshot.
+    cfg = _write(
+        tmp_path / "agent.yaml",
+        """
+id: hermes
+roots:
+  - source: ~/.hermes
+    dest: .hermes
+external_dependencies:
+  - source: ~/ChatWorkspace
+  - source: ~/LocalOps/hermes
+    dest: LocalOps/hermes
+""",
+    )
+
+    config = load_agent_config(cfg)
+
+    assert len(config.external_dependencies) == 2
+    first = config.external_dependencies[0]
+    assert isinstance(first, ConfigRoot)
+    assert first.source == Path("~/ChatWorkspace").expanduser()
+    assert first.dest is None  # derived later
+    assert first.kind == "external_dependency"
+    second = config.external_dependencies[1]
+    assert second.source == Path("~/LocalOps/hermes").expanduser()
+    assert second.dest == "LocalOps/hermes"
+
+
 def test_load_agent_config_requires_id(tmp_path: Path) -> None:
     cfg = _write(
         tmp_path / "agent.yaml",

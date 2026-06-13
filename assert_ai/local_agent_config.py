@@ -48,6 +48,7 @@ class AgentRuntimeConfig:
     schema_version: int = 1
     exclude: list[str] = field(default_factory=list)
     instruction_files: list[str] = field(default_factory=list)
+    external_dependencies: list[ConfigRoot] = field(default_factory=list)
 
 
 def _as_str_list(value: Any, *, field_name: str) -> list[str]:
@@ -65,7 +66,7 @@ def _validate_dest(dest: str) -> str:
     return dest
 
 
-def _parse_root(raw: Any) -> ConfigRoot:
+def _parse_root(raw: Any, *, default_kind: str | None = None) -> ConfigRoot:
     if not isinstance(raw, dict):
         raise ValueError("each root must be a mapping")
     source_raw = raw.get("source")
@@ -74,13 +75,14 @@ def _parse_root(raw: Any) -> ConfigRoot:
     source = Path(source_raw).expanduser()
     dest_raw = raw.get("dest")
     dest = _validate_dest(dest_raw) if isinstance(dest_raw, str) and dest_raw else None
+    kind = str(raw["kind"]) if raw.get("kind") is not None else default_kind
     return ConfigRoot(
         source=source,
         dest=dest,
         include=_as_str_list(raw.get("include"), field_name="root include"),
         exclude=_as_str_list(raw.get("exclude"), field_name="root exclude"),
         required=bool(raw.get("required", False)),
-        kind=str(raw["kind"]) if raw.get("kind") is not None else None,
+        kind=kind,
     )
 
 
@@ -107,6 +109,13 @@ def load_agent_config(path: str | Path) -> AgentRuntimeConfig:
         raise ValueError("roots must be a list")
     roots = [_parse_root(item) for item in roots_raw]
 
+    ext_raw = payload.get("external_dependencies")
+    if ext_raw is None:
+        ext_raw = []
+    if not isinstance(ext_raw, list):
+        raise ValueError("external_dependencies must be a list")
+    external_dependencies = [_parse_root(item, default_kind="external_dependency") for item in ext_raw]
+
     display_name = payload.get("display_name")
     schema_version = payload.get("schema_version", 1)
 
@@ -117,4 +126,5 @@ def load_agent_config(path: str | Path) -> AgentRuntimeConfig:
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
         exclude=_as_str_list(payload.get("exclude"), field_name="exclude"),
         instruction_files=_as_str_list(payload.get("instruction_files"), field_name="instruction_files"),
+        external_dependencies=external_dependencies,
     )
