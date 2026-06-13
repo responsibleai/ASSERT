@@ -67,4 +67,4 @@ Each dimension has:
 - **name** — unique identifier used in `scores.jsonl`
 - **description** — rubric the LLM judge follows (be specific and concrete)
 - **scale** — `[low, high]` scoring range
-- **weight** — relative importance when aggregating into `metrics.json`
+- **weight** — relative importance when aggregating scores from `scores.jsonl` into summary rates

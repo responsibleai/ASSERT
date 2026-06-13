@@ -66,6 +66,22 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
         </tr>
 </table>
 
+## Acknowledgments
+
+ASSERT's core method is **AI-assisted systematization** — turning a broad, contested behavior concept into an explicit, measurable specification — following **[Agarwal et al. (2026), *AI-Assisted Systematization for Evaluating GenAI Systems*](https://www.microsoft.com/en-us/research/publication/ai-assisted-systematization-for-evaluating-genai-systems/)** from Microsoft Research. The staged pipeline that turns that specification into generated scenarios, runs them against a target, and judges the results is modeled in spirit on the design of **[Bloom](https://github.com/safety-research/bloom)** and **[Petri](https://github.com/safety-research/petri)**, open-source behavioral-evaluation frameworks from the Anthropic alignment team (Safety Research, MIT licensed).
+
+Adapted third-party material and the corresponding license notices are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). If you use ASSERT in research, please also cite Agarwal et al. (2026) and Bloom (see [`CITATION.cff`](CITATION.cff)).
+
+### Team and contributors
+
+ASSERT was built by the Microsoft Responsible AI organization.
+
+- **Product:** Mehrnoosh Sameki, Minsoo Thigpen, Chang Liu, Abby Palia, Hanna Kim
+- **Science:** Riccardo Fogliato, Emily Sheng, Alex Dow, Meera Chander, Alex Chouldechova, Sharman Tan, Xiawei Wang, Ahmed Magooda, Mayank Gupta, Jean Garcia-Gathright, Chad Atalla, Dan Vann, Hanna Wallach, Hannah Washington, Meredith Rodden, Nadine Frey, Melissa Kirkwood, Nick Pangakis, Ali Azad, Ahmed Elghory Ghoneim, Shushan Arakleyan
+- **Engineering:** Mohamed Elmergawi, Jake Present, Aaron Aspinwall, Yeming Tang
+- **Design:** Sooyeon Hwang, Becky Haruyama
+- **Special thanks:** Roni Burd, Mohammad A, Heba Elfardy, Sandeep Atluri, Sydney Lister, Ram Shankar Siva Kumar, Andrew Gully
+
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is subject to those third party's policies.

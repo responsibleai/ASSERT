@@ -1,0 +1,62 @@
+name: Review escalation
+
+# Deterministic CODEOWNERS-based review-request escalation for the
+# maintainer-assist pattern. Runs on GitHub's always-on schedule so the 24h/72h
+# escalation windows fire even when the maintainer is away — which is exactly
+# the situation the escalation is designed for (see AGENTS.md, "Where to run
+# the loop"). This is the deterministic half of the dev-maintainer agent
+# (review routing); it does not run the LLM audit.
+
+on:
+  schedule:
+    # Every 6 hours. The escalation windows are 24h/72h/7d, so this cadence is
+    # ample and keeps API/notification volume low.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print decisions without requesting reviewers"
+        type: boolean
+        default: true
+      min_age_hours:
+        description: "Override the first escalation window (use 0 to evaluate fresh PRs)"
+        type: string
+        default: "24"
+
+permissions:
+  contents: read          # read .github/CODEOWNERS
+  pull-requests: write    # request reviewers
+
+concurrency:
+  group: review-escalation
+  cancel-in-progress: false
+
+jobs:
+  escalate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Escalate stale review requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Scheduled runs are live; manual runs honor the dry_run input
+          # (default true) so the workflow is safe to trigger by hand.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MIN_AGE="${{ github.event.inputs.min_age_hours }}"
+            DRY="${{ github.event.inputs.dry_run }}"
+          else
+            MIN_AGE="24"
+            DRY="false"
+          fi
+          ARGS="--repo ${{ github.repository }} --min-age-hours ${MIN_AGE}"
+          if [ "${DRY}" = "true" ]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          echo "Running: escalate_reviews.py ${ARGS}"
+          python .github/scripts/escalate_reviews.py ${ARGS}
