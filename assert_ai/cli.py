@@ -518,6 +518,11 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
         log_file=log_file,
         json_output=(output_format == "json"),
     )
+    # Emit the resolved Azure auth mode now that logging handlers are
+    # installed. model_client is imported transitively before this point,
+    # so any log records it emits at import time would be silently dropped.
+    from assert_ai.core.model_client import log_resolved_azure_auth_mode
+    log_resolved_azure_auth_mode()
 
 
 # -- init (design an eval config with an LLM assistant) ---------------------
@@ -597,6 +602,8 @@ def run(
             log_file=log_file,
             json_output=(output_format == "json"),
         )
+        from assert_ai.core.model_client import log_resolved_azure_auth_mode
+        log_resolved_azure_auth_mode()
     runner = _load_runner_module()
     rc = runner.run_pipeline(
         config=str(config),
