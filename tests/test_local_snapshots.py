@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -789,4 +790,57 @@ roots:
     assert (snap / "real.md").exists()
     # Directory symlink content must NOT be pulled in.
     assert not (snap / "linked-dir" / "deep" / "big.bin").exists()
+
+
+def test_config_snapshot_tolerates_source_vanishing_mid_walk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # A live agent tree churns under the snapshot walk (the agent is running while
+    # we copy it). A file enumerated by rglob can disappear before it is copied.
+    # That single-file race must be recorded and skipped, NOT abort the whole
+    # snapshot. Regression: dereferencing symlinks made copy2 raise
+    # FileNotFoundError on a vanished source, which previously killed the run.
+    from assert_ai.local_agent_config import load_agent_config
+
+    home = tmp_path / ".agent"
+    home.mkdir(parents=True)
+    (home / "keep_a.md").write_text("a", encoding="utf-8")
+    (home / "vanishes.md").write_text("poof", encoding="utf-8")
+    (home / "keep_b.md").write_text("b", encoding="utf-8")
+
+    real_copy2 = shutil.copy2
+
+    def flaky_copy2(src, dst, *args, **kwargs):
+        if Path(src).name == "vanishes.md":
+            raise FileNotFoundError(2, "No such file or directory", str(src))
+        return real_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr("assert_ai.local_snapshots.shutil.copy2", flaky_copy2)
+
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: agent
+roots:
+  - source: {home}
+    dest: .agent
+""",
+        encoding="utf-8",
+    )
+    config = load_agent_config(cfg)
+    out = tmp_path / "snapshot"
+
+    # Must not raise.
+    result = create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot"
+    # The two readable files survive; the vanished one is skipped, not fatal.
+    assert (snap / ".agent" / "keep_a.md").exists()
+    assert (snap / ".agent" / "keep_b.md").exists()
+    assert not (snap / ".agent" / "vanishes.md").exists()
+    total_copied = sum(r["files_copied"] for r in result.manifest["copied_roots"])
+    assert total_copied >= 2
+    # The skip is recorded as evidence, not silently dropped.
+    reasons = {e["reason"] for e in result.manifest["excluded_files"]}
+    assert "source_unavailable" in reasons
 

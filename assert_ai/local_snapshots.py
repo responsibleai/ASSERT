@@ -207,7 +207,15 @@ def _copy_root(*, source: Path, dest: Path, snapshot_root: Path, exclude_pattern
         target = destination_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         # follow_symlinks=True (default) copies the real target content.
-        shutil.copy2(src, target, follow_symlinks=True)
+        # A live agent tree can churn under the walk: a file enumerated by
+        # rglob may vanish (or become unreadable) before we copy it. Record
+        # that single-file race and skip it rather than aborting the whole
+        # snapshot.
+        try:
+            shutil.copy2(src, target, follow_symlinks=True)
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            excluded.append({"source": rel_posix, "dest": dest_posix, "reason": "source_unavailable", "detail": type(exc).__name__})
+            return
         files_copied += 1
         try:
             bytes_copied += target.stat().st_size
