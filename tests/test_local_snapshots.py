@@ -712,3 +712,81 @@ roots:
     assert not (snap / ".env").exists()
     assert not (snap / "sessions" / "old.log").exists()
 
+
+def test_config_snapshot_dereferences_file_symlinks(tmp_path: Path) -> None:
+    # Wall #4: a runtime's interpreter is often a SYMLINK (e.g. Hermes's
+    # venv/bin/python -> uv-managed cpython). The copier must dereference file
+    # symlinks so the cloned runtime has a working interpreter, not a dangling
+    # link. The link target may live OUTSIDE the copied root.
+    from assert_ai.local_agent_config import load_agent_config
+
+    # Interpreter target lives outside the home root entirely.
+    interp = tmp_path / "uv" / "cpython-3.11" / "bin"
+    interp.mkdir(parents=True)
+    (interp / "python3.11").write_text("#!/real/python\nprint('hi')\n", encoding="utf-8")
+
+    home = tmp_path / ".hermes"
+    venv_bin = home / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    # The three symlinks Hermes actually has.
+    (venv_bin / "python").symlink_to(interp / "python3.11")
+    (venv_bin / "python3").symlink_to(interp / "python3.11")
+    (venv_bin / "activate").write_text("# activate\n", encoding="utf-8")
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: hermes
+roots:
+  - source: {home}
+    dest: .hermes
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap_bin = out / "snapshot" / ".hermes" / "venv" / "bin"
+    py = snap_bin / "python"
+    # The interpreter must exist as a real file with the target's content.
+    assert py.exists(), "venv/bin/python must survive the copy"
+    assert not py.is_symlink(), "symlink must be dereferenced to a real file"
+    assert py.read_text(encoding="utf-8") == "#!/real/python\nprint('hi')\n"
+    assert (snap_bin / "python3").exists()
+    assert (snap_bin / "activate").exists()
+
+
+def test_config_snapshot_skips_directory_symlinks(tmp_path: Path) -> None:
+    # Directory symlinks are NOT dereferenced — that risks loops and silently
+    # copying huge external trees. They are recorded as skipped, not copied.
+    from assert_ai.local_agent_config import load_agent_config
+
+    external = tmp_path / "external-tree"
+    (external / "deep").mkdir(parents=True)
+    (external / "deep" / "big.bin").write_text("huge\n", encoding="utf-8")
+
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "real.md").write_text("real\n", encoding="utf-8")
+    (home / "linked-dir").symlink_to(external, target_is_directory=True)
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: hermes
+roots:
+  - source: {home}
+    dest: .hermes
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot" / ".hermes"
+    assert (snap / "real.md").exists()
+    # Directory symlink content must NOT be pulled in.
+    assert not (snap / "linked-dir" / "deep" / "big.bin").exists()
+

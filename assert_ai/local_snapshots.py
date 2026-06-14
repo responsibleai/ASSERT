@@ -193,11 +193,21 @@ def _copy_root(*, source: Path, dest: Path, snapshot_root: Path, exclude_pattern
             excluded.append({"source": rel_posix, "dest": dest_posix, "reason": "secret_or_credential_like_path"})
             return
         if src.is_symlink():
-            excluded.append({"source": rel_posix, "dest": dest_posix, "reason": "symlink_not_copied"})
-            return
+            # Directory symlinks are not dereferenced: following them risks
+            # cycles and silently pulling in huge external trees.
+            if src.is_dir():
+                excluded.append({"source": rel_posix, "dest": dest_posix, "reason": "directory_symlink_not_copied"})
+                return
+            # File symlinks ARE dereferenced. A runtime's interpreter is often a
+            # symlink (e.g. a venv's bin/python -> an externally managed cpython),
+            # so the clone needs the real target content, not a dangling link.
+            if not src.exists():
+                excluded.append({"source": rel_posix, "dest": dest_posix, "reason": "broken_symlink"})
+                return
         target = destination_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, target)
+        # follow_symlinks=True (default) copies the real target content.
+        shutil.copy2(src, target, follow_symlinks=True)
         files_copied += 1
         try:
             bytes_copied += target.stat().st_size
@@ -319,7 +329,7 @@ def create_local_agent_snapshot(
             "explicit_include_roots": bool(include_root_values),
             "advanced_copy_roots_used": bool(copy_root_values),
             "secrets_excluded_by_path": True,
-            "symlinks_not_copied": True,
+            "file_symlinks_dereferenced": True,
         },
     }
 
@@ -458,7 +468,7 @@ def create_snapshot_from_config(
             "builtin_secret_floor": True,
             "config_excludes": list(config.exclude),
             "secrets_excluded_by_path": True,
-            "symlinks_not_copied": True,
+            "file_symlinks_dereferenced": True,
         },
     }
 
