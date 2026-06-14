@@ -16,6 +16,10 @@ import pytest
 from assert_ai.local_agent_config import (
     AgentRuntimeConfig,
     ConfigRoot,
+    EndpointSpec,
+    LaunchSpec,
+    ModelRoutingSpec,
+    SmokeProbeSpec,
     load_agent_config,
 )
 
@@ -198,3 +202,87 @@ roots:
 
     with pytest.raises(ValueError, match="dest"):
         load_agent_config(cfg)
+
+
+def test_load_agent_config_parses_launch_endpoint_routing_and_smoke(tmp_path: Path) -> None:
+    # The self-introspection step emits launch/endpoint/model_routing/smoke_probe.
+    # These must be parsed so a generic run can be driven entirely from this one file.
+    cfg = _write(
+        tmp_path / "agent.yaml",
+        """
+id: hermes-default-wsl
+roots:
+  - source: ~/.hermes
+launch:
+  command:
+    - /home/jakepresent/.hermes/hermes-agent/venv/bin/python
+    - -m
+    - hermes_cli.main
+    - gateway
+    - run
+    - --replace
+endpoint:
+  url: http://127.0.0.1:8642/v1/chat/completions
+  protocol: openai_chat
+  model: hermes-agent
+model_routing:
+  config_file: /home/jakepresent/.hermes/config.yaml
+  provider_key: model.provider
+  model_key: model.default
+  api_mode_key: model.api_mode
+  credential_file: /home/jakepresent/.hermes/auth.json
+  resolved_provider: copilot
+  resolved_base_url: https://api.githubcopilot.com
+  resolved_api_mode: codex_responses
+smoke_probe:
+  prompt: "What does your configured memory say Jake prefers?"
+""",
+    )
+
+    config = load_agent_config(cfg)
+
+    assert isinstance(config.launch, LaunchSpec)
+    assert config.launch.command == (
+        "/home/jakepresent/.hermes/hermes-agent/venv/bin/python",
+        "-m",
+        "hermes_cli.main",
+        "gateway",
+        "run",
+        "--replace",
+    )
+
+    assert isinstance(config.endpoint, EndpointSpec)
+    assert config.endpoint.url == "http://127.0.0.1:8642/v1/chat/completions"
+    assert config.endpoint.protocol == "openai_chat"
+    assert config.endpoint.model == "hermes-agent"
+    assert config.endpoint.port == 8642  # parsed from the url
+
+    assert isinstance(config.model_routing, ModelRoutingSpec)
+    assert config.model_routing.config_file == Path("/home/jakepresent/.hermes/config.yaml")
+    assert config.model_routing.provider_key == "model.provider"
+    assert config.model_routing.resolved_provider == "copilot"
+    assert config.model_routing.resolved_base_url == "https://api.githubcopilot.com"
+
+    assert isinstance(config.smoke_probe, SmokeProbeSpec)
+    assert config.smoke_probe.prompt.startswith("What does your configured memory")
+
+
+def test_load_agent_config_optional_sections_default_to_none(tmp_path: Path) -> None:
+    # A minimal config (no launch/endpoint/routing/smoke) is still valid; those
+    # sections simply default to None so snapshot-only flows keep working.
+    cfg = _write(
+        tmp_path / "agent.yaml",
+        """
+id: codex
+roots:
+  - source: ~/.codex
+""",
+    )
+
+    config = load_agent_config(cfg)
+
+    assert config.launch is None
+    assert config.endpoint is None
+    assert config.model_routing is None
+    assert config.smoke_probe is None
+
