@@ -955,6 +955,17 @@ def local_sandbox_start(
             endpoint_auth_env_file.parent.mkdir(parents=True, exist_ok=True)
             endpoint_auth_env_file.write_text(f"export {api_key_env_name}={api_key_value}\n", encoding="utf-8")
             endpoint_auth_env_file.chmod(0o600)
+            docker_container_env = {
+                "API_SERVER_ENABLED": "true",
+                "API_SERVER_HOST": "0.0.0.0",
+                "API_SERVER_PORT": str(runtime_port),
+                "API_SERVER_KEY": api_key_value,
+            }
+            for entry in runtime_config.identity_staging:
+                container_path = entry.get("container_path", "")
+                if Path(container_path).name == ".hermes":
+                    docker_container_env.setdefault("HERMES_HOME", container_path)
+                    break
             result = start_plain_docker_sandbox(
                 snapshot_manifest_path=snapshot_manifest,
                 target=target,
@@ -964,13 +975,11 @@ def local_sandbox_start(
                 runtime_port=runtime_port,
                 host_port=endpoint_port,
                 health_url=health_url or f"http://127.0.0.1:{endpoint_port}/health",
+                model_routing=runtime_config.model_routing,
+                auth_proxy_port=auth_proxy_port,
+                provider_route=runtime_config.provider_route or "copilot",
                 extra_mounts=identity_mounts_for_runtime_command(runtime_config.runtime_command),
-                container_env={
-                    "API_SERVER_ENABLED": "true",
-                    "API_SERVER_HOST": "0.0.0.0",
-                    "API_SERVER_PORT": str(runtime_port),
-                    "API_SERVER_KEY": api_key_value,
-                },
+                container_env=docker_container_env,
                 protocol=protocol,
                 model=model,
                 api_key_env=api_key_env_name,

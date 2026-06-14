@@ -162,9 +162,19 @@ def _default_discovered_roots(agent: dict[str, Any]) -> list[tuple[Path, Path]]:
     return roots
 
 
+def _certificate_bundle_allowed(rel: str, name: str) -> bool:
+    lower_rel = rel.lower()
+    lower_name = name.lower()
+    return lower_name in {"cacert.pem", "ca-certificates.crt"} and (
+        "/certifi/" in f"/{lower_rel}" or "/certs/" in f"/{lower_rel}" or lower_name == "ca-certificates.crt"
+    )
+
+
 def _matches_secret_pattern(rel: str, name: str, patterns: Iterable[str] = ()) -> bool:
     lower_rel = rel.lower()
     lower_name = name.lower()
+    if _certificate_bundle_allowed(lower_rel, lower_name):
+        return False
     suffix = Path(lower_name).suffix
     if lower_name == ".env" or lower_name.endswith(".env") or "/.env" in lower_rel:
         return True

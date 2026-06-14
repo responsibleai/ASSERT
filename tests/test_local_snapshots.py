@@ -714,6 +714,34 @@ roots:
     assert not (snap / "sessions" / "old.log").exists()
 
 
+def test_config_snapshot_keeps_runtime_ca_bundle_pem(tmp_path: Path) -> None:
+    from assert_ai.local_agent_config import load_agent_config
+
+    home = tmp_path / ".hermes"
+    certifi_dir = home / "venv" / "lib" / "python3.11" / "site-packages" / "certifi"
+    certifi_dir.mkdir(parents=True)
+    (certifi_dir / "cacert.pem").write_text("CA CERTS\n", encoding="utf-8")
+    (home / "private.pem").write_text("PRIVATE KEY\n", encoding="utf-8")
+    cfg = tmp_path / "agent.yaml"
+    cfg.write_text(
+        f"""
+id: hermes
+roots:
+  - source: {home}
+    dest: .hermes
+""",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(cfg)
+    out = tmp_path / "out"
+    create_snapshot_from_config(config=config, output_dir=out, redact_paths=True)
+
+    snap = out / "snapshot" / ".hermes"
+    assert (snap / "venv" / "lib" / "python3.11" / "site-packages" / "certifi" / "cacert.pem").exists()
+    assert not (snap / "private.pem").exists()
+
+
 def test_config_snapshot_dereferences_file_symlinks(tmp_path: Path) -> None:
     # Wall #4: a runtime's interpreter is often a SYMLINK (e.g. Hermes's
     # venv/bin/python -> uv-managed cpython). The copier must dereference file

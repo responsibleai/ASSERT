@@ -1385,7 +1385,10 @@ def test_runtime_config_rewrites_staged_model_routing_file(tmp_path: Path) -> No
     )
 
     rewritten = yaml.safe_load((out / "sandbox" / "profile" / "config.yaml").read_text(encoding="utf-8"))
-    assert rewritten["model"]["provider"] == "copilot"
+    assert rewritten["model"]["provider"] == "custom:assert-local-proxy"
+    assert rewritten["providers"]["assert-local-proxy"]["base_url"] == "http://host.docker.internal:12435/copilot"
+    assert rewritten["providers"]["assert-local-proxy"]["api_key"] == "proxy-managed"
+    assert rewritten["providers"]["assert-local-proxy"]["transport"] == "codex_responses"
     assert rewritten["model"]["base_url"] == "http://host.docker.internal:12435/copilot"
     assert rewritten["model"]["api_key"] == "proxy-managed"
     assert rewritten["model"]["api_mode"] == "codex_responses"
@@ -1861,6 +1864,7 @@ endpoint:
     assert calls[0]["runtime_port"] == 8642
     assert calls[0]["host_port"] == 18081
     assert calls[0]["endpoint_url"] == "http://127.0.0.1:18081/v1/chat/completions"
+    assert calls[0]["container_env"]["HERMES_HOME"] == "/home/user/.hermes"
     env_file = calls[0]["api_key_env_file"]
     assert env_file.exists()
     assert env_file.stat().st_mode & 0o777 == 0o600
@@ -1952,3 +1956,73 @@ def test_docker_run_backend_passes_container_environment(tmp_path: Path) -> None
     env_pairs = [args[index + 1] for index, value in enumerate(args) if value == "-e"]
     assert "API_SERVER_ENABLED=true" in env_pairs
     assert "API_SERVER_KEY=probe-secret" in env_pairs
+
+
+def test_docker_run_backend_rewrites_model_routing_and_starts_auth_proxy(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / "snapshot"
+    (snapshot_root / ".hermes").mkdir(parents=True)
+    (snapshot_root / ".hermes" / "config.yaml").write_text(
+        "model:\n  provider: copilot\n  base_url: ''\n  api_key: ''\n  api_mode: github-copilot\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "schema_version": 1,
+        "target": "hermes-default",
+        "source": "agent_config",
+        "snapshot_root": "snapshot",
+        "copied_roots": [{"source": "[LOCAL_PATH]", "dest": ".hermes", "files_copied": 1, "bytes_copied": 10}],
+        "excluded_files": [],
+    }
+    manifest_path = tmp_path / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    starts: list[list[str]] = []
+
+    def fake_start(args, **kwargs):
+        starts.append(args)
+        class Proc:
+            pid = 12345 + len(starts)
+            def poll(self): return None
+            def send_signal(self, sig): pass
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+        return Proc()
+
+    from assert_ai.local_sandbox import RuntimeModelRouting, start_plain_docker_sandbox
+
+    start_plain_docker_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="hermes-default",
+        runtime_command=("sleep", "999"),
+        identity_staging=({"snapshot_path": ".hermes", "container_path": "/home/user/.hermes"},),
+        endpoint_url="http://127.0.0.1:18081/v1/chat/completions",
+        runtime_port=8642,
+        host_port=18081,
+        health_url=None,
+        output_dir=tmp_path / "out",
+        model="hermes-agent",
+        model_routing=RuntimeModelRouting(
+            staged_config_file=".hermes/config.yaml",
+            provider_key="model.provider",
+            base_url_key="model.base_url",
+            api_key_key="model.api_key",
+            api_mode_key="model.api_mode",
+            resolved_provider="copilot",
+            resolved_api_mode="github-copilot",
+        ),
+        auth_proxy_port=12435,
+        provider_route="copilot",
+        start_process=fake_start,
+        wait_for_health=lambda url, timeout_seconds: None,
+    )
+
+    assert len(starts) == 2
+    auth_proxy_args = starts[0]
+    docker_args = starts[1]
+    assert "run_auth_proxy.py" in " ".join(auth_proxy_args)
+    assert "--config" in auth_proxy_args
+    assert "docker" == docker_args[0]
+    rewritten = yaml.safe_load((snapshot_root / ".hermes" / "config.yaml").read_text(encoding="utf-8"))
+    assert rewritten["model"]["base_url"] == "http://host.docker.internal:12435/copilot"
+    assert rewritten["model"]["api_key"] == "proxy-managed"
+    state = json.loads((tmp_path / "out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert {proc["name"] for proc in state["processes"]} == {"auth-proxy", "docker-run"}

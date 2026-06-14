@@ -413,6 +413,17 @@ def _set_dotted_key(payload: dict[str, Any], dotted_key: str, value: Any) -> Non
     cursor[parts[-1]] = value
 
 
+def _get_dotted_key(payload: dict[str, Any], dotted_key: str | None) -> Any:
+    if not dotted_key:
+        return None
+    cursor: Any = payload
+    for part in [part for part in dotted_key.split(".") if part]:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
 def _rewrite_model_routing_config(sandbox_root: Path, routing: RuntimeModelRouting, *, auth_proxy_port: int, provider_route: str) -> None:
     config_path = sandbox_root / routing.staged_config_file
     if not config_path.exists():
@@ -420,12 +431,32 @@ def _rewrite_model_routing_config(sandbox_root: Path, routing: RuntimeModelRouti
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
         raise ValueError(f"model_routing config file must be a YAML mapping: {routing.staged_config_file}")
-    if routing.provider_key and routing.resolved_provider:
-        _set_dotted_key(payload, routing.provider_key, routing.resolved_provider)
+    proxy_base_url = f"http://host.docker.internal:{auth_proxy_port}/{provider_route}"
+    proxy_api_key = "proxy-managed"
+    if routing.provider_key:
+        # Route through a runtime-local custom provider instead of trying to
+        # override a built-in provider's credential resolver. Some agents
+        # (Hermes/Copilot) ignore top-level base_url/api_key for built-ins and
+        # resolve credentials through OAuth state. A named custom provider keeps
+        # real credentials host-side behind the auth proxy while using generic
+        # config-file rewriting.
+        proxy_provider = "assert-local-proxy"
+        providers = payload.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
+            payload["providers"] = providers
+        transport = routing.resolved_api_mode or _get_dotted_key(payload, routing.api_mode_key) or "chat_completions"
+        providers[proxy_provider] = {
+            "name": "ASSERT Local Proxy",
+            "base_url": proxy_base_url,
+            "api_key": proxy_api_key,
+            "transport": transport,
+        }
+        _set_dotted_key(payload, routing.provider_key, f"custom:{proxy_provider}")
     if routing.base_url_key:
-        _set_dotted_key(payload, routing.base_url_key, f"http://host.docker.internal:{auth_proxy_port}/{provider_route}")
+        _set_dotted_key(payload, routing.base_url_key, proxy_base_url)
     if routing.api_key_key:
-        _set_dotted_key(payload, routing.api_key_key, "proxy-managed")
+        _set_dotted_key(payload, routing.api_key_key, proxy_api_key)
     if routing.api_mode_key and routing.resolved_api_mode:
         _set_dotted_key(payload, routing.api_mode_key, routing.resolved_api_mode)
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -1692,6 +1723,10 @@ def start_plain_docker_sandbox(
     output_dir: str | Path,
     extra_mounts: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
     container_env: dict[str, str] | None = None,
+    model_routing: RuntimeModelRouting | None = None,
+    auth_proxy_port: int = 12435,
+    provider_route: str = "copilot",
+    rampart_root: str | Path | None = None,
     protocol: str = "openai_chat",
     model: str | None = None,
     api_key_env: str | None = None,
@@ -1735,9 +1770,43 @@ def start_plain_docker_sandbox(
     logs_dir = output / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     stderr_log = logs_dir / "docker-run.stderr.log"
+    auth_proxy_stderr_log = logs_dir / "auth-proxy.stderr.log"
+    auth_proxy_requests_log = logs_dir / "auth-proxy-requests.jsonl"
     sandbox_root = Path(manifest_path.parent / str(manifest.get("snapshot_root", "snapshot"))).resolve()
     if not sandbox_root.exists():
         sandbox_root = _stage_snapshot(manifest_path=manifest_path, manifest=manifest, output_dir=output)
+
+    auth_proxy_process: subprocess.Popen[str] | None = None
+    auth_proxy_config_path: Path | None = None
+    if model_routing is not None:
+        auth_proxy_config_path = output / "auth-proxy.json"
+        _write_live_auth_proxy_config(auth_proxy_config_path, provider_route=provider_route)
+        rampart = Path(rampart_root).expanduser().resolve() if rampart_root is not None else _default_rampart_root()
+        auth_proxy_script = rampart / "scripts" / "run_auth_proxy.py"
+        if not auth_proxy_script.exists():
+            raise ValueError(f"auth proxy runner not found under: {rampart}")
+        auth_proxy_args = [
+            _rampart_python(rampart),
+            str(auth_proxy_script),
+            "serve",
+            "--port",
+            str(auth_proxy_port),
+            "--config",
+            str(auth_proxy_config_path),
+            "--request-log",
+            str(auth_proxy_requests_log),
+        ]
+        with auth_proxy_stderr_log.open("w", encoding="utf-8") as stderr_handle:
+            auth_proxy_process = start_process(
+                auth_proxy_args,
+                cwd=output,
+                stderr=stderr_handle,
+                stdout=subprocess.DEVNULL,
+                text=True,
+                start_new_session=True,
+            )
+        wait_for_health(f"http://127.0.0.1:{auth_proxy_port}/health", timeout_seconds=health_timeout_seconds)
+        _rewrite_model_routing_config(sandbox_root, model_routing, auth_proxy_port=auth_proxy_port, provider_route=provider_route)
 
     name = container_name or _sanitize_container_name(f"assert-{target}")
     args = ["docker", "run", "--rm", "--name", name, "-p", f"{host_port}:{runtime_port}"]
@@ -1791,6 +1860,8 @@ def start_plain_docker_sandbox(
             "backend": "docker-run",
             "status": "running",
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "staged_snapshot_root": str(sandbox_root),
+            "sandbox_root": str(sandbox_root),
             "snapshot": {
                 "manifest": _path_value(manifest_path, redact_paths=redact_paths),
                 "snapshot_root": "snapshot" if redact_paths else str(sandbox_root),
@@ -1805,11 +1876,23 @@ def start_plain_docker_sandbox(
                 "mounts": redacted_mounts,
             },
             "processes": [
+                *(
+                    [
+                        {
+                            "name": "auth-proxy",
+                            "pid": auth_proxy_process.pid,
+                            "log_path": _path_value(auth_proxy_stderr_log, redact_paths=redact_paths),
+                            "request_log_path": _path_value(auth_proxy_requests_log, redact_paths=redact_paths),
+                        }
+                    ]
+                    if auth_proxy_process is not None
+                    else []
+                ),
                 {
                     "name": "docker-run",
                     "pid": process.pid,
                     "log_path": _path_value(stderr_log, redact_paths=redact_paths),
-                }
+                },
             ],
             "cleanup": {
                 "docker_rm": f"docker rm -f {name}",
@@ -1831,6 +1914,12 @@ def start_plain_docker_sandbox(
                 process.wait(timeout=5)
             except Exception:
                 process.kill()
+        if auth_proxy_process is not None and auth_proxy_process.poll() is None:
+            try:
+                auth_proxy_process.send_signal(signal.SIGTERM)
+                auth_proxy_process.wait(timeout=5)
+            except Exception:
+                auth_proxy_process.kill()
         raise
 
 def start_local_sandbox(
