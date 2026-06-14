@@ -523,6 +523,7 @@ class RuntimeLaunchConfig:
     sandbox_name: str | None = None
     docker_command: str = "docker.exe"
     rampart_root: Path | str | None = None
+    provider_route: str | None = None
 
 
 @dataclass(frozen=True)
@@ -545,6 +546,7 @@ class RampartRuntimeDescriptor:
     docker_command: str = "docker.exe"
     target: str | None = None
     rampart_root: Path | str | None = None
+    provider_route: str | None = None
 
     def _rampart_path(self) -> Path:
         if self.rampart_root is not None:
@@ -580,6 +582,7 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
         docker_command=config.docker_command,
         target=config.id,
         rampart_root=config.rampart_root,
+        provider_route=config.provider_route,
     )
 
 
@@ -620,6 +623,7 @@ def load_runtime_config(path: str | Path) -> RuntimeLaunchConfig:
         sandbox_name=payload.get("sandbox_name") if isinstance(payload.get("sandbox_name"), str) else None,
         docker_command=str(payload.get("docker_command", "docker.exe")),
         rampart_root=payload.get("rampart_root") if isinstance(payload.get("rampart_root"), str) else None,
+        provider_route=payload.get("provider_route") if isinstance(payload.get("provider_route"), str) else None,
     )
 
 
@@ -738,6 +742,23 @@ class RampartDockerHarness:
             LocalSandboxCleanupCommand(label, [context.docker_command, "sandbox", action, context.sandbox_name])
             for label, action in zip(self.descriptor.cleanup_labels, ("stop", "rm"), strict=False)
         ]
+        # The auth proxy needs a routes file. OpenClaw pre-supplies one via
+        # context.auth_proxy_config; the generic path must write it here so the
+        # proxy starts with real routes instead of exiting with "no routes".
+        routes_path = context.auth_proxy_config or (context.output_dir / "auth-proxy.json")
+        prepare = None
+        if context.auth_proxy_config is None:
+            provider = context.provider
+            mock_port = context.mock_openai_port
+            route = context.provider_route or "copilot"
+
+            def _write_routes() -> None:
+                if provider == "mock":
+                    _write_mock_auth_proxy_config(routes_path, mock_openai_port=mock_port)
+                else:
+                    _write_live_auth_proxy_config(routes_path, provider_route=route)
+
+            prepare = _write_routes
         return LocalSandboxLaunchPlan(
             steps=steps,
             cleanup_commands=cleanup_commands,
@@ -749,7 +770,9 @@ class RampartDockerHarness:
                 "provider_route": context.provider_route,
                 "model_ref": context.model_ref,
                 "sandbox_name": context.sandbox_name,
+                "auth_proxy_config": _path_value(routes_path, redact_paths=context.redact_paths),
             },
+            prepare=prepare,
         )
 
 

@@ -1174,6 +1174,53 @@ def test_docker_backend_runs_runtime_config_descriptor_without_openclaw_assumpti
     assert "openclaw" not in result.state_path.read_text(encoding="utf-8").lower()
 
 
+def test_runtime_config_live_provider_writes_auth_proxy_routes(tmp_path: Path) -> None:
+    # The generic path must WRITE the auth-proxy routes file, not just reference it.
+    # This is the exact live-run wall: the proxy step starts but has no routes,
+    # so it exits and the health check fails. provider=copilot -> copilot route.
+    rampart_root = tmp_path / "rampart-scripts"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# proxy\n", encoding="utf-8")
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=(sys.executable, "-c", "print('launch')"),
+        rampart_root=rampart_root,
+        endpoint_port=19000,
+        sandbox_name="toy-sandbox",
+        provider_route="copilot",
+    )
+    out = tmp_path / "sandbox-out"
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=out,
+        endpoint_url="http://127.0.0.1:19000",
+        provider="live",
+        protocol="openai_chat",
+        model="toy-model",
+        dry_run=False,
+        redact_paths=False,
+        run_step=lambda step, log: (log.parent.mkdir(parents=True, exist_ok=True), log.write_text("ok\n"), 0)[-1],
+        start_step=lambda step, log: (log.parent.mkdir(parents=True, exist_ok=True), log.write_text("ready\n"), LocalSandboxManagedProcess(name=step.name, pid=5000, log_path=log))[-1],
+    )
+
+    # The auth-proxy step must point at a routes file that actually exists on disk.
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    auth_step = next(step for step in state["plan"]["steps"] if step["name"] == "start_auth_proxy")
+    cmd = auth_step["command"]
+    cfg_idx = cmd.index("--config") + 1
+    routes_file = Path(cmd[cfg_idx])
+    assert routes_file.exists(), f"auth-proxy routes file was not written: {routes_file}"
+    payload = json.loads(routes_file.read_text(encoding="utf-8"))
+    assert "copilot" in payload["providers"]
+
+
 def test_openclaw_runtime_descriptor_exposes_docker_launch_plan(tmp_path: Path) -> None:
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
     runner_root = _make_runner_root(tmp_path)
