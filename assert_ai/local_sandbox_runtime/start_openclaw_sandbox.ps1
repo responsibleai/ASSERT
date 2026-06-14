@@ -15,6 +15,10 @@ param(
     [string]$Models,
     [int]$AuthProxyPort = 12435,
     [string]$RuntimeArchive = "",
+    [string]$SnapshotRoot = "",
+    [string]$RuntimeCommandFile = "",
+    [string]$IdentityStagingFile = "",
+    [int]$EndpointPort = 0,
     [switch]$SkipBuild
 )
 
@@ -28,17 +32,63 @@ if (-not (Test-Path -LiteralPath $launcher)) {
     throw "OpenClaw sandbox launcher not found: $launcher"
 }
 
-if ($RuntimeArchive) {
-    $runtimeArchivePath = $RuntimeArchive
-    if (-not (Test-Path -LiteralPath $runtimeArchivePath) -and $RuntimeArchive.StartsWith("/")) {
-        $runtimeArchivePath = (wsl.exe wslpath -w $RuntimeArchive).Trim()
+$workspace = Join-Path $env:TEMP "openclaw-sandbox-workspace-$SandboxName"
+
+function Resolve-HostPath {
+    param([string]$PathValue)
+    if (-not $PathValue) { return "" }
+    if ((Test-Path -LiteralPath $PathValue) -or (-not $PathValue.StartsWith("/"))) {
+        return $PathValue
     }
+    return (wsl.exe wslpath -w $PathValue).Trim()
+}
+
+function Copy-DirectoryContents {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+    if (Test-Path -LiteralPath $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+    }
+}
+
+if ($RuntimeArchive) {
+    $runtimeArchivePath = Resolve-HostPath $RuntimeArchive
     if (-not (Test-Path -LiteralPath $runtimeArchivePath)) {
         throw "Runtime archive not found: $RuntimeArchive"
     }
-    $workspace = Join-Path $env:TEMP "openclaw-sandbox-workspace-$SandboxName"
     New-Item -ItemType Directory -Force -Path $workspace | Out-Null
     Copy-Item -LiteralPath $runtimeArchivePath -Destination (Join-Path $workspace "openclaw-runtime.tar.gz") -Force
+}
+
+if ($SnapshotRoot -or $RuntimeCommandFile -or $IdentityStagingFile) {
+    New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+}
+if ($SnapshotRoot) {
+    $snapshotRootPath = Resolve-HostPath $SnapshotRoot
+    if (-not (Test-Path -LiteralPath $snapshotRootPath)) {
+        throw "Snapshot root not found: $SnapshotRoot"
+    }
+    Copy-DirectoryContents -Source $snapshotRootPath -Destination (Join-Path $workspace "snapshot")
+}
+if ($RuntimeCommandFile) {
+    $runtimeCommandPath = Resolve-HostPath $RuntimeCommandFile
+    if (-not (Test-Path -LiteralPath $runtimeCommandPath)) {
+        throw "Runtime command file not found: $RuntimeCommandFile"
+    }
+    Copy-Item -LiteralPath $runtimeCommandPath -Destination (Join-Path $workspace "runtime-command.json") -Force
+}
+if ($IdentityStagingFile) {
+    $identityStagingPath = Resolve-HostPath $IdentityStagingFile
+    if (-not (Test-Path -LiteralPath $identityStagingPath)) {
+        throw "Identity staging file not found: $IdentityStagingFile"
+    }
+    Copy-Item -LiteralPath $identityStagingPath -Destination (Join-Path $workspace "identity-staging.json") -Force
 }
 
 $invokeParams = @{
@@ -47,6 +97,10 @@ $invokeParams = @{
     SandboxName = $SandboxName
 }
 if ($SkipBuild) { $invokeParams["SkipBuild"] = $true }
+if ($SnapshotRoot) { $invokeParams["SnapshotRoot"] = "snapshot" }
+if ($RuntimeCommandFile) { $invokeParams["RuntimeCommandFile"] = "runtime-command.json" }
+if ($IdentityStagingFile) { $invokeParams["IdentityStagingFile"] = "identity-staging.json" }
+if ($EndpointPort -gt 0) { $invokeParams["EndpointPort"] = $EndpointPort }
 
 & $launcher @invokeParams
 if ($LASTEXITCODE -ne 0) {

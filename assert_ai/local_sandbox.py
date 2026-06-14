@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -671,6 +672,35 @@ def _default_snapshot_dest_for_source(source: Path) -> Path:
     return Path(source.name)
 
 
+def _default_generic_launcher_command(*, agent_config_id: str) -> tuple[str, ...]:
+    launcher = _default_runner_root() / "start_openclaw_sandbox.ps1"
+    sandbox_name = "la-" + re.sub(r"[^A-Za-z0-9-]+", "-", agent_config_id).strip("-")[:40].lower()
+    return (
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(launcher),
+        "-RampartOpenClawRoot",
+        str(_default_rampart_root()),
+        "-SandboxName",
+        sandbox_name or "la-generic",
+        "-Models",
+        "{}",
+        "-AuthProxyPort",
+        "{auth_proxy_port}",
+        "-SnapshotRoot",
+        "{sandbox_root}",
+        "-RuntimeCommandFile",
+        "{runtime_command_file}",
+        "-IdentityStagingFile",
+        "{identity_staging_file}",
+        "-EndpointPort",
+        "{endpoint_port}",
+    )
+
+
 def _identity_staging_for_agent_config(agent_config: Any) -> tuple[dict[str, str], ...]:
     """Map staged snapshot roots back to their original absolute container paths.
 
@@ -742,7 +772,7 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
         id=agent_config.id,
         harness="rampart-docker",
         runtime_profile=agent_config.id,
-        launch_command=None,
+        launch_command=_default_generic_launcher_command(agent_config_id=agent_config.id),
         runtime_command=tuple(launch.command),
         identity_staging=_identity_staging_for_agent_config(agent_config),
         endpoint_port=int(endpoint_port),

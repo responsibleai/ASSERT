@@ -887,7 +887,9 @@ model_routing:
     # The agent's launch.command is the runtime command to run inside the clone.
     # It must not be executed as the host-side sandbox launcher.
     launch = next(step for step in state["plan"]["steps"] if step["name"] == "launch_rampart_sandbox")
-    assert "19000" not in " ".join(launch["command"])
+    assert "print('launch {sandbox_name} {endpoint_port}')" not in " ".join(launch["command"])
+    assert "-RuntimeCommandFile" in launch["command"]
+    assert "-IdentityStagingFile" in launch["command"]
     assert state["plan"]["runtime_command"] == ["python", "-c", "print('launch {sandbox_name} {endpoint_port}')"]
 
 
@@ -1142,6 +1144,17 @@ def test_agent_config_bridge_builds_private_identity_staging_plan(tmp_path: Path
 
     runtime_config = build_runtime_config_from_agent_config(config)
 
+    assert runtime_config.launch_command is not None
+    launch_text = " ".join(runtime_config.launch_command)
+    assert "start_openclaw_sandbox.ps1" in launch_text
+    assert "-SnapshotRoot" in runtime_config.launch_command
+    assert "{sandbox_root}" in runtime_config.launch_command
+    assert "-RuntimeCommandFile" in runtime_config.launch_command
+    assert "{runtime_command_file}" in runtime_config.launch_command
+    assert "-IdentityStagingFile" in runtime_config.launch_command
+    assert "{identity_staging_file}" in runtime_config.launch_command
+    assert "-EndpointPort" in runtime_config.launch_command
+    assert "{endpoint_port}" in runtime_config.launch_command
     assert runtime_config.identity_staging == (
         {"snapshot_path": ".hermes", "container_path": str(hermes_home.resolve())},
         {"snapshot_path": "hermes", "container_path": str(local_ops.resolve())},
