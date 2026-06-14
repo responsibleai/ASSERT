@@ -765,6 +765,33 @@ def _staged_path_for_agent_source(agent_config: Any, source_path: Path) -> str |
     return None
 
 
+def _infer_port_from_launch_command(command: tuple[str, ...]) -> int | None:
+    for idx, item in enumerate(command):
+        if item in {"--port", "-p"} and idx + 1 < len(command):
+            try:
+                return int(command[idx + 1])
+            except ValueError:
+                return None
+        if item.startswith("--port="):
+            try:
+                return int(item.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def _endpoint_port_from_agent_endpoint(endpoint: Any, launch_command: tuple[str, ...]) -> int:
+    if endpoint is None:
+        return 18081
+    explicit_port = getattr(endpoint, "port", None)
+    url = getattr(endpoint, "url", None) or ""
+    if explicit_port:
+        return int(explicit_port)
+    if "{endpoint_port}" in url:
+        return _infer_port_from_launch_command(launch_command) or 18081
+    return 18081
+
+
 def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchConfig:
     """Derive a RuntimeLaunchConfig from an agent's self-introspected config.
 
@@ -780,7 +807,7 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
         raise ValueError("agent config requires a launch command to start a sandbox")
 
     endpoint = getattr(agent_config, "endpoint", None)
-    endpoint_port = (endpoint.port if endpoint and endpoint.port else 18081)
+    endpoint_port = _endpoint_port_from_agent_endpoint(endpoint, tuple(launch.command))
 
     routing = getattr(agent_config, "model_routing", None)
     provider_route = getattr(routing, "resolved_provider", None) if routing else None

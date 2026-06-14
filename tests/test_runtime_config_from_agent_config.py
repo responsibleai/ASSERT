@@ -21,6 +21,7 @@ from assert_ai.local_agent_config import (
     EndpointSpec,
     LaunchSpec,
     ModelRoutingSpec,
+    load_agent_config,
 )
 from assert_ai.local_sandbox import (
     RuntimeLaunchConfig,
@@ -97,3 +98,30 @@ def test_bridge_requires_launch_command() -> None:
     cfg = AgentRuntimeConfig(id="bare", roots=[ConfigRoot(source=Path("/x"))])
     with pytest.raises(ValueError, match="launch"):
         build_runtime_config_from_agent_config(cfg)
+
+
+def test_agent_config_endpoint_token_uses_launch_port(tmp_path: Path) -> None:
+    config_path = tmp_path / "agent.yaml"
+    config_path.write_text(
+        """
+id: openclaw-like
+roots:
+  - source: /tmp/openclaw
+launch:
+  command:
+    - node
+    - gateway.js
+    - --port
+    - "18789"
+endpoint:
+  url: http://127.0.0.1:{endpoint_port}/v1/chat/completions
+  protocol: openai_chat
+  model: github-copilot/gpt-5.5
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_agent_config(config_path)
+    runtime_config = build_runtime_config_from_agent_config(cfg)
+
+    assert runtime_config.endpoint_port == 18789
