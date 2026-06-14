@@ -48,7 +48,13 @@ def _hermes_like() -> AgentRuntimeConfig:
             protocol="openai_chat",
             model="hermes-agent",
         ),
-        model_routing=ModelRoutingSpec(resolved_provider="copilot"),
+        model_routing=ModelRoutingSpec(
+            config_file=Path("/home/u/.hermes/config.yaml"),
+            provider_key="model.provider",
+            base_url_key="model.base_url",
+            api_key_key="model.api_key",
+            resolved_provider="copilot",
+        ),
     )
 
 
@@ -74,6 +80,9 @@ def test_bridge_maps_core_fields() -> None:
     assert runtime_config.endpoint_port == 8642
     # provider route comes from model_routing.resolved_provider
     assert runtime_config.provider_route == "copilot"
+    assert runtime_config.model_routing is not None
+    assert runtime_config.model_routing.staged_config_file == ".hermes/config.yaml"
+    assert runtime_config.model_routing.provider_key == "model.provider"
 
 
 def test_bridge_defaults_rampart_root_to_known_location() -> None:

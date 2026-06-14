@@ -396,6 +396,38 @@ def _write_live_auth_proxy_config(path: Path, *, provider_route: str) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _set_dotted_key(payload: dict[str, Any], dotted_key: str, value: Any) -> None:
+    parts = [part for part in dotted_key.split(".") if part]
+    if not parts:
+        raise ValueError("model_routing key must not be empty")
+    cursor: dict[str, Any] = payload
+    for part in parts[:-1]:
+        existing = cursor.get(part)
+        if not isinstance(existing, dict):
+            existing = {}
+            cursor[part] = existing
+        cursor = existing
+    cursor[parts[-1]] = value
+
+
+def _rewrite_model_routing_config(sandbox_root: Path, routing: RuntimeModelRouting, *, auth_proxy_port: int, provider_route: str) -> None:
+    config_path = sandbox_root / routing.staged_config_file
+    if not config_path.exists():
+        raise ValueError(f"model_routing config file is missing from staged snapshot: {routing.staged_config_file}")
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"model_routing config file must be a YAML mapping: {routing.staged_config_file}")
+    if routing.provider_key and routing.resolved_provider:
+        _set_dotted_key(payload, routing.provider_key, routing.resolved_provider)
+    if routing.base_url_key:
+        _set_dotted_key(payload, routing.base_url_key, f"http://host.docker.internal:{auth_proxy_port}/{provider_route}")
+    if routing.api_key_key:
+        _set_dotted_key(payload, routing.api_key_key, "proxy-managed")
+    if routing.api_mode_key and routing.resolved_api_mode:
+        _set_dotted_key(payload, routing.api_mode_key, routing.resolved_api_mode)
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
 def _default_run_step(step: LocalSandboxStep, log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -506,6 +538,20 @@ def _local_cleanup_json(command: LocalSandboxCleanupCommand, *, redact_paths: bo
 
 
 @dataclass(frozen=True)
+class RuntimeModelRouting:
+    """Model-provider rewrite to apply to the staged runtime config."""
+
+    staged_config_file: str
+    provider_key: str | None = None
+    model_key: str | None = None
+    api_mode_key: str | None = None
+    base_url_key: str | None = None
+    api_key_key: str | None = None
+    resolved_provider: str | None = None
+    resolved_api_mode: str | None = None
+
+
+@dataclass(frozen=True)
 class RuntimeLaunchConfig:
     """Data-driven local-agent runtime config for a sandbox launch."""
 
@@ -525,6 +571,7 @@ class RuntimeLaunchConfig:
     docker_command: str = "docker.exe"
     rampart_root: Path | str | None = None
     provider_route: str | None = None
+    model_routing: RuntimeModelRouting | None = None
 
 
 @dataclass(frozen=True)
@@ -549,6 +596,7 @@ class RampartRuntimeDescriptor:
     target: str | None = None
     rampart_root: Path | str | None = None
     provider_route: str | None = None
+    model_routing: RuntimeModelRouting | None = None
 
     def _rampart_path(self) -> Path:
         if self.rampart_root is not None:
@@ -591,7 +639,26 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
         target=config.id,
         rampart_root=config.rampart_root,
         provider_route=config.provider_route,
+        model_routing=config.model_routing,
     )
+
+
+def _default_snapshot_dest_for_source(source: Path) -> Path:
+    return Path(source.name)
+
+
+def _staged_path_for_agent_source(agent_config: Any, source_path: Path) -> str | None:
+    source = source_path.expanduser().resolve()
+    roots = [*getattr(agent_config, "roots", []), *getattr(agent_config, "external_dependencies", [])]
+    for root in roots:
+        root_source = root.source.expanduser().resolve()
+        try:
+            rel = source.relative_to(root_source)
+        except ValueError:
+            continue
+        dest = Path(root.dest) if root.dest else _default_snapshot_dest_for_source(root_source)
+        return (dest / rel).as_posix()
+    return None
 
 
 def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchConfig:
@@ -613,6 +680,20 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
 
     routing = getattr(agent_config, "model_routing", None)
     provider_route = getattr(routing, "resolved_provider", None) if routing else None
+    runtime_model_routing = None
+    if routing is not None and getattr(routing, "config_file", None) is not None:
+        staged_config_file = _staged_path_for_agent_source(agent_config, routing.config_file)
+        if staged_config_file is not None:
+            runtime_model_routing = RuntimeModelRouting(
+                staged_config_file=staged_config_file,
+                provider_key=getattr(routing, "provider_key", None),
+                model_key=getattr(routing, "model_key", None),
+                api_mode_key=getattr(routing, "api_mode_key", None),
+                base_url_key=getattr(routing, "base_url_key", None),
+                api_key_key=getattr(routing, "api_key_key", None),
+                resolved_provider=getattr(routing, "resolved_provider", None),
+                resolved_api_mode=getattr(routing, "resolved_api_mode", None),
+            )
 
     return RuntimeLaunchConfig(
         id=agent_config.id,
@@ -622,6 +703,7 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
         runtime_command=tuple(launch.command),
         endpoint_port=int(endpoint_port),
         provider_route=provider_route,
+        model_routing=runtime_model_routing,
         rampart_root=_default_rampart_root(),
     )
 
@@ -787,18 +869,22 @@ class RampartDockerHarness:
         # proxy starts with real routes instead of exiting with "no routes".
         routes_path = context.auth_proxy_config or (context.output_dir / "auth-proxy.json")
         prepare = None
-        if context.auth_proxy_config is None:
+        if context.auth_proxy_config is None or self.descriptor.model_routing is not None:
             provider = context.provider
             mock_port = context.mock_openai_port
             route = context.provider_route or "copilot"
+            model_routing = self.descriptor.model_routing
 
-            def _write_routes() -> None:
-                if provider == "mock":
-                    _write_mock_auth_proxy_config(routes_path, mock_openai_port=mock_port)
-                else:
-                    _write_live_auth_proxy_config(routes_path, provider_route=route)
+            def _prepare_runtime() -> None:
+                if context.auth_proxy_config is None:
+                    if provider == "mock":
+                        _write_mock_auth_proxy_config(routes_path, mock_openai_port=mock_port)
+                    else:
+                        _write_live_auth_proxy_config(routes_path, provider_route=route)
+                if model_routing is not None:
+                    _rewrite_model_routing_config(context.sandbox_root, model_routing, auth_proxy_port=context.auth_proxy_port, provider_route=route)
 
-            prepare = _write_routes
+            prepare = _prepare_runtime
         return LocalSandboxLaunchPlan(
             steps=steps,
             cleanup_commands=cleanup_commands,

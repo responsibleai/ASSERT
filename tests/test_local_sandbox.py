@@ -21,6 +21,7 @@ from assert_ai.local_sandbox import (
     LocalSandboxStep,
     OpenClawDockerLaunchDescriptor,
     RuntimeLaunchConfig,
+    RuntimeModelRouting,
     build_descriptor_from_runtime_config,
     smoke_local_sandbox,
     start_local_sandbox,
@@ -1271,6 +1272,56 @@ def test_docker_backend_runs_runtime_config_descriptor_without_openclaw_assumpti
     ]
     assert any("launch toy-sandbox 19000" in item for item in executed)
     assert "openclaw" not in result.state_path.read_text(encoding="utf-8").lower()
+
+
+def test_runtime_config_rewrites_staged_model_routing_file(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    staged_source_config = manifest_path.parent / "snapshot" / "profile" / "config.yaml"
+    staged_source_config.write_text(
+        "model:\n  provider: old\n  base_url: ''\n  api_key: old-key\n  api_mode: old-mode\n",
+        encoding="utf-8",
+    )
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=(sys.executable, "-c", "print('launch')"),
+        endpoint_port=19000,
+        provider_route="copilot",
+        model_routing=RuntimeModelRouting(
+            staged_config_file="profile/config.yaml",
+            provider_key="model.provider",
+            base_url_key="model.base_url",
+            api_key_key="model.api_key",
+            api_mode_key="model.api_mode",
+            resolved_provider="copilot",
+            resolved_api_mode="codex_responses",
+        ),
+    )
+    out = tmp_path / "sandbox-out"
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=out,
+        endpoint_url="http://127.0.0.1:19000",
+        provider="live",
+        protocol="openai_chat",
+        model="toy-model",
+        dry_run=False,
+        redact_paths=False,
+        run_step=lambda step, log: (log.parent.mkdir(parents=True, exist_ok=True), log.write_text("ok\n"), 0)[-1],
+        start_step=lambda step, log: (log.parent.mkdir(parents=True, exist_ok=True), log.write_text("ready\n"), LocalSandboxManagedProcess(name=step.name, pid=5100, log_path=log))[-1],
+    )
+
+    rewritten = yaml.safe_load((out / "sandbox" / "profile" / "config.yaml").read_text(encoding="utf-8"))
+    assert rewritten["model"]["provider"] == "copilot"
+    assert rewritten["model"]["base_url"] == "http://host.docker.internal:12435/copilot"
+    assert rewritten["model"]["api_key"] == "proxy-managed"
+    assert rewritten["model"]["api_mode"] == "codex_responses"
+
 
 
 def test_runtime_config_live_provider_writes_auth_proxy_routes(tmp_path: Path) -> None:
