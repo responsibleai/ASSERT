@@ -9,11 +9,24 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
+from assert_ai.core.config_model import (
+    EndpointConfig,
+    EvaluationConfig,
+    InferenceConfig,
+    JudgeConfig,
+    TargetConfig,
+    TesterConfig,
+    ToolsConfig,
+)
 from assert_ai.core.io import load_test_cases
 from assert_ai.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
 from assert_ai.core.session import TurnResult
-from assert_ai.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
+from assert_ai.stages.inference import (
+    _inference_config_fingerprint,
+    _prepare_test_cases,
+    _run_prompt_test_case,
+    run_inference,
+)
 from assert_ai.viewer_read_model import ViewerReadModelBuildError
 
 
@@ -52,6 +65,41 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
         # with the same test_case_id but different content must hash apart.
         self.assertNotEqual(hash_a, hash_no_seeds)
         self.assertNotEqual(hash_a, hash_b)
+
+    def test_inference_config_fingerprint_uses_endpoint_url_for_mapping_config(self) -> None:
+        target = TargetConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                protocol="openai_chat",
+                model="custom-agent",
+            )
+        )
+        evaluation = EvaluationConfig(
+            inference=InferenceConfig(max_turns=4, concurrency=1),
+            judge=JudgeConfig(model="azure/gpt-5.4"),
+            tester=TesterConfig(model="azure/gpt-5.4"),
+        )
+
+        self.assertEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(target, evaluation, 1024),
+        )
+        same_url_other_model = TargetConfig(
+            endpoint=EndpointConfig(
+                url="http://localhost:8000/v1/chat/completions",
+                protocol="openai_chat",
+                model="other-agent",
+            )
+        )
+        other_target = TargetConfig(endpoint="http://localhost:9000/chat")
+        self.assertNotEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(same_url_other_model, evaluation, 1024),
+        )
+        self.assertNotEqual(
+            _inference_config_fingerprint(target, evaluation, 1024),
+            _inference_config_fingerprint(other_target, evaluation, 1024),
+        )
 
     def test_prepare_test_cases_rejects_non_empty_seed_prompt_when_target_prompt_is_fixed(self) -> None:
         rows = [
@@ -1719,6 +1767,98 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                     save_dir=str(out_dir),
                     run_id="run-provider-error",
                 )
+
+    async def test_run_inference_records_tool_call_without_following_tool_result(self) -> None:
+        """A tool_calls-only assistant turn must still surface as judge-visible evidence.
+
+        Non-streaming OpenAI-compatible endpoints can return
+        finish_reason='tool_calls' with no separate role:tool result message
+        (the service executes the tool internally, or the harness only sees the
+        requested call). The transcript must still record a tool_call event so
+        the judge can cite tool/process behavior. Regression guard for the
+        endpoint-target tool-evidence gap.
+        """
+        test_case_rows = [{"type": "prompt", "seed": {"description": "use a tool"}}]
+
+        class FakeEndpointSession:
+            runtime_mode = "http_endpoint"
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def run_turn(self, messages):
+                user_text = ""
+                for msg in reversed(messages):
+                    if msg.role == "user":
+                        user_text = msg.text
+                        break
+                return TurnResult(
+                    text="",
+                    state_messages=list(messages) + [Message(role="assistant", content="")],
+                    interaction_messages=[
+                        {"role": "user", "content": user_text},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": "read_file",
+                                    "arguments": {"path": "README.md"},
+                                }
+                            ],
+                        },
+                    ],
+                    raw={"response": {"content": ""}},
+                )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            test_set_path = tmp_path / "test_set.jsonl"
+            out_dir = tmp_path / "run"
+            test_set_path.write_text(
+                "\n".join(json.dumps(row) for row in test_case_rows) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "assert_ai.stages.inference._build_target_session",
+                return_value=FakeEndpointSession(),
+            ):
+                await run_inference(
+                    test_set_path=str(test_set_path),
+                    target=TargetConfig(
+                        endpoint=EndpointConfig(
+                            url="http://localhost:8000/v1/chat/completions",
+                            protocol="openai_chat",
+                            model="custom-agent",
+                        )
+                    ),
+                    evaluation=EvaluationConfig(
+                        judge=JudgeConfig(model="azure/gpt-5.4"),
+                        inference=InferenceConfig(concurrency=1),
+                    ),
+                    save_dir=str(out_dir),
+                    run_id="run-tool-evidence",
+                )
+
+            inference_rows = [
+                json.loads(line)
+                for line in (out_dir / "inference_set.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(len(inference_rows), 1)
+        tool_events = [
+            event
+            for event in inference_rows[0]["events"]
+            if event["edit"]["type"] == "tool_call"
+        ]
+        self.assertEqual(len(tool_events), 1)
+        self.assertEqual(tool_events[0]["edit"]["tool_name"], "read_file")
+        self.assertEqual(tool_events[0]["edit"]["tool_args"], {"path": "README.md"})
 
     async def test_run_inference_fails_when_untyped_error_ratio_exceeds_threshold(self) -> None:
         """Untyped errors above the failure threshold abort the stage.

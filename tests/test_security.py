@@ -222,6 +222,16 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         with patch.dict("os.environ", {"ASSERT_ALLOW_PRIVATE_ENDPOINTS": "1"}):
             validate_endpoint_url("http://10.0.0.1/api")
 
+    def test_allow_localhost_flag_allows_loopback_ip_only(self) -> None:
+        validate_endpoint_url("http://127.0.0.1:18081/api", allow_localhost=True)
+        validate_endpoint_url("http://[::1]:18081/api", allow_localhost=True)
+        with self.assertRaises(ValueError, msg="blocked"):
+            validate_endpoint_url("http://10.0.0.1/api", allow_localhost=True)
+
+    def test_allow_localhost_flag_still_blocks_metadata_ips(self) -> None:
+        with self.assertRaises(ValueError, msg="blocked"):
+            validate_endpoint_url("http://169.254.169.254/latest/meta-data", allow_localhost=True)
+
 
 # ── sanitize_payload ───────────────────────────────────────────
 

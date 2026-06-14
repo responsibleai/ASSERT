@@ -121,6 +121,51 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                 },
             )
 
+    def test_parse_pipeline_config_accepts_openai_chat_endpoint_mapping(self) -> None:
+        parsed = parse_pipeline_config(
+            {
+                "pipeline": {
+                    "inference": {
+                        "target": {
+                            "endpoint": {
+                                "url": "http://localhost:8000/v1/chat/completions",
+                                "protocol": "openai_chat",
+                                "model": "custom-agent",
+                                "api_key_env": "ASSERT_TARGET_API_KEY",
+                                "stream": True,
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+        assert parsed is not None
+        assert parsed.target is not None
+        assert parsed.target.endpoint is not None
+        self.assertEqual(parsed.target.endpoint.url, "http://localhost:8000/v1/chat/completions")
+        self.assertEqual(parsed.target.endpoint.protocol, "openai_chat")
+        self.assertEqual(parsed.target.endpoint.model, "custom-agent")
+        self.assertEqual(parsed.target.endpoint.api_key_env, "ASSERT_TARGET_API_KEY")
+        self.assertEqual(parsed.target.endpoint.stream, True)
+
+    def test_parse_pipeline_config_rejects_openai_chat_endpoint_without_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, "target.endpoint.model is required when protocol is openai_chat"):
+            parse_pipeline_config(
+                {
+                    "pipeline": {
+                        "inference": {
+                            "target": {
+                                "endpoint": {
+                                    "url": "http://localhost:8000/v1/chat/completions",
+                                    "protocol": "openai_chat",
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+
     def test_load_runtime_context_reads_inference_target(self) -> None:
         context = load_runtime_context(
             {

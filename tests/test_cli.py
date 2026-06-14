@@ -97,6 +97,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         mock_runner.run_pipeline.assert_called_once()
         self.assertEqual(mock_runner.run_pipeline.call_args.kwargs["concurrency"], 5)
+        self.assertIn("elapsed:", result.output)
 
     def test_verbose_flag_accepted(self) -> None:
         result = self.runner.invoke(cli, ["-v", "--help"])

@@ -147,7 +147,12 @@ _LOCAL_DEV_HOSTNAMES = {
 }
 
 
-def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
+def validate_endpoint_url(
+    url: str,
+    *,
+    allow_private: bool = False,
+    allow_localhost: bool = False,
+) -> None:
     """Validate an HTTP endpoint URL to prevent SSRF attacks.
 
     Blocks requests to:
@@ -157,7 +162,9 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
 
     Args:
         url: The URL to validate.
-        allow_private: If True, skip private/internal IP checks (for local development).
+        allow_private: If True, skip private/internal IP checks (legacy local development escape hatch).
+        allow_localhost: If True, allow loopback endpoint URLs for explicit local-dev targets while
+            still blocking private networks and metadata endpoints.
 
     Raises ValueError if the URL is potentially dangerous.
     """
@@ -192,6 +199,8 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
     # Try to parse as IP address
     try:
         ip = ipaddress.ip_address(hostname)
+        if allow_localhost and ip.is_loopback:
+            return
         for network in _BLOCKED_IP_RANGES:
             if ip in network:
                 raise ValueError(
