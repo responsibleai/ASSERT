@@ -1641,6 +1641,198 @@ def stop_local_sandbox(state_path: str | Path, *, timeout_seconds: float = 5.0) 
     }
 
 
+
+
+
+def identity_mounts_for_runtime_command(runtime_command: tuple[str, ...] | list[str]) -> tuple[dict[str, str], ...]:
+    """Return extra identity mounts needed by an absolute symlink executable.
+
+    Path-bound Python virtualenvs commonly put ``venv/bin/python`` as a symlink
+    to a uv-managed interpreter outside the venv. Same-path bind mounts need that
+    interpreter tree as well, otherwise the copied venv executable starts but
+    cannot find its standard library.
+    """
+    if not runtime_command:
+        return ()
+    executable = Path(str(runtime_command[0])).expanduser()
+    if not executable.is_absolute() or not executable.is_symlink():
+        return ()
+    try:
+        raw_target = Path(os.readlink(executable))
+    except OSError:
+        return ()
+    if not raw_target.is_absolute():
+        raw_target = executable.parent / raw_target
+    if raw_target.parent.name == "bin" and raw_target.name.startswith("python"):
+        mount_root = raw_target.parent.parent
+    else:
+        mount_root = raw_target.parent
+    if not mount_root.exists():
+        try:
+            resolved = executable.resolve(strict=True)
+        except OSError:
+            return ()
+        mount_root = resolved.parent.parent if resolved.parent.name == "bin" and resolved.name.startswith("python") else resolved.parent
+    return ({"host_path": str(mount_root), "container_path": str(mount_root), "mode": "ro"},)
+
+def _sanitize_container_name(name: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "-", name).strip("-._")
+    return safe[:120] or "assert-local-agent"
+
+def start_plain_docker_sandbox(
+    *,
+    snapshot_manifest_path: str | Path,
+    target: str,
+    runtime_command: tuple[str, ...] | list[str],
+    identity_staging: tuple[dict[str, str], ...] | list[dict[str, str]],
+    endpoint_url: str,
+    runtime_port: int,
+    host_port: int,
+    health_url: str | None,
+    output_dir: str | Path,
+    extra_mounts: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+    container_env: dict[str, str] | None = None,
+    protocol: str = "openai_chat",
+    model: str | None = None,
+    api_key_env: str | None = None,
+    api_key_env_file: str | Path | None = None,
+    docker_image: str = "docker/sandbox-templates:shell",
+    container_name: str | None = None,
+    redact_paths: bool = True,
+    health_timeout_seconds: float = 60.0,
+    start_process: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
+    wait_for_health: Callable[..., None] = _wait_for_health,
+) -> LocalSandboxStartResult:
+    """Start a copied local agent in a plain Docker container via identity mounts.
+
+    This backend is intentionally simpler than the RAMPART/Docker Sandbox path:
+    snapshot roots are bind-mounted at the original absolute paths declared by
+    the agent config, so path-bound runtimes such as Python virtualenvs can boot
+    without rewriting shebangs or editable-install finders.
+    """
+
+    if not runtime_command:
+        raise ValueError("runtime_command is required for the docker-run backend")
+    if not identity_staging:
+        raise ValueError("identity_staging is required for the docker-run backend")
+
+    manifest_path = Path(snapshot_manifest_path).expanduser().resolve()
+    output = Path(output_dir).expanduser().resolve()
+    manifest = _load_snapshot_manifest(manifest_path)
+    _check_manifest_target(manifest, target)
+    endpoint = _endpoint_config(
+        endpoint_url=endpoint_url,
+        protocol=protocol,
+        model=model,
+        api_key_env=api_key_env,
+        stream=False,
+    )
+    validate_endpoint_url(endpoint["url"], allow_localhost=True)
+    if health_url:
+        validate_endpoint_url(health_url, allow_localhost=True)
+
+    output.mkdir(parents=True, exist_ok=True)
+    logs_dir = output / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stderr_log = logs_dir / "docker-run.stderr.log"
+    sandbox_root = Path(manifest_path.parent / str(manifest.get("snapshot_root", "snapshot"))).resolve()
+    if not sandbox_root.exists():
+        sandbox_root = _stage_snapshot(manifest_path=manifest_path, manifest=manifest, output_dir=output)
+
+    name = container_name or _sanitize_container_name(f"assert-{target}")
+    args = ["docker", "run", "--rm", "--name", name, "-p", f"{host_port}:{runtime_port}"]
+    for key, value in sorted((container_env or {}).items()):
+        args.extend(["-e", f"{key}={value}"])
+    redacted_mounts: list[dict[str, str]] = []
+    for entry in identity_staging:
+        snapshot_path = entry["snapshot_path"]
+        container_path = entry["container_path"]
+        host_path = (sandbox_root / snapshot_path).resolve()
+        if not host_path.exists():
+            raise ValueError(f"identity staging source does not exist: {snapshot_path}")
+        args.extend(["-v", f"{host_path}:{container_path}:rw"])
+        redacted_mounts.append({
+            "snapshot_path": snapshot_path,
+            "container_path": _redact_local_string(container_path, redact_paths=redact_paths),
+        })
+    for entry in extra_mounts:
+        host_path = Path(entry["host_path"]).expanduser().resolve()
+        container_path = entry["container_path"]
+        mode = entry.get("mode", "ro")
+        if not host_path.exists():
+            raise ValueError(f"extra mount source does not exist: {host_path}")
+        args.extend(["-v", f"{host_path}:{container_path}:{mode}"])
+        redacted_mounts.append({
+            "snapshot_path": "[external]",
+            "container_path": _redact_local_string(container_path, redact_paths=redact_paths),
+            "mode": mode,
+        })
+    args.extend([docker_image, "bash", "-lc", shlex.join(runtime_command)])
+
+    process: subprocess.Popen[str] | None = None
+    try:
+        with stderr_log.open("w", encoding="utf-8") as stderr_handle:
+            process = start_process(
+                args,
+                cwd=output,
+                stderr=stderr_handle,
+                stdout=subprocess.DEVNULL,
+                text=True,
+                start_new_session=True,
+            )
+        if health_url:
+            wait_for_health(health_url, timeout_seconds=health_timeout_seconds)
+
+        state_path = output / "sandbox_state.json"
+        config_path = output / "endpoint_target.yaml"
+        state = {
+            "schema_version": 1,
+            "target": target,
+            "backend": "docker-run",
+            "status": "running",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "snapshot": {
+                "manifest": _path_value(manifest_path, redact_paths=redact_paths),
+                "snapshot_root": "snapshot" if redact_paths else str(sandbox_root),
+                "copied_roots": manifest.get("copied_roots", []),
+            },
+            "endpoint": endpoint,
+            "endpoint_auth_env_file": _path_value(Path(api_key_env_file), redact_paths=redact_paths) if api_key_env_file else None,
+            "health_url": health_url,
+            "docker": {
+                "image": docker_image,
+                "container": name,
+                "mounts": redacted_mounts,
+            },
+            "processes": [
+                {
+                    "name": "docker-run",
+                    "pid": process.pid,
+                    "log_path": _path_value(stderr_log, redact_paths=redact_paths),
+                }
+            ],
+            "cleanup": {
+                "docker_rm": f"docker rm -f {name}",
+            },
+        }
+        write_json(state_path, state)
+        _write_endpoint_target_config(config_path, endpoint)
+        return LocalSandboxStartResult(
+            state_path=state_path,
+            config_path=config_path,
+            sandbox_root=sandbox_root,
+            endpoint_url=endpoint_url,
+            process=process,
+        )
+    except Exception:
+        if process is not None and process.poll() is None:
+            try:
+                process.send_signal(signal.SIGTERM)
+                process.wait(timeout=5)
+            except Exception:
+                process.kill()
+        raise
+
 def start_local_sandbox(
     *,
     snapshot_manifest_path: str | Path,

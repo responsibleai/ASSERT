@@ -1726,3 +1726,229 @@ def test_cli_local_sandbox_start_writes_state_and_config(tmp_path: Path) -> None
     import signal
 
     os.kill(state["processes"][0]["pid"], signal.SIGTERM)
+
+
+def test_docker_run_backend_mounts_identity_roots_and_maps_endpoint(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / "snapshot"
+    (snapshot_root / ".hermes").mkdir(parents=True)
+    (snapshot_root / ".hermes" / "config.yaml").write_text("model: {}\n", encoding="utf-8")
+    manifest = {
+        "schema_version": 1,
+        "target": "hermes-default",
+        "source": "agent_config",
+        "snapshot_root": "snapshot",
+        "copied_roots": [
+            {"source": "[LOCAL_PATH]", "dest": ".hermes", "files_copied": 1, "bytes_copied": 10},
+        ],
+        "excluded_files": [],
+    }
+    manifest_path = tmp_path / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Uses a harmless command and a fake docker runner so the test verifies the
+    # product contract without requiring Docker.
+    docker_calls: list[list[str]] = []
+
+    def fake_start(args, **kwargs):
+        docker_calls.append(args)
+        class Proc:
+            pid = 12345
+            def poll(self): return None
+            def send_signal(self, sig): pass
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+        return Proc()
+
+    from assert_ai.local_sandbox import start_plain_docker_sandbox
+
+    result = start_plain_docker_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="hermes-default",
+        runtime_command=("python", "-m", "http.server", "8642"),
+        identity_staging=(
+            {"snapshot_path": ".hermes", "container_path": "/home/user/.hermes"},
+        ),
+        endpoint_url="http://127.0.0.1:18081/v1/chat/completions",
+        runtime_port=8642,
+        host_port=18081,
+        health_url="http://127.0.0.1:18081/health",
+        protocol="openai_chat",
+        model="hermes-agent",
+        output_dir=tmp_path / "out",
+        docker_image="docker/sandbox-templates:shell",
+        start_process=fake_start,
+        wait_for_health=lambda url, timeout_seconds: None,
+        redact_paths=True,
+    )
+
+    assert docker_calls, "docker run should be invoked"
+    args = docker_calls[0]
+    assert args[:3] == ["docker", "run", "--rm"]
+    assert "-p" in args
+    assert "18081:8642" in args
+    assert "-v" in args
+    mount_specs = [args[index + 1] for index, value in enumerate(args) if value == "-v"]
+    assert any(spec.endswith(":/home/user/.hermes:rw") for spec in mount_specs)
+    assert result.endpoint_url == "http://127.0.0.1:18081/v1/chat/completions"
+    state = json.loads((tmp_path / "out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    assert state["backend"] == "docker-run"
+    assert "/home/user" not in json.dumps(state)
+    assert state["endpoint"]["protocol"] == "openai_chat"
+
+
+def test_cli_sandbox_start_config_supports_docker_run_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot_root = tmp_path / "snapshot"
+    (snapshot_root / ".hermes").mkdir(parents=True)
+    (snapshot_root / ".hermes" / "config.yaml").write_text("model: {}\n", encoding="utf-8")
+    manifest = {
+        "schema_version": 1,
+        "target": "hermes-default",
+        "source": "agent_config",
+        "snapshot_root": "snapshot",
+        "copied_roots": [{"source": "[LOCAL_PATH]", "dest": ".hermes", "files_copied": 1, "bytes_copied": 10}],
+        "excluded_files": [],
+    }
+    manifest_path = tmp_path / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    config_path = tmp_path / "agent.yaml"
+    config_path.write_text(
+        """
+id: hermes-default
+roots:
+  - source: /home/user/.hermes
+launch:
+  command: [python, -m, http.server, '8642']
+endpoint:
+  url: http://127.0.0.1:8642/v1/chat/completions
+  protocol: openai_chat
+  model: hermes-agent
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    def fake_start_plain(**kwargs):
+        calls.append(kwargs)
+        out = kwargs["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        state = out / "sandbox_state.json"
+        target_cfg = out / "endpoint_target.yaml"
+        state.write_text(json.dumps({"backend": "docker-run", "status": "running", "endpoint": {"url": kwargs["endpoint_url"]}}), encoding="utf-8")
+        target_cfg.write_text("endpoint:\n  url: http://127.0.0.1:18081/v1/chat/completions\n", encoding="utf-8")
+        class Result:
+            state_path = state
+            config_path = target_cfg
+            endpoint_url = kwargs["endpoint_url"]
+            process = None
+        return Result()
+
+    monkeypatch.setattr("assert_ai.local_sandbox.start_plain_docker_sandbox", fake_start_plain)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local", "sandbox", "start",
+            "--snapshot", str(manifest_path),
+            "--config", str(config_path),
+            "--backend", "docker-run",
+            "--output-dir", str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls
+    assert calls[0]["runtime_port"] == 8642
+    assert calls[0]["host_port"] == 18081
+    assert calls[0]["endpoint_url"] == "http://127.0.0.1:18081/v1/chat/completions"
+    env_file = calls[0]["api_key_env_file"]
+    assert env_file.exists()
+    assert env_file.stat().st_mode & 0o777 == 0o600
+    assert env_file.read_text(encoding="utf-8").startswith("export ASSERT_LOCAL_AGENT_API_KEY_")
+
+
+def test_docker_run_backend_adds_runtime_command_symlink_target_mount(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    interpreter_root = tmp_path / "uv" / "cpython-3.11-linux-x86_64-gnu"
+    (runtime_root / "venv" / "bin").mkdir(parents=True)
+    (interpreter_root / "bin").mkdir(parents=True)
+    (interpreter_root / "lib" / "python3.11").mkdir(parents=True)
+    python_bin = interpreter_root / "bin" / "python3.11"
+    python_bin.write_text("python", encoding="utf-8")
+    link = runtime_root / "venv" / "bin" / "python"
+    link.symlink_to(python_bin)
+
+    from assert_ai.local_sandbox import identity_mounts_for_runtime_command
+
+    mounts = identity_mounts_for_runtime_command((str(link), "-m", "hermes_cli.main"))
+
+    assert mounts == (
+        {"host_path": str(interpreter_root), "container_path": str(interpreter_root), "mode": "ro"},
+    )
+
+
+def test_docker_run_backend_preserves_runtime_command_raw_symlink_alias(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    uv_root = tmp_path / "uv"
+    real_root = uv_root / "cpython-3.11.15-linux-x86_64-gnu"
+    alias_root = uv_root / "cpython-3.11-linux-x86_64-gnu"
+    (runtime_root / "venv" / "bin").mkdir(parents=True)
+    (real_root / "bin").mkdir(parents=True)
+    (real_root / "lib" / "python3.11").mkdir(parents=True)
+    python_bin = real_root / "bin" / "python3.11"
+    python_bin.write_text("python", encoding="utf-8")
+    alias_root.symlink_to(real_root)
+    link = runtime_root / "venv" / "bin" / "python"
+    link.symlink_to(alias_root / "bin" / "python3.11")
+
+    from assert_ai.local_sandbox import identity_mounts_for_runtime_command
+
+    mounts = identity_mounts_for_runtime_command((str(link), "-m", "hermes_cli.main"))
+
+    assert mounts == (
+        {"host_path": str(alias_root), "container_path": str(alias_root), "mode": "ro"},
+    )
+
+
+def test_docker_run_backend_passes_container_environment(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / "snapshot"
+    (snapshot_root / ".hermes").mkdir(parents=True)
+    manifest = {
+        "schema_version": 1,
+        "target": "hermes-default",
+        "source": "agent_config",
+        "snapshot_root": "snapshot",
+        "copied_roots": [{"source": "[LOCAL_PATH]", "dest": ".hermes", "files_copied": 0, "bytes_copied": 0}],
+        "excluded_files": [],
+    }
+    manifest_path = tmp_path / "snapshot_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    docker_calls = []
+    def fake_start(args, **kwargs):
+        docker_calls.append(args)
+        class Proc:
+            pid = 12345
+            def poll(self): return None
+            def send_signal(self, sig): pass
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+        return Proc()
+    from assert_ai.local_sandbox import start_plain_docker_sandbox
+    start_plain_docker_sandbox(
+        snapshot_manifest_path=manifest_path,
+        target="hermes-default",
+        runtime_command=("sleep", "999"),
+        identity_staging=({"snapshot_path": ".hermes", "container_path": "/home/user/.hermes"},),
+        endpoint_url="http://127.0.0.1:18081/v1/chat/completions",
+        runtime_port=8642,
+        host_port=18081,
+        health_url=None,
+        output_dir=tmp_path / "out",
+        model="hermes-agent",
+        container_env={"API_SERVER_ENABLED": "true", "API_SERVER_KEY": "probe-secret"},
+        start_process=fake_start,
+    )
+    args = docker_calls[0]
+    env_pairs = [args[index + 1] for index, value in enumerate(args) if value == "-e"]
+    assert "API_SERVER_ENABLED=true" in env_pairs
+    assert "API_SERVER_KEY=probe-secret" in env_pairs

@@ -65,9 +65,11 @@ def test_bridge_maps_core_fields() -> None:
     assert runtime_config.id == "hermes-default-wsl"
     assert runtime_config.harness == "rampart-docker"
     # The agent's launch.command is the command to run inside the copied runtime.
-    # It is NOT a host-side sandbox launcher, so it must not be executed by the
-    # generic backend as launch_command.
-    assert runtime_config.launch_command is None
+    # The generic backend supplies its own sandbox launcher wrapper as launch_command.
+    assert runtime_config.launch_command is not None
+    assert "start_openclaw_sandbox.ps1" in " ".join(runtime_config.launch_command)
+    assert "{runtime_command_file}" in runtime_config.launch_command
+    assert "{identity_staging_file}" in runtime_config.launch_command
     assert runtime_config.runtime_command == (
         "/home/u/.hermes/hermes-agent/venv/bin/python",
         "-m",

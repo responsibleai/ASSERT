@@ -8,10 +8,13 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import time
 
 from datetime import datetime, timezone
 from pathlib import Path
+import secrets
+import sys
 from typing import Any, Callable, Iterable, Optional
 
 import click
@@ -811,7 +814,7 @@ def local_sandbox():
 @click.option("--config", "agent_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Agent runtime-config YAML (the agent's self-report). Primary generic path: derives target, launch, endpoint, and routing from this one file.")
 @click.option("--target", default=None, help="Agent ID expected in the snapshot manifest. Derived from --config when omitted.")
 @click.option("--runtime-config", "runtime_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Low-level runtime launch-config YAML. Advanced; prefer --config.", hidden=True)
-@click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
+@click.option("--backend", type=click.Choice(["docker", "docker-run", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
 @click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.", hidden=True)
 @click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.", hidden=True)
 @click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.", hidden=True)
@@ -868,9 +871,11 @@ def local_sandbox_start(
         DockerSandboxBackend,
         build_descriptor_from_runtime_config,
         build_runtime_config_from_agent_config,
+        identity_mounts_for_runtime_command,
         load_runtime_config,
         start_local_sandbox,
         start_openclaw_docker_sandbox,
+        start_plain_docker_sandbox,
     )
 
     started_at = time.perf_counter()
@@ -897,8 +902,14 @@ def local_sandbox_start(
             if agent_config.endpoint.model and model is None:
                 model = agent_config.endpoint.model
             ep_port = agent_config.endpoint.port
-            if ep_port and endpoint_url == "http://127.0.0.1:18081":
-                endpoint_url = f"http://127.0.0.1:{ep_port}"
+            if endpoint_url == "http://127.0.0.1:18081":
+                if backend == "docker-run":
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(agent_config.endpoint.url or "")
+                    endpoint_url = f"http://127.0.0.1:{endpoint_port}{parsed.path or ''}"
+                elif ep_port:
+                    endpoint_url = f"http://127.0.0.1:{ep_port}"
         if agent_config.model_routing and agent_config.model_routing.resolved_provider and provider == "mock":
             provider = "copilot"
 
@@ -924,6 +935,46 @@ def local_sandbox_start(
                 model=model,
                 api_key_env=api_key_env,
                 stream=stream,
+                output_dir=run_dir,
+                redact_paths=not show_paths,
+            )
+            prepared_only = False
+        elif backend == "docker-run":
+            if agent_config is None:
+                raise ValueError("--backend docker-run requires --config")
+            runtime_config = build_runtime_config_from_agent_config(agent_config)
+            if not runtime_config.runtime_command:
+                raise ValueError("agent config must include launch.command for --backend docker-run")
+            if not runtime_config.identity_staging:
+                raise ValueError("agent config must declare roots for --backend docker-run")
+            runtime_port = agent_config.endpoint.port if agent_config.endpoint and agent_config.endpoint.port else runtime_config.endpoint_port
+            api_key_env_name = f"ASSERT_LOCAL_AGENT_API_KEY_{_local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest).replace('-', '_').upper()}"
+            api_key_value = secrets.token_urlsafe(24)
+            os.environ[api_key_env_name] = api_key_value
+            endpoint_auth_env_file = run_dir / "endpoint_auth.env"
+            endpoint_auth_env_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint_auth_env_file.write_text(f"export {api_key_env_name}={api_key_value}\n", encoding="utf-8")
+            endpoint_auth_env_file.chmod(0o600)
+            result = start_plain_docker_sandbox(
+                snapshot_manifest_path=snapshot_manifest,
+                target=target,
+                runtime_command=runtime_config.runtime_command,
+                identity_staging=runtime_config.identity_staging,
+                endpoint_url=endpoint_url,
+                runtime_port=runtime_port,
+                host_port=endpoint_port,
+                health_url=health_url or f"http://127.0.0.1:{endpoint_port}/health",
+                extra_mounts=identity_mounts_for_runtime_command(runtime_config.runtime_command),
+                container_env={
+                    "API_SERVER_ENABLED": "true",
+                    "API_SERVER_HOST": "0.0.0.0",
+                    "API_SERVER_PORT": str(runtime_port),
+                    "API_SERVER_KEY": api_key_value,
+                },
+                protocol=protocol,
+                model=model,
+                api_key_env=api_key_env_name,
+                api_key_env_file=endpoint_auth_env_file,
                 output_dir=run_dir,
                 redact_paths=not show_paths,
             )
