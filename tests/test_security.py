@@ -203,16 +203,17 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         with patch("assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
             validate_endpoint_url("https://api.example.com/v1/chat")
 
-    def test_localhost_skips_dns_resolution(self) -> None:
-        """localhost is in _LOCAL_DEV_HOSTNAMES — blocked by IP range but not by DNS check."""
-        # localhost resolves to 127.0.0.1 which IS in blocked ranges, but the
-        # hostname literal "localhost" is checked as an IP parse first (fails),
-        # then skipped from DNS resolution. However 'localhost' is NOT in
-        # _BLOCKED_HOSTNAMES, so it passes the hostname check.
-        # The IP literal check only fires for actual IP addresses.
-        # Net: localhost passes because it's in _LOCAL_DEV_HOSTNAMES.
+    def test_localhost_hostname_blocked_without_explicit_local_dev(self) -> None:
+        """localhost hostnames require the same explicit local-dev opt-in as loopback IPs."""
         with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
-            validate_endpoint_url("http://localhost:8080/api")
+            with self.assertRaises(ValueError):
+                validate_endpoint_url("http://localhost:8080/api")
+            mock_dns.assert_not_called()
+
+    def test_allow_localhost_flag_allows_localhost_hostname(self) -> None:
+        with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
+            validate_endpoint_url("http://localhost:8080/api", allow_localhost=True)
+            validate_endpoint_url("http://localhost.localdomain:8080/api", allow_localhost=True)
             mock_dns.assert_not_called()
 
     def test_allow_private_flag_skips_all_checks(self) -> None:

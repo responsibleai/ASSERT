@@ -209,9 +209,16 @@ def validate_endpoint_url(
     except ValueError as e:
         if "blocked" in str(e).lower():
             raise
-        # Not an IP literal — resolve hostname and check resulting IPs
-        if hostname.lower() not in _LOCAL_DEV_HOSTNAMES:
-            _validate_resolved_ips(hostname)
+        # Not an IP literal. Local-dev hostnames are allowed only behind the explicit
+        # allow_localhost opt-in; otherwise they are loopback SSRF targets just like
+        # 127.0.0.1.
+        if hostname.lower() in _LOCAL_DEV_HOSTNAMES:
+            if allow_localhost:
+                return
+            raise ValueError(
+                f"URL hostname '{hostname}' is blocked (loopback hostname requires local_dev)"
+            )
+        _validate_resolved_ips(hostname)
 
 
 def _validate_resolved_ips(hostname: str) -> None:
