@@ -946,15 +946,15 @@ def local_sandbox_start(
             if not runtime_config.identity_staging:
                 raise ValueError("agent config must declare roots for --backend docker-run")
             runtime_port = agent_config.endpoint.port if agent_config.endpoint and agent_config.endpoint.port else runtime_config.endpoint_port
-            api_key_env_name = f"ASSERT_LOCAL_AGENT_API_KEY_{_local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest).replace('-', '_').upper()}"
-            # Local docker-run endpoint auth is a disposable localhost guard, not a
-            # credential. Use a deterministic sentinel instead of generating and
-            # persisting a secret; provider credentials stay behind the auth proxy.
+            endpoint_auth_env_name = f"ASSERT_LOCAL_AGENT_ENDPOINT_TOKEN_{_local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest).replace('-', '_').upper()}"
+            # docker-run is bound to localhost for local dogfood. This is a
+            # non-secret endpoint guard value; provider credentials stay behind
+            # the host-side auth proxy.
             endpoint_auth_value = "assert-local-dev"
-            os.environ[api_key_env_name] = endpoint_auth_value
+            os.environ[endpoint_auth_env_name] = endpoint_auth_value
             endpoint_auth_env_file = run_dir / "endpoint_auth.env"
             endpoint_auth_env_file.parent.mkdir(parents=True, exist_ok=True)
-            endpoint_auth_env_file.write_text(f"export {api_key_env_name}={endpoint_auth_value}\n", encoding="utf-8")
+            endpoint_auth_env_file.write_text(f"export {endpoint_auth_env_name}={endpoint_auth_value}\n", encoding="utf-8")
             endpoint_auth_env_file.chmod(0o600)
             docker_container_env = {
                 "API_SERVER_ENABLED": "true",
@@ -991,7 +991,7 @@ def local_sandbox_start(
                 container_env=docker_container_env,
                 protocol=protocol,
                 model=model,
-                api_key_env=api_key_env_name,
+                api_key_env=endpoint_auth_env_name,
                 api_key_env_file=endpoint_auth_env_file,
                 output_dir=run_dir,
                 redact_paths=not show_paths,

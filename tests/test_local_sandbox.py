@@ -1957,7 +1957,7 @@ endpoint:
     env_file = calls[0]["api_key_env_file"]
     assert env_file.exists()
     assert env_file.stat().st_mode & 0o777 == 0o600
-    assert env_file.read_text(encoding="utf-8").startswith("export ASSERT_LOCAL_AGENT_API_KEY_")
+    assert env_file.read_text(encoding="utf-8").startswith("export ASSERT_LOCAL_AGENT_ENDPOINT_TOKEN_")
 
 
 
