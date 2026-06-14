@@ -808,8 +808,9 @@ def local_sandbox():
 
 @local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
 @click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
-@click.option("--target", required=True, help="Agent ID expected in the snapshot manifest.")
-@click.option("--runtime-config", "runtime_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Runtime config YAML for non-OpenClaw sandbox targets.")
+@click.option("--config", "agent_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Agent runtime-config YAML (the agent's self-report). Primary generic path: derives target, launch, endpoint, and routing from this one file.")
+@click.option("--target", default=None, help="Agent ID expected in the snapshot manifest. Derived from --config when omitted.")
+@click.option("--runtime-config", "runtime_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Low-level runtime launch-config YAML. Advanced; prefer --config.", hidden=True)
 @click.option("--backend", type=click.Choice(["docker", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
 @click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.", hidden=True)
 @click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.", hidden=True)
@@ -835,7 +836,8 @@ def local_sandbox():
 @click.option("--show-paths", is_flag=True, help="Write local absolute paths in state instead of redacted placeholders. Advanced option.", hidden=True)
 def local_sandbox_start(
     snapshot_manifest: Path,
-    target: str,
+    agent_config_path: Path | None,
+    target: str | None,
     runtime_config_path: Path | None,
     backend: str,
     command_text: str | None,
@@ -862,9 +864,48 @@ def local_sandbox_start(
     show_paths: bool,
 ):
     """Stage a copied snapshot and start a local sandbox endpoint."""
-    from assert_ai.local_sandbox import DockerSandboxBackend, build_descriptor_from_runtime_config, load_runtime_config, start_local_sandbox, start_openclaw_docker_sandbox
+    from assert_ai.local_sandbox import (
+        DockerSandboxBackend,
+        build_descriptor_from_runtime_config,
+        build_runtime_config_from_agent_config,
+        load_runtime_config,
+        start_local_sandbox,
+        start_openclaw_docker_sandbox,
+    )
 
     started_at = time.perf_counter()
+
+    # --config is the primary generic path: the agent's self-report drives
+    # target, launch, endpoint, and routing. Derive everything from it up front.
+    agent_config = None
+    if agent_config_path is not None:
+        if runtime_config_path is not None:
+            _error("use either --config or --runtime-config, not both")
+            return
+        from assert_ai.local_agent_config import load_agent_config
+
+        try:
+            agent_config = load_agent_config(agent_config_path)
+        except ValueError as exc:
+            _error(str(exc))
+            return
+        if target is None:
+            target = agent_config.id
+        if agent_config.endpoint is not None:
+            if agent_config.endpoint.protocol:
+                protocol = agent_config.endpoint.protocol
+            if agent_config.endpoint.model and model is None:
+                model = agent_config.endpoint.model
+            ep_port = agent_config.endpoint.port
+            if ep_port and endpoint_url == "http://127.0.0.1:18081":
+                endpoint_url = f"http://127.0.0.1:{ep_port}"
+        if agent_config.model_routing and agent_config.model_routing.resolved_provider and provider == "mock":
+            provider = "copilot"
+
+    if target is None:
+        _error("provide --config <agent.yaml> or --target <id>")
+        return
+
     run_dir = output_dir or _local_sandbox_run_dir(target=target, snapshot_manifest=snapshot_manifest)
     generated_sandbox_name = sandbox_name or _local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest)
 
@@ -888,18 +929,27 @@ def local_sandbox_start(
             )
             prepared_only = False
         else:
-            if runtime_config_path is not None:
-                runtime_config = load_runtime_config(runtime_config_path)
+            if agent_config is not None or runtime_config_path is not None:
+                from dataclasses import replace
+
+                if agent_config is not None:
+                    runtime_config = build_runtime_config_from_agent_config(agent_config)
+                    if rampart_root is not None:
+                        runtime_config = replace(runtime_config, rampart_root=str(rampart_root))
+                else:
+                    assert runtime_config_path is not None
+                    runtime_config = load_runtime_config(runtime_config_path)
                 descriptor = build_descriptor_from_runtime_config(runtime_config)
                 config_endpoint_url = endpoint_url
                 if endpoint_url == "http://127.0.0.1:18081":
                     config_endpoint_url = f"http://127.0.0.1:{runtime_config.endpoint_port}"
+                docker_provider = "live" if provider.lower() == "copilot" else provider.lower()
                 result = DockerSandboxBackend(descriptor=descriptor).start(
                     snapshot_manifest_path=snapshot_manifest,
                     target=target,
                     output_dir=run_dir,
                     endpoint_url=config_endpoint_url,
-                    provider=provider.lower(),
+                    provider=docker_provider,
                     protocol=protocol,
                     model=model if protocol == "openai_chat" else None,
                     api_key_env=api_key_env,

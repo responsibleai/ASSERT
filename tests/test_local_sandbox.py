@@ -826,6 +826,65 @@ cleanup_labels:
     assert "openclaw" not in (tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8").lower()
 
 
+def test_cli_local_sandbox_start_drives_generic_run_from_agent_config(tmp_path: Path) -> None:
+    # The payoff: a single self-introspected agent-config drives the generic run.
+    # No --runtime-config, no --target -- everything is derived from the one file.
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    rampart_root = tmp_path / "rampart-scripts"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# proxy\n", encoding="utf-8")
+    agent_config_path = tmp_path / "agent.yaml"
+    agent_config_path.write_text(
+        """
+id: toy-agent
+display_name: Toy Agent
+roots:
+  - source: ~/.toy
+launch:
+  command:
+    - python
+    - -c
+    - print('launch {sandbox_name} {endpoint_port}')
+endpoint:
+  url: http://127.0.0.1:19000/v1/chat/completions
+  protocol: openai_chat
+  model: toy-model
+model_routing:
+  resolved_provider: copilot
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local",
+            "sandbox",
+            "start",
+            "--snapshot",
+            str(manifest_path),
+            "--config",
+            str(agent_config_path),
+            "--rampart-root",
+            str(rampart_root),
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "sandbox-out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared local-agent sandbox" in result.output
+    state = json.loads((tmp_path / "sandbox-out" / "sandbox_state.json").read_text(encoding="utf-8"))
+    # target derived from the agent-config id
+    assert state["target"] == "toy-agent"
+    # endpoint protocol/model derived from the agent-config endpoint
+    assert state["endpoint"]["protocol"] == "openai_chat"
+    assert state["endpoint"]["model"] == "toy-model"
+    # launch command derived from the agent-config launch (port from endpoint url)
+    launch = next(step for step in state["plan"]["steps"] if step["name"] == "launch_rampart_sandbox")
+    assert "19000" in " ".join(launch["command"])
+
 
 def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
