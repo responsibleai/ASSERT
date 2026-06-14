@@ -95,7 +95,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_endpoint_protocol_preserves_legacy_payload_and_response(self) -> None:
         client = _FakeClientSession({"response": "legacy answer"})
-        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat")
+        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat", local_dev=True)
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
 
@@ -136,6 +136,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
             protocol="openai_chat",
             model="custom-agent",
             headers={"Authorization": "Bearer secret-token"},
+            local_dev=True,
         )
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
@@ -180,6 +181,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
             protocol="openai_chat",
             model="custom-agent",
             stream=True,
+            local_dev=True,
         )
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
@@ -210,6 +212,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
             protocol="openai_chat",
             model="custom-agent",
             stream=True,
+            local_dev=True,
         )
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
@@ -253,7 +256,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
                 "metadata": {"runtime": "test-agent"},
             }
         )
-        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat")
+        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat", local_dev=True)
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
 
@@ -276,7 +279,7 @@ class HTTPEndpointSessionTest(unittest.IsolatedAsyncioTestCase):
                 },
             }
         )
-        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat")
+        session = HTTPEndpointSession(endpoint="http://localhost:8787/chat", local_dev=True)
         setattr(session, "_aiohttp", object())
         setattr(session, "_session", client)
 
