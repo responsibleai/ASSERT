@@ -586,6 +586,37 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
     )
 
 
+def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchConfig:
+    """Derive a RuntimeLaunchConfig from an agent's self-introspected config.
+
+    This is the bridge that makes a generic run possible from the single file the
+    introspection step emits: it maps the agent's declared launch command,
+    endpoint, and model routing onto the RAMPART Docker harness the backend
+    already drives. Runtime-specific knowledge comes from the self-report, not
+    from hand-authored per-runtime code.
+    """
+
+    launch = getattr(agent_config, "launch", None)
+    if launch is None or not getattr(launch, "command", None):
+        raise ValueError("agent config requires a launch command to start a sandbox")
+
+    endpoint = getattr(agent_config, "endpoint", None)
+    endpoint_port = (endpoint.port if endpoint and endpoint.port else 18081)
+
+    routing = getattr(agent_config, "model_routing", None)
+    provider_route = getattr(routing, "resolved_provider", None) if routing else None
+
+    return RuntimeLaunchConfig(
+        id=agent_config.id,
+        harness="rampart-docker",
+        runtime_profile=agent_config.id,
+        launch_command=tuple(launch.command),
+        endpoint_port=int(endpoint_port),
+        provider_route=provider_route,
+        rampart_root=_default_rampart_root(),
+    )
+
+
 def _tuple_from_sequence(value: Any, *, field_name: str) -> tuple[str, ...]:
     if value is None:
         return ()
