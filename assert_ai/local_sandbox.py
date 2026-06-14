@@ -399,67 +399,188 @@ def _write_live_auth_proxy_config(path: Path, *, provider_route: str) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _set_dotted_key(payload: dict[str, Any], dotted_key: str, value: Any) -> None:
-    parts = [part for part in dotted_key.split(".") if part]
+def _parse_config_path(path: str) -> list[str | int]:
+    if not path:
+        raise ValueError("model_routing key must not be empty")
+    parts: list[str | int] = []
+    for raw_part in [part for part in path.split(".") if part]:
+        remainder = raw_part
+        while remainder:
+            if "[" not in remainder:
+                parts.append(int(remainder) if remainder.isdigit() else remainder)
+                break
+            prefix, rest = remainder.split("[", 1)
+            if prefix:
+                parts.append(prefix)
+            index_text, sep, after = rest.partition("]")
+            if not sep or not index_text.isdigit():
+                raise ValueError(f"unsupported model_routing path segment: {raw_part}")
+            parts.append(int(index_text))
+            remainder = after
     if not parts:
         raise ValueError("model_routing key must not be empty")
-    cursor: dict[str, Any] = payload
-    for part in parts[:-1]:
+    return parts
+
+
+def _set_config_path(payload: dict[str, Any], path: str, value: Any) -> None:
+    parts = _parse_config_path(path)
+    cursor: Any = payload
+    for idx, part in enumerate(parts[:-1]):
+        next_part = parts[idx + 1]
+        if isinstance(part, int):
+            if not isinstance(cursor, list):
+                raise ValueError(f"cannot index non-list while setting model_routing path: {path}")
+            while len(cursor) <= part:
+                cursor.append({} if isinstance(next_part, str) else [])
+            if not isinstance(cursor[part], (dict, list)):
+                cursor[part] = {} if isinstance(next_part, str) else []
+            cursor = cursor[part]
+            continue
+        if not isinstance(cursor, dict):
+            raise ValueError(f"cannot set mapping key on non-mapping while setting model_routing path: {path}")
         existing = cursor.get(part)
-        if not isinstance(existing, dict):
-            existing = {}
+        if not isinstance(existing, (dict, list)):
+            existing = [] if isinstance(next_part, int) else {}
             cursor[part] = existing
         cursor = existing
-    cursor[parts[-1]] = value
+    final = parts[-1]
+    if isinstance(final, int):
+        if not isinstance(cursor, list):
+            raise ValueError(f"cannot index non-list while setting model_routing path: {path}")
+        while len(cursor) <= final:
+            cursor.append(None)
+        cursor[final] = value
+    else:
+        if not isinstance(cursor, dict):
+            raise ValueError(f"cannot set mapping key on non-mapping while setting model_routing path: {path}")
+        cursor[final] = value
 
 
-def _get_dotted_key(payload: dict[str, Any], dotted_key: str | None) -> Any:
-    if not dotted_key:
+def _get_config_path(payload: dict[str, Any], path: str | None) -> Any:
+    if not path:
         return None
     cursor: Any = payload
-    for part in [part for part in dotted_key.split(".") if part]:
-        if not isinstance(cursor, dict):
-            return None
-        cursor = cursor.get(part)
+    try:
+        parts = _parse_config_path(path)
+    except ValueError:
+        return None
+    for part in parts:
+        if isinstance(part, int):
+            if not isinstance(cursor, list) or len(cursor) <= part:
+                return None
+            cursor = cursor[part]
+        else:
+            if not isinstance(cursor, dict):
+                return None
+            cursor = cursor.get(part)
     return cursor
 
 
-def _rewrite_model_routing_config(sandbox_root: Path, routing: RuntimeModelRouting, *, auth_proxy_port: int, provider_route: str) -> None:
+def _rewrite_model_routing_config(
+    sandbox_root: Path,
+    routing: RuntimeModelRouting,
+    *,
+    auth_proxy_port: int,
+    provider_route: str,
+    endpoint_api_key: str | None = None,
+) -> None:
     config_path = sandbox_root / routing.staged_config_file
+    created_config = False
     if not config_path.exists():
-        raise ValueError(f"model_routing config file is missing from staged snapshot: {routing.staged_config_file}")
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(payload, dict):
-        raise ValueError(f"model_routing config file must be a YAML mapping: {routing.staged_config_file}")
+        if not routing.create_if_missing:
+            raise ValueError(f"model_routing config file is missing from staged snapshot: {routing.staged_config_file}")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {}
+        created_config = True
+    else:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict):
+            raise ValueError(f"model_routing config file must be a YAML mapping: {routing.staged_config_file}")
+    if created_config and (routing.format == "json" or config_path.suffix.lower() == ".json"):
+        # A materialized runtime config needs enough non-secret structure for a
+        # gateway-style runtime to treat it as configured. OpenClaw requires
+        # gateway.mode=local; other JSON runtimes ignore unknown keys.
+        _set_config_path(payload, "gateway.mode", "local")
+        _set_config_path(payload, "gateway.http.endpoints.chatCompletions.enabled", True)
+        _set_config_path(payload, "models.mode", "replace")
+    if endpoint_api_key and (routing.format == "json" or config_path.suffix.lower() == ".json"):
+        _set_config_path(payload, "gateway.auth.mode", "token")
+        _set_config_path(payload, "gateway.auth.token", endpoint_api_key)
     proxy_base_url = f"http://host.docker.internal:{auth_proxy_port}/{provider_route}"
     proxy_api_key = "proxy-managed"
+
+    if (routing.format == "json" or config_path.suffix.lower() == ".json") and routing.base_url_key and routing.base_url_key.startswith("models.providers."):
+        proxy_provider_id = "assert-local-proxy"
+        resolved_model = routing.resolved_model or "model"
+        model_suffix = resolved_model.split("/", 1)[1] if "/" in resolved_model else resolved_model
+        proxy_model = f"{proxy_provider_id}/{model_suffix}"
+        api_mode_value = routing.resolved_api_mode or "openai-responses"
+        if routing.provider_key and routing.provider_key.startswith("auth.profiles."):
+            _set_config_path(payload, routing.provider_key, routing.resolved_provider or provider_route)
+        _set_config_path(payload, "models.mode", "replace")
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.baseUrl", proxy_base_url)
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.apiKey", proxy_api_key)
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.auth", "api-key")
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.request.allowPrivateNetwork", True)
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.models[0].api", api_mode_value)
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.models[0].id", model_suffix)
+        _set_config_path(payload, f"models.providers.{proxy_provider_id}.models[0].name", model_suffix)
+        if routing.model_key:
+            _set_config_path(payload, routing.model_key, proxy_model)
+        if routing.format == "json" or config_path.suffix.lower() == ".json":
+            config_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        else:
+            config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        return
     if routing.provider_key:
-        # Route through a runtime-local custom provider instead of trying to
-        # override a built-in provider's credential resolver. Some agents
-        # (Hermes/Copilot) ignore top-level base_url/api_key for built-ins and
-        # resolve credentials through OAuth state. A named custom provider keeps
-        # real credentials host-side behind the auth proxy while using generic
-        # config-file rewriting.
-        proxy_provider = "assert-local-proxy"
-        providers = payload.get("providers")
-        if not isinstance(providers, dict):
-            providers = {}
-            payload["providers"] = providers
-        transport = routing.resolved_api_mode or _get_dotted_key(payload, routing.api_mode_key) or "chat_completions"
-        providers[proxy_provider] = {
-            "name": "ASSERT Local Proxy",
-            "base_url": proxy_base_url,
-            "api_key": proxy_api_key,
-            "transport": transport,
-        }
-        _set_dotted_key(payload, routing.provider_key, f"custom:{proxy_provider}")
+        # Top-level provider selectors (Hermes: model.provider) need a runtime-local
+        # custom provider so built-in OAuth resolvers are bypassed. Nested provider
+        # fields (OpenClaw: auth.profiles.<id>.provider) are schema-specific values
+        # and should retain the self-reported provider route.
+        if routing.provider_key == "model.provider":
+            proxy_provider = "assert-local-proxy"
+            providers = payload.get("providers")
+            if not isinstance(providers, dict):
+                providers = {}
+                payload["providers"] = providers
+            transport = routing.resolved_api_mode or _get_config_path(payload, routing.api_mode_key) or "chat_completions"
+            providers[proxy_provider] = {
+                "name": "ASSERT Local Proxy",
+                "base_url": proxy_base_url,
+                "api_key": proxy_api_key,
+                "transport": transport,
+            }
+            _set_config_path(payload, routing.provider_key, f"custom:{proxy_provider}")
+        else:
+            existing_provider = _get_config_path(payload, routing.provider_key)
+            # If provider_key points at the same mapping later patched by base_url/api_key
+            # (OpenClaw: models.providers.github-copilot), do not invent a generic
+            # "provider" field; the runtime schema may reject unknown keys.
+            if not isinstance(existing_provider, dict):
+                _set_config_path(payload, routing.provider_key, routing.resolved_provider or provider_route)
     if routing.base_url_key:
-        _set_dotted_key(payload, routing.base_url_key, proxy_base_url)
+        _set_config_path(payload, routing.base_url_key, proxy_base_url)
     if routing.api_key_key:
-        _set_dotted_key(payload, routing.api_key_key, proxy_api_key)
-    if routing.api_mode_key and routing.resolved_api_mode:
-        _set_dotted_key(payload, routing.api_mode_key, routing.resolved_api_mode)
-    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        _set_config_path(payload, routing.api_key_key, proxy_api_key)
+        if routing.api_key_key.endswith(".apiKey"):
+            _set_config_path(payload, routing.api_key_key[: -len(".apiKey")] + ".auth", "api-key")
+    api_mode_value = routing.resolved_api_mode
+    if not api_mode_value and routing.api_mode_key and "models.providers." in routing.api_mode_key:
+        # OpenClaw requires a provider models array even in a materialized config.
+        # Its Copilot provider uses the OpenAI Responses transport in the live config.
+        api_mode_value = "openai-responses"
+    if routing.api_mode_key and api_mode_value:
+        _set_config_path(payload, routing.api_mode_key, api_mode_value)
+        if routing.resolved_model and routing.api_mode_key.endswith(".api"):
+            model_entry_path = routing.api_mode_key[: -len(".api")]
+            _set_config_path(payload, f"{model_entry_path}.id", routing.resolved_model)
+            _set_config_path(payload, f"{model_entry_path}.name", routing.resolved_model)
+    if routing.model_key and routing.resolved_model:
+        _set_config_path(payload, routing.model_key, routing.resolved_model)
+    if routing.format == "json" or config_path.suffix.lower() == ".json":
+        config_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    else:
+        config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def _write_generic_runtime_payload_files(
@@ -602,6 +723,9 @@ class RuntimeModelRouting:
     api_key_key: str | None = None
     resolved_provider: str | None = None
     resolved_api_mode: str | None = None
+    resolved_model: str | None = None
+    create_if_missing: bool = False
+    format: str = "yaml"
 
 
 @dataclass(frozen=True)
@@ -824,6 +948,9 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
                 api_key_key=getattr(routing, "api_key_key", None),
                 resolved_provider=getattr(routing, "resolved_provider", None),
                 resolved_api_mode=getattr(routing, "resolved_api_mode", None),
+                resolved_model=getattr(endpoint, "model", None),
+                create_if_missing=True,
+                format="json" if str(routing.config_file).lower().endswith(".json") else "yaml",
             )
 
     return RuntimeLaunchConfig(
@@ -1833,7 +1960,7 @@ def start_plain_docker_sandbox(
                 start_new_session=True,
             )
         wait_for_health(f"http://127.0.0.1:{auth_proxy_port}/health", timeout_seconds=health_timeout_seconds)
-        _rewrite_model_routing_config(sandbox_root, model_routing, auth_proxy_port=auth_proxy_port, provider_route=provider_route)
+        _rewrite_model_routing_config(sandbox_root, model_routing, auth_proxy_port=auth_proxy_port, provider_route=provider_route, endpoint_api_key=(container_env or {}).get("API_SERVER_KEY"))
 
     name = container_name or _sanitize_container_name(f"assert-{target}")
     args = ["docker", "run", "--rm", "--name", name, "-p", f"{host_port}:{runtime_port}"]

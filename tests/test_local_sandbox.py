@@ -113,6 +113,95 @@ server.serve_forever()
     return f"{sys.executable} -u -c {shlex.quote(code)}"
 
 
+
+def test_model_routing_path_setter_supports_array_indexes_and_literal_colon_keys() -> None:
+    from assert_ai.local_sandbox import _get_config_path, _set_config_path
+
+    payload: dict[str, object] = {}
+
+    _set_config_path(payload, "auth.profiles.github-copilot:github.provider", "copilot")
+    _set_config_path(payload, "models.providers.github-copilot.models[0].api", "codex_responses")
+
+    assert payload["auth"]["profiles"]["github-copilot:github"]["provider"] == "copilot"
+    assert payload["models"]["providers"]["github-copilot"]["models"][0]["api"] == "codex_responses"
+    assert _get_config_path(payload, "auth.profiles.github-copilot:github.provider") == "copilot"
+    assert _get_config_path(payload, "models.providers.github-copilot.models[0].api") == "codex_responses"
+
+
+
+def test_model_routing_path_supports_numeric_segments_as_list_indexes() -> None:
+    from assert_ai.local_sandbox import _get_config_path, _set_config_path
+
+    payload: dict[str, object] = {}
+    _set_config_path(payload, "models.providers.github-copilot.models.0.api", "openai-responses")
+
+    assert payload["models"]["providers"]["github-copilot"]["models"][0]["api"] == "openai-responses"
+    assert _get_config_path(payload, "models.providers.github-copilot.models.0.api") == "openai-responses"
+
+def test_model_routing_rewrite_materializes_missing_required_config(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import RuntimeModelRouting, _rewrite_model_routing_config
+
+    routing = RuntimeModelRouting(
+        staged_config_file=".openclaw/openclaw.json",
+        provider_key="auth.profiles.github-copilot:github.provider",
+        model_key="agents.defaults.model.primary",
+        api_mode_key="models.providers.github-copilot.models[0].api",
+        base_url_key="models.providers.github-copilot.baseUrl",
+        api_key_key="models.providers.github-copilot.apiKey",
+        resolved_provider="copilot",
+        resolved_api_mode="codex_responses",
+        resolved_model="github-copilot/gpt-5.5",
+        create_if_missing=True,
+        format="json",
+    )
+
+    _rewrite_model_routing_config(tmp_path, routing, auth_proxy_port=12435, provider_route="copilot", endpoint_api_key="endpoint-token")
+
+    materialized = tmp_path / ".openclaw" / "openclaw.json"
+    assert materialized.exists()
+    payload = json.loads(materialized.read_text(encoding="utf-8"))
+    assert payload["auth"]["profiles"]["github-copilot:github"]["provider"] == "copilot"
+    provider_config = payload["models"]["providers"]["assert-local-proxy"]
+    assert isinstance(provider_config, dict)
+    assert provider_config["baseUrl"] == "http://host.docker.internal:12435/copilot"
+    assert payload["models"]["mode"] == "replace"
+    assert provider_config["apiKey"] == "proxy-managed"
+    assert provider_config["auth"] == "api-key"
+    assert provider_config["request"]["allowPrivateNetwork"] is True
+    model_entry = provider_config["models"][0]
+    assert model_entry["api"] == "codex_responses"
+    assert model_entry["id"] == "gpt-5.5"
+    assert model_entry["name"] == "gpt-5.5"
+    assert payload["agents"]["defaults"]["model"]["primary"] == "assert-local-proxy/gpt-5.5"
+    assert payload["gateway"]["mode"] == "local"
+    assert payload["gateway"]["http"]["endpoints"]["chatCompletions"]["enabled"] is True
+    assert payload["gateway"]["auth"]["mode"] == "token"
+    assert payload["gateway"]["auth"]["token"] == "endpoint-token"
+
+
+def test_model_routing_rewrite_refreshes_endpoint_token_for_existing_materialized_config(tmp_path: Path) -> None:
+    from assert_ai.local_sandbox import RuntimeModelRouting, _rewrite_model_routing_config
+
+    config_path = tmp_path / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps({"gateway": {"mode": "local", "auth": {"mode": "token", "token": "old-token"}}}),
+        encoding="utf-8",
+    )
+    routing = RuntimeModelRouting(
+        staged_config_file=".openclaw/openclaw.json",
+        base_url_key="models.providers.github-copilot.baseUrl",
+        api_key_key="models.providers.github-copilot.apiKey",
+        create_if_missing=True,
+        format="json",
+    )
+
+    _rewrite_model_routing_config(tmp_path, routing, auth_proxy_port=12435, provider_route="copilot", endpoint_api_key="new-token")
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["gateway"]["auth"]["mode"] == "token"
+    assert payload["gateway"]["auth"]["token"] == "new-token"
+
 def test_start_local_sandbox_stages_snapshot_and_writes_state_and_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOCAL_AGENT_API_KEY", "super-secret-value")
     manifest_path = _write_snapshot_manifest(tmp_path / "input")
@@ -1869,6 +1958,94 @@ endpoint:
     assert env_file.exists()
     assert env_file.stat().st_mode & 0o777 == 0o600
     assert env_file.read_text(encoding="utf-8").startswith("export ASSERT_LOCAL_AGENT_API_KEY_")
+
+
+
+def test_cli_docker_run_sets_openclaw_home_for_openclaw_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input", target="openclaw-main")
+    config_path = tmp_path / "agent.yaml"
+    config_path.write_text(
+        """
+id: openclaw-main
+roots:
+  - source: /home/user/.openclaw
+launch:
+  command: [node, /home/user/openclaw/dist/index.js, gateway, --port, "18789"]
+endpoint:
+  url: http://127.0.0.1:{endpoint_port}/v1/chat/completions
+  protocol: openai_chat
+  model: github-copilot/gpt-5.5
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_start_plain(**kwargs):
+        calls.append(kwargs)
+        out = kwargs["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        state = out / "sandbox_state.json"
+        target_cfg = out / "endpoint_target.yaml"
+        state.write_text(json.dumps({"backend": "docker-run", "status": "running", "endpoint": {"url": kwargs["endpoint_url"]}}), encoding="utf-8")
+        target_cfg.write_text("endpoint:\n  url: http://127.0.0.1:18081/v1/chat/completions\n", encoding="utf-8")
+        class Result:
+            state_path = state
+            config_path = target_cfg
+            endpoint_url = kwargs["endpoint_url"]
+            process = None
+        return Result()
+
+    monkeypatch.setattr("assert_ai.local_sandbox.start_plain_docker_sandbox", fake_start_plain)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "local", "sandbox", "start",
+            "--snapshot", str(manifest_path),
+            "--config", str(config_path),
+            "--backend", "docker-run",
+            "--output-dir", str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["runtime_port"] == 18789
+    assert calls[0]["host_port"] == 18081
+    assert calls[0]["container_env"]["OPENCLAW_HOME"] == "/home/user"
+
+
+
+def test_cli_docker_run_uses_endpoint_url_port_as_host_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_path = _write_snapshot_manifest(tmp_path / "input", target="openclaw-main")
+    config_path = tmp_path / "agent.yaml"
+    config_path.write_text(
+        """
+id: openclaw-main
+roots:
+  - source: /home/user/.openclaw
+launch:
+  command: [node, /home/user/openclaw/dist/index.js, gateway, --port, "18789"]
+endpoint:
+  url: http://127.0.0.1:{endpoint_port}/v1/chat/completions
+  protocol: openai_chat
+  model: github-copilot/gpt-5.5
+""".strip() + "\n", encoding="utf-8")
+    calls=[]
+    def fake_start_plain(**kwargs):
+        calls.append(kwargs)
+        out=kwargs["output_dir"]; out.mkdir(parents=True, exist_ok=True)
+        state=out/"sandbox_state.json"; target_cfg=out/"endpoint_target.yaml"
+        state.write_text(json.dumps({"backend":"docker-run","status":"running","endpoint":{"url":kwargs["endpoint_url"]}}), encoding="utf-8")
+        target_cfg.write_text("endpoint:\n  url: " + kwargs["endpoint_url"] + "\n", encoding="utf-8")
+        class Result:
+            state_path=state; config_path=target_cfg; endpoint_url=kwargs["endpoint_url"]; process=None
+        return Result()
+    monkeypatch.setattr("assert_ai.local_sandbox.start_plain_docker_sandbox", fake_start_plain)
+    result=CliRunner().invoke(cli,["local","sandbox","start","--snapshot",str(manifest_path),"--config",str(config_path),"--backend","docker-run","--endpoint-url","http://127.0.0.1:18082/v1/chat/completions","--output-dir",str(tmp_path/"out")])
+    assert result.exit_code == 0, result.output
+    assert calls[0]["host_port"] == 18082
+    assert calls[0]["runtime_port"] == 18789
+    assert calls[0]["endpoint_url"] == "http://127.0.0.1:18082/v1/chat/completions"
 
 
 def test_docker_run_backend_adds_runtime_command_symlink_target_mount(tmp_path: Path) -> None:

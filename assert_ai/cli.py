@@ -16,6 +16,7 @@ from pathlib import Path
 import secrets
 import sys
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import urlparse
 
 import click
 import yaml
@@ -904,8 +905,6 @@ def local_sandbox_start(
             ep_port = agent_config.endpoint.port
             if endpoint_url == "http://127.0.0.1:18081":
                 if backend == "docker-run":
-                    from urllib.parse import urlparse
-
                     parsed = urlparse(agent_config.endpoint.url or "")
                     endpoint_url = f"http://127.0.0.1:{endpoint_port}{parsed.path or ''}"
                 elif ep_port:
@@ -965,7 +964,15 @@ def local_sandbox_start(
                 container_path = entry.get("container_path", "")
                 if Path(container_path).name == ".hermes":
                     docker_container_env.setdefault("HERMES_HOME", container_path)
-                    break
+                if Path(container_path).name == ".openclaw":
+                    docker_container_env.setdefault("OPENCLAW_HOME", str(Path(container_path).parent))
+            endpoint_host_port = endpoint_port
+            try:
+                parsed_endpoint = urlparse(endpoint_url)
+                if parsed_endpoint.port:
+                    endpoint_host_port = parsed_endpoint.port
+            except ValueError:
+                pass
             result = start_plain_docker_sandbox(
                 snapshot_manifest_path=snapshot_manifest,
                 target=target,
@@ -973,8 +980,8 @@ def local_sandbox_start(
                 identity_staging=runtime_config.identity_staging,
                 endpoint_url=endpoint_url,
                 runtime_port=runtime_port,
-                host_port=endpoint_port,
-                health_url=health_url or f"http://127.0.0.1:{endpoint_port}/health",
+                host_port=endpoint_host_port,
+                health_url=health_url or f"http://127.0.0.1:{endpoint_host_port}/health",
                 model_routing=runtime_config.model_routing,
                 auth_proxy_port=auth_proxy_port,
                 provider_route=runtime_config.provider_route or "copilot",
