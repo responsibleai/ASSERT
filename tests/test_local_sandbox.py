@@ -13,6 +13,7 @@ import yaml
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
+from assert_ai.local_agent_config import AgentRuntimeConfig, ConfigRoot, EndpointSpec, LaunchSpec
 from assert_ai.local_sandbox import (
     DockerSandboxBackend,
     LocalSandboxLaunchContext,
@@ -23,6 +24,7 @@ from assert_ai.local_sandbox import (
     RuntimeLaunchConfig,
     RuntimeModelRouting,
     build_descriptor_from_runtime_config,
+    build_runtime_config_from_agent_config,
     smoke_local_sandbox,
     start_local_sandbox,
     start_openclaw_docker_sandbox,
@@ -1125,6 +1127,59 @@ def test_runtime_config_builds_rampart_descriptor_without_runtime_class() -> Non
     assert descriptor.endpoint_bridge_args == ("--sandbox-root", "{sandbox_root}", "--endpoint-port", "{endpoint_port}")
 
 
+def test_agent_config_bridge_builds_private_identity_staging_plan(tmp_path: Path) -> None:
+    hermes_home = tmp_path / "home" / "jake" / ".hermes"
+    local_ops = tmp_path / "home" / "jake" / "LocalOps" / "hermes"
+    hermes_home.mkdir(parents=True)
+    local_ops.mkdir(parents=True)
+    config = AgentRuntimeConfig(
+        id="hermes-default",
+        roots=[ConfigRoot(source=hermes_home)],
+        external_dependencies=[ConfigRoot(source=local_ops, kind="external_dependency")],
+        launch=LaunchSpec(command=("python", "-m", "hermes_cli.main", "gateway", "run")),
+        endpoint=EndpointSpec(url="http://127.0.0.1:8642/v1/chat/completions", protocol="openai_chat", model="gpt-5.5"),
+    )
+
+    runtime_config = build_runtime_config_from_agent_config(config)
+
+    assert runtime_config.identity_staging == (
+        {"snapshot_path": ".hermes", "container_path": str(hermes_home.resolve())},
+        {"snapshot_path": "hermes", "container_path": str(local_ops.resolve())},
+    )
+
+
+def test_identity_staging_metadata_is_redacted_in_dry_run_state(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        runtime_command=("python", "-m", "toy"),
+        identity_staging=(
+            {"snapshot_path": "profile", "container_path": str(tmp_path / "home" / "jake" / ".toy")},
+        ),
+    )
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=tmp_path / "sandbox-out",
+        endpoint_url="http://127.0.0.1:19000",
+        provider="mock",
+        protocol="assert",
+        dry_run=True,
+        redact_paths=True,
+    )
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["plan"]["identity_staging"] == [
+        {"snapshot_path": "profile", "container_path": "[LOCAL_PATH]"},
+    ]
+    assert str(tmp_path) not in result.state_path.read_text(encoding="utf-8")
+
+
 def test_runtime_config_carries_rampart_root_into_descriptor(tmp_path: Path) -> None:
     """A generic runtime config can declare where the RAMPART scripts live.
 
@@ -1321,6 +1376,71 @@ def test_runtime_config_rewrites_staged_model_routing_file(tmp_path: Path) -> No
     assert rewritten["model"]["base_url"] == "http://host.docker.internal:12435/copilot"
     assert rewritten["model"]["api_key"] == "proxy-managed"
     assert rewritten["model"]["api_mode"] == "codex_responses"
+
+
+
+def test_generic_launcher_receives_private_runtime_payload_files(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=(
+            sys.executable,
+            "-c",
+            "print('launch')",
+            "--runtime-command",
+            "{runtime_command_file}",
+            "--identity-staging",
+            "{identity_staging_file}",
+        ),
+        runtime_command=(str(tmp_path / "home" / "jake" / ".toy" / "venv" / "bin" / "python"), "-m", "toy_runtime", "serve"),
+        identity_staging=(
+            {"snapshot_path": "profile", "container_path": str(tmp_path / "home" / "jake" / ".toy")},
+        ),
+        endpoint_port=19000,
+    )
+    out = tmp_path / "sandbox-out"
+    executed: list[list[str]] = []
+
+    def run_step(step: LocalSandboxStep, log_path: Path) -> int:
+        executed.append(step.command)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+        return 0
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=out,
+        endpoint_url="http://127.0.0.1:19000",
+        provider="mock",
+        protocol="assert",
+        dry_run=False,
+        redact_paths=True,
+        run_step=run_step,
+        start_step=lambda step, log: (log.parent.mkdir(parents=True, exist_ok=True), log.write_text("ready\n"), LocalSandboxManagedProcess(name=step.name, pid=5200, log_path=log))[-1],
+    )
+
+    runtime_file = out / "runtime-command.json"
+    identity_file = out / "identity-staging.json"
+    assert json.loads(runtime_file.read_text(encoding="utf-8")) == {
+        "command": [str(tmp_path / "home" / "jake" / ".toy" / "venv" / "bin" / "python"), "-m", "toy_runtime", "serve"]
+    }
+    assert json.loads(identity_file.read_text(encoding="utf-8")) == {
+        "entries": [{"snapshot_path": "profile", "container_path": str(tmp_path / "home" / "jake" / ".toy")}]
+    }
+    launch_command = next(command for command in executed if "--runtime-command" in command)
+    assert str(runtime_file) in launch_command
+    assert str(identity_file) in launch_command
+    state_text = result.state_path.read_text(encoding="utf-8")
+    assert str(tmp_path / "home" / "jake") not in state_text
+    state = json.loads(state_text)
+    assert state["plan"]["runtime_command"] == ["[LOCAL_PATH]", "-m", "toy_runtime", "serve"]
+    assert state["plan"]["runtime_command_file"] == "[LOCAL_PATH]"
+    assert state["plan"]["identity_staging_file"] == "[LOCAL_PATH]"
 
 
 

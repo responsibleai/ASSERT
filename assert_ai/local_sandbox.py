@@ -85,6 +85,8 @@ class LocalSandboxLaunchContext:
     auth_proxy_port: int = 12435
     mock_openai_port: int = 18080
     auth_proxy_config: Path | None = None
+    runtime_command_file: Path | None = None
+    identity_staging_file: Path | None = None
     runner_root: Path = Path(".")
     rampart_root: Path = Path(".")
     docker_command: str = "docker.exe"
@@ -428,6 +430,25 @@ def _rewrite_model_routing_config(sandbox_root: Path, routing: RuntimeModelRouti
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def _write_generic_runtime_payload_files(
+    *,
+    output_dir: Path,
+    runtime_command: tuple[str, ...] | None,
+    identity_staging: tuple[dict[str, str], ...],
+) -> tuple[Path, Path]:
+    runtime_path = output_dir / "runtime-command.json"
+    identity_path = output_dir / "identity-staging.json"
+    runtime_path.write_text(
+        json.dumps({"command": list(runtime_command or ())}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    identity_path.write_text(
+        json.dumps({"entries": list(identity_staging)}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return runtime_path, identity_path
+
+
 def _default_run_step(step: LocalSandboxStep, log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -561,6 +582,7 @@ class RuntimeLaunchConfig:
     required_paths: tuple[str, ...] = ()
     launch_command: tuple[str, ...] | None = None
     runtime_command: tuple[str, ...] | None = None
+    identity_staging: tuple[dict[str, str], ...] = ()
     endpoint_bridge_module: str | None = None
     endpoint_bridge_args: tuple[str, ...] = ()
     cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
@@ -585,6 +607,7 @@ class RampartRuntimeDescriptor:
     endpoint_bridge_args: tuple[str, ...] = ()
     launch_command: tuple[str, ...] | None = None
     runtime_command: tuple[str, ...] | None = None
+    identity_staging: tuple[dict[str, str], ...] = ()
     launch_cwd: Path | None = None
     launch_log_name: str = "launch-rampart-sandbox.log"
     cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
@@ -630,6 +653,7 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
         endpoint_bridge_args=config.endpoint_bridge_args,
         launch_command=config.launch_command,
         runtime_command=config.runtime_command,
+        identity_staging=config.identity_staging,
         cleanup_labels=config.cleanup_labels,
         endpoint_port=config.endpoint_port,
         auth_proxy_port=config.auth_proxy_port,
@@ -645,6 +669,25 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
 
 def _default_snapshot_dest_for_source(source: Path) -> Path:
     return Path(source.name)
+
+
+def _identity_staging_for_agent_config(agent_config: Any) -> tuple[dict[str, str], ...]:
+    """Map staged snapshot roots back to their original absolute container paths.
+
+    Agent configs use real-machine paths. For path-bound runtimes (Python venvs,
+    editable installs, shebangs), the generic sandbox launcher needs to recreate
+    those same absolute paths inside the container instead of inventing a
+    sandbox-relative home. This plan is private runtime metadata; shareable
+    manifests remain redacted.
+    """
+
+    entries: list[dict[str, str]] = []
+    roots = [*getattr(agent_config, "roots", []), *getattr(agent_config, "external_dependencies", [])]
+    for root in roots:
+        source = root.source.expanduser().resolve()
+        dest = Path(root.dest) if root.dest else _default_snapshot_dest_for_source(source)
+        entries.append({"snapshot_path": dest.as_posix(), "container_path": str(source)})
+    return tuple(entries)
 
 
 def _staged_path_for_agent_source(agent_config: Any, source_path: Path) -> str | None:
@@ -701,6 +744,7 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
         runtime_profile=agent_config.id,
         launch_command=None,
         runtime_command=tuple(launch.command),
+        identity_staging=_identity_staging_for_agent_config(agent_config),
         endpoint_port=int(endpoint_port),
         provider_route=provider_route,
         model_routing=runtime_model_routing,
@@ -757,6 +801,8 @@ def _launch_template_values(context: LocalSandboxLaunchContext) -> dict[str, str
         "endpoint_port": str(context.endpoint_port),
         "auth_proxy_port": str(context.auth_proxy_port),
         "mock_openai_port": str(context.mock_openai_port),
+        "runtime_command_file": str(context.runtime_command_file or context.output_dir / "runtime-command.json"),
+        "identity_staging_file": str(context.identity_staging_file or context.output_dir / "identity-staging.json"),
         "sandbox_name": context.sandbox_name,
         "provider": context.provider,
         "provider_route": context.provider_route or "",
@@ -775,6 +821,18 @@ def _expand_launch_templates(values: tuple[str, ...] | None, context: LocalSandb
     if values is None:
         return None
     return tuple(_expand_launch_template_value(value, context) for value in values)
+
+
+def _identity_staging_json(entries: tuple[dict[str, str], ...], *, redact_paths: bool) -> list[dict[str, str]]:
+    rendered: list[dict[str, str]] = []
+    for entry in entries:
+        rendered.append(
+            {
+                "snapshot_path": entry["snapshot_path"],
+                "container_path": _redact_local_string(entry["container_path"], redact_paths=redact_paths),
+            }
+        )
+    return rendered
 
 
 class RampartDockerHarness:
@@ -895,7 +953,12 @@ class RampartDockerHarness:
                 "provider": context.provider,
                 "provider_route": context.provider_route,
                 "model_ref": context.model_ref,
-                "runtime_command": list(self.descriptor.runtime_command) if self.descriptor.runtime_command else None,
+                "runtime_command": _redact_command(list(self.descriptor.runtime_command), redact_paths=context.redact_paths)
+                if self.descriptor.runtime_command
+                else None,
+                "runtime_command_file": _path_value(context.runtime_command_file, redact_paths=context.redact_paths),
+                "identity_staging": _identity_staging_json(self.descriptor.identity_staging, redact_paths=context.redact_paths),
+                "identity_staging_file": _path_value(context.identity_staging_file, redact_paths=context.redact_paths),
                 "sandbox_name": context.sandbox_name,
                 "auth_proxy_config": _path_value(routes_path, redact_paths=context.redact_paths),
             },
@@ -957,6 +1020,16 @@ class DockerSandboxBackend:
         state_path = output / "sandbox_state.json"
         config_path = output / "endpoint_target.yaml"
         logs_dir = output / "logs"
+        runtime_command_file: Path | None = None
+        identity_staging_file: Path | None = None
+        descriptor_runtime_command = getattr(self.descriptor, "runtime_command", None)
+        descriptor_identity_staging = getattr(self.descriptor, "identity_staging", ())
+        if descriptor_runtime_command or descriptor_identity_staging:
+            runtime_command_file, identity_staging_file = _write_generic_runtime_payload_files(
+                output_dir=output,
+                runtime_command=descriptor_runtime_command,
+                identity_staging=descriptor_identity_staging,
+            )
         context = LocalSandboxLaunchContext(
             manifest_path=manifest_path,
             manifest=manifest,
@@ -972,6 +1045,8 @@ class DockerSandboxBackend:
             auth_proxy_port=int(getattr(self.descriptor, "auth_proxy_port", 12435)),
             mock_openai_port=int(getattr(self.descriptor, "mock_openai_port", 18080)),
             auth_proxy_config=Path(getattr(self.descriptor, "auth_proxy_config")).expanduser().resolve() if getattr(self.descriptor, "auth_proxy_config", None) else None,
+            runtime_command_file=runtime_command_file,
+            identity_staging_file=identity_staging_file,
             runner_root=getattr(self.descriptor, "_runner_path", lambda: Path("."))(),
             rampart_root=getattr(self.descriptor, "_rampart_path", lambda: Path("."))(),
             docker_command=str(getattr(self.descriptor, "docker_command", "docker.exe")),
