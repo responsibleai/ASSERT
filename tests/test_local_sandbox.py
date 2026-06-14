@@ -881,9 +881,11 @@ model_routing:
     # endpoint protocol/model derived from the agent-config endpoint
     assert state["endpoint"]["protocol"] == "openai_chat"
     assert state["endpoint"]["model"] == "toy-model"
-    # launch command derived from the agent-config launch (port from endpoint url)
+    # The agent's launch.command is the runtime command to run inside the clone.
+    # It must not be executed as the host-side sandbox launcher.
     launch = next(step for step in state["plan"]["steps"] if step["name"] == "launch_rampart_sandbox")
-    assert "19000" in " ".join(launch["command"])
+    assert "19000" not in " ".join(launch["command"])
+    assert state["plan"]["runtime_command"] == ["python", "-c", "print('launch {sandbox_name} {endpoint_port}')"]
 
 
 def test_cli_local_sandbox_start_happy_path_derives_live_copilot_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1173,6 +1175,44 @@ def test_runtime_config_rampart_root_reaches_auth_proxy_step(tmp_path: Path) -> 
     state = json.loads(result.state_path.read_text(encoding="utf-8"))
     auth_step = next(step for step in state["plan"]["steps"] if step["name"] == "start_auth_proxy")
     assert str(rampart_root) in " ".join(auth_step["command"])
+
+
+def test_generic_runtime_without_sandbox_launcher_rejects_live_start_before_host_steps(tmp_path: Path) -> None:
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=None,
+        endpoint_port=19000,
+    )
+    called: list[str] = []
+
+    def run_step(step: LocalSandboxStep, log_path: Path) -> int:
+        called.append(f"run:{step.name}")
+        raise AssertionError(f"host run step should not execute: {step.name}")
+
+    def start_step(step: LocalSandboxStep, log_path: Path) -> LocalSandboxManagedProcess:
+        called.append(f"service:{step.name}")
+        raise AssertionError(f"host service step should not execute: {step.name}")
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    with pytest.raises(ValueError, match="sandbox launcher"):
+        backend.start(
+            snapshot_manifest_path=manifest_path,
+            target="toy-agent",
+            output_dir=tmp_path / "sandbox-out",
+            endpoint_url="http://127.0.0.1:19000",
+            provider="mock",
+            model="toy-model",
+            dry_run=False,
+            run_step=run_step,
+            start_step=start_step,
+        )
+
+    assert called == []
+
 
 
 def test_docker_backend_runs_runtime_config_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:

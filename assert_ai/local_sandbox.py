@@ -514,6 +514,7 @@ class RuntimeLaunchConfig:
     runtime_profile: str
     required_paths: tuple[str, ...] = ()
     launch_command: tuple[str, ...] | None = None
+    runtime_command: tuple[str, ...] | None = None
     endpoint_bridge_module: str | None = None
     endpoint_bridge_args: tuple[str, ...] = ()
     cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
@@ -536,6 +537,7 @@ class RampartRuntimeDescriptor:
     endpoint_bridge_module: str | None = None
     endpoint_bridge_args: tuple[str, ...] = ()
     launch_command: tuple[str, ...] | None = None
+    runtime_command: tuple[str, ...] | None = None
     launch_cwd: Path | None = None
     launch_log_name: str = "launch-rampart-sandbox.log"
     cleanup_labels: tuple[str, ...] = ("sandbox_stop", "sandbox_rm")
@@ -554,6 +556,11 @@ class RampartRuntimeDescriptor:
         return _default_rampart_root()
 
     def validate(self, context: LocalSandboxLaunchContext) -> None:
+        if not context.dry_run and self.launch_command is None:
+            raise ValueError(
+                "generic runtime live start requires a sandbox launcher command; "
+                "agent launch.command is the runtime command inside the sandbox and must not be executed on the host"
+            )
         missing = [relative for relative in self.required_paths if not (context.sandbox_root / relative).exists()]
         if missing:
             raise ValueError(f"snapshot is missing required runtime paths: {', '.join(missing)}")
@@ -574,6 +581,7 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
         endpoint_bridge_module=config.endpoint_bridge_module,
         endpoint_bridge_args=config.endpoint_bridge_args,
         launch_command=config.launch_command,
+        runtime_command=config.runtime_command,
         cleanup_labels=config.cleanup_labels,
         endpoint_port=config.endpoint_port,
         auth_proxy_port=config.auth_proxy_port,
@@ -610,7 +618,8 @@ def build_runtime_config_from_agent_config(agent_config: Any) -> RuntimeLaunchCo
         id=agent_config.id,
         harness="rampart-docker",
         runtime_profile=agent_config.id,
-        launch_command=tuple(launch.command),
+        launch_command=None,
+        runtime_command=tuple(launch.command),
         endpoint_port=int(endpoint_port),
         provider_route=provider_route,
         rampart_root=_default_rampart_root(),
@@ -800,6 +809,7 @@ class RampartDockerHarness:
                 "provider": context.provider,
                 "provider_route": context.provider_route,
                 "model_ref": context.model_ref,
+                "runtime_command": list(self.descriptor.runtime_command) if self.descriptor.runtime_command else None,
                 "sandbox_name": context.sandbox_name,
                 "auth_proxy_config": _path_value(routes_path, redact_paths=context.redact_paths),
             },
