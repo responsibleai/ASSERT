@@ -2152,6 +2152,9 @@ def test_docker_run_backend_rewrites_model_routing_and_starts_auth_proxy(tmp_pat
     }
     manifest_path = tmp_path / "snapshot_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rampart_root = tmp_path / "rampart"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# fake auth proxy\n", encoding="utf-8")
     starts: list[list[str]] = []
 
     def fake_start(args, **kwargs):
@@ -2188,6 +2191,7 @@ def test_docker_run_backend_rewrites_model_routing_and_starts_auth_proxy(tmp_pat
         ),
         auth_proxy_port=12435,
         provider_route="copilot",
+        rampart_root=rampart_root,
         start_process=fake_start,
         wait_for_health=lambda url, timeout_seconds: None,
     )
