@@ -522,6 +522,7 @@ class RuntimeLaunchConfig:
     mock_openai_port: int = 18080
     sandbox_name: str | None = None
     docker_command: str = "docker.exe"
+    rampart_root: Path | str | None = None
 
 
 @dataclass(frozen=True)
@@ -543,6 +544,12 @@ class RampartRuntimeDescriptor:
     sandbox_name: str | None = None
     docker_command: str = "docker.exe"
     target: str | None = None
+    rampart_root: Path | str | None = None
+
+    def _rampart_path(self) -> Path:
+        if self.rampart_root is not None:
+            return Path(self.rampart_root).expanduser().resolve()
+        return _default_rampart_root()
 
     def validate(self, context: LocalSandboxLaunchContext) -> None:
         missing = [relative for relative in self.required_paths if not (context.sandbox_root / relative).exists()]
@@ -572,6 +579,7 @@ def build_descriptor_from_runtime_config(config: RuntimeLaunchConfig) -> Rampart
         sandbox_name=config.sandbox_name,
         docker_command=config.docker_command,
         target=config.id,
+        rampart_root=config.rampart_root,
     )
 
 
@@ -611,6 +619,7 @@ def load_runtime_config(path: str | Path) -> RuntimeLaunchConfig:
         mock_openai_port=int(payload.get("mock_openai_port", 18080)),
         sandbox_name=payload.get("sandbox_name") if isinstance(payload.get("sandbox_name"), str) else None,
         docker_command=str(payload.get("docker_command", "docker.exe")),
+        rampart_root=payload.get("rampart_root") if isinstance(payload.get("rampart_root"), str) else None,
     )
 
 

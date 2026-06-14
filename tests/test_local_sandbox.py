@@ -1063,6 +1063,59 @@ def test_runtime_config_builds_rampart_descriptor_without_runtime_class() -> Non
     assert descriptor.endpoint_bridge_args == ("--sandbox-root", "{sandbox_root}", "--endpoint-port", "{endpoint_port}")
 
 
+def test_runtime_config_carries_rampart_root_into_descriptor(tmp_path: Path) -> None:
+    """A generic runtime config can declare where the RAMPART scripts live.
+
+    Regression: a live Hermes start via --runtime-config died at the auth-proxy
+    step because RuntimeLaunchConfig had no rampart_root field, so the backend
+    fell back to Path('.') and could not find scripts/run_auth_proxy.py.
+    """
+    rampart_root = tmp_path / "rampart-here"
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="toy-profile",
+        rampart_root=rampart_root,
+    )
+
+    descriptor = build_descriptor_from_runtime_config(runtime_config)
+
+    assert descriptor._rampart_path() == rampart_root.resolve()
+
+
+def test_runtime_config_rampart_root_reaches_auth_proxy_step(tmp_path: Path) -> None:
+    rampart_root = tmp_path / "rampart-scripts"
+    (rampart_root / "scripts").mkdir(parents=True)
+    (rampart_root / "scripts" / "run_auth_proxy.py").write_text("# proxy\n", encoding="utf-8")
+    manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
+    runtime_config = RuntimeLaunchConfig(
+        id="toy-agent",
+        harness="rampart-docker",
+        runtime_profile="profile",
+        required_paths=("profile/AGENTS.md",),
+        launch_command=(sys.executable, "-c", "print('launch')"),
+        rampart_root=rampart_root,
+        endpoint_port=19000,
+        sandbox_name="toy-sandbox",
+    )
+
+    backend = DockerSandboxBackend(descriptor=build_descriptor_from_runtime_config(runtime_config))
+    result = backend.start(
+        snapshot_manifest_path=manifest_path,
+        target="toy-agent",
+        output_dir=tmp_path / "sandbox-out",
+        endpoint_url="http://127.0.0.1:19000",
+        provider="mock",
+        protocol="assert",
+        dry_run=True,
+        redact_paths=False,
+    )
+
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    auth_step = next(step for step in state["plan"]["steps"] if step["name"] == "start_auth_proxy")
+    assert str(rampart_root) in " ".join(auth_step["command"])
+
+
 def test_docker_backend_runs_runtime_config_descriptor_without_openclaw_assumptions(tmp_path: Path) -> None:
     manifest_path = _write_fake_snapshot_manifest(tmp_path / "input", target="toy-agent")
     runtime_config = RuntimeLaunchConfig(
