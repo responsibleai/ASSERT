@@ -1091,6 +1091,30 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(captured["azure_ad_token_provider"], stub)
 
+    # Row 2b: aad + azure/* + AZURE_API_KEY also present in env → provider
+    # still wins, and the injection layer must not leak ``api_key`` into the
+    # LiteLLM payload. Pins behavior matching the public docs on
+    # ``ASSERT_AZURE_USE_AAD`` precedence (explicit AAD flag wins over key)
+    # and protects against a regression where the injection layer would
+    # silently fall back to the env key when AAD was explicitly requested.
+    async def test_aad_mode_with_azure_api_key_in_env_still_injects_provider(self) -> None:
+        stub = lambda: "stub-token"
+        with patch.dict(
+            "os.environ",
+            {"ASSERT_AZURE_USE_AAD": "1", "AZURE_API_KEY": "sk-test-should-be-ignored"},
+            clear=False,
+        ):
+            captured = await self._run_chat(
+                model="azure/gpt-4o-mini", mode="aad", provider=stub,
+            )
+        self.assertIs(captured["azure_ad_token_provider"], stub)
+        # The injection layer must not surface ``api_key`` itself — LiteLLM
+        # is free to do whatever it wants with the env var, but
+        # ``azure_ad_token_provider`` takes precedence inside LiteLLM, so
+        # the explicit AAD opt-in continues to win even when the env carries
+        # a stale ``AZURE_API_KEY``.
+        self.assertNotIn("api_key", captured)
+
     # Row 3: aad-fallback + azure/* → provider injected
     async def test_aad_fallback_mode_azure_model_injects_provider(self) -> None:
         stub = lambda: "stub-token"
