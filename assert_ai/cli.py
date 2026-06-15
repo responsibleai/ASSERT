@@ -88,6 +88,23 @@ def _load_analysis_module(loader: Callable[[], Any]) -> Any:
         _handle_missing_analysis_dependency(exc)
 
 
+def _handle_missing_acs_dependency(exc: ModuleNotFoundError) -> None:
+    missing = getattr(exc, "name", "") or "ACS extra"
+    _error(
+        f"Could not import ACS dependency '{missing}'. Install the ACS extra first, for example:\n"
+        "  python -m pip install -e \".[acs]\""
+    )
+
+
+def _load_acs_symbol(name: str) -> Any:
+    try:
+        import assert_ai.integrations.acs as acs
+
+        return getattr(acs, name)
+    except ModuleNotFoundError as exc:
+        _handle_missing_acs_dependency(exc)
+
+
 def _console(*, no_color: bool = False) -> Console:
     return Console(highlight=False, color_system=None if no_color else "auto")
 
@@ -133,6 +150,120 @@ def _resolve_results_dir(results_dir: Path) -> Path:
     if not path.is_absolute():
         path = (ROOT / path).resolve()
     return path
+
+
+def _resolve_acs_run_dir(run_dir: Path | None, suite: str | None, run_id: str | None) -> Path:
+    has_run_dir = run_dir is not None
+    has_suite_run = suite is not None or run_id is not None
+    if has_run_dir and has_suite_run:
+        _error("Use either --run-dir or --suite with --run, not both.")
+    if not has_run_dir and not has_suite_run:
+        _error("Provide either --run-dir or both --suite and --run.")
+    if has_suite_run and (suite is None or run_id is None):
+        _error("Use --suite and --run together, or provide --run-dir.")
+
+    if run_dir is not None:
+        resolved = run_dir.expanduser()
+        if not resolved.is_absolute():
+            resolved = resolved.resolve()
+    else:
+        resolved = DEFAULT_RESULTS_DIR / str(suite) / str(run_id)
+
+    if not resolved.exists():
+        _error(f"Run directory not found: {resolved}")
+    if not resolved.is_dir():
+        _error(f"Run path is not a directory: {resolved}")
+    if not (resolved / "scores.jsonl").is_file():
+        _error(f"Run directory does not contain scores.jsonl: {resolved}")
+    return resolved
+
+
+def _default_acs_out_dir(summary: Any) -> Path:
+    suite_id = str(getattr(summary, "suite_id", "") or "policy")
+    return ROOT / "artifacts" / "acs" / suite_id
+
+
+def _print_acs_artifacts(artifacts: Any) -> None:
+    click.echo("Wrote ACS policy:")
+    click.echo(f"  manifest: {artifacts.manifest_path}")
+    click.echo(f"  rego:     {artifacts.rego_path}")
+    click.echo(f"  report:   {artifacts.report_path}")
+    guarded_points = ", ".join(str(point) for point in artifacts.guarded_points) or "-"
+    click.echo(f"Guarded points: {guarded_points}")
+    if artifacts.warnings:
+        click.echo("Warnings:")
+        for warning in artifacts.warnings:
+            click.echo(f"  - {warning}")
+
+
+def _print_acs_validation_totals(report: Any) -> None:
+    click.echo(
+        f"Validation: handled {report.handled}/{report.total} "
+        f"(reacted, incl. warn); strongly blocked {report.strong_blocked}/{report.total} "
+        f"(deny/escalate); handled_rate {_fmt_percent(report.handled_rate)}"
+    )
+
+
+def _enforce_acs_validation_gate(report: Any, *, fail_on_allow: bool, require_block: bool) -> None:
+    """Fail the command per the requested validation gate, strictest first."""
+    uncovered = getattr(report, "uncovered_behaviors", ())
+    if (require_block or fail_on_allow) and uncovered:
+        _error(
+            "ACS validation could not replay any example for behavior finding(s): "
+            f"{', '.join(uncovered)}. The policy was not exercised against them "
+            "(no inference evidence); re-run with the matching inference set."
+        )
+    if require_block and not report.fully_blocked:
+        _error(
+            f"ACS policy did not strongly block {report.not_blocked} known-bad example(s) "
+            "(only deny/escalate counts as a block)."
+        )
+    if fail_on_allow and not report.ok:
+        _error(f"ACS policy allowed {report.failed} known-bad example(s).")
+
+
+def _print_acs_validation_by_point(report: Any) -> None:
+    grouped: dict[str, dict[str, int]] = {}
+    for case in report.cases:
+        point = str(case.intervention_point or "-")
+        bucket = grouped.setdefault(point, {"total": 0, "handled": 0, "strong": 0})
+        bucket["total"] += 1
+        bucket["handled"] += int(bool(case.handled))
+        bucket["strong"] += int(bool(case.strong_block))
+
+    if not grouped:
+        click.echo("Validation cases: 0")
+        return
+
+    table = Table(title="Validation by intervention point", box=None, show_header=True, show_edge=False, pad_edge=False)
+    table.add_column("Point", style="cyan", no_wrap=True)
+    table.add_column("Handled", style="white", no_wrap=True)
+    table.add_column("Strong blocked", style="white", no_wrap=True)
+    for point, bucket in sorted(grouped.items()):
+        table.add_row(
+            point,
+            f"{bucket['handled']}/{bucket['total']}",
+            str(bucket["strong"]),
+        )
+    _console().print(table)
+
+
+def _print_acs_validation_cases(report: Any) -> None:
+    table = Table(title="Validation cases", box=None, show_header=True, show_edge=False, pad_edge=False)
+    table.add_column("Intervention point", style="cyan", no_wrap=True)
+    table.add_column("Behavior", style="white")
+    table.add_column("Dimension", style="white", no_wrap=True)
+    table.add_column("Decision", style="white", no_wrap=True)
+    table.add_column("Strong block", style="white", no_wrap=True)
+    for case in report.cases:
+        table.add_row(
+            str(case.intervention_point),
+            str(case.behavior),
+            str(case.dimension),
+            str(case.decision),
+            "yes" if case.strong_block else "no",
+        )
+    _console().print(table)
 
 
 def _complete_suite(ctx: click.Context, _: click.Parameter, incomplete: str) -> list[CompletionItem]:
@@ -1260,6 +1391,149 @@ def results_compare_suites(
     console.print(struct_table)
 
 
+@cli.group(cls=SuggestingGroup, short_help="Generate and validate ACS policies from ASSERT findings")
+def acs():
+    """Generate deployable ACS policies from ASSERT findings.
+
+    Runtime guarding is available from Python via the ``guard_target(...)`` API.
+    """
+
+
+@acs.command("generate", short_help="Generate a deployable ACS policy from an ASSERT run")
+@click.option(
+    "--run-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Run directory containing scores.jsonl.",
+)
+@click.option("--suite", default=None, shell_complete=_complete_suite, help="Suite ID under artifacts/results.")
+@click.option("--run", "run_id", default=None, shell_complete=_complete_run, help="Run ID under the selected suite.")
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for the generated ACS policy.",
+)
+@click.option("--min-rate", type=click.FloatRange(min=0.0, max=1.0), default=0.0, show_default=True, help="Minimum violation rate to include.")
+@click.option("--min-count", type=click.IntRange(min=0), default=1, show_default=True, help="Minimum scored cases to include.")
+@click.option("--model", default=None, help="Language model ID to pass to the ACS generator.")
+@click.option(
+    "--lm-kind",
+    type=click.Choice(["assert", "openai-compatible"], case_sensitive=False),
+    default="assert",
+    show_default=True,
+    help="Language model adapter for policy generation.",
+)
+@click.option("--strict/--no-strict", default=False, show_default=True, help="Enable strict ACS artifact validation.")
+@click.option("--validate/--no-validate", "run_validation", default=True, show_default=True, help="Validate the generated policy against known-bad findings.")
+@click.option("--fail-on-allow", is_flag=True, help="Exit nonzero if validation allows (does not react to) any known-bad example. A warn still counts as reacting.")
+@click.option("--require-block", is_flag=True, help="Exit nonzero unless every known-bad example is strongly blocked (deny/escalate). A warn is not a block.")
+def acs_generate(
+    run_dir: Path | None,
+    suite: str | None,
+    run_id: str | None,
+    out_dir: Path | None,
+    min_rate: float,
+    min_count: int,
+    model: str | None,
+    lm_kind: str,
+    strict: bool,
+    run_validation: bool,
+    fail_on_allow: bool,
+    require_block: bool,
+):
+    """Generate a deployable ACS policy from an ASSERT run's findings."""
+    resolved_run_dir = _resolve_acs_run_dir(run_dir, suite, run_id)
+    load_findings = _load_acs_symbol("load_findings")
+    generate_policy = _load_acs_symbol("generate_policy")
+
+    try:
+        summary = load_findings(resolved_run_dir, min_rate=min_rate, min_count=min_count)
+    except (FileNotFoundError, ValueError) as exc:
+        _error(str(exc))
+
+    if not summary.has_findings:
+        click.echo("Warning: no ASSERT findings met thresholds; generated policy will be a benign baseline.")
+
+    policy_out_dir = out_dir.expanduser() if out_dir is not None else _default_acs_out_dir(summary)
+    try:
+        artifacts = generate_policy(
+            summary,
+            out_dir=policy_out_dir,
+            lm_kind=lm_kind,
+            model=model,
+            strict=strict,
+        )
+    except ModuleNotFoundError as exc:
+        _handle_missing_acs_dependency(exc)
+    except ValueError as exc:
+        _error(str(exc))
+
+    _print_acs_artifacts(artifacts)
+
+    if run_validation:
+        validate_policy = _load_acs_symbol("validate_policy")
+        try:
+            report = validate_policy(artifacts.manifest_path, summary)
+        except ModuleNotFoundError as exc:
+            _handle_missing_acs_dependency(exc)
+        except (FileNotFoundError, ValueError) as exc:
+            _error(str(exc))
+        _print_acs_validation_totals(report)
+        _print_acs_validation_by_point(report)
+        _enforce_acs_validation_gate(report, fail_on_allow=fail_on_allow, require_block=require_block)
+
+
+@acs.command("validate", short_help="Validate an ACS manifest against an ASSERT run")
+@click.option(
+    "--manifest",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="ACS manifest.yaml to validate.",
+)
+@click.option(
+    "--run-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Run directory containing scores.jsonl.",
+)
+@click.option("--suite", default=None, shell_complete=_complete_suite, help="Suite ID under artifacts/results.")
+@click.option("--run", "run_id", default=None, shell_complete=_complete_run, help="Run ID under the selected suite.")
+@click.option("--min-rate", type=click.FloatRange(min=0.0, max=1.0), default=0.0, show_default=True, help="Minimum violation rate to include.")
+@click.option("--min-count", type=click.IntRange(min=0), default=1, show_default=True, help="Minimum scored cases to include.")
+@click.option("--max-cases", type=click.IntRange(min=1), default=None, help="Maximum known-bad examples to replay.")
+@click.option("--fail-on-allow", is_flag=True, help="Exit nonzero if validation allows (does not react to) any known-bad example. A warn still counts as reacting.")
+@click.option("--require-block", is_flag=True, help="Exit nonzero unless every known-bad example is strongly blocked (deny/escalate). A warn is not a block.")
+def acs_validate(
+    manifest: Path,
+    run_dir: Path | None,
+    suite: str | None,
+    run_id: str | None,
+    min_rate: float,
+    min_count: int,
+    max_cases: int | None,
+    fail_on_allow: bool,
+    require_block: bool,
+):
+    """Validate an ACS manifest against an ASSERT run's known-bad findings."""
+    resolved_run_dir = _resolve_acs_run_dir(run_dir, suite, run_id)
+    load_findings = _load_acs_symbol("load_findings")
+    validate_policy = _load_acs_symbol("validate_policy")
+
+    try:
+        summary = load_findings(resolved_run_dir, min_rate=min_rate, min_count=min_count)
+        report = validate_policy(manifest, summary, max_cases=max_cases)
+    except ModuleNotFoundError as exc:
+        _handle_missing_acs_dependency(exc)
+    except (FileNotFoundError, ValueError) as exc:
+        _error(str(exc))
+
+    _print_acs_validation_cases(report)
+    _print_acs_validation_totals(report)
+    _enforce_acs_validation_gate(report, fail_on_allow=fail_on_allow, require_block=require_block)
+
+
 @cli.group(cls=SuggestingGroup, short_help="Run post-hoc analysis commands")
 def analysis():
     """Post-hoc analysis commands for test_set and inspect logs."""
@@ -1338,7 +1612,7 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
 
     # Load config for judge settings
     with open(config_path) as f:
-        raw_config = yaml.safe_load(f)
+        yaml.safe_load(f)
 
     out_dir = output or (DEFAULT_RESULTS_DIR / "judge-traces")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
