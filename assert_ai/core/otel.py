@@ -63,8 +63,8 @@ _GENAI_OUTPUT_MESSAGES_KEY = "gen_ai.output.messages"
 _GENAI_INPUT_MESSAGES_KEY = "gen_ai.input.messages"
 
 # Operation-name values that denote model/LLM spans. Anything matching
-# _GENAI_TOOL_OPERATION is a tool span; everything else is treated as a
-# model/agent span and degrades gracefully on missing optional fields.
+# _GENAI_TOOL_OPERATION is a tool span; other GenAI operations are agent /
+# orchestration spans and do not count as model calls.
 _GENAI_MODEL_OPERATIONS = {"chat", "generate_content", "text_completion"}
 _GENAI_TOOL_OPERATION = "execute_tool"
 
@@ -192,8 +192,9 @@ def _classify_span_kind(attrs: dict[str, Any]) -> str:
     OpenInference's ``openinference.span.kind`` wins when present so dual-emitting
     spans keep their established classification. Otherwise the GenAI
     ``gen_ai.operation.name`` is mapped to the same internal kinds:
-    ``execute_tool`` -> ``TOOL``, model operations -> ``LLM``. Spans with neither
-    fall back to ``UNKNOWN`` (unchanged behavior).
+    ``execute_tool`` -> ``TOOL``, model operations -> ``LLM``, and other GenAI
+    operations (``invoke_agent``, ``plan``, ``retrieval``, ...) -> ``AGENT``.
+    Spans with neither fall back to ``UNKNOWN`` (unchanged behavior).
     """
     if _SPAN_KIND_KEY in attrs:
         return attrs[_SPAN_KIND_KEY]
@@ -203,9 +204,7 @@ def _classify_span_kind(attrs: dict[str, Any]) -> str:
     if operation in _GENAI_MODEL_OPERATIONS:
         return "LLM"
     if operation is not None:
-        # Other GenAI agent operations (invoke_agent, plan, retrieval, ...).
-        # Carry them through as model-like spans rather than dropping them.
-        return "LLM"
+        return "AGENT"
     return "UNKNOWN"
 
 
@@ -309,10 +308,12 @@ class _EventAccumulator:
     total_output_tokens: int = 0
     total_latency_ms: float = 0.0
     llm_call_count: int = 0
-    # call_id -> tool_call edit dict, for binding late-arriving tool results.
-    _tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # call_id -> result seen before its tool_call was emitted.
-    _pending_results: dict[str, Any] = field(default_factory=dict)
+    # call_id -> outstanding tool_call edit dicts, for binding late-arriving
+    # tool results. Multiple entries are kept so repeated call ids across turns
+    # or retries bind FIFO rather than overwriting an earlier request.
+    _tool_calls_by_id: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # call_id -> results seen before their tool_call was emitted.
+    _pending_results: dict[str, list[Any]] = field(default_factory=dict)
 
     def note_node(self, name: str | None) -> None:
         if name and name not in self.nodes_visited:
@@ -328,7 +329,7 @@ class _EventAccumulator:
         tool_args: Any,
         tool_result: Any = "",
         call_id: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Append a tool_call transcript event, binding a pending result if any."""
         self.note_tool(tool_name)
         edit: dict[str, Any] = {
@@ -339,26 +340,41 @@ class _EventAccumulator:
         }
         if call_id:
             edit["tool_call_id"] = call_id
+            if not edit["tool_result"] and self._pending_results.get(call_id):
+                edit["tool_result"] = self._pending_results[call_id].pop(0)
+                if not self._pending_results[call_id]:
+                    del self._pending_results[call_id]
         self.events.append({
             "view": ["target", "combined"],
             "actor": "tool",
             "edit": edit,
         })
-        if call_id:
-            self._tool_calls_by_id[call_id] = edit
-            if not edit["tool_result"] and call_id in self._pending_results:
-                edit["tool_result"] = self._pending_results.pop(call_id)
+        if call_id and not edit.get("tool_result"):
+            self._tool_calls_by_id.setdefault(call_id, []).append(edit)
+        return edit
 
-    def bind_tool_result(self, call_id: str | None, result: Any) -> None:
-        """Attach a tool result to an already-emitted tool_call, or hold it."""
+    def bind_tool_result(
+        self,
+        call_id: str | None,
+        result: Any,
+        *,
+        hold_if_unbound: bool = True,
+    ) -> bool:
+        """Attach a tool result to an emitted tool_call, or optionally hold it."""
         if not call_id:
-            return
-        edit = self._tool_calls_by_id.get(call_id)
-        if edit is not None:
+            return False
+        pending_edits = self._tool_calls_by_id.get(call_id, [])
+        while pending_edits:
+            edit = pending_edits.pop(0)
             if not edit.get("tool_result"):
                 edit["tool_result"] = result
-        else:
-            self._pending_results[call_id] = result
+                if not pending_edits:
+                    self._tool_calls_by_id.pop(call_id, None)
+                return True
+        self._tool_calls_by_id.pop(call_id, None)
+        if hold_if_unbound:
+            self._pending_results.setdefault(call_id, []).append(result)
+        return False
 
 
 def _spans_to_events(
@@ -485,18 +501,23 @@ def _openinference_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> Non
 def _genai_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     """Map a single OTel GenAI-convention span into transcript events.
 
-    Tool spans (operation ``execute_tool``) become tool_call edits; model and
-    other agent operations become assistant add_message edits plus any tool
-    calls carried in span events. Optional fields degrade gracefully.
+    Tool spans (operation ``execute_tool``) become tool_call edits; model spans
+    become assistant add_message edits plus any tool calls carried in span events.
+    Agent/orchestration spans preserve node attribution and event-carried tool
+    calls/results but do not count as model calls. Optional fields degrade
+    gracefully.
 
-    Routes on ``gen_ai.operation.name`` directly so the mapping is correct
-    regardless of how the span's ``kind`` was populated upstream.
+    Routes on the classified span kind so non-model GenAI operations such as
+    ``invoke_agent`` do not inflate LLM aggregates or duplicate child chat output.
     """
-    operation = span.attributes.get(_GENAI_OPERATION_KEY)
-    if operation == _GENAI_TOOL_OPERATION:
+    if span.kind == "TOOL":
         _genai_tool_span_to_events(span, acc)
-    else:
+    elif span.kind == "LLM":
         _genai_model_span_to_events(span, acc)
+    elif span.kind == "AGENT":
+        _genai_agent_span_to_events(span, acc)
+    else:
+        _genai_agent_span_to_events(span, acc)
 
 
 def _genai_model_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
@@ -514,11 +535,15 @@ def _genai_model_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     acc.llm_call_count += 1
     acc.note_node(node_name)
 
-    # Assistant text: prefer the generic gen_ai content attribute, then the
-    # optional vendor enrichment, then content carried in span events.
-    output_text = _genai_text_from_messages(attrs.get(_GENAI_OUTPUT_MESSAGES_KEY))
-    if not output_text:
-        output_text = _genai_text_from_messages(attrs.get(_OPENCLAW_OUTPUT_MESSAGES_KEY))
+    # Assistant text/tool calls: prefer the generic gen_ai content attribute,
+    # then the optional vendor enrichment, then content carried in span events.
+    output_text, attr_tool_calls = _genai_messages_content(
+        attrs.get(_GENAI_OUTPUT_MESSAGES_KEY)
+    )
+    if not output_text and not attr_tool_calls:
+        output_text, attr_tool_calls = _genai_messages_content(
+            attrs.get(_OPENCLAW_OUTPUT_MESSAGES_KEY)
+        )
 
     event_text, event_tool_calls, event_results = _genai_extract_events(span.events)
     if not output_text:
@@ -541,11 +566,28 @@ def _genai_model_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
             },
         })
 
-    # Tool calls requested in the model's choice become tool_call edits;
+    # Tool calls requested in the model's messages/choice become tool_call edits;
     # results carried as gen_ai.tool.message events bind to them by id.
-    for tc in event_tool_calls:
+    for tc in [*attr_tool_calls, *event_tool_calls]:
         acc.emit_tool_call(tc["name"], tc["args"], "", tc.get("call_id"))
-    for call_id, result in event_results.items():
+    for call_id, result in event_results:
+        acc.bind_tool_result(call_id, result)
+
+
+def _genai_agent_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
+    """Record GenAI agent/orchestration spans without counting model work."""
+    attrs = span.attributes
+    node_name = attrs.get(_LANGGRAPH_NODE_KEY, span.name)
+    acc.note_node(node_name)
+
+    _, attr_tool_calls = _genai_messages_content(attrs.get(_GENAI_OUTPUT_MESSAGES_KEY))
+    if not attr_tool_calls:
+        _, attr_tool_calls = _genai_messages_content(attrs.get(_OPENCLAW_OUTPUT_MESSAGES_KEY))
+    _, event_tool_calls, event_results = _genai_extract_events(span.events)
+
+    for tc in [*attr_tool_calls, *event_tool_calls]:
+        acc.emit_tool_call(tc["name"], tc["args"], "", tc.get("call_id"))
+    for call_id, result in event_results:
         acc.bind_tool_result(call_id, result)
 
 
@@ -569,12 +611,19 @@ def _genai_tool_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     # NOTE: tool-span latency is intentionally NOT added to total_latency_ms.
     # The OpenInference path aggregates LLM-span latency only, so adding TOOL
     # latency here would make the aggregate inconsistent across conventions.
+    if call_id and tool_result and acc.bind_tool_result(
+        call_id,
+        tool_result,
+        hold_if_unbound=False,
+    ):
+        acc.note_tool(tool_name)
+        return
     acc.emit_tool_call(tool_name, tool_args, tool_result, call_id)
 
 
 def _genai_extract_events(
     events: list[dict[str, Any]],
-) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[str, list[dict[str, Any]], list[tuple[str, Any]]]:
     """Pull assistant text, tool calls, and tool results from GenAI span events.
 
     Handles ``gen_ai.choice`` (model output, may include tool_calls),
@@ -586,11 +635,17 @@ def _genai_extract_events(
     """
     texts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
-    results_by_id: dict[str, Any] = {}
+    results_by_id: list[tuple[str, Any]] = []
 
     for event in events:
+        if not isinstance(event, dict):
+            continue
         name = event.get("name", "")
-        attrs = _flatten_attributes(event.get("attributes", []))
+        try:
+            attrs = _flatten_attributes(event.get("attributes") or [])
+        except (TypeError, AttributeError, ValueError):
+            log.warning("Skipping malformed GenAI span event attributes: %r", event)
+            continue
 
         if name in (_GENAI_CHOICE_EVENT, _GENAI_ASSISTANT_MESSAGE_EVENT):
             message = _coerce_json(attrs.get("message"))
@@ -609,7 +664,7 @@ def _genai_extract_events(
                 or attrs.get(_GENAI_TOOL_CALL_ID_KEY)
             )
             if call_id:
-                results_by_id[call_id] = _genai_tool_result_str(attrs.get("content"))
+                results_by_id.append((call_id, _genai_tool_result_str(attrs.get("content"))))
 
     return "\n".join(t for t in texts if t), tool_calls, results_by_id
 
@@ -621,19 +676,44 @@ def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     calls: list[dict[str, Any]] = []
     for rc in raw_calls:
-        if not isinstance(rc, dict):
-            continue
-        fn = rc.get("function")
-        if not isinstance(fn, dict):
-            fn = {}
-        name = fn.get("name") or rc.get("name") or "tool"
-        raw_args = fn.get("arguments") if "arguments" in fn else rc.get("arguments")
-        calls.append({
-            "name": name,
-            "args": _genai_tool_args(raw_args),
-            "call_id": rc.get("id") or rc.get("call_id"),
-        })
+        normalized = _normalize_tool_call(rc)
+        if normalized:
+            calls.append(normalized)
     return calls
+
+
+def _extract_tool_calls_from_parts(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize tool-call parts from a GenAI message object."""
+    calls: list[dict[str, Any]] = []
+    for field in ("parts", "content"):
+        parts = message.get(field)
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            normalized = _normalize_tool_call(part)
+            if normalized:
+                calls.append(normalized)
+    return calls
+
+
+def _normalize_tool_call(value: Any) -> dict[str, Any] | None:
+    """Normalize OpenAI-style and GenAI part-style tool-call payloads."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("type") not in (None, "function", "tool_call"):
+        return None
+    fn = value.get("function")
+    if not isinstance(fn, dict):
+        fn = {}
+    name = fn.get("name") or value.get("name")
+    raw_args = fn.get("arguments") if "arguments" in fn else value.get("arguments")
+    if not name and raw_args is None:
+        return None
+    return {
+        "name": name or "tool",
+        "args": _genai_tool_args(raw_args),
+        "call_id": value.get("id") or value.get("call_id") or value.get("tool_call_id"),
+    }
 
 
 def _coerce_json(value: Any) -> Any:
@@ -687,7 +767,7 @@ def _message_text(message: Any) -> str:
     if isinstance(content, list):
         chunks = []
         for part in content:
-            if isinstance(part, dict):
+            if isinstance(part, dict) and part.get("type") in (None, "text"):
                 c = part.get("content") or part.get("text")
                 if isinstance(c, str):
                     chunks.append(c)
@@ -726,6 +806,34 @@ def _genai_text_from_messages(value: Any) -> str:
         if text:
             texts.append(text)
     return "\n".join(texts)
+
+
+def _genai_messages_content(value: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Extract assistant text plus tool calls from a gen_ai messages value."""
+    messages = _coerce_json(value)
+    if messages is None:
+        return "", []
+    if isinstance(messages, str):
+        return messages, []
+    if isinstance(messages, dict):
+        messages = [messages]
+    if not isinstance(messages, list):
+        return "", []
+
+    texts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "assistant")
+        if role not in ("assistant", "model", None):
+            continue
+        text = _message_text(msg)
+        if text:
+            texts.append(text)
+        tool_calls.extend(_extract_tool_calls(msg))
+        tool_calls.extend(_extract_tool_calls_from_parts(msg))
+    return "\n".join(texts), tool_calls
 
 
 def _genai_tool_args(value: Any) -> Any:
@@ -1144,7 +1252,7 @@ class LiveOTelExporter:
                     if sdk_span.parent else None
                 ),
                 name=sdk_span.name,
-                kind=attrs.get("openinference.span.kind", "UNKNOWN"),
+                kind=_classify_span_kind(attrs),
                 start_time_ns=sdk_span.start_time or 0,
                 end_time_ns=sdk_span.end_time or 0,
                 attributes=attrs,
@@ -1436,9 +1544,6 @@ def auto_select_extraction_mode(spans: list[OTelSpan]) -> str:
     if not spans:
         return ExtractionMode.FLAT
 
-    # NOTE: OpenInference does not currently define an "AGENT" span kind;
-    # agent-level spans use "CHAIN". This check is forward-looking for when
-    # the convention may add an explicit AGENT kind.
     agent_spans = [s for s in spans if s.kind == "AGENT"]
     tree = build_span_tree(spans)
     max_depth = max((r.depth for r in tree), default=0) if tree else 0

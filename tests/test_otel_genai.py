@@ -651,5 +651,253 @@ class TestSdkEventValueConversion(unittest.TestCase):
         self.assertEqual(evt_attrs["labels"], ["x", "y"])
 
 
+class TestGenAIToolCallReviewFollowups(unittest.TestCase):
+    """Review follow-ups around GenAI tool-call correlation and span events."""
+
+    def test_execute_tool_span_binds_result_to_choice_call_without_duplicate(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "traceId": "stitch", "spanId": "chat1", "name": "chat",
+                    "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                        {"key": "session.id", "value": {"stringValue": "stitch_sess"}},
+                    ],
+                    "events": [{
+                        "name": "gen_ai.choice",
+                        "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                            "role": "assistant",
+                            "content": "Calling lookup.",
+                            "tool_calls": [{
+                                "id": "call_same", "type": "function",
+                                "function": {"name": "lookup", "arguments": "{\"q\": \"x\"}"},
+                            }],
+                        })}}],
+                    }],
+                },
+                {
+                    "traceId": "stitch", "spanId": "tool1", "name": "execute_tool lookup",
+                    "startTimeUnixNano": 1_000_000, "endTimeUnixNano": 2_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                        {"key": "gen_ai.tool.name", "value": {"stringValue": "lookup"}},
+                        {"key": "gen_ai.tool.call.id", "value": {"stringValue": "call_same"}},
+                        {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": "{\"q\": \"x\"}"}},
+                        {"key": "gen_ai.tool.call.result", "value": {"stringValue": "{\"value\": \"done\"}"}},
+                        {"key": "session.id", "value": {"stringValue": "stitch_sess"}},
+                    ],
+                },
+            ]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        tools = [
+            e for e in _tool_events(_row(rows, "stitch_sess"))
+            if e["edit"].get("tool_call_id") == "call_same"
+        ]
+        self.assertEqual(len(tools), 1, tools)
+        self.assertEqual(tools[0]["edit"]["tool_args"], {"q": "x"})
+        self.assertIn("done", tools[0]["edit"]["tool_result"])
+
+    def test_repeated_call_ids_bind_results_in_fifo_order(self):
+        def choice(q):
+            return {
+                "name": "gen_ai.choice",
+                "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "dup", "type": "function",
+                        "function": {"name": "lookup", "arguments": json.dumps({"q": q})},
+                    }],
+                })}}],
+            }
+
+        def result(value):
+            return {
+                "name": "gen_ai.tool.message",
+                "attributes": [
+                    {"key": "id", "value": {"stringValue": "dup"}},
+                    {"key": "content", "value": {"stringValue": value}},
+                ],
+            }
+
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "fifo", "spanId": "chat1", "name": "chat",
+                "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                    {"key": "session.id", "value": {"stringValue": "fifo_sess"}},
+                ],
+                "events": [choice("first"), choice("second"), result("first-result"), result("second-result")],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        tools = _tool_events(_row(rows, "fifo_sess"))
+        self.assertEqual([t["edit"]["tool_args"] for t in tools], [{"q": "first"}, {"q": "second"}])
+        self.assertEqual([t["edit"]["tool_result"] for t in tools], ["first-result", "second-result"])
+
+    def test_output_messages_tool_call_parts_emit_tool_call(self):
+        messages = [{
+            "role": "assistant",
+            "parts": [
+                {"type": "text", "content": "Need weather."},
+                {
+                    "type": "tool_call",
+                    "id": "part_call",
+                    "name": "get_weather",
+                    "arguments": {"location": "Paris"},
+                },
+            ],
+        }]
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "parts", "spanId": "chat1", "name": "chat",
+                "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                    {"key": "gen_ai.output.messages", "value": {"stringValue": json.dumps(messages)}},
+                    {"key": "session.id", "value": {"stringValue": "parts_sess"}},
+                ],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        tools = _tool_events(_row(rows, "parts_sess"))
+        self.assertEqual(len(tools), 1, tools)
+        self.assertEqual(tools[0]["edit"]["tool_name"], "get_weather")
+        self.assertEqual(tools[0]["edit"]["tool_args"], {"location": "Paris"})
+        self.assertEqual(tools[0]["edit"].get("tool_call_id"), "part_call")
+
+    def test_non_model_genai_operations_do_not_count_or_duplicate_outputs(self):
+        messages = [{"role": "assistant", "content": "Child answer."}]
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "traceId": "agent", "spanId": "agent1", "name": "invoke_agent",
+                    "startTimeUnixNano": 0, "endTimeUnixNano": 3_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "invoke_agent"}},
+                        {"key": "langgraph.node", "value": {"stringValue": "agent"}},
+                        {"key": "gen_ai.output.messages", "value": {"stringValue": json.dumps(messages)}},
+                        {"key": "session.id", "value": {"stringValue": "agent_sess"}},
+                    ],
+                },
+                {
+                    "traceId": "agent", "spanId": "chat1", "parentSpanId": "agent1", "name": "chat",
+                    "startTimeUnixNano": 1_000_000, "endTimeUnixNano": 2_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                        {"key": "langgraph.node", "value": {"stringValue": "model"}},
+                        {"key": "gen_ai.output.messages", "value": {"stringValue": json.dumps(messages)}},
+                        {"key": "session.id", "value": {"stringValue": "agent_sess"}},
+                    ],
+                },
+            ]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        row = _row(rows, "agent_sess")
+        self.assertEqual(row["raw"]["llm_call_count"], 1)
+        self.assertEqual(row["raw"]["total_latency_ms"], 1.0)
+        self.assertEqual(row["raw"]["nodes_visited"], ["agent", "model"])
+        target_text = [e["edit"]["message"]["content"] for e in _target_events(row)]
+        self.assertEqual(target_text, ["Child answer."])
+
+    def test_agent_span_events_can_emit_tool_calls_without_llm_count(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "agent_evt", "spanId": "agent1", "name": "invoke_agent",
+                "startTimeUnixNano": 0, "endTimeUnixNano": 3_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "invoke_agent"}},
+                    {"key": "langgraph.node", "value": {"stringValue": "agent"}},
+                    {"key": "session.id", "value": {"stringValue": "agent_evt_sess"}},
+                ],
+                "events": [{
+                    "name": "gen_ai.choice",
+                    "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "agent_call", "type": "function",
+                            "function": {"name": "lookup", "arguments": "{\"q\": \"agent\"}"},
+                        }],
+                    })}}],
+                }],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        row = _row(rows, "agent_evt_sess")
+        self.assertEqual(row["raw"]["llm_call_count"], 0)
+        self.assertEqual(row["raw"]["total_latency_ms"], 0.0)
+        self.assertEqual(_tool_events(row)[0]["edit"]["tool_name"], "lookup")
+
+    def test_malformed_event_attributes_do_not_abort_import(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "bad_evt", "spanId": "chat1", "name": "chat",
+                "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                    {"key": "gen_ai.output.messages", "value": {"stringValue": "[{\"role\": \"assistant\", \"content\": \"fallback\"}]"}},
+                    {"key": "session.id", "value": {"stringValue": "bad_evt_sess"}},
+                ],
+                "events": [{"name": "gen_ai.choice", "attributes": None}],
+            }]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        targets = _target_events(_row(rows, "bad_evt_sess"))
+        self.assertEqual(targets[0]["edit"]["message"]["content"], "fallback")
+
+    def test_standalone_execute_tool_result_does_not_seed_later_duplicate_id(self):
+        doc = {
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "traceId": "stale", "spanId": "tool1", "name": "execute_tool lookup",
+                    "startTimeUnixNano": 0, "endTimeUnixNano": 1_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                        {"key": "gen_ai.tool.name", "value": {"stringValue": "lookup"}},
+                        {"key": "gen_ai.tool.call.id", "value": {"stringValue": "dup"}},
+                        {"key": "gen_ai.tool.call.result", "value": {"stringValue": "first-result"}},
+                        {"key": "session.id", "value": {"stringValue": "stale_sess"}},
+                    ],
+                },
+                {
+                    "traceId": "stale", "spanId": "chat1", "name": "chat",
+                    "startTimeUnixNano": 2_000_000, "endTimeUnixNano": 3_000_000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                        {"key": "session.id", "value": {"stringValue": "stale_sess"}},
+                    ],
+                    "events": [{
+                        "name": "gen_ai.choice",
+                        "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                            "role": "assistant",
+                            "tool_calls": [{
+                                "id": "dup", "type": "function",
+                                "function": {"name": "lookup", "arguments": "{\"q\": \"later\"}"},
+                            }],
+                        })}}],
+                    }],
+                },
+            ]}]}]
+        }
+        path = _write_otlp_tempfile(self, doc)
+        rows = parse_otel_traces(path, group_by="session.id")
+        tools = _tool_events(_row(rows, "stale_sess"))
+        self.assertEqual([t["edit"]["tool_result"] for t in tools], ["first-result", ""])
+
+
 if __name__ == "__main__":
     unittest.main()
