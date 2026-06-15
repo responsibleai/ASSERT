@@ -848,8 +848,20 @@ def _drop_web_search_for_fallback(
     return replace(options, web_search=False)
 
 
-def _classify_llm_error(exc: Exception) -> Exception:
+def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     """Wrap litellm exceptions into categorized errors.
+
+    Args:
+        exc: The exception raised by the LiteLLM call.
+        model: The model name (e.g. ``"azure/gpt-4o"``, ``"openai/gpt-4o"``)
+            that produced the error. Used to scope provider-specific hints
+            (e.g. Azure RBAC guidance) so non-Azure providers do not see
+            misleading "verify your Cognitive Services role" text when the
+            user has merely set ``ASSERT_AZURE_USE_AAD=1`` for a different
+            ``azure/*`` model elsewhere in the same process. Defaults to
+            ``None`` for call sites (e.g. user-callable wrappers) that
+            cannot supply a model name; in that case provider-specific
+            hints are suppressed.
 
     LiteLLM maps provider HTTP errors to OpenAI-compatible exception types.
     We re-classify them into four categories that drive retry behaviour in
@@ -880,10 +892,17 @@ def _classify_llm_error(exc: Exception) -> Exception:
     from APIStatusError → APIError on some providers).
     """
     litellm = _get_litellm_module()
+    is_azure_model = bool(model) and model.startswith("azure/")
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         msg = f"Authentication failed: {exc}"
-        if azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
+        # Azure-specific RBAC / install hints only apply when the failing
+        # call targeted an ``azure/*`` model. Without this gate, a user
+        # running an ``openai/*`` model in the same process while
+        # ``ASSERT_AZURE_USE_AAD=1`` is set would see "verify the
+        # 'Cognitive Services OpenAI User' role" on a vanilla OpenAI 401,
+        # which is misleading.
+        if is_azure_model and azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
             if azure_auth._AZURE_AAD_DEP_MISSING:
                 msg += (
                     "\nNo AZURE_API_KEY is set and azure-identity is not "
@@ -1398,7 +1417,7 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
             _rate_limiter.report_success(model)
             return result
         except Exception as exc:
-            classified = _classify_llm_error(exc)
+            classified = _classify_llm_error(exc, model=model)
             last_exc = classified
             if isinstance(classified, LLMRateLimitError):
                 own_429s += 1

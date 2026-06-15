@@ -1186,7 +1186,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
              patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
-            wrapped = model_client._classify_llm_error(exc)
+            wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("Cognitive Services OpenAI User", str(wrapped))
         self.assertIn("AZURE_API_KEY", str(wrapped))
@@ -1196,7 +1196,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         exc = fake_litellm.AuthenticationError("401: bad key")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "key"):
-            wrapped = model_client._classify_llm_error(exc)
+            wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
 
@@ -1207,11 +1207,44 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad-fallback"), \
              patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", True):
-            wrapped = model_client._classify_llm_error(exc)
+            wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("assert-ai[azure-aad]", str(wrapped))
         # The RBAC hint must not appear in this branch — it would be misleading.
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+
+    def test_auth_error_omits_azure_hints_for_non_azure_model(self) -> None:
+        """A 401 on an ``openai/*`` model must not leak Azure-specific hints
+        even when ``ASSERT_AZURE_USE_AAD=1`` is set process-wide for some
+        other ``azure/*`` model. Without the model-scope gate, an OpenAI 401
+        would advise the user to fix their Azure RBAC role, which is
+        actively misleading."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: invalid api key")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
+            wrapped = model_client._classify_llm_error(exc, model="openai/gpt-5.4-mini")
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        # Neither the RBAC hint nor the install hint should appear on a
+        # non-Azure call.
+        self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+        self.assertNotIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertNotIn("Azure AD auth is active", str(wrapped))
+
+    def test_auth_error_omits_azure_hints_when_model_not_supplied(self) -> None:
+        """Call sites without a model in scope (e.g. user-callable wrappers)
+        pass ``model=None`` (the default). The classifier must treat those
+        defensively and never append Azure hints."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
+            wrapped = model_client._classify_llm_error(exc)
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+        self.assertNotIn("assert-ai[azure-aad]", str(wrapped))
 
 
 if __name__ == "__main__":

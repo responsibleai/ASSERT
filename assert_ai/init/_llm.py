@@ -54,7 +54,7 @@ def chat_completion(
     try:
         response = litellm.completion(**kwargs)
     except Exception as exc:
-        classified = _classify_llm_error(exc)
+        classified = _classify_llm_error(exc, model=model)
         # One-shot fallback: if the Responses API is not available in
         # this region, activate process-wide Chat Completions and
         # retry once. If the fallback was already active when we
