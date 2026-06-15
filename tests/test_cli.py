@@ -139,7 +139,7 @@ class CliAuthModeLoggingTest(unittest.TestCase):
         """``--help`` (and other non-LLM invocations of the group callback)
         must not call ``log_resolved_azure_auth_mode``. The line previously
         fired here, leaking into help text and any non-LLM subcommand."""
-        with patch("assert_ai.core.model_client.log_resolved_azure_auth_mode") as log_fn:
+        with patch("assert_ai.core.azure_auth.log_resolved_azure_auth_mode") as log_fn:
             result = self.runner.invoke(cli, ["--help"])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
@@ -165,7 +165,7 @@ class CliAuthModeLoggingTest(unittest.TestCase):
 
             with patch("assert_ai.cli._load_runner_module", side_effect=_load_runner_module), \
                  patch(
-                     "assert_ai.core.model_client.log_resolved_azure_auth_mode",
+                     "assert_ai.core.azure_auth.log_resolved_azure_auth_mode",
                      side_effect=_log_auth_mode,
                  ):
                 result = self.runner.invoke(cli, ["run", "--config", str(config)])
@@ -195,7 +195,7 @@ class CliAuthModeLoggingTest(unittest.TestCase):
 
             with patch("assert_ai.cli._load_runner_module", return_value=self._make_runner_mock()), \
                  patch(
-                     "assert_ai.core.model_client.log_resolved_azure_auth_mode",
+                     "assert_ai.core.azure_auth.log_resolved_azure_auth_mode",
                      side_effect=_capture_level,
                  ):
                 result = self.runner.invoke(

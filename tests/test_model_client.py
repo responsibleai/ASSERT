@@ -1071,7 +1071,7 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
         captured: dict[str, object] = {}
         fake_litellm = self._stub_litellm(captured)
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
-             patch.object(model_client, "_AZURE_AUTH_MODE", mode), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", mode), \
              patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=provider):
             await model_client.generate(model, "hi")
         return captured
@@ -1115,7 +1115,7 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
 
     # Row 6: aad + azure/* + missing dep → raises LLMAuthError eagerly
     async def test_aad_mode_azure_model_missing_dep_raises(self) -> None:
-        with patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
+        with patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
              patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=None):
             with self.assertRaises(model_client.LLMAuthError) as ctx:
                 await model_client.generate("azure/gpt-4o-mini", "hi")
@@ -1146,7 +1146,7 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
             extra_kwargs={"azure_ad_token_provider": user_provider},
         )
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
-             patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
              patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=lambda: "auto-token"):
             await model_client.generate("azure/gpt-4o-mini", "hi", opts)
         self.assertIs(captured["azure_ad_token_provider"], user_provider)
@@ -1184,8 +1184,8 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         fake_litellm = self._fake_litellm_with_auth_error()
         exc = fake_litellm.AuthenticationError("401: bad token")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
-             patch.object(model_client, "_AZURE_AUTH_MODE", "aad"), \
-             patch.object(model_client, "_AZURE_AAD_DEP_MISSING", False):
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
             wrapped = model_client._classify_llm_error(exc)
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("Cognitive Services OpenAI User", str(wrapped))
@@ -1195,7 +1195,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         fake_litellm = self._fake_litellm_with_auth_error()
         exc = fake_litellm.AuthenticationError("401: bad key")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
-             patch.object(model_client, "_AZURE_AUTH_MODE", "key"):
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "key"):
             wrapped = model_client._classify_llm_error(exc)
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
@@ -1205,8 +1205,8 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         fake_litellm = self._fake_litellm_with_auth_error()
         exc = fake_litellm.AuthenticationError("401: no api key supplied")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
-             patch.object(model_client, "_AZURE_AUTH_MODE", "aad-fallback"), \
-             patch.object(model_client, "_AZURE_AAD_DEP_MISSING", True):
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad-fallback"), \
+             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", True):
             wrapped = model_client._classify_llm_error(exc)
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("assert-ai[azure-aad]", str(wrapped))

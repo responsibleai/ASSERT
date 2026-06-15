@@ -740,7 +740,7 @@ def run(
     # the value that azure/* requests will actually use — and AFTER subcommand
     # logging flags have been applied (above), so ``--quiet`` silences it and
     # ``--output json`` formats it as JSON.
-    from assert_ai.core.model_client import log_resolved_azure_auth_mode
+    from assert_ai.core.azure_auth import log_resolved_azure_auth_mode
     log_resolved_azure_auth_mode()
     rc = runner.run_pipeline(
         config=str(config),

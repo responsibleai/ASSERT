@@ -38,6 +38,7 @@ from assert_ai.core.artifact_cache import (
     supports_artifact_cache,
     update_latest,
 )
+from assert_ai.core.azure_auth import refresh_azure_auth_mode
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
 from assert_ai.core.io import write_json
 from assert_ai.core.model_client import (
@@ -46,7 +47,6 @@ from assert_ai.core.model_client import (
     LLMProviderError,
     LLMRateLimitError,
     UsageAccumulator,
-    refresh_azure_auth_mode,
     track_usage,
 )
 from assert_ai.core.runtime_safety import (

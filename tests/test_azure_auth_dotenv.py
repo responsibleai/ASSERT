@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 from dotenv import load_dotenv
 
-from assert_ai.core import azure_auth, model_client
+from assert_ai.core import azure_auth
 
 
 _AZURE_AUTH_ENV_VARS = (
@@ -54,19 +54,19 @@ class _DotenvHarness(unittest.TestCase):
         for var in _AZURE_AUTH_ENV_VARS:
             os.environ.pop(var, None)
 
-        # Reset both the azure_auth provider cache and model_client's
-        # mode cache so the next refresh_azure_auth_mode call resolves
+        # Reset both the azure_auth provider cache and the auth-mode
+        # cache so the next refresh_azure_auth_mode call resolves
         # against the test's env, not whatever a prior test cached.
         azure_auth._reset_cache_for_tests()
-        self._mode_before = model_client._AZURE_AUTH_MODE
-        self._dep_missing_before = model_client._AZURE_AAD_DEP_MISSING
-        model_client._AZURE_AUTH_MODE = None
-        model_client._AZURE_AAD_DEP_MISSING = False
+        self._mode_before = azure_auth._AZURE_AUTH_MODE
+        self._dep_missing_before = azure_auth._AZURE_AAD_DEP_MISSING
+        azure_auth._AZURE_AUTH_MODE = None
+        azure_auth._AZURE_AAD_DEP_MISSING = False
         self.addCleanup(self._restore_model_client_cache)
 
     def _restore_model_client_cache(self) -> None:
-        model_client._AZURE_AUTH_MODE = self._mode_before
-        model_client._AZURE_AAD_DEP_MISSING = self._dep_missing_before
+        azure_auth._AZURE_AUTH_MODE = self._mode_before
+        azure_auth._AZURE_AAD_DEP_MISSING = self._dep_missing_before
         azure_auth._reset_cache_for_tests()
 
     def _write_dotenv(self, contents: str) -> Path:
@@ -89,7 +89,7 @@ class DotenvPrecedenceTest(_DotenvHarness):
         env_path = self._write_dotenv("ASSERT_AZURE_USE_AAD=1\n")
 
         load_dotenv(env_path, override=False)
-        mode = model_client.refresh_azure_auth_mode(force=True)
+        mode = azure_auth.refresh_azure_auth_mode(force=True)
 
         self.assertEqual(mode, "aad")
 
@@ -101,7 +101,7 @@ class DotenvPrecedenceTest(_DotenvHarness):
         env_path = self._write_dotenv("AZURE_API_KEY=sk-test-secret\n")
 
         load_dotenv(env_path, override=False)
-        mode = model_client.refresh_azure_auth_mode(force=True)
+        mode = azure_auth.refresh_azure_auth_mode(force=True)
 
         self.assertEqual(mode, "key")
 
@@ -117,7 +117,7 @@ class DotenvPrecedenceTest(_DotenvHarness):
         env_path = self._write_dotenv("ASSERT_AZURE_USE_AAD=1\n")
 
         load_dotenv(env_path, override=False)
-        mode = model_client.refresh_azure_auth_mode(force=True)
+        mode = azure_auth.refresh_azure_auth_mode(force=True)
 
         self.assertEqual(mode, "aad")
 

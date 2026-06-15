@@ -171,6 +171,93 @@ def _wrap_provider_with_provenance_log(
     return provider
 
 
+# Cached on first access (or after ``refresh_azure_auth_mode(force=True)``).
+# Kept module-global so per-request lookups stay free (no env reads,
+# no extra function calls in the hot path) once warmed.
+#
+# Resolution is deliberately *lazy*: process entrypoints that load
+# ``.env`` (the runner, ``assert-ai init``) call
+# ``refresh_azure_auth_mode(force=True)`` after ``load_dotenv`` so the
+# resolved mode reflects the dotenv-populated environment, not just
+# the shell vars present at module import.
+_AZURE_AUTH_MODE: Mode | None = None
+
+# True when the user's environment selects AAD (explicit or fallback)
+# but the ``azure-identity`` package is not importable. Used by
+# ``model_client._classify_llm_error`` to swap the RBAC hint for an
+# install hint. Updated alongside ``_AZURE_AUTH_MODE`` whenever the
+# cache is refreshed.
+_AZURE_AAD_DEP_MISSING: bool = False
+
+
+def refresh_azure_auth_mode(force: bool = False) -> Mode:
+    """Resolve the Azure auth mode from the current environment and cache it.
+
+    Idempotent: once the cache is populated, subsequent calls are no-ops
+    unless ``force=True``. Entrypoints that load ``.env`` should call this
+    with ``force=True`` immediately after ``load_dotenv`` so the resolved
+    mode reflects the dotenv-populated environment.
+
+    Returns the resolved mode for the caller's convenience.
+    """
+    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    if _AZURE_AUTH_MODE is not None and not force:
+        return _AZURE_AUTH_MODE
+    _AZURE_AUTH_MODE = resolve_azure_auth_mode()
+    _AZURE_AAD_DEP_MISSING = (
+        _AZURE_AUTH_MODE in ("aad", "aad-fallback")
+        and get_azure_token_provider() is None
+    )
+    return _AZURE_AUTH_MODE
+
+
+def _get_azure_auth_mode() -> Mode:
+    """Return the cached auth mode, resolving lazily on first access."""
+    if _AZURE_AUTH_MODE is None:
+        return refresh_azure_auth_mode()
+    return _AZURE_AUTH_MODE
+
+
+def log_resolved_azure_auth_mode() -> None:
+    """Emit a single INFO/WARNING line describing the active Azure auth mode.
+
+    Safe to call multiple times — it always logs the currently-resolved
+    state. Intended to be called by entrypoints (CLI, library hosts) once
+    their logging is configured, so users have a reliable startup anchor
+    for which auth path will be used by ``azure/*`` requests. A followup
+    provenance line ("AAD token acquired via …") fires on the first
+    successful token acquisition, but is easy to miss mid-stream without
+    this anchor.
+    """
+    mode = _get_azure_auth_mode()
+    if mode == "aad":
+        log.info(
+            "Azure OpenAI auth mode: AAD (forced via %s).",
+            ENV_USE_AAD_FLAG,
+        )
+        if _AZURE_AAD_DEP_MISSING:
+            log.warning(
+                "%s is set but azure-identity is not installed; the next "
+                "azure/* request will fail. Install with: "
+                "pip install 'assert-ai[azure-aad]'",
+                ENV_USE_AAD_FLAG,
+            )
+    elif mode == "aad-fallback":
+        if _AZURE_AAD_DEP_MISSING:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "azure-identity not installed — install with: "
+                "pip install 'assert-ai[azure-aad]').",
+            )
+        else:
+            log.info(
+                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "using DefaultAzureCredential).",
+            )
+    else:
+        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
+
+
 def _reset_cache_for_tests() -> None:
     """Clear the cached provider — for tests only."""
     global _CACHED_PROVIDER, _CACHE_POPULATED

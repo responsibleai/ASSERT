@@ -11,7 +11,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from assert_ai.core import azure_auth, model_client
+from assert_ai.core import azure_auth
 
 
 def _fake_response(content: str = "hi") -> Any:
@@ -44,8 +44,8 @@ class InitChatCompletionAzureAadTest(unittest.TestCase):
         os.environ.pop("AZURE_API_KEY", None)
 
         azure_auth._reset_cache_for_tests()
-        self._mode_before = model_client._AZURE_AUTH_MODE
-        model_client._AZURE_AUTH_MODE = "aad"
+        self._mode_before = azure_auth._AZURE_AUTH_MODE
+        azure_auth._AZURE_AUTH_MODE = "aad"
         self.addCleanup(self._restore)
 
         # Stub the token-provider lookup so we don't need azure-identity
@@ -61,7 +61,7 @@ class InitChatCompletionAzureAadTest(unittest.TestCase):
         self.addCleanup(self._provider_patch.stop)
 
     def _restore(self) -> None:
-        model_client._AZURE_AUTH_MODE = self._mode_before
+        azure_auth._AZURE_AUTH_MODE = self._mode_before
         azure_auth._reset_cache_for_tests()
 
     def test_azure_model_gets_azure_ad_token_provider(self) -> None:
@@ -121,12 +121,12 @@ class InitChatCompletionAzureKeyModeTest(unittest.TestCase):
         os.environ.pop("ASSERT_AZURE_USE_AAD", None)
 
         azure_auth._reset_cache_for_tests()
-        self._mode_before = model_client._AZURE_AUTH_MODE
-        model_client._AZURE_AUTH_MODE = "key"
+        self._mode_before = azure_auth._AZURE_AUTH_MODE
+        azure_auth._AZURE_AUTH_MODE = "key"
         self.addCleanup(self._restore)
 
     def _restore(self) -> None:
-        model_client._AZURE_AUTH_MODE = self._mode_before
+        azure_auth._AZURE_AUTH_MODE = self._mode_before
         azure_auth._reset_cache_for_tests()
 
     def test_key_mode_does_not_inject(self) -> None:

@@ -9,7 +9,7 @@ Import side effects (intentional for the ``assert-ai`` CLI):
   time to strip any ``/openai/...`` path suffix, logging at INFO when
   it does so. Library users importing this module will see the env
   var mutated for the rest of the process.
-* ``refresh_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
+* ``azure_auth.refresh_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
   ``AZURE_API_KEY`` lazily on first access (or eagerly when an
   entrypoint calls it with ``force=True`` after ``load_dotenv``) to
   pick the Azure OpenAI auth mode for the process. When the resolved
@@ -359,52 +359,6 @@ def _model_family(model: str) -> str:
     return normalized
 
 
-# Cached on first access (or after ``refresh_azure_auth_mode(force=True)``).
-# Kept module-global so per-request lookups stay free (no env reads,
-# no extra function calls in the hot path) once warmed.
-#
-# Resolution is deliberately *lazy*: process entrypoints that load
-# ``.env`` (the runner, ``assert-ai init``) call
-# ``refresh_azure_auth_mode(force=True)`` after ``load_dotenv`` so the
-# resolved mode reflects the dotenv-populated environment, not just
-# the shell vars present at module import.
-_AZURE_AUTH_MODE: azure_auth.Mode | None = None
-
-# True when the user's environment selects AAD (explicit or fallback)
-# but the ``azure-identity`` package is not importable. Used by
-# ``_classify_llm_error`` to swap the RBAC hint for an install hint.
-# Updated alongside ``_AZURE_AUTH_MODE`` whenever the cache is refreshed.
-_AZURE_AAD_DEP_MISSING: bool = False
-
-
-def refresh_azure_auth_mode(force: bool = False) -> azure_auth.Mode:
-    """Resolve the Azure auth mode from the current environment and cache it.
-
-    Idempotent: once the cache is populated, subsequent calls are no-ops
-    unless ``force=True``. Entrypoints that load ``.env`` should call this
-    with ``force=True`` immediately after ``load_dotenv`` so the resolved
-    mode reflects the dotenv-populated environment.
-
-    Returns the resolved mode for the caller's convenience.
-    """
-    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
-    if _AZURE_AUTH_MODE is not None and not force:
-        return _AZURE_AUTH_MODE
-    _AZURE_AUTH_MODE = azure_auth.resolve_azure_auth_mode()
-    _AZURE_AAD_DEP_MISSING = (
-        _AZURE_AUTH_MODE in ("aad", "aad-fallback")
-        and azure_auth.get_azure_token_provider() is None
-    )
-    return _AZURE_AUTH_MODE
-
-
-def _get_azure_auth_mode() -> azure_auth.Mode:
-    """Return the cached auth mode, resolving lazily on first access."""
-    if _AZURE_AUTH_MODE is None:
-        return refresh_azure_auth_mode()
-    return _AZURE_AUTH_MODE
-
-
 def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
     """Attach an Azure AD token provider to ``azure/*`` payloads when AAD is active.
 
@@ -426,7 +380,7 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
     """
     if _model_family(model) != "azure":
         return
-    mode = _get_azure_auth_mode()
+    mode = azure_auth._get_azure_auth_mode()
     if mode == "key":
         return
     provider = azure_auth.get_azure_token_provider()
@@ -929,8 +883,8 @@ def _classify_llm_error(exc: Exception) -> Exception:
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         msg = f"Authentication failed: {exc}"
-        if _get_azure_auth_mode() in {"aad", "aad-fallback"}:
-            if _AZURE_AAD_DEP_MISSING:
+        if azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
+            if azure_auth._AZURE_AAD_DEP_MISSING:
                 msg += (
                     "\nNo AZURE_API_KEY is set and azure-identity is not "
                     "installed. Either export AZURE_API_KEY, or install "
@@ -1741,62 +1695,6 @@ def _normalize_azure_api_base() -> None:
 
 
 _normalize_azure_api_base()
-
-
-# Pick the Azure OpenAI auth mode lazily on first access. We deliberately
-# do *not* resolve it here at import time: ``model_client`` is imported
-# transitively before entrypoints get a chance to call ``load_dotenv``,
-# so an eager resolution would freeze the wrong mode whenever the user's
-# Azure credentials live only in a project ``.env``. Entrypoints
-# (``runner.py``, ``init/_command.py``) call ``refresh_azure_auth_mode(
-# force=True)`` immediately after loading their dotenv files.
-#
-# Log emission is intentionally deferred to `log_resolved_azure_auth_mode()`
-# below. This module is imported transitively at CLI startup *before*
-# `configure_logging()` installs handlers — emitting log records here would
-# silently drop them. Model-invoking subcommands call
-# `log_resolved_azure_auth_mode()` right after `configure_logging()` so
-# users get a reliable startup anchor for whichever auth path is active.
-
-
-def log_resolved_azure_auth_mode() -> None:
-    """Emit a single INFO/WARNING line describing the active Azure auth mode.
-
-    Safe to call multiple times — it always logs the currently-resolved
-    state. Intended to be called by entrypoints (CLI, library hosts) once
-    their logging is configured, so users have a reliable startup anchor
-    for which auth path will be used by ``azure/*`` requests. A followup
-    provenance line ("AAD token acquired via …") fires on the first
-    successful token acquisition, but is easy to miss mid-stream without
-    this anchor.
-    """
-    mode = _get_azure_auth_mode()
-    if mode == "aad":
-        log.info(
-            "Azure OpenAI auth mode: AAD (forced via %s).",
-            azure_auth.ENV_USE_AAD_FLAG,
-        )
-        if _AZURE_AAD_DEP_MISSING:
-            log.warning(
-                "%s is set but azure-identity is not installed; the next "
-                "azure/* request will fail. Install with: "
-                "pip install 'assert-ai[azure-aad]'",
-                azure_auth.ENV_USE_AAD_FLAG,
-            )
-    elif mode == "aad-fallback":
-        if _AZURE_AAD_DEP_MISSING:
-            log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
-                "azure-identity not installed — install with: "
-                "pip install 'assert-ai[azure-aad]').",
-            )
-        else:
-            log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
-                "using DefaultAzureCredential).",
-            )
-    else:
-        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
 
 
 # ── Import-time env-var seed ───────────────────────────────────
