@@ -16,11 +16,12 @@ runtime guard so the same agent target can be re-run secured.
 
 Layered dependencies
 --------------------
-``findings`` and ``prompt_builder`` depend only on ``assert_ai`` and the standard
-library, so they import eagerly and are usable without the optional ACS extra.
-``generate`` requires ``acs-generator`` and ``validate``/``guard`` require the
-native ``agent-control-specification`` SDK; those symbols load lazily and raise a
-clear install hint (``pip install "assert-ai[acs]"``) when the extra is absent.
+``findings``, ``prompt_builder``, and ``eval_config`` depend only on ``assert_ai``
+and the standard library, so they import eagerly and are usable without the
+optional ACS extra. ``generate`` requires ``acs-generator`` and
+``validate``/``guard`` require the native ``agent-control-specification`` SDK;
+those symbols load lazily and raise a clear install hint
+(``pip install "assert-ai[acs]"``) when the extra is absent.
 """
 
 from __future__ import annotations
@@ -35,6 +36,15 @@ if TYPE_CHECKING:  # pragma: no cover - import-time typing only
         FindingsSummary,
         load_findings,
         summarize_findings,
+    )
+    from assert_ai.integrations.acs.eval_config import (
+        PolicySummary,
+        RuleSummary,
+        build_eval_config,
+        render_behavior_description,
+        render_context,
+        summarize_policy,
+        write_eval_config,
     )
     from assert_ai.integrations.acs.generate import PolicyArtifacts, generate_policy
     from assert_ai.integrations.acs.guard import (
@@ -64,6 +74,13 @@ __all__ = [
     "FindingsSummary",
     "load_findings",
     "summarize_findings",
+    "PolicySummary",
+    "RuleSummary",
+    "summarize_policy",
+    "render_behavior_description",
+    "render_context",
+    "build_eval_config",
+    "write_eval_config",
     "GuardrailPrompt",
     "build_guardrail_prompt",
     "AssertLanguageModel",
@@ -89,6 +106,13 @@ _LAZY_EXPORTS = {
     "FindingsSummary": "findings",
     "load_findings": "findings",
     "summarize_findings": "findings",
+    "PolicySummary": "eval_config",
+    "RuleSummary": "eval_config",
+    "summarize_policy": "eval_config",
+    "render_behavior_description": "eval_config",
+    "render_context": "eval_config",
+    "build_eval_config": "eval_config",
+    "write_eval_config": "eval_config",
     "GuardrailPrompt": "prompt_builder",
     "build_guardrail_prompt": "prompt_builder",
     "AssertLanguageModel": "language_model",
