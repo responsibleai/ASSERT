@@ -136,6 +136,14 @@ def init(
     if env_file.exists():
         load_dotenv(env_file, override=False)
 
+    # Refresh the Azure auth mode now that ``.env`` has populated the
+    # environment so the init LLM call respects the dotenv-supplied
+    # ``ASSERT_AZURE_USE_AAD`` / ``AZURE_API_KEY`` rather than whichever
+    # state was frozen at module import.
+    from assert_ai.core.model_client import refresh_azure_auth_mode
+
+    refresh_azure_auth_mode(force=True)
+
     # Auto-detect non-interactive when stdin is not a TTY
     if not sys.stdin.isatty():
         non_interactive = True
