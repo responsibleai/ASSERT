@@ -32,6 +32,7 @@ def chat_completion(
         _activate_chat_completions_fallback,
         _classify_llm_error,
         _force_chat_completions,
+        _maybe_inject_azure_aad_token,
     )
 
     kwargs: dict[str, Any] = {
@@ -42,6 +43,13 @@ def chat_completion(
     }
     if response_format is not None:
         kwargs["response_format"] = response_format
+
+    # Route ``azure/*`` calls through the same AAD injection path that
+    # the main pipeline uses (see ``_build_chat_payload``). Without
+    # this, ``assert-ai init`` would bypass AAD and silently fall back
+    # to whatever key/cred LiteLLM finds in the environment, defeating
+    # the documented ``ASSERT_AZURE_USE_AAD=1`` opt-in.
+    _maybe_inject_azure_aad_token(model, kwargs)
 
     try:
         response = litellm.completion(**kwargs)
