@@ -47,6 +47,10 @@ _TRUTHY = {"1", "true", "yes", "on"}
 # label so users see "az login" instead of "AzureCliCredential" in the
 # one-line provenance log. Anything not in this map falls back to the
 # raw class name — better than silence, and unlikely in practice.
+#
+# Note: VisualStudioCodeCredential is intentionally absent — we set
+# ``exclude_visual_studio_code_credential=True`` on DefaultAzureCredential
+# so it is never resolved from in practice.
 _FRIENDLY_CRED_LABELS: Mapping[str, str] = {
     "AzureCliCredential": "az login",
     "AzureDeveloperCliCredential": "azd login",
@@ -55,7 +59,6 @@ _FRIENDLY_CRED_LABELS: Mapping[str, str] = {
     "WorkloadIdentityCredential": "workload identity",
     "EnvironmentCredential": "service principal (env vars)",
     "SharedTokenCacheCredential": "shared token cache",
-    "VisualStudioCodeCredential": "VS Code",
 }
 
 # DefaultAzureCredential is expensive to construct repeatedly and
