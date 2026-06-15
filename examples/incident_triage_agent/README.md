@@ -394,7 +394,7 @@ story is the A → C demo path: ACS collapses the procedural axis at
 a visible overrefusal cost.
 
 **Artifacts.** Config: `eval_config_naive_prompt.yaml`. Results:
-`artifacts/results/incident-triage-agent-v1/naive-prompt/{config.yaml,manifest.json,metrics.json,scores.jsonl}`.
+`artifacts/results/incident-triage-agent-v1/naive-prompt/{config.yaml,manifest.json,metrics.json}` (committed). `scores.jsonl` is gitignored and regenerated locally on a fresh run.
 
 ## B.2 — `guarded-with-shield-gepa` (GEPA placeholder)
 
@@ -427,7 +427,7 @@ variant C; variant D stays here as the placeholder lever, not the
 finished result.
 
 **Artifacts.** Config: `eval_config_guarded_gepa.yaml`. Results:
-`artifacts/results/incident-triage-agent-v1/guarded-with-shield-gepa/{config.yaml,manifest.json,metrics.json,scores.jsonl}`.
+`artifacts/results/incident-triage-agent-v1/guarded-with-shield-gepa/{config.yaml,manifest.json,metrics.json}` (committed). `scores.jsonl` is gitignored and regenerated locally on a fresh run.
 GEPA recipe: `optimize_with_gepa.ipynb`. GEPA reference:
 [Agrawal et al., arXiv:2507.19457](https://arxiv.org/abs/2507.19457)
 (ICLR 2026 oral); GEPA ships in DSPy as `dspy.GEPA`.

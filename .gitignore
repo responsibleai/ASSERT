@@ -23,6 +23,11 @@ artifacts/
 # so the README can reference it before any live n=200 run.
 !examples/incident_triage_agent/artifacts/
 !examples/incident_triage_agent/artifacts/**
+# ...but never the per-test-case judge rows: ~5 MB each, regenerated on every
+# run. The curated summaries (metrics.json, manifest.json, config.yaml) and the
+# trade_off.png chart are kept; render_trade_off.py falls back to the documented
+# case-study numbers when scores.jsonl is absent.
+examples/incident_triage_agent/artifacts/**/scores.jsonl
 
 # Do not ignore SvelteKit route folders named "logs"
 !viewer/src/routes/**/logs/

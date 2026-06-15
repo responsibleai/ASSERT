@@ -114,11 +114,11 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 
 Read artifacts in this order:
 
-1. `metrics.json`
-2. `scores.jsonl`
-3. `inference_set.jsonl`
-4. Phoenix/OpenInference traces, if configured
-5. `config.yaml`
+1. `scores.jsonl`
+2. `inference_set.jsonl`
+3. Phoenix/OpenInference traces, if configured
+4. `config.yaml`
+5. `metrics.json`
 
 Look for judge evidence, cited turns, tool calls, routing decisions, and trace references.
 
@@ -171,7 +171,7 @@ When I ask for help, prefer concrete file paths, runnable commands, and the YAML
 
 # Maintainer assist pattern (Copilot CLI + agents)
 
-This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on their local workstation, plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
+This section defines a reusable OSS maintainer-assist pattern: a small set of Copilot CLI agents the repository maintainer runs on a scheduled loop on an always-on host (see [Where to run the loop](#where-to-run-the-loop)), plus `.github/CODEOWNERS` routing, to keep the repo healthy when the maintainer can't review every PR within hours. Technical PRs still get an audit pass; stale review requests get re-routed to an available code owner.
 
 It is **not** part of the ASSERT product. Contributors do not need to interact with it. Other OSS maintainers are welcome to fork the pattern.
 
@@ -207,6 +207,20 @@ The dev-maintainer agent enforces this rule on every observation pass:
 | ≥ 72h, reviewer requested but no response | Request review from a *second* CODEOWNER on the same path (uses narrow write #2 again — GitHub's review-request mechanism notifies the new reviewer directly). |
 | ≥ 7 days, still no response | Escalate to the fallback admin (repository maintainer) as last resort. |
 
+### Where to run the loop
+
+The escalation windows above are wall-clock thresholds, so the loop only helps if it runs somewhere that stays up while the maintainer is away — which is the exact situation the escalation is designed for. Running it on the maintainer's own workstation defeats the purpose: if the maintainer is offline (vacation, travel, off-grid), so is their laptop, and the 24h / 72h passes never fire.
+
+Run the loop on an **always-on host** instead:
+
+- a small always-on VM (the maintainer's own infrastructure), or
+- a scheduled CI job or cron, or
+- a scheduled GitHub Action (`on: schedule:`), which needs no separate host at all.
+
+`.github/CODEOWNERS` (GitHub-native review routing) already covers the baseline case on its own and keeps working regardless of where — or whether — this loop runs. Treat the agent loop as an enhancement layered on top of CODEOWNERS, not a replacement for it.
+
+This repo ships that enhancement as a reference implementation: the scheduled workflow `.github/workflows/review-escalation.yml` runs `.github/scripts/escalate_reviews.py`, which applies the windows and routing above deterministically (no LLM) on GitHub's own always-on schedule. The LLM `audit-pr` pass remains a separate concern a maintainer can run from any host.
+
 ### Reviewer routing logic
 
 When picking a reviewer to request or ping:
@@ -214,8 +228,8 @@ When picking a reviewer to request or ping:
 1. Read the effective CODEOWNERS list for the PR's changed paths.
 2. **Exclude the PR author.**
 3. **Exclude any owner whose GitHub status is set to "busy" / "out of office"** at the time the agent runs (the agent reads the GraphQL `user.status` field for each candidate; owners keep this in sync themselves).
-4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort.
-5. Pick from the remaining candidates. Prefer admins. If the path has multiple eligible owners, pick the one not recently pinged.
+4. **Exclude the fallback admin** unless every other co-owner has been excluded by the rules above. The fallback admin is the reviewer of last resort. **Never request the PR author** — if the only owner of a path is the author (e.g. the catch-all owner authored the PR), the agent makes no request and logs the PR for manual escalation rather than pinging the author.
+5. Pick deterministically from the remaining candidates: the owner covering the most changed paths, then alphabetical order. The reference Action (`.github/workflows/review-escalation.yml`) is stateless, so it uses this deterministic order in place of "least recently pinged"; a stateful host may substitute ping-history. For the 72h second-owner and 7d fallback steps, owners already requested are excluded and the next is chosen by the same order.
 
 ### Designer agent stays observation-only
 
