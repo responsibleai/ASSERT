@@ -263,3 +263,17 @@ def _reset_cache_for_tests() -> None:
     global _CACHED_PROVIDER, _CACHE_POPULATED
     _CACHED_PROVIDER = None
     _CACHE_POPULATED = False
+
+
+def _reset_auth_mode_cache_for_tests() -> None:
+    """Clear the cached auth-mode resolution — for tests only.
+
+    Resets both ``_AZURE_AUTH_MODE`` and ``_AZURE_AAD_DEP_MISSING`` to
+    their pre-resolution baseline so the next ``refresh_azure_auth_mode``
+    or ``_get_azure_auth_mode`` call resolves against the current env.
+    Centralises the field list so future additions to the auth-mode
+    cache do not require touching every test that needs a clean slate.
+    """
+    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    _AZURE_AUTH_MODE = None
+    _AZURE_AAD_DEP_MISSING = False

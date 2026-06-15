@@ -60,8 +60,7 @@ class _DotenvHarness(unittest.TestCase):
         azure_auth._reset_cache_for_tests()
         self._mode_before = azure_auth._AZURE_AUTH_MODE
         self._dep_missing_before = azure_auth._AZURE_AAD_DEP_MISSING
-        azure_auth._AZURE_AUTH_MODE = None
-        azure_auth._AZURE_AAD_DEP_MISSING = False
+        azure_auth._reset_auth_mode_cache_for_tests()
         self.addCleanup(self._restore_model_client_cache)
 
     def _restore_model_client_cache(self) -> None:
