@@ -9,7 +9,7 @@ inject an ``azure_ad_token_provider`` into LiteLLM payloads for
 ``AZURE_API_KEY`` (and not opted into AAD), the legacy key-based path
 runs unchanged.
 
-Auth-mode precedence (least surprise — key first):
+Auth-mode precedence (explicit AAD flag wins, then key, then auto-fallback):
 
 1. ``ASSERT_AZURE_USE_AAD=1`` → always AAD, even if a key is also set.
 2. ``AZURE_API_KEY`` set (and flag not set) → key auth, unchanged.
