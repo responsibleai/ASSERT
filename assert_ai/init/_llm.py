@@ -73,6 +73,10 @@ def chat_completion(
                 "Azure Responses API not enabled in region",
                 model=model,
             )
+            # Reuse the original kwargs verbatim. ``_activate_chat_completions_fallback``
+            # flips process-wide routing state, so the same call now goes through
+            # Chat Completions instead of the Responses API — no per-call kwargs
+            # changes are needed.
             try:
                 response = litellm.completion(**kwargs)
             except Exception as inner_exc:
