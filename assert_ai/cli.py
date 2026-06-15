@@ -518,11 +518,12 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
         log_file=log_file,
         json_output=(output_format == "json"),
     )
-    # Emit the resolved Azure auth mode now that logging handlers are
-    # installed. model_client is imported transitively before this point,
-    # so any log records it emits at import time would be silently dropped.
-    from assert_ai.core.model_client import log_resolved_azure_auth_mode
-    log_resolved_azure_auth_mode()
+    # NOTE: the resolved Azure auth mode is logged by the subcommands that
+    # actually invoke LLMs (``run``, ``init``), AFTER they have loaded ``.env``
+    # and called ``refresh_azure_auth_mode(force=True)``. Emitting here would
+    # log a stale (pre-dotenv) value, would ignore ``--quiet``/``--output json``
+    # passed on the subcommand, and would add noise to commands that never
+    # touch an LLM (e.g. ``results compare-suites``).
 
 
 # -- init (design an eval config with an LLM assistant) ---------------------
@@ -602,9 +603,14 @@ def run(
             log_file=log_file,
             json_output=(output_format == "json"),
         )
-        from assert_ai.core.model_client import log_resolved_azure_auth_mode
-        log_resolved_azure_auth_mode()
     runner = _load_runner_module()
+    # Emit the resolved Azure auth mode AFTER runner.py has loaded ``.env``
+    # and called ``refresh_azure_auth_mode(force=True)`` — so the log reflects
+    # the value that azure/* requests will actually use — and AFTER subcommand
+    # logging flags have been applied (above), so ``--quiet`` silences it and
+    # ``--output json`` formats it as JSON.
+    from assert_ai.core.model_client import log_resolved_azure_auth_mode
+    log_resolved_azure_auth_mode()
     rc = runner.run_pipeline(
         config=str(config),
         force_stages=list(force_stage),

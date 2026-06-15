@@ -140,9 +140,13 @@ def init(
     # environment so the init LLM call respects the dotenv-supplied
     # ``ASSERT_AZURE_USE_AAD`` / ``AZURE_API_KEY`` rather than whichever
     # state was frozen at module import.
-    from assert_ai.core.model_client import refresh_azure_auth_mode
+    from assert_ai.core.model_client import log_resolved_azure_auth_mode, refresh_azure_auth_mode
 
     refresh_azure_auth_mode(force=True)
+    # Emit the resolved auth-mode line AFTER refresh so it reflects the
+    # value the upcoming LLM call will use, and AFTER the parent ``cli``
+    # group has configured logging so ``--quiet``/``--output json`` apply.
+    log_resolved_azure_auth_mode()
 
     # Auto-detect non-interactive when stdin is not a TTY
     if not sys.stdin.isatty():
