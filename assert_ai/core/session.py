@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ from assert_ai.core.model_client import (
     build_llm_call_trace,
     generate,
     generate_with_tools,
+    messages_to_openai,
     normalize_response,
     summarize_response,
 )
@@ -639,9 +641,10 @@ class CallableSession:
 class HTTPEndpointSession:
     """Invokes an HTTP endpoint as the eval target.
 
-    POST {"message": text, "history": [...]} to the URL.
-    Expects {"response": "..."} back.
-    Same black-box visibility as CallableSession.
+    The default ``assert`` protocol POSTs ``{"message": text, "history": [...]}``
+    and expects ``{"response": "..."}`` back. The ``openai_chat`` protocol
+    calls an OpenAI-compatible Chat Completions endpoint and preserves returned
+    tool calls when they are present.
     """
 
     def __init__(
@@ -651,14 +654,24 @@ class HTTPEndpointSession:
         headers: dict[str, str] | None = None,
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
+        protocol: str = "assert",
+        model: str | None = None,
+        api_key_env: str | None = None,
+        stream: bool = False,
+        local_dev: bool = False,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
-        validate_endpoint_url(endpoint)
+        validate_endpoint_url(endpoint, allow_localhost=local_dev)
         self._endpoint = endpoint
-        self._headers = headers or {}
+        self._headers = dict(headers or {})
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
+        self._protocol = protocol
+        self._model = model
+        self._api_key_env = api_key_env
+        self._stream = stream
+        self._local_dev = local_dev
         self._session = None  # aiohttp.ClientSession
 
     @property
@@ -682,6 +695,244 @@ class HTTPEndpointSession:
             await self._session.close()
             self._session = None
 
+    def _request_headers(self) -> dict[str, str]:
+        headers = dict(self._headers)
+        if self._api_key_env:
+            api_key = os.environ.get(self._api_key_env)
+            if not api_key:
+                raise RuntimeError(f"Environment variable {self._api_key_env} is required for endpoint authentication")
+            headers.setdefault("Authorization", f"Bearer {api_key}")
+        return headers
+
+    def _build_payload(self, messages: list[Message], user_text: str, history: list[dict[str, str]]) -> dict[str, Any]:
+        if self._protocol == "openai_chat":
+            if not self._model:
+                raise RuntimeError("OpenAI chat endpoint protocol requires a model")
+            return {
+                "model": self._model,
+                "messages": messages_to_openai(messages),
+                **({"stream": True} if self._stream else {}),
+            }
+        return {"message": user_text, "history": history}
+
+    def _normalize_response(self, data: dict[str, Any], request_payload: dict[str, Any]) -> ConnectorResponse:
+        response = _normalize_connector_response(data)
+        if response.text == "" and isinstance(data.get("response"), str):
+            response.text = data["response"]
+        raw = response.raw or dict(data)
+        if "metadata" in data and isinstance(data["metadata"], dict):
+            raw["metadata"] = data["metadata"]
+        from assert_ai.core.security import sanitize_payload
+
+        return ConnectorResponse(
+            text=response.text,
+            events=response.events,
+            raw=sanitize_payload(raw),
+        )
+
+    @staticmethod
+    def _response_content_type(resp: Any) -> str:
+        content_type = str(getattr(resp, "content_type", "") or "")
+        if content_type:
+            return content_type.lower()
+        headers = getattr(resp, "headers", None)
+        if headers is not None and hasattr(headers, "get"):
+            return str(headers.get("content-type", "") or "").lower()
+        return ""
+
+    async def _read_openai_chat_stream(
+        self,
+        resp: Any,
+        *,
+        messages: list[Message],
+        user_text: str,
+    ) -> TurnResult:
+        from assert_ai.core.security import sanitize_payload
+
+        chunks: list[str] = []
+        events: list[AdapterEvent] = []
+        tool_traces: list[ToolTrace] = []
+        stream_events: list[dict[str, Any]] = []
+        pending_tool_args: dict[str, tuple[str, dict[str, Any]]] = {}
+        # Standard OpenAI-compatible streamed tool calls arrive as fragmented
+        # ``choices[0].delta.tool_calls`` entries keyed by ``index``; name and
+        # id come on the first fragment and ``function.arguments`` is appended
+        # across fragments. Accumulate by index and finalize after the stream.
+        streamed_tool_calls: dict[int, dict[str, Any]] = {}
+        model = self._model
+        response_id = None
+        finish_reason = None
+        usage = None
+
+        buffer = ""
+        current_event = "message"
+        data_lines: list[str] = []
+
+        def flush_event() -> None:
+            nonlocal current_event, response_id, model, finish_reason, usage
+            if not data_lines:
+                current_event = current_event or "message"
+                return
+            payload = "\n".join(data_lines)
+            data_lines.clear()
+            event_name = current_event or "message"
+            current_event = "message"
+            if payload == "[DONE]":
+                return
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                if event_name != "message":
+                    stream_events.append({"event": event_name, "data": payload})
+                return
+            if event_name != "message":
+                stream_events.append({"event": event_name, "data": data})
+
+            if event_name == "message":
+                if isinstance(data, dict):
+                    response_id = data.get("id") or response_id
+                    model = data.get("model") or model
+                    usage = data.get("usage") or usage
+                    choices = data.get("choices") if isinstance(data.get("choices"), list) else []
+                    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+                    raw_delta = choice.get("delta")
+                    delta = raw_delta if isinstance(raw_delta, dict) else {}
+                    if isinstance(delta.get("content"), str):
+                        chunks.append(delta["content"])
+                    raw_message = choice.get("message")
+                    message = raw_message if isinstance(raw_message, dict) else {}
+                    if isinstance(message.get("content"), str):
+                        chunks.append(message["content"])
+                    delta_tool_calls = delta.get("tool_calls")
+                    if isinstance(delta_tool_calls, list):
+                        _accumulate_streamed_tool_calls(streamed_tool_calls, delta_tool_calls)
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                return
+
+            if event_name == "hermes.tool.progress" and isinstance(data, dict):
+                tool_name = str(data.get("tool") or "tool")
+                tool_call_id = str(data.get("toolCallId") or data.get("tool_call_id") or f"tool_{len(events) + 1}")
+                status = str(data.get("status") or "")
+                label = str(data.get("label") or data.get("displayLabel") or tool_name)
+                if status in {"running", "started", "start", "pending", ""}:
+                    tool_args = {"label": label, "status": status} if status else {"label": label}
+                    pending_tool_args[tool_call_id] = (tool_name, tool_args)
+                    events.append(
+                        AdapterEvent(
+                            role="tool_call",
+                            content="",
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            tool_call_id=tool_call_id,
+                        )
+                    )
+                    return
+
+                pending_tool_name, tool_args = pending_tool_args.get(tool_call_id, (tool_name, {}))
+                content = status or "completed"
+                events.append(
+                    AdapterEvent(
+                        role="tool_result",
+                        content=content,
+                        tool_name=pending_tool_name,
+                        tool_args=tool_args,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+                tool_traces.append(
+                    ToolTrace(
+                        tool_name=pending_tool_name,
+                        tool_args=tool_args,
+                        tool_result=content,
+                        raw={"event": event_name, "data": data},
+                    )
+                )
+
+        def process_line(line: str) -> None:
+            nonlocal current_event
+            if line == "":
+                flush_event()
+                return
+            if line.startswith(":"):
+                return
+            if line.startswith("event:"):
+                current_event = line[len("event:"):].strip() or "message"
+                return
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:"):].lstrip())
+
+        async for chunk in resp.content:
+            if isinstance(chunk, bytes):
+                buffer += chunk.decode("utf-8", errors="replace")
+            else:
+                buffer += str(chunk)
+            while True:
+                match = re.search(r"\r?\n", buffer)
+                if not match:
+                    break
+                line = buffer[: match.start()]
+                buffer = buffer[match.end():]
+                process_line(line)
+        if buffer.strip():
+            process_line(buffer.strip())
+        flush_event()
+
+        # Finalize standard OpenAI-compatible streamed tool calls (delta.tool_calls)
+        # into tool-call adapter events. These complement custom progress events
+        # like hermes.tool.progress and are emitted before the final assistant text.
+        for index in sorted(streamed_tool_calls):
+            accumulated = streamed_tool_calls[index]
+            tool_name = str(accumulated.get("name") or "tool")
+            tool_call_id = str(accumulated.get("id") or f"tool_{index}")
+            raw_arguments = str(accumulated.get("arguments") or "")
+            tool_args: dict[str, Any] = {}
+            if raw_arguments.strip():
+                try:
+                    parsed = json.loads(raw_arguments)
+                    if isinstance(parsed, dict):
+                        tool_args = parsed
+                except json.JSONDecodeError:
+                    tool_args = {"raw_arguments": raw_arguments}
+            events.append(
+                AdapterEvent(
+                    role="tool_call",
+                    content="",
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_call_id=tool_call_id,
+                )
+            )
+            tool_traces.append(
+                ToolTrace(tool_name=tool_name, tool_args=tool_args, tool_result="")
+            )
+
+        response_text = _sanitize_response_text("".join(chunks))
+        response_summary: dict[str, Any] = {
+            "content": response_text,
+            "stop_reason": finish_reason or "",
+            "model": model,
+            "stream_events": stream_events,
+        }
+        if response_id:
+            response_summary["response_id"] = response_id
+        if isinstance(usage, dict):
+            response_summary["usage"] = usage
+        raw = sanitize_payload({"endpoint": self._endpoint, "response": response_summary})
+
+        response_events = [*events, AdapterEvent(role="assistant", content=response_text)] if events else None
+        interaction_messages = _serialize_connector_interaction_messages(
+            user_text=user_text,
+            response=ConnectorResponse(text=response_text, events=response_events, raw=raw),
+        )
+        return TurnResult(
+            text=response_text,
+            state_messages=list(messages) + [Message(role="assistant", content=response_text)],
+            interaction_messages=interaction_messages,
+            tool_traces=tool_traces,
+            raw=raw,
+            finish_reason=finish_reason,
+        )
+
     async def run_turn(self, messages: list[Message]) -> TurnResult:
         aiohttp = self._aiohttp
 
@@ -697,17 +948,26 @@ class HTTPEndpointSession:
             if msg.role in ("user", "assistant")
         ]
 
-        payload = {"message": user_text, "history": history}
+        payload = self._build_payload(messages, user_text, history)
 
         try:
             async with self._session.post(
                 self._endpoint,
                 json=payload,
-                headers=self._headers,
+                headers=self._request_headers(),
             ) as resp:
                 resp.raise_for_status()
+                if (
+                    self._protocol == "openai_chat"
+                    and self._stream
+                    and "text/event-stream" in self._response_content_type(resp)
+                ):
+                    return await self._read_openai_chat_stream(
+                        resp,
+                        messages=messages,
+                        user_text=user_text,
+                    )
                 data = await resp.json()
-                response_text = data.get("response", "")
         except aiohttp.ClientResponseError as exc:
             raise RuntimeError(
                 f"HTTP endpoint {self._endpoint} returned status {exc.status}: {exc.message}"
@@ -717,19 +977,69 @@ class HTTPEndpointSession:
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc
 
-        # Sanitize response text to prevent credential leakage into artifacts
-        response_text = _sanitize_response_text(response_text)
+        if self._protocol == "openai_chat":
+            model_response = normalize_response(
+                data,
+                api_mode="openai_chat_endpoint",
+                request_payload=payload,
+            )
+            from assert_ai.core.security import sanitize_payload
 
-        interaction_messages = [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": response_text},
-        ]
+            response_text = _sanitize_response_text(model_response.text or "")
+            response_summary = summarize_response(model_response)
+            response_summary["content"] = response_text
+            raw = sanitize_payload({"endpoint": self._endpoint, "response": response_summary})
+            assistant_message = {
+                "role": "assistant",
+                "content": response_text,
+                "raw": raw,
+            }
+            if model_response.tool_calls:
+                assistant_message["tool_calls"] = [
+                    _serialize_tool_call(tool_call)
+                    for tool_call in model_response.tool_calls
+                ]
+            return TurnResult(
+                text=response_text,
+                state_messages=list(messages) + [
+                    Message(
+                        role="assistant",
+                        content=response_text,
+                        tool_calls=list(model_response.tool_calls),
+                    )
+                ],
+                interaction_messages=[
+                    {"role": "user", "content": user_text},
+                    assistant_message,
+                ],
+                tool_traces=[
+                    ToolTrace(
+                        tool_name=tool_call.name,
+                        tool_args=tool_call.arguments,
+                        tool_result="",
+                        raw=tool_call.raw if isinstance(tool_call.raw, dict) else None,
+                    )
+                    for tool_call in model_response.tool_calls
+                ],
+                raw=raw,
+                finish_reason=model_response.finish_reason,
+            )
+
+        response = self._normalize_response(data, payload)
+        response_text = _sanitize_response_text(response.text)
+        response = ConnectorResponse(text=response_text, events=response.events, raw=response.raw)
+        interaction_messages = _serialize_connector_interaction_messages(
+            user_text=user_text,
+            response=response,
+        )
+        if response.events:
+            interaction_messages.append({"role": "assistant", "content": response_text, "raw": response.raw})
 
         return TurnResult(
             text=response_text,
             state_messages=list(messages) + [Message(role="assistant", content=response_text)],
             interaction_messages=interaction_messages,
-            raw={"endpoint": self._endpoint},
+            raw={"endpoint": self._endpoint, **(response.raw or {})},
         )
 
 
@@ -820,6 +1130,34 @@ def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
         "function": tool_call.function,
         "arguments": tool_call.arguments,
     }
+
+
+def _accumulate_streamed_tool_calls(
+    accumulator: dict[int, dict[str, Any]],
+    delta_tool_calls: list[Any],
+) -> None:
+    """Fold one streamed ``delta.tool_calls`` fragment into per-index state.
+
+    OpenAI-compatible streaming splits each tool call across chunks: the first
+    fragment carries ``id``/``function.name`` and later fragments append to
+    ``function.arguments``. Fragments are keyed by ``index``.
+    """
+    for fragment in delta_tool_calls:
+        if not isinstance(fragment, dict):
+            continue
+        index = fragment.get("index")
+        if not isinstance(index, int):
+            index = len(accumulator)
+        entry = accumulator.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        if fragment.get("id"):
+            entry["id"] = str(fragment["id"])
+        function = fragment.get("function")
+        if isinstance(function, dict):
+            if function.get("name"):
+                entry["name"] = str(function["name"])
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                entry["arguments"] += arguments
 
 
 def _tool_history_entry(tool_name: str, tool_args: dict[str, Any], tool_result: str) -> dict[str, Any]:

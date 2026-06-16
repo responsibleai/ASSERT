@@ -6,11 +6,16 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
+import os
+import time
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import urlparse
 
 import click
 import yaml
@@ -72,6 +77,57 @@ def _load_test_set_metrics():
         _TEST_SET_METRICS_MODULE = test_set_metrics
     return _TEST_SET_METRICS_MODULE
 
+
+
+
+def _local_sandbox_run_dir(*, target: str, snapshot_manifest: Path) -> Path:
+    """Return the default local sandbox run directory for a start command."""
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    digest = hashlib.sha256(str(snapshot_manifest.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path("artifacts") / "local-agents" / "sandboxes" / f"{target}-{timestamp}-{digest}"
+
+
+def _local_snapshot_output_dir(*, target: str, discovery_path: Path) -> Path:
+    """Return the default local snapshot output directory for a create command."""
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    digest = hashlib.sha256(str(discovery_path.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path("artifacts") / "local-agents" / "snapshots" / f"{target}-{timestamp}-{digest}"
+
+
+def _local_sandbox_name(*, target: str, snapshot_manifest: Path) -> str:
+    """Return a short Docker Sandbox-safe name for a local-agent run."""
+
+    digest = hashlib.sha256(str(snapshot_manifest.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
+    prefix = "oc" if target == "openclaw" else "la"
+    return f"{prefix}-{digest}"
+
+
+def _local_sandbox_display_model(provider_route: str, model: str) -> str:
+    parts = model.split("-")
+    pretty_model = " ".join([parts[0].upper(), *parts[1:]]) if parts else model
+    if provider_route == "copilot":
+        return f"{pretty_model} via Copilot"
+    return pretty_model
+
+
+def _local_sandbox_model_ref(*, provider_route: str, model: str) -> str:
+    return f"{provider_route}/{model}={_local_sandbox_display_model(provider_route, model)}"
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Render elapsed wall time for CLI summaries."""
+
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    minutes, remainder = divmod(seconds, 60)
+    hours, minutes = divmod(int(minutes), 60)
+    if hours:
+        return f"{hours}h {minutes}m {remainder:.1f}s"
+    if minutes:
+        return f"{minutes}m {remainder:.1f}s"
+    return f"{seconds:.2f}s"
 
 def _handle_missing_analysis_dependency(exc: ModuleNotFoundError) -> None:
     missing = getattr(exc, "name", "") or "analysis extras"
@@ -651,6 +707,584 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
     )
 
 
+# -- local agent setup ------------------------------------------------------
+@cli.group(cls=SuggestingGroup, short_help="Discover and prepare local agent targets")
+def local():
+    """Local agent setup commands for sandboxed target evaluation."""
+
+
+@local.command("discover", short_help="Find local agent installs/configs")
+@click.option(
+    "--target",
+    type=click.Choice(["all", "openclaw", "hermes", "claude-code", "codex", "opencode", "gemini"], case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Local agent family to discover.",
+)
+@click.option("--home", type=click.Path(path_type=Path), default=None, help="Home directory to inspect instead of the current user home.")
+@click.option("--runtime-path", type=click.Path(path_type=Path), default=None, help="Explicit runtime/package path for targets that support it.")
+@click.option("--workspace", "workspace_path", type=click.Path(path_type=Path), default=None, help="Explicit workspace/context path for targets that support it.")
+@click.option("--source-bundle", "source_bundle_path", type=click.Path(path_type=Path), default=None, help="Explicit source-bundle manifest path.")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None, help="Write discovery JSON manifest to this path.")
+@click.option("--show-paths", is_flag=True, help="Print local absolute paths instead of redacted path placeholders.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON only.")
+def local_discover(
+    target: str,
+    home: Path | None,
+    runtime_path: Path | None,
+    workspace_path: Path | None,
+    source_bundle_path: Path | None,
+    output_path: Path | None,
+    show_paths: bool,
+    as_json: bool,
+):
+    """Find local agent installs/configs and write a reviewable manifest."""
+    from assert_ai.local_agents import discover_local_agents
+
+    started_at = time.perf_counter()
+    try:
+        result = discover_local_agents(
+            target=target,
+            home=home,
+            runtime_path=runtime_path,
+            workspace_path=workspace_path,
+            source_bundle_path=source_bundle_path,
+            redact_paths=not show_paths,
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    payload = result.to_json()
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    if as_json:
+        _echo_json(payload)
+        return
+
+    agents = payload.get("agents", [])
+    if not agents:
+        click.echo("No local agents found.")
+        if output_path is not None:
+            click.echo(f"Wrote discovery manifest: {output_path}")
+        click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+        return
+
+    click.echo("Found local agents:")
+    click.echo("")
+    for index, agent in enumerate(agents, 1):
+        click.echo(f"{index}. {agent['id']}")
+        runtime = agent.get("runtime") or {}
+        config = agent.get("config") or {}
+        workspace = agent.get("workspace") or {}
+        if runtime.get("version"):
+            click.echo(f"   runtime: {agent.get('display_name', agent['id'])} {runtime['version']}")
+        elif runtime.get("binary"):
+            binary_state = "found" if runtime.get("valid") else "not found"
+            click.echo(f"   runtime: {runtime['binary']} ({binary_state})")
+        if runtime.get("path"):
+            click.echo(f"   runtime path: {runtime['path']}")
+        if config.get("path"):
+            click.echo(f"   config: {config['path']}")
+        if workspace.get("path"):
+            click.echo(f"   workspace: {workspace['path']}")
+        source_bundle = agent.get("source_bundle") or {}
+        if source_bundle:
+            click.echo(f"   source bundle: {'found' if source_bundle.get('exists') else 'not found'}")
+        candidate_count = len(agent.get("candidate_files") or [])
+        if candidate_count:
+            click.echo(f"   candidate files: {candidate_count}")
+        excluded_count = len(agent.get("excluded_files") or [])
+        if excluded_count:
+            click.echo(f"   excluded files: {excluded_count} secret-looking file{'s' if excluded_count != 1 else ''}")
+        external_count = len(agent.get("external_references") or [])
+        if external_count:
+            click.echo(f"   external references: {external_count}")
+            if show_paths:
+                for reference in (agent.get("external_references") or [])[:5]:
+                    click.echo(f"     {reference['kind']} from {reference['source']}: {reference['path']}")
+        copy_roots = agent.get("suggested_copy_roots") or []
+        if copy_roots:
+            click.echo("   suggested extra roots:")
+            for root in copy_roots:
+                click.echo(f"     --include-root {root['source']}")
+        click.echo(f"   status: {agent.get('summary') or agent.get('status')}")
+        click.echo("")
+
+    if output_path is not None:
+        click.echo(f"Wrote discovery manifest: {output_path}")
+    if any(agent.get("status") == "ready" for agent in agents):
+        click.echo("Next:")
+        click.echo("  assert-ai local snapshot create --from <discovery.json> --target <agent-id> [--include-root <path>]")
+    click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+
+
+@local.group("snapshot", cls=SuggestingGroup, short_help="Create copied local-agent snapshots")
+def local_snapshot():
+    """Create copied snapshots from explicit local roots."""
+
+
+@local_snapshot.command("create", short_help="Copy local-agent roots into a snapshot directory")
+@click.option("--config", "config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Agent runtime-config YAML (the agent declares what to copy). Primary path. Mutually exclusive with --from/--target.")
+@click.option("--from", "discovery_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Discovery JSON manifest from `assert-ai local discover`. Use with --target.")
+@click.option("--target", default=None, help="Agent ID from the discovery manifest. Use with --from.")
+@click.option("--include-root", "include_roots", multiple=True, help="Extra root to include (discovery path). Destination is derived from the folder name. Repeat for multiple roots.")
+@click.option("--copy-root", "copy_roots", multiple=True, help="Advanced root mapping as SOURCE:DEST (discovery path). Repeat for multiple roots.")
+@click.option("--output-dir", default=None, type=click.Path(path_type=Path), help="Directory where the snapshot and manifest will be written. Defaults to artifacts/local-agents/snapshots/.")
+@click.option("--show-paths", is_flag=True, help="Write local absolute paths in the manifest instead of redacted placeholders.")
+def local_snapshot_create(
+    config_path: Path | None,
+    discovery_path: Path | None,
+    target: str | None,
+    include_roots: tuple[str, ...],
+    copy_roots: tuple[str, ...],
+    output_dir: Path | None,
+    show_paths: bool,
+):
+    """Copy user-approved roots into a reviewable local-agent snapshot.
+
+    Two modes:
+    - --config <agent.yaml>: the agent declares its own roots (primary path).
+    - --from <discovery.json> --target <id>: discovery-driven (legacy/advanced).
+    """
+    from assert_ai.local_snapshots import create_local_agent_snapshot, create_snapshot_from_config
+
+    if config_path and (discovery_path or target):
+        _error("use either --config or --from/--target, not both")
+        return
+    if not config_path and not (discovery_path and target):
+        _error("provide --config <agent.yaml>, or --from <discovery.json> with --target <id>")
+        return
+
+    started_at = time.perf_counter()
+    try:
+        if config_path:
+            from assert_ai.local_agent_config import load_agent_config
+
+            config = load_agent_config(config_path)
+            resolved_target = config.id
+            resolved_output_dir = output_dir or _local_snapshot_output_dir(target=resolved_target, discovery_path=config_path)
+            result = create_snapshot_from_config(
+                config=config,
+                output_dir=resolved_output_dir,
+                redact_paths=not show_paths,
+            )
+        else:
+            assert discovery_path is not None and target is not None
+            resolved_output_dir = output_dir or _local_snapshot_output_dir(target=target, discovery_path=discovery_path)
+            result = create_local_agent_snapshot(
+                discovery_path=discovery_path,
+                target=target,
+                copy_root_specs=copy_roots,
+                include_root_specs=include_roots,
+                output_dir=resolved_output_dir,
+                redact_paths=not show_paths,
+            )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    manifest = result.manifest
+    copied_count = len(manifest.get("copied_roots") or [])
+    excluded_count = len(manifest.get("excluded_files") or [])
+    files_copied = sum(int(root.get("files_copied") or 0) for root in manifest.get("copied_roots") or [])
+    click.echo("Created local-agent snapshot")
+    click.echo(f"  target: {manifest.get('target')}")
+    click.echo(f"  snapshot root: {result.snapshot_root}")
+    click.echo(f"  manifest: {result.manifest_path}")
+    click.echo(f"  copied roots: {copied_count}")
+    click.echo(f"  files copied: {files_copied}")
+    click.echo(f"  excluded files: {excluded_count}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+
+
+@local.group("spec", cls=SuggestingGroup, short_help="Build ASSERT specs from sandbox snapshots")
+def local_spec():
+    """Build ASSERT eval specs from copied local-agent sandbox state."""
+
+
+@local_spec.command("build", short_help="Build ASSERT config from sandbox state")
+@click.option("--sandbox-state", "state_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`.")
+@click.option("--include", "include_patterns", multiple=True, help="Extra sandbox-relative glob to include as behavior/context source. Repeatable.")
+@click.option("--output-dir", type=click.Path(path_type=Path), default=None, help="Directory for agent-spec.json, agent-spec.md, and eval_config.yaml. Defaults next to the sandbox state.")
+def local_spec_build(state_path: Path, include_patterns: tuple[str, ...], output_dir: Path | None):
+    """Build a normal ASSERT eval config from the copied sandbox snapshot."""
+    from assert_ai.local_specs import build_local_agent_spec
+
+    started_at = time.perf_counter()
+    resolved_output_dir = output_dir or (state_path.parent / "spec")
+    try:
+        result = build_local_agent_spec(
+            state_path=state_path,
+            output_dir=resolved_output_dir,
+            include=list(include_patterns),
+        )
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    click.echo("Built local-agent ASSERT spec")
+    click.echo(f"  sources: {result.source_count}")
+    click.echo(f"  spec: {result.spec_json_path}")
+    click.echo(f"  summary: {result.spec_markdown_path}")
+    click.echo(f"  config: {result.eval_config_path}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+    click.echo("Next:")
+    click.echo(f"  assert-ai run --config {result.eval_config_path}")
+
+
+@local.group("sandbox", cls=SuggestingGroup, short_help="Start local-agent sandbox endpoints")
+def local_sandbox():
+    """Start sandboxed local-agent endpoints from copied snapshots."""
+
+
+@local_sandbox.command("start", short_help="Start a sandbox endpoint from a snapshot")
+@click.option("--snapshot", "snapshot_manifest", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Snapshot manifest from `assert-ai local snapshot create`.")
+@click.option("--config", "agent_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Agent runtime-config YAML (the agent's self-report). Primary generic path: derives target, launch, endpoint, and routing from this one file.")
+@click.option("--target", default=None, help="Agent ID expected in the snapshot manifest. Derived from --config when omitted.")
+@click.option("--runtime-config", "runtime_config_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Low-level runtime launch-config YAML. Advanced; prefer --config.", hidden=True)
+@click.option("--backend", type=click.Choice(["docker", "docker-run", "command"], case_sensitive=False), default="docker", show_default=True, help="Sandbox backend to use. Advanced option.", hidden=True)
+@click.option("--command", "command_text", default=None, help="Debug backend command. Required only for --backend command. If URL templates use {port}, print the port on the first stdout line.", hidden=True)
+@click.option("--endpoint-url", default="http://127.0.0.1:18081", show_default=True, help="Endpoint URL or URL template. Use {port} when a command backend prints a dynamic port.", hidden=True)
+@click.option("--health-url", default=None, help="Optional health URL or URL template to wait for before writing state.", hidden=True)
+@click.option("--rampart-root", default=None, type=click.Path(path_type=Path), help="Path to the existing OpenClaw Docker sandbox runner. Advanced option.", hidden=True)
+@click.option("--runner-root", default=None, type=click.Path(path_type=Path), help="Path to ASSERT local sandbox helper scripts. Advanced option.", hidden=True)
+@click.option("--sandbox-name", default=None, type=str, help="Name for the local sandbox instance. Advanced option.", hidden=True)
+@click.option("--provider", type=click.Choice(["mock", "copilot"], case_sensitive=False), default="mock", show_default=True, help="Model provider for the sandboxed runtime.")
+@click.option("--provider-route", type=click.Choice(["copilot"], case_sensitive=False), default="copilot", show_default=True, help="Live provider route to generate. Advanced option.", hidden=True)
+@click.option("--model-ref", default=None, help="Provider/model mapping for the sandboxed runtime. Advanced option.", hidden=True)
+@click.option("--endpoint-port", default=18081, show_default=True, type=int, help="Loopback port for the sandbox endpoint bridge when using --backend docker. Advanced option.", hidden=True)
+@click.option("--auth-proxy-port", default=12435, show_default=True, type=int, help="Loopback auth proxy port when using --backend docker. Advanced option.", hidden=True)
+@click.option("--mock-openai-port", default=18080, show_default=True, type=int, help="Loopback mock OpenAI provider port when using --backend docker --provider mock. Advanced option.", hidden=True)
+@click.option("--docker-command", default="docker.exe", show_default=True, help="Docker CLI command for Docker Sandbox operations. Advanced option.", hidden=True)
+@click.option("--auth-proxy-config", default=None, type=click.Path(path_type=Path), help="Auth proxy config for --provider live. Advanced option.", hidden=True)
+@click.option("--skip-build", is_flag=True, help="Skip Docker Sandbox build/install phase when reusing an existing sandbox. Advanced option.", hidden=True)
+@click.option("--dry-run", is_flag=True, help="Prepare state/config and show the sandbox plan without launching Docker.")
+@click.option("--protocol", type=click.Choice(["assert", "openai_chat"], case_sensitive=False), default="assert", show_default=True, help="Endpoint protocol for the generated ASSERT target config. Advanced option.", hidden=True)
+@click.option("--model", default=None, help="Model name for the sandboxed target runtime.")
+@click.option("--api-key-env", default=None, help="Environment variable name containing endpoint auth; the value is not written to artifacts. Advanced option.", hidden=True)
+@click.option("--stream/--no-stream", default=False, show_default=True, help="Whether the generated endpoint target config should request streaming. Advanced option.", hidden=True)
+@click.option("--output-dir", default=None, type=click.Path(path_type=Path), help="Directory where sandbox state, staged snapshot, logs, and target config will be written. Advanced option.", hidden=True)
+@click.option("--show-paths", is_flag=True, help="Write local absolute paths in state instead of redacted placeholders. Advanced option.", hidden=True)
+def local_sandbox_start(
+    snapshot_manifest: Path,
+    agent_config_path: Path | None,
+    target: str | None,
+    runtime_config_path: Path | None,
+    backend: str,
+    command_text: str | None,
+    endpoint_url: str,
+    health_url: str | None,
+    rampart_root: Path | None,
+    runner_root: Path | None,
+    sandbox_name: str | None,
+    provider: str,
+    provider_route: str,
+    model_ref: str | None,
+    endpoint_port: int,
+    auth_proxy_port: int,
+    mock_openai_port: int,
+    docker_command: str,
+    auth_proxy_config: Path | None,
+    skip_build: bool,
+    dry_run: bool,
+    protocol: str,
+    model: str | None,
+    api_key_env: str | None,
+    stream: bool,
+    output_dir: Path | None,
+    show_paths: bool,
+):
+    """Stage a copied snapshot and start a local sandbox endpoint."""
+    from assert_ai.local_sandbox import (
+        DockerSandboxBackend,
+        build_descriptor_from_runtime_config,
+        build_runtime_config_from_agent_config,
+        identity_mounts_for_runtime_command,
+        load_runtime_config,
+        start_local_sandbox,
+        start_openclaw_docker_sandbox,
+        start_plain_docker_sandbox,
+    )
+
+    started_at = time.perf_counter()
+
+    # --config is the primary generic path: the agent's self-report drives
+    # target, launch, endpoint, and routing. Derive everything from it up front.
+    agent_config = None
+    if agent_config_path is not None:
+        if runtime_config_path is not None:
+            _error("use either --config or --runtime-config, not both")
+            return
+        from assert_ai.local_agent_config import load_agent_config
+
+        try:
+            agent_config = load_agent_config(agent_config_path)
+        except ValueError as exc:
+            _error(str(exc))
+            return
+        if target is None:
+            target = agent_config.id
+        if agent_config.endpoint is not None:
+            if agent_config.endpoint.protocol:
+                protocol = agent_config.endpoint.protocol
+            if agent_config.endpoint.model and model is None:
+                model = agent_config.endpoint.model
+            ep_port = agent_config.endpoint.port
+            if endpoint_url == "http://127.0.0.1:18081":
+                if backend == "docker-run":
+                    parsed = urlparse(agent_config.endpoint.url or "")
+                    endpoint_url = f"http://127.0.0.1:{endpoint_port}{parsed.path or ''}"
+                elif ep_port:
+                    endpoint_url = f"http://127.0.0.1:{ep_port}"
+        if agent_config.model_routing and agent_config.model_routing.resolved_provider and provider == "mock":
+            provider = "copilot"
+
+    if target is None:
+        _error("provide --config <agent.yaml> or --target <id>")
+        return
+
+    run_dir = output_dir or _local_sandbox_run_dir(target=target, snapshot_manifest=snapshot_manifest)
+    generated_sandbox_name = sandbox_name or _local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest)
+
+    try:
+        if backend == "command":
+            if not command_text:
+                raise ValueError("--command is required when --backend command")
+            result = start_local_sandbox(
+                snapshot_manifest_path=snapshot_manifest,
+                target=target,
+                backend=backend,
+                command=command_text,
+                endpoint_url=endpoint_url,
+                health_url=health_url,
+                protocol=protocol,
+                model=model,
+                api_key_env=api_key_env,
+                stream=stream,
+                output_dir=run_dir,
+                redact_paths=not show_paths,
+            )
+            prepared_only = False
+        elif backend == "docker-run":
+            if agent_config is None:
+                raise ValueError("--backend docker-run requires --config")
+            runtime_config = build_runtime_config_from_agent_config(agent_config)
+            if not runtime_config.runtime_command:
+                raise ValueError("agent config must include launch.command for --backend docker-run")
+            if not runtime_config.identity_staging:
+                raise ValueError("agent config must declare roots for --backend docker-run")
+            runtime_port = agent_config.endpoint.port if agent_config.endpoint and agent_config.endpoint.port else runtime_config.endpoint_port
+            endpoint_auth_env_name = f"ASSERT_LOCAL_AGENT_ENDPOINT_TOKEN_{_local_sandbox_name(target=target, snapshot_manifest=snapshot_manifest).replace('-', '_').upper()}"
+            # docker-run is bound to localhost for local dogfood. This is a
+            # non-secret endpoint guard value; provider credentials stay behind
+            # the host-side auth proxy.
+            endpoint_auth_value = "assert-local-dev"
+            os.environ[endpoint_auth_env_name] = endpoint_auth_value
+            endpoint_auth_env_file = run_dir / "endpoint_auth.env"
+            endpoint_auth_env_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint_auth_env_file.write_text(f"export {endpoint_auth_env_name}={endpoint_auth_value}\n", encoding="utf-8")
+            endpoint_auth_env_file.chmod(0o600)
+            docker_container_env = {
+                "API_SERVER_ENABLED": "true",
+                "API_SERVER_HOST": "0.0.0.0",
+                "API_SERVER_PORT": str(runtime_port),
+                "API_SERVER_KEY": endpoint_auth_value,
+            }
+            for entry in runtime_config.identity_staging:
+                container_path = entry.get("container_path", "")
+                if Path(container_path).name == ".hermes":
+                    docker_container_env.setdefault("HERMES_HOME", container_path)
+                if Path(container_path).name == ".openclaw":
+                    docker_container_env.setdefault("OPENCLAW_HOME", str(Path(container_path).parent))
+            endpoint_host_port = endpoint_port
+            try:
+                parsed_endpoint = urlparse(endpoint_url)
+                if parsed_endpoint.port:
+                    endpoint_host_port = parsed_endpoint.port
+            except ValueError:
+                pass
+            result = start_plain_docker_sandbox(
+                snapshot_manifest_path=snapshot_manifest,
+                target=target,
+                runtime_command=runtime_config.runtime_command,
+                identity_staging=runtime_config.identity_staging,
+                endpoint_url=endpoint_url,
+                runtime_port=runtime_port,
+                host_port=endpoint_host_port,
+                health_url=health_url or f"http://127.0.0.1:{endpoint_host_port}/health",
+                model_routing=runtime_config.model_routing,
+                auth_proxy_port=auth_proxy_port,
+                provider_route=runtime_config.provider_route or "copilot",
+                extra_mounts=identity_mounts_for_runtime_command(runtime_config.runtime_command),
+                container_env=docker_container_env,
+                protocol=protocol,
+                model=model,
+                api_key_env=endpoint_auth_env_name,
+                api_key_env_file=endpoint_auth_env_file,
+                output_dir=run_dir,
+                redact_paths=not show_paths,
+            )
+            prepared_only = False
+        else:
+            if agent_config is not None or runtime_config_path is not None:
+                from dataclasses import replace
+
+                if agent_config is not None:
+                    runtime_config = build_runtime_config_from_agent_config(agent_config)
+                    if rampart_root is not None:
+                        runtime_config = replace(runtime_config, rampart_root=str(rampart_root))
+                else:
+                    assert runtime_config_path is not None
+                    runtime_config = load_runtime_config(runtime_config_path)
+                descriptor = build_descriptor_from_runtime_config(runtime_config)
+                config_endpoint_url = endpoint_url
+                if endpoint_url == "http://127.0.0.1:18081":
+                    config_endpoint_url = f"http://127.0.0.1:{runtime_config.endpoint_port}"
+                docker_provider = "live" if provider.lower() == "copilot" else provider.lower()
+                result = DockerSandboxBackend(descriptor=descriptor).start(
+                    snapshot_manifest_path=snapshot_manifest,
+                    target=target,
+                    output_dir=run_dir,
+                    endpoint_url=config_endpoint_url,
+                    provider=docker_provider,
+                    protocol=protocol,
+                    model=model if protocol == "openai_chat" else None,
+                    api_key_env=api_key_env,
+                    stream=stream,
+                    redact_paths=not show_paths,
+                    dry_run=dry_run,
+                )
+                prepared_only = dry_run
+                endpoint_url = config_endpoint_url
+            else:
+                requested_provider = provider.lower()
+                docker_provider = "live" if requested_provider == "copilot" else requested_provider
+                docker_provider_route = "copilot" if requested_provider == "copilot" else provider_route
+                docker_model_ref = model_ref
+                if docker_provider == "live" and docker_model_ref is None:
+                    if model is None:
+                        raise ValueError("--model is required when --provider copilot")
+                    docker_model_ref = _local_sandbox_model_ref(provider_route=docker_provider_route, model=model)
+                if docker_provider == "mock" and docker_model_ref is None:
+                    docker_model_ref = "openai/mock-model=Mock Model"
+                if docker_model_ref is None:
+                    raise ValueError("--model-ref is required for the selected provider")
+                endpoint_model = model if protocol == "openai_chat" else None
+                result = start_openclaw_docker_sandbox(
+                    snapshot_manifest_path=snapshot_manifest,
+                    target=target,
+                    output_dir=run_dir,
+                    runner_root=runner_root,
+                    rampart_root=rampart_root,
+                    sandbox_name=generated_sandbox_name,
+                    provider=docker_provider,
+                    provider_route=docker_provider_route,
+                    model_ref=docker_model_ref,
+                    endpoint_port=endpoint_port,
+                    auth_proxy_port=auth_proxy_port,
+                    mock_openai_port=mock_openai_port,
+                    docker_command=docker_command,
+                    auth_proxy_config=auth_proxy_config,
+                    skip_build=skip_build,
+                    protocol=protocol,
+                    model=endpoint_model,
+                    api_key_env=api_key_env,
+                    stream=stream,
+                    redact_paths=not show_paths,
+                    dry_run=dry_run,
+                )
+                prepared_only = dry_run
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    click.echo("Prepared local-agent sandbox" if prepared_only else "Started local-agent sandbox")
+    click.echo(f"  target: {target}")
+    click.echo(f"  backend: {backend}")
+    click.echo(f"  endpoint: {result.endpoint_url}")
+    click.echo(f"  state: {result.state_path}")
+    click.echo(f"  target config: {result.config_path}")
+    if result.process is not None:
+        click.echo(f"  pid: {result.process.pid}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+
+
+@local_sandbox.command("smoke", short_help="Smoke test a started sandbox endpoint")
+@click.option("--state", "state_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`. Defaults to the single running sandbox.")
+@click.option(
+    "--message",
+    default=None,
+    help=(
+        "Smoke-test message to send. If omitted for an OpenClaw sandbox, runs a configured-workspace smoke "
+        "that surfaces first-run/stock setup failures."
+    ),
+)
+@click.option("--timeout", "timeout_seconds", default=240.0, show_default=True, type=float, help="HTTP timeout in seconds for the smoke request.")
+def local_sandbox_smoke(state_path: Path | None, message: str | None, timeout_seconds: float):
+    """Send a POST to a started sandbox endpoint."""
+    from assert_ai.local_sandbox import find_running_sandbox_state, smoke_local_sandbox
+
+    started_at = time.perf_counter()
+    try:
+        resolved_state = state_path or find_running_sandbox_state()
+        result = smoke_local_sandbox(resolved_state, message=message, timeout_seconds=timeout_seconds)
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    raw_events = result.get("events")
+    events = raw_events if isinstance(raw_events, list) else []
+    click.echo(f"Sandbox smoke: {result.get('status')}")
+    click.echo(f"  endpoint: {result.get('agent_endpoint')}")
+    click.echo(f"  response: {result.get('response')}")
+    raw_check = result.get("configured_workspace_check")
+    configured_workspace_check = raw_check if isinstance(raw_check, dict) else {}
+    if configured_workspace_check:
+        click.echo(f"  configured workspace: {configured_workspace_check.get('status')}")
+        failure_signals = configured_workspace_check.get("failure_signals")
+        if isinstance(failure_signals, list) and failure_signals:
+            click.echo(f"  failure signals: {', '.join(str(item) for item in failure_signals)}")
+    raw_metadata = result.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    provider_value = metadata.get("provider")
+    model_value = metadata.get("model")
+    if provider_value:
+        click.echo(f"  provider: {provider_value}")
+    if model_value:
+        click.echo(f"  model: {model_value}")
+    click.echo(f"  events: {len(events)}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+    if result.get("status") != "ok":
+        reason = "configured workspace check failed" if configured_workspace_check.get("status") == "failed" else "sandbox smoke failed"
+        _error(reason)
+
+
+@local_sandbox.command("stop", short_help="Stop a started sandbox endpoint")
+@click.option("--state", "state_path", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Sandbox state JSON from `assert-ai local sandbox start`. Defaults to the single running sandbox.")
+@click.option("--timeout", "timeout_seconds", default=5.0, show_default=True, type=float, help="Seconds to wait before force-killing sandbox processes.")
+def local_sandbox_stop(state_path: Path | None, timeout_seconds: float):
+    """Terminate processes recorded in a sandbox state file."""
+    from assert_ai.local_sandbox import find_running_sandbox_state, stop_local_sandbox
+
+    started_at = time.perf_counter()
+    try:
+        resolved_state = state_path or find_running_sandbox_state()
+        result = stop_local_sandbox(resolved_state, timeout_seconds=timeout_seconds)
+    except ValueError as exc:
+        _error(str(exc))
+        return
+
+    raw_processes = result.get("processes")
+    processes = raw_processes if isinstance(raw_processes, list) else []
+    click.echo("Stopped local-agent sandbox")
+    click.echo(f"  state: {resolved_state}")
+    click.echo(f"  processes: {len(processes)}")
+    click.echo(f"  elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
+
+
 # -- init (design an eval config with an LLM assistant) ---------------------
 from assert_ai.init._command import init  # noqa: E402
 
@@ -729,6 +1363,7 @@ def run(
             json_output=(output_format == "json"),
         )
     runner = _load_runner_module()
+    started_at = time.perf_counter()
     rc = runner.run_pipeline(
         config=str(config),
         force_stages=list(force_stage),
@@ -736,6 +1371,7 @@ def run(
         overrides=list(overrides),
         concurrency=concurrency,
     )
+    click.echo(f"elapsed: {_format_elapsed(time.perf_counter() - started_at)}")
     raise SystemExit(rc)
 
 

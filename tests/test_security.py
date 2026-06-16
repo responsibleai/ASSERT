@@ -203,16 +203,17 @@ class ValidateEndpointUrlTest(unittest.TestCase):
         with patch("assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo):
             validate_endpoint_url("https://api.example.com/v1/chat")
 
-    def test_localhost_skips_dns_resolution(self) -> None:
-        """localhost is in _LOCAL_DEV_HOSTNAMES — blocked by IP range but not by DNS check."""
-        # localhost resolves to 127.0.0.1 which IS in blocked ranges, but the
-        # hostname literal "localhost" is checked as an IP parse first (fails),
-        # then skipped from DNS resolution. However 'localhost' is NOT in
-        # _BLOCKED_HOSTNAMES, so it passes the hostname check.
-        # The IP literal check only fires for actual IP addresses.
-        # Net: localhost passes because it's in _LOCAL_DEV_HOSTNAMES.
+    def test_localhost_hostname_blocked_without_explicit_local_dev(self) -> None:
+        """localhost hostnames require the same explicit local-dev opt-in as loopback IPs."""
         with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
-            validate_endpoint_url("http://localhost:8080/api")
+            with self.assertRaises(ValueError):
+                validate_endpoint_url("http://localhost:8080/api")
+            mock_dns.assert_not_called()
+
+    def test_allow_localhost_flag_allows_localhost_hostname(self) -> None:
+        with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
+            validate_endpoint_url("http://localhost:8080/api", allow_localhost=True)
+            validate_endpoint_url("http://localhost.localdomain:8080/api", allow_localhost=True)
             mock_dns.assert_not_called()
 
     def test_allow_private_flag_skips_all_checks(self) -> None:
@@ -221,6 +222,16 @@ class ValidateEndpointUrlTest(unittest.TestCase):
     def test_allow_private_env_var_skips_all_checks(self) -> None:
         with patch.dict("os.environ", {"ASSERT_ALLOW_PRIVATE_ENDPOINTS": "1"}):
             validate_endpoint_url("http://10.0.0.1/api")
+
+    def test_allow_localhost_flag_allows_loopback_ip_only(self) -> None:
+        validate_endpoint_url("http://127.0.0.1:18081/api", allow_localhost=True)
+        validate_endpoint_url("http://[::1]:18081/api", allow_localhost=True)
+        with self.assertRaises(ValueError, msg="blocked"):
+            validate_endpoint_url("http://10.0.0.1/api", allow_localhost=True)
+
+    def test_allow_localhost_flag_still_blocks_metadata_ips(self) -> None:
+        with self.assertRaises(ValueError, msg="blocked"):
+            validate_endpoint_url("http://169.254.169.254/latest/meta-data", allow_localhost=True)
 
 
 # ── sanitize_payload ───────────────────────────────────────────

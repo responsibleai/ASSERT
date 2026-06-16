@@ -147,7 +147,12 @@ _LOCAL_DEV_HOSTNAMES = {
 }
 
 
-def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
+def validate_endpoint_url(
+    url: str,
+    *,
+    allow_private: bool = False,
+    allow_localhost: bool = False,
+) -> None:
     """Validate an HTTP endpoint URL to prevent SSRF attacks.
 
     Blocks requests to:
@@ -157,7 +162,9 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
 
     Args:
         url: The URL to validate.
-        allow_private: If True, skip private/internal IP checks (for local development).
+        allow_private: If True, skip private/internal IP checks (legacy local development escape hatch).
+        allow_localhost: If True, allow loopback endpoint URLs for explicit local-dev targets while
+            still blocking private networks and metadata endpoints.
 
     Raises ValueError if the URL is potentially dangerous.
     """
@@ -192,6 +199,8 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
     # Try to parse as IP address
     try:
         ip = ipaddress.ip_address(hostname)
+        if allow_localhost and ip.is_loopback:
+            return
         for network in _BLOCKED_IP_RANGES:
             if ip in network:
                 raise ValueError(
@@ -200,9 +209,16 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
     except ValueError as e:
         if "blocked" in str(e).lower():
             raise
-        # Not an IP literal — resolve hostname and check resulting IPs
-        if hostname.lower() not in _LOCAL_DEV_HOSTNAMES:
-            _validate_resolved_ips(hostname)
+        # Not an IP literal. Local-dev hostnames are allowed only behind the explicit
+        # allow_localhost opt-in; otherwise they are loopback SSRF targets just like
+        # 127.0.0.1.
+        if hostname.lower() in _LOCAL_DEV_HOSTNAMES:
+            if allow_localhost:
+                return
+            raise ValueError(
+                f"URL hostname '{hostname}' is blocked (loopback hostname requires local_dev)"
+            )
+        _validate_resolved_ips(hostname)
 
 
 def _validate_resolved_ips(hostname: str) -> None:

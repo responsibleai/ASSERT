@@ -16,20 +16,21 @@ import yaml
 log = logging.getLogger(__name__)
 
 from assert_ai.core.config_model import (
-    DEFAULT_TESTER_MAX_TURNS,
-    DEFAULT_JUDGE_MAX_TOKENS,
-    DEFAULT_JUDGE_TEMPERATURE,
     DEFAULT_INFERENCE_CONCURRENCY,
     DEFAULT_INFERENCE_MAX_TOOL_CALLS,
     DEFAULT_INFERENCE_MAX_TOKENS,
     DEFAULT_INFERENCE_TEMPERATURE,
-    TesterConfig,
+    DEFAULT_JUDGE_MAX_TOKENS,
+    DEFAULT_JUDGE_TEMPERATURE,
+    DEFAULT_TESTER_MAX_TURNS,
+    EndpointConfig,
     EvaluationConfig,
     JudgeConfig,
     ModelConfig,
     PipelineConfig,
     InferenceConfig,
     TargetConfig,
+    TesterConfig,
     ToolsConfig,
     TraceConfig,
 )
@@ -457,6 +458,28 @@ def parse_tools_config(raw: dict[str, Any], *, field_name: str) -> ToolsConfig:
     )
 
 
+def parse_endpoint_config(raw: Any, *, field_name: str) -> EndpointConfig | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        url = _optional_str(raw, field_name=field_name)
+        return EndpointConfig(url=url or "")
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a string or mapping")
+    reject_unknown_keys(raw, field_name=field_name, allowed={"url", "protocol", "model", "api_key_env", "stream", "local_dev"})
+    url = _optional_str(raw.get("url"), field_name=f"{field_name}.url")
+    if not url:
+        raise ValueError(f"{field_name}.url is required")
+    return EndpointConfig(
+        url=url,
+        protocol=_optional_str(raw.get("protocol"), field_name=f"{field_name}.protocol") or "assert",
+        model=_optional_str(raw.get("model"), field_name=f"{field_name}.model"),
+        api_key_env=_optional_str(raw.get("api_key_env"), field_name=f"{field_name}.api_key_env"),
+        stream=raw.get("stream", False),
+        local_dev=raw.get("local_dev", False),
+    )
+
+
 def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a mapping")
@@ -489,7 +512,7 @@ def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig
         tools=tools,
         connector=_optional_str(raw.get("connector"), field_name=f"{field_name}.connector"),
         callable=_optional_str(raw.get("callable"), field_name=f"{field_name}.callable"),
-        endpoint=_optional_str(raw.get("endpoint"), field_name=f"{field_name}.endpoint"),
+        endpoint=parse_endpoint_config(raw.get("endpoint"), field_name=f"{field_name}.endpoint"),
         trace=trace,
     )
 

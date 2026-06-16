@@ -1623,7 +1623,7 @@ class TestHTTPEndpointSession(unittest.TestCase):
 
     def test_runtime_mode(self):
         from assert_ai.core.session import HTTPEndpointSession
-        session = HTTPEndpointSession(endpoint="http://localhost:8000/chat")
+        session = HTTPEndpointSession(endpoint="http://localhost:8000/chat", local_dev=True)
         self.assertEqual(session.runtime_mode, "http_endpoint")
 
     def test_endpoint_config_valid(self):

@@ -25,6 +25,7 @@ from assert_ai.config import resolve_stage_paths
 from assert_ai.core.config_model import (
     DEFAULT_MODEL_TIMEOUT_S,
     DEFAULT_INFERENCE_MAX_TOKENS,
+    EndpointConfig,
     EvaluationConfig,
     ModelConfig,
     InferenceConfig,
@@ -154,7 +155,30 @@ def _inference_config_fingerprint(
     test case ids are deterministic enough that the resume path silently
     reuses inference rows from prior test_set.jsonl content.
     """
-    target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
+    endpoint_config = target.endpoint if isinstance(target.endpoint, EndpointConfig) else None
+    endpoint_name = ""
+    if endpoint_config:
+        # Note: the auth env var name is intentionally excluded. It is not
+        # output-affecting (the URL already identifies the target), and feeding
+        # a key-named string into a hash trips static-analysis "sensitive data
+        # in weak hash" rules. A boolean presence flag preserves the
+        # cache-invalidation signal without naming a credential.
+        endpoint_name = "|".join(
+            part
+            for part in (
+                endpoint_config.protocol,
+                endpoint_config.model,
+                endpoint_config.url,
+                "auth" if endpoint_config.api_key_env else "",
+                "stream" if endpoint_config.stream else "",
+            )
+            if part
+        )
+    target_name = (
+        target.model.name
+        if isinstance(target.model, ModelConfig)
+        else (target.connector or target.callable or endpoint_name or "")
+    )
     test_set_sha = ""
     if test_set_path is not None and test_set_path.exists():
         test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
@@ -293,6 +317,13 @@ def _record_interaction_messages(
     skipped_initial_user = False
     pending_tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
     pending_target_llm_call_id: str | None = None
+    # Tool calls whose result message never arrives (e.g. a non-streaming
+    # OpenAI-compatible endpoint that returns finish_reason='tool_calls' with
+    # no following role:tool message, or a service that executes tools
+    # internally and only surfaces the requested call). Tracked in order so
+    # they can still be recorded as judge-visible tool_call evidence at the end
+    # instead of being silently dropped.
+    unresolved_tool_calls: list[tuple[str, str, dict[str, Any], str | None]] = []
 
     for message in interaction_messages:
         role = message.get("role")
@@ -333,9 +364,13 @@ def _record_interaction_messages(
                         continue
                     tool_call_id = str(tool_call.get("id") or "")
                     tool_name = str(tool_call.get("function") or "tool")
-                    tool_args = tool_call.get("arguments") if isinstance(tool_call.get("arguments"), dict) else {}
+                    raw_args = tool_call.get("arguments")
+                    parsed_args = dict(raw_args) if isinstance(raw_args, dict) else {}
                     if tool_call_id:
-                        pending_tool_calls[tool_call_id] = (tool_name, tool_args)
+                        pending_tool_calls[tool_call_id] = (tool_name, parsed_args)
+                    # Track every requested call (even id-less ones) so a turn
+                    # with no following tool result still records evidence.
+                    unresolved_tool_calls.append((tool_call_id, tool_name, parsed_args, llm_call_id))
             if content:
                 message_id = f"event:{len(transcript.events)}"
                 transcript.add_event(TranscriptEvent(
@@ -351,8 +386,15 @@ def _record_interaction_messages(
         if role == "tool":
             tool_call_id = str(message.get("tool_call_id") or "")
             default_name = str(message.get("function") or "tool")
-            default_args = message.get("arguments") if isinstance(message.get("arguments"), dict) else {}
+            raw_default_args = message.get("arguments")
+            default_args: dict[str, Any] = dict(raw_default_args) if isinstance(raw_default_args, dict) else {}
             tool_name, tool_args = pending_tool_calls.get(tool_call_id, (default_name, default_args))
+            # This call now has a result; drop it from the unresolved list so it
+            # isn't double-recorded by the end-of-loop flush below.
+            if tool_call_id:
+                unresolved_tool_calls = [
+                    entry for entry in unresolved_tool_calls if entry[0] != tool_call_id
+                ]
             message_id = f"event:{len(transcript.events)}"
             transcript.add_event(TranscriptEvent(
                 view=["target", "combined"],
@@ -368,6 +410,25 @@ def _record_interaction_messages(
                 transcript.link_llm_call_to_message(llm_call_id, message_id)
             if pending_target_llm_call_id is not None:
                 transcript.link_llm_call_to_message(pending_target_llm_call_id, message_id)
+
+    # Flush any requested tool calls that never received a result message so the
+    # judge still sees them as tool/process evidence. The empty tool_result
+    # signals "result not reported by the target," which is the honest state for
+    # final-text-only or internally-executed endpoint targets.
+    for tool_call_id, tool_name, tool_args, owner_llm_call_id in unresolved_tool_calls:
+        message_id = f"event:{len(transcript.events)}"
+        transcript.add_event(TranscriptEvent(
+            view=["target", "combined"],
+            actor="tool",
+            edit=ToolCallEdit(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result="",
+            ),
+        ))
+        link_id = owner_llm_call_id or pending_target_llm_call_id
+        if link_id is not None:
+            transcript.link_llm_call_to_message(link_id, message_id)
 
 
 def _append_llm_calls(transcript: Transcript, llm_calls: list[dict[str, Any]]) -> dict[int, str]:
@@ -530,10 +591,20 @@ def _build_target_session(
     if target.is_endpoint:
         if not target.endpoint:
             raise ValueError("endpoint target requires an endpoint URL")
+        endpoint_config = (
+            target.endpoint
+            if isinstance(target.endpoint, EndpointConfig)
+            else EndpointConfig(url=str(target.endpoint))
+        )
         return HTTPEndpointSession(
-            endpoint=target.endpoint,
+            endpoint=endpoint_config.url,
             system_prompt=target.system_prompt,
             message_timeout_s=inference.tool_timeout_s,
+            protocol=endpoint_config.protocol,
+            model=endpoint_config.model,
+            api_key_env=endpoint_config.api_key_env,
+            stream=endpoint_config.stream,
+            local_dev=endpoint_config.local_dev,
         )
 
     if target.is_callable:
@@ -597,6 +668,20 @@ def _build_target_session(
     )
 
 
+def _target_identifier(target: TargetConfig) -> str:
+    if isinstance(target.model, ModelConfig):
+        return str(target.model.name)
+    if target.model:
+        return str(target.model)
+    if target.connector:
+        return target.connector
+    if target.callable:
+        return target.callable
+    if isinstance(target.endpoint, EndpointConfig):
+        return target.endpoint.model or target.endpoint.url
+    return str(target.endpoint or "")
+
+
 async def _run_prompt_test_case(
     *,
     test_case: dict[str, Any],
@@ -618,7 +703,7 @@ async def _run_prompt_test_case(
         config_path=config_path,
         call_label=f"target:{test_case_id}",
     )
-    target_id = str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or "")
+    target_id = _target_identifier(target)
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="prompt",
@@ -626,7 +711,7 @@ async def _run_prompt_test_case(
             behavior=str(test_case.get("behavior") or ""),
             target=target_id,
             tester_model="",
-            target_reasoning_effort=target.model.reasoning_effort if target.model else None,
+            target_reasoning_effort=target.model.reasoning_effort if isinstance(target.model, ModelConfig) else None,
             dimensions=row_factors(test_case),
         )
     )
@@ -936,9 +1021,9 @@ async def _run_scenario_test_case(
             kind="scenario",
             test_case_id=test_case_id,
             behavior=str(test_case.get("behavior") or ""),
-            target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
+            target=_target_identifier(target),
             tester_model=str(tester.model.name),
-            target_reasoning_effort=target.model.reasoning_effort if target.model else None,
+            target_reasoning_effort=target.model.reasoning_effort if isinstance(target.model, ModelConfig) else None,
             tester_reasoning_effort=tester.model.reasoning_effort,
             dimensions=row_factors(test_case),
         )
