@@ -9,6 +9,8 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - 'pytest.ini'
+      - 'README.md'
+      - 'LICENSE'
       - '.github/workflows/build.yml'
   pull_request:
     branches: [main]
@@ -18,6 +20,8 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - 'pytest.ini'
+      - 'README.md'
+      - 'LICENSE'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
