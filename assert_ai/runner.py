@@ -38,6 +38,7 @@ from assert_ai.core.artifact_cache import (
     supports_artifact_cache,
     update_latest,
 )
+from assert_ai.core.azure_auth import refresh_azure_auth_mode
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
 from assert_ai.core.io import write_json
 from assert_ai.core.model_client import (
@@ -61,6 +62,13 @@ from assert_ai.stages import STAGES
 # directory, which lives inside the venv's site-packages and misses the
 # project `.env`.
 load_dotenv(find_dotenv(usecwd=True))
+
+# Force-resolve the Azure auth mode now that ``.env`` has populated the
+# environment. Without this, ``model_client``'s lazy resolution would
+# fire on the first request (which is fine) — but doing it here lets
+# entrypoints log the resolved mode up-front and surfaces missing
+# ``azure-identity`` early.
+refresh_azure_auth_mode(force=True)
 
 log = logging.getLogger(__name__)
 

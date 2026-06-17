@@ -9,6 +9,14 @@ Import side effects (intentional for the ``assert-ai`` CLI):
   time to strip any ``/openai/...`` path suffix, logging at INFO when
   it does so. Library users importing this module will see the env
   var mutated for the rest of the process.
+* ``azure_auth.refresh_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
+  ``AZURE_API_KEY`` lazily on first access (or eagerly when an
+  entrypoint calls it with ``force=True`` after ``load_dotenv``) to
+  pick the Azure OpenAI auth mode for the process. When the resolved
+  mode is AAD, it pre-warms the ``azure-identity`` credential so
+  first-request latency stays low and missing-dep errors surface
+  early. The mode is read again per-request only as a cheap
+  module-global lookup, never re-derived.
 * The first activation of the Chat Completions fallback (either via
   ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
   API preference, or a reactive recovery from a region error) calls
@@ -32,6 +40,8 @@ import random
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from typing import Any, Iterator, Mapping, Sequence
+
+from assert_ai.core import azure_auth
 
 log = logging.getLogger(__name__)
 
@@ -349,6 +359,45 @@ def _model_family(model: str) -> str:
     return normalized
 
 
+def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
+    """Attach an Azure AD token provider to ``azure/*`` payloads when AAD is active.
+
+    No-op for non-Azure models and for the ``key`` auth mode, so existing
+    API-key users are completely unaffected.
+
+    When the resolved mode is ``aad`` (explicit opt-in via
+    ``ASSERT_AZURE_USE_AAD=1``) but ``azure-identity`` is not installed,
+    this raises :class:`LLMAuthError` eagerly so the user gets a clear
+    install hint instead of a confusing 401 from the gateway.
+
+    When the resolved mode is ``aad-fallback`` (opportunistic — no key
+    set, no explicit opt-in) and the dep is missing, we silently skip
+    injection and let LiteLLM surface its own auth error; the friendly
+    install hint is then appended in :func:`_classify_llm_error`.
+
+    Callers must invoke this *before* applying ``extra_kwargs`` so that
+    any explicit user-supplied ``azure_ad_token_provider`` still wins.
+    """
+    if _model_family(model) != "azure":
+        return
+    mode = azure_auth._get_azure_auth_mode()
+    if mode == "key":
+        return
+    provider = azure_auth.get_azure_token_provider()
+    if provider is None:
+        if mode == "aad":
+            raise LLMAuthError(
+                "Azure managed-identity auth is active but the "
+                "azure-identity package is not installed. Install it "
+                "with `pip install 'assert-ai[azure-aad]'`, or set "
+                "AZURE_API_KEY to use API-key auth."
+            )
+        # aad-fallback path: silently skip — LiteLLM's own auth error
+        # will be augmented with an install hint by _classify_llm_error.
+        return
+    payload["azure_ad_token_provider"] = provider
+
+
 def _supports_web_search_preview(model: str) -> bool:
     """Whether this model can use the Responses API web_search_preview tool.
 
@@ -552,6 +601,7 @@ def _build_chat_payload(
         payload["max_tokens"] = resolved_options.max_output_tokens
     if resolved_options.reasoning_effort is not None:
         payload["reasoning_effort"] = resolved_options.reasoning_effort
+    _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
     return payload
 
@@ -578,6 +628,7 @@ def _build_responses_payload(
         payload["max_output_tokens"] = resolved_options.max_tokens
     if resolved_options.reasoning_effort is not None:
         payload["reasoning_effort"] = resolved_options.reasoning_effort
+    _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
     return payload
 
@@ -797,8 +848,20 @@ def _drop_web_search_for_fallback(
     return replace(options, web_search=False)
 
 
-def _classify_llm_error(exc: Exception) -> Exception:
+def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     """Wrap litellm exceptions into categorized errors.
+
+    Args:
+        exc: The exception raised by the LiteLLM call.
+        model: The model name (e.g. ``"azure/gpt-4o"``, ``"openai/gpt-4o"``)
+            that produced the error. Used to scope provider-specific hints
+            (e.g. Azure RBAC guidance) so non-Azure providers do not see
+            misleading "verify your Cognitive Services role" text when the
+            user has merely set ``ASSERT_AZURE_USE_AAD=1`` for a different
+            ``azure/*`` model elsewhere in the same process. Defaults to
+            ``None`` for call sites (e.g. user-callable wrappers) that
+            cannot supply a model name; in that case provider-specific
+            hints are suppressed.
 
     LiteLLM maps provider HTTP errors to OpenAI-compatible exception types.
     We re-classify them into four categories that drive retry behaviour in
@@ -829,9 +892,32 @@ def _classify_llm_error(exc: Exception) -> Exception:
     from APIStatusError → APIError on some providers).
     """
     litellm = _get_litellm_module()
+    is_azure_model = bool(model) and model.startswith("azure/")
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
-        err = LLMAuthError(f"Authentication failed: {exc}")
+        msg = f"Authentication failed: {exc}"
+        # Azure-specific RBAC / install hints only apply when the failing
+        # call targeted an ``azure/*`` model. Without this gate, a user
+        # running an ``openai/*`` model in the same process while
+        # ``ASSERT_AZURE_USE_AAD=1`` is set would see "verify the
+        # 'Cognitive Services OpenAI User' role" on a vanilla OpenAI 401,
+        # which is misleading.
+        if is_azure_model and azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
+            if azure_auth._AZURE_AAD_DEP_MISSING:
+                msg += (
+                    "\nNo AZURE_API_KEY is set and azure-identity is not "
+                    "installed. Either export AZURE_API_KEY, or install "
+                    "Azure AD support with "
+                    "`pip install 'assert-ai[azure-aad]'`."
+                )
+            else:
+                msg += (
+                    "\nAzure AD auth is active. Verify the caller identity "
+                    "has the 'Cognitive Services OpenAI User' role on the "
+                    "Azure OpenAI resource, or set AZURE_API_KEY to fall "
+                    "back to API-key auth."
+                )
+        err = LLMAuthError(msg)
         err.__cause__ = exc
         return err
     # 403 — insufficient permissions
@@ -1331,7 +1417,7 @@ async def _with_retries(call_fn: Any, *, model: str, label: str | None = None) -
             _rate_limiter.report_success(model)
             return result
         except Exception as exc:
-            classified = _classify_llm_error(exc)
+            classified = _classify_llm_error(exc, model=model)
             last_exc = classified
             if isinstance(classified, LLMRateLimitError):
                 own_429s += 1

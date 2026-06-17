@@ -15,7 +15,7 @@ eval spec -> behavior categories -> test cases -> execute target -> judge -> art
 ## Safety and privacy rules
 
 - Never read, print, commit, summarize, or infer values from `.env` or other local environment files.
-- Use placeholder names such as `AZURE_API_KEY` and `AZURE_API_BASE`; never invent or expose credential values.
+- Use placeholder names such as `AZURE_API_KEY`, `AZURE_API_BASE`, `azure_ad_token`, and `azure_ad_token_provider`; never invent or expose credential values.
 - Do not recommend committing generated artifacts, local traces, `.venv`, logs, or `.env` files.
 - Treat this repo as a customer-preview distribution. Keep contributions customer-safe — avoid any internal-only planning, prioritization, or organizational content.
 
@@ -153,7 +153,7 @@ Key facts:
 - For a hosted model with a system prompt and optional tools, use `target.model` and `target.tools`.
 - Read `README.md`, `docs/quickstart.md`, `docs/targets/README.md`, `docs/targets/callable.md`, and
   `docs/config/schema.md` before suggesting changes to YAML schema.
-- Never read or print values from `.env`. Use placeholder names like AZURE_API_KEY and AZURE_API_BASE.
+- Never read or print values from `.env`. Use placeholder names like AZURE_API_KEY, AZURE_API_BASE, azure_ad_token, and azure_ad_token_provider.
 - Keep all suggestions customer-safe.
 
 When I ask for help, prefer concrete file paths, runnable commands, and the YAML keys defined in docs/config/schema.md.

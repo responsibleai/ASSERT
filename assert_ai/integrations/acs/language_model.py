@@ -34,6 +34,8 @@ class AssertLanguageModel:
 
     def complete(self, system: str, user: str) -> str:
         """Return the raw assistant text for the ACS generator's JSON plan prompt."""
+        from assert_ai.core.model_client import _maybe_inject_azure_aad_token
+
         litellm = _assert_litellm_module()
         payload: dict[str, Any] = {
             "model": self.model,
@@ -46,11 +48,20 @@ class AssertLanguageModel:
         if self.response_format_json:
             payload["response_format"] = {"type": "json_object"}
 
+        # Route azure/* through the same AAD injection path the rest of
+        # the LiteLLM call sites use (``model_client._build_chat_payload``
+        # and ``init._llm.chat_completion``). No-op for non-azure/*
+        # models and for the ``key`` auth mode, so existing API-key
+        # users are unaffected.
+        _maybe_inject_azure_aad_token(self.model, payload)
+
         try:
             response = litellm.completion(**payload)
         except Exception as exc:
             if not self.response_format_json or not _is_response_format_rejection(exc):
                 raise
+            # Shallow-copy preserves ``azure_ad_token_provider`` (a
+            # callable reference) on the response_format-less retry.
             fallback_payload = dict(payload)
             fallback_payload.pop("response_format", None)
             response = litellm.completion(**fallback_payload)
