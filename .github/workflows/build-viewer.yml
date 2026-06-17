@@ -1,0 +1,44 @@
+name: Build (viewer)
+
+# Gates the Svelte/SvelteKit frontend in viewer/. Triggered only by changes
+# under viewer/ (or this workflow itself), so Python-only PRs do not pay for
+# a Node build and viewer-only PRs (notably Dependabot frontend bumps) do
+# not need to wait on Python jobs.
+#
+# Mirrors the equivalent Node steps Dependabot PRs need to validate:
+#   - install with the committed lockfile (npm ci)
+#   - svelte-check (type + a11y diagnostics)
+#   - vite build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'viewer/**'
+      - '.github/workflows/build-viewer.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'viewer/**'
+      - '.github/workflows/build-viewer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  viewer-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: viewer/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
