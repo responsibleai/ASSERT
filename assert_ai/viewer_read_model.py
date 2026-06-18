@@ -454,6 +454,14 @@ def _summary_multi_judge(raw_multi_judge: Any) -> dict[str, Any] | None:
     return summary
 
 
+def _score_keys(row: dict[str, Any]) -> list[str] | None:
+    raw_score_keys = row.get("score_keys")
+    if not isinstance(raw_score_keys, list):
+        return None
+    score_keys = [key for key in raw_score_keys if isinstance(key, str) and key]
+    return score_keys if len(score_keys) == len(raw_score_keys) else None
+
+
 def _write_transcript_index(
     *,
     run_dir: Path,
@@ -602,6 +610,9 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             }
             if dimensions:
                 prompt_row["dimensions"] = dimensions
+            score_keys = _score_keys(row)
+            if score_keys is not None:
+                prompt_row["score_keys"] = score_keys
             prompt_rows.append(prompt_row)
             continue
 
@@ -624,6 +635,9 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         }
         if dimensions:
             audit_row["dimensions"] = dimensions
+        score_keys = _score_keys(row)
+        if score_keys is not None:
+            audit_row["score_keys"] = score_keys
         audit_rows.append(audit_row)
 
     prompt_rows_path = _viewer_cache_path(run_dir, VIEWER_PROMPT_ROWS_FILE)

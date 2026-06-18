@@ -7,7 +7,8 @@ import { MEASUREMENTS_ROOT } from './config.js';
 import type { DimensionDef } from '$lib/types.js';
 
 /**
- * Built-in judge dimensions. These are always included in every evaluation.
+ * Built-in judge dimensions. These are included by default and can be disabled
+ * per score row through its configured score_keys.
  * Additional dimensions come from the eval.yaml judge_dimensions section.
  */
 const BUILT_IN_DIMENSIONS: Record<string, DimensionDef> = {

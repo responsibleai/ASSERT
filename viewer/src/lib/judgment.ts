@@ -9,6 +9,7 @@ export interface JudgmentRecordLike {
 	verdict?: VerdictLike;
 	judge_status?: JudgeStatus | string | null;
 	judge_error?: string | null;
+	score_keys?: string[] | null;
 }
 
 export function isBooleanFlag(value: unknown): value is boolean {
@@ -52,13 +53,21 @@ export function getRecordMetricValue(record: JudgmentRecordLike, metric: string)
 	return getVerdictMetricValue(record.verdict, metric);
 }
 
-function hasSuccessfulJudgeVerdict(verdict: VerdictLike, requiredBaseMetrics: string[]): boolean {
+function requiredMetricsForRecord(
+	record: JudgmentRecordLike,
+	defaultRequiredBaseMetrics: string[]
+): string[] {
+	const scoreKeys = record.score_keys;
+	if (Array.isArray(scoreKeys) && scoreKeys.every((key) => typeof key === 'string')) {
+		return [...scoreKeys];
+	}
+	return defaultRequiredBaseMetrics;
+}
+
+function hasSuccessfulJudgeVerdict(verdict: VerdictLike, requiredMetrics: string[]): boolean {
 	const dimensions = readDimensions(verdict);
 	if (dimensions && Array.isArray(verdict?.node_judgments)) {
-		return (
-			requiredBaseMetrics.length > 0 &&
-			requiredBaseMetrics.every((metric) => isBooleanFlag(dimensions[metric]))
-		);
+		return requiredMetrics.every((metric) => isBooleanFlag(dimensions[metric]));
 	}
 	return false;
 }
@@ -67,15 +76,16 @@ export function inferJudgeStatus(
 	record: JudgmentRecordLike,
 	requiredBaseMetrics: string[]
 ): JudgeStatus {
+	const requiredMetrics = requiredMetricsForRecord(record, requiredBaseMetrics);
 	if (record.judge_status === 'scoring_skipped') {
 		return 'scoring_skipped';
 	}
 	if (record.judge_status != null) {
-		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredBaseMetrics)
+		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics)
 			? 'ok'
 			: 'judge_failed';
 	}
-	return hasSuccessfulJudgeVerdict(record.verdict, requiredBaseMetrics) ? 'ok' : 'judge_failed';
+	return hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics) ? 'ok' : 'judge_failed';
 }
 
 export function isSuccessfulJudgment(
