@@ -1,6 +1,13 @@
 "use client";
 
-import type { AnchorHTMLAttributes } from "react";
+import {
+	isValidElement,
+	useRef,
+	useState,
+	type AnchorHTMLAttributes,
+	type ComponentPropsWithoutRef,
+	type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -122,6 +129,82 @@ type MarkdownContentProps = {
 	relativePath?: string;
 };
 
+function CopyIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+		</svg>
+	);
+}
+
+function CheckIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<path d="M20 6 9 17l-5-5" />
+		</svg>
+	);
+}
+
+// Languages whose blocks are illustrative (directory trees, plain output) and
+// should not show a copy button.
+const NON_COPYABLE_LANGUAGES = new Set(["text", "plaintext", "txt", "plain"]);
+
+function getCodeLanguage(children: ReactNode): string | null {
+	if (!isValidElement(children)) return null;
+	const className: string = (children.props as { className?: string })?.className ?? "";
+	const match = className.match(/language-([\w-]+)/);
+	return match ? match[1].toLowerCase() : null;
+}
+
+function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
+	const preRef = useRef<HTMLPreElement>(null);
+	const [copied, setCopied] = useState(false);
+
+	const language = getCodeLanguage(children);
+	const copyable = !language || !NON_COPYABLE_LANGUAGES.has(language);
+
+	async function handleCopy() {
+		const text = preRef.current?.innerText ?? "";
+		try {
+			await navigator.clipboard.writeText(text);
+		} catch {
+			// Fallback for browsers without the async clipboard API
+			const textarea = document.createElement("textarea");
+			textarea.value = text;
+			textarea.style.position = "fixed";
+			textarea.style.opacity = "0";
+			document.body.appendChild(textarea);
+			textarea.select();
+			document.execCommand("copy");
+			document.body.removeChild(textarea);
+		}
+		setCopied(true);
+		window.setTimeout(() => setCopied(false), 2000);
+	}
+
+	if (!copyable) {
+		return <pre {...props}>{children}</pre>;
+	}
+
+	return (
+		<div className="docs-code-block">
+			<button
+				type="button"
+				className="docs-copy-btn"
+				onClick={handleCopy}
+				aria-label="Copy to clipboard"
+				data-tooltip={copied ? "Copied!" : "Copy to Clipboard"}
+			>
+				{copied ? <CheckIcon /> : <CopyIcon />}
+			</button>
+			<pre ref={preRef} {...props}>
+				{children}
+			</pre>
+		</div>
+	);
+}
+
 export default function MarkdownContent({ source, relativePath = "" }: MarkdownContentProps) {
 	const anchorRenderer = ({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement>) => {
 		const rewritten = href ? rewriteMarkdownLink(href, relativePath) : null;
@@ -136,7 +219,7 @@ export default function MarkdownContent({ source, relativePath = "" }: MarkdownC
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
 				rehypePlugins={[rehypeRaw, rehypeSlug, rehypeHighlight]}
-				components={{ a: anchorRenderer }}
+				components={{ a: anchorRenderer, pre: CodeBlock }}
 			>
 				{rewriteAssetPaths(source)}
 			</ReactMarkdown>

@@ -216,6 +216,85 @@ export function getHeadings(content: string): Heading[] {
 	return headings;
 }
 
+export type DocSearchHeading = { id: string; text: string; offset: number };
+export type DocSearchEntry = {
+	href: string;
+	title: string;
+	group: string | null;
+	description: string;
+	text: string; // plain-text body, used for matching and snippets
+	headings: DocSearchHeading[];
+};
+
+// Remove inline markdown so search matches and snippets read as plain prose.
+function stripInline(line: string): string {
+	return line
+		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // images -> alt text
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links -> link text
+		.replace(/`([^`]+)`/g, "$1") // inline code
+		.replace(/[*_~]+/g, "") // emphasis markers
+		.replace(/^\s{0,3}>\s?/, "") // blockquote marker
+		.replace(/^\s*[-*+]\s+/, "") // unordered list marker
+		.replace(/^\s*\d+\.\s+/, "") // ordered list marker
+		.replace(/^\s*#{1,6}\s+/, "") // stray heading markers
+		.trim();
+}
+
+// Build a flat plain-text body plus heading offsets so the search UI can show a
+// snippet and deep-link to the nearest preceding section heading.
+function buildSearchable(content: string): { text: string; headings: DocSearchHeading[] } {
+	const slugger = new GithubSlugger();
+	const lines = content.split("\n");
+	const headings: DocSearchHeading[] = [];
+	let text = "";
+	let inFence = false;
+	for (const line of lines) {
+		if (/^\s*```/.test(line)) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) {
+			if (line.trim()) text += line + "\n";
+			continue;
+		}
+		const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+		if (headingMatch) {
+			const headingText = headingMatch[2]
+				.replace(/`([^`]+)`/g, "$1")
+				.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+				.replace(/[*_]+/g, "")
+				.trim();
+			headings.push({ id: slugger.slug(headingText), text: headingText, offset: text.length });
+			text += headingText + "\n";
+			continue;
+		}
+		const stripped = stripInline(line);
+		if (stripped) text += stripped + "\n";
+	}
+	return { text, headings };
+}
+
+/**
+ * Returns a per-page search index containing the page title, group, plain-text
+ * body, and heading offsets. Used by the docs sidebar to search full page
+ * content (not just nav titles) and deep-link to the matching section.
+ */
+export function getDocsSearchIndex(): DocSearchEntry[] {
+	const docs = getAllDocs();
+	return docs.map((doc) => {
+		const { text, headings } = buildSearchable(doc.content);
+		const group = doc.slug.length > 1 ? humanize(doc.slug[0]) : null;
+		return {
+			href: doc.href,
+			title: doc.title,
+			group,
+			description: doc.description ?? "",
+			text,
+			headings,
+		};
+	});
+}
+
 /**
  * For breadcrumbs: returns the group label ("Targets", "Reference", etc.) for a doc,
  * or null for top-level docs.
