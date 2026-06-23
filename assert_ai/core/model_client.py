@@ -12,11 +12,12 @@ Import side effects (intentional for the ``assert-ai`` CLI):
 * ``azure_auth.refresh_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
   ``AZURE_API_KEY`` lazily on first access (or eagerly when an
   entrypoint calls it with ``force=True`` after ``load_dotenv``) to
-  pick the Azure OpenAI auth mode for the process. When the resolved
-  mode is AAD, it pre-warms the ``azure-identity`` credential so
-  first-request latency stays low and missing-dep errors surface
-  early. The mode is read again per-request only as a cheap
-  module-global lookup, never re-derived.
+  pick the Azure auth mode for the process (applies to both ``azure/*``
+  and ``azure_ai/*`` LiteLLM routes). When the resolved mode is AAD,
+  it pre-warms the ``azure-identity`` credential so first-request
+  latency stays low and missing-dep errors surface early. The mode is
+  read again per-request only as a cheap module-global lookup, never
+  re-derived.
 * The first activation of the Chat Completions fallback (either via
   ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
   API preference, or a reactive recovery from a region error) calls

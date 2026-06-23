@@ -202,7 +202,7 @@ def _wrap_provider_with_provenance_log(
     ``DefaultAzureCredential`` extends) sets ``_successful_credential``
     after a successful ``get_token``. We read it once after the first
     successful token to give users a single, friendly provenance line
-    (``"Azure OpenAI auth: AAD token acquired via AzureCliCredential
+    (``"Azure auth: AAD token acquired via AzureCliCredential
     (az login)."``) without flooding logs with the SDK's per-step
     chain trace.
 
@@ -221,7 +221,7 @@ def _wrap_provider_with_provenance_log(
             label = _FRIENDLY_CRED_LABELS.get(cls_name or "", "credential chain")
             if cls_name:
                 log.info(
-                    "Azure OpenAI auth: AAD token acquired via %s (%s).",
+                    "Azure auth: AAD token acquired via %s (%s).",
                     cls_name,
                     label,
                 )
@@ -229,7 +229,7 @@ def _wrap_provider_with_provenance_log(
                 # Token came back but we couldn't identify the inner
                 # credential — still tell the user AAD succeeded so
                 # they're not left guessing.
-                log.info("Azure OpenAI auth: AAD token acquired.")
+                log.info("Azure auth: AAD token acquired.")
             logged["done"] = True
         return token
 
@@ -305,30 +305,30 @@ def log_resolved_azure_auth_mode() -> None:
     mode = _get_azure_auth_mode()
     if mode == "aad":
         log.info(
-            "Azure OpenAI auth mode: AAD (forced via %s).",
+            "Azure auth mode: AAD (forced via %s).",
             ENV_USE_AAD_FLAG,
         )
         if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.warning(
                 "%s is set but azure-identity is not installed; the next "
-                "azure/* request will fail. Install with: "
+                "azure/* or azure_ai/* request will fail. Install with: "
                 "pip install 'assert-ai[azure-aad]'",
                 ENV_USE_AAD_FLAG,
             )
     elif mode == "aad-fallback":
         if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "Azure auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "azure-identity not installed — install with: "
                 "pip install 'assert-ai[azure-aad]').",
             )
         else:
             log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "Azure auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "using DefaultAzureCredential).",
             )
     else:
-        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
+        log.info("Azure auth mode: API key (AZURE_API_KEY).")
 
 
 def _reset_cache_for_tests() -> None:
