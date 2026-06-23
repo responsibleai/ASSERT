@@ -38,6 +38,12 @@ Mode = Literal["key", "aad", "aad-fallback"]
 #: Standard scope for Azure OpenAI / Cognitive Services data-plane tokens.
 AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
 
+#: Scope for Azure AI Foundry data-plane tokens (Foundry projects, hosted
+#: agents, and other ``azure_ai/*`` LiteLLM routes). Distinct from the
+#: Cognitive Services scope above because the Foundry control plane sits
+#: behind a different audience.
+AZURE_FOUNDRY_SCOPE = "https://ai.azure.com/.default"
+
 #: Env var users set to force AAD even when ``AZURE_API_KEY`` is present.
 ENV_USE_AAD_FLAG = "ASSERT_AZURE_USE_AAD"
 
@@ -63,10 +69,17 @@ _FRIENDLY_CRED_LABELS: Mapping[str, str] = {
 
 # DefaultAzureCredential is expensive to construct repeatedly and
 # azure-identity already handles its own in-process token caching, so
-# the provider callable is built lazily once and reused for the
-# process lifetime.
-_CACHED_PROVIDER: Callable[[], str] | None = None
-_CACHE_POPULATED = False
+# provider callables are built lazily and reused for the process
+# lifetime. We key the cache on scope because Azure OpenAI and Azure AI
+# Foundry data planes accept tokens for different audiences; the
+# underlying ``DefaultAzureCredential`` is reused across scopes.
+_PROVIDER_CACHE: dict[str, Callable[[], str] | None] = {}
+_CACHED_CREDENTIAL: object | None = None
+#: True after the first import attempt for ``azure.identity`` has
+#: completed, regardless of whether it succeeded. Lets us short-circuit
+#: repeat imports without re-introducing per-scope ImportError costs.
+_IDENTITY_IMPORT_ATTEMPTED = False
+_IDENTITY_AVAILABLE = False
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -90,20 +103,37 @@ def resolve_azure_auth_mode(env: Mapping[str, str] | None = None) -> Mode:
     return "aad-fallback"
 
 
-def get_azure_token_provider() -> Callable[[], str] | None:
-    """Return a cached bearer-token callable for Azure OpenAI, or ``None``.
+def get_azure_token_provider(
+    scope: str = AZURE_OPENAI_SCOPE,
+) -> Callable[[], str] | None:
+    """Return a cached bearer-token callable for ``scope``, or ``None``.
 
     Returns ``None`` (without raising) when ``azure-identity`` is not
     installed. Callers should treat ``None`` as "AAD requested but
     optional dependency missing" and surface an actionable install hint.
 
+    The default scope (:data:`AZURE_OPENAI_SCOPE`) covers ``azure/*``
+    LiteLLM models. Pass :data:`AZURE_FOUNDRY_SCOPE` for ``azure_ai/*``
+    routes (Foundry hosted agents, embeddings, chat). Each scope gets
+    its own cached provider; all providers share a single
+    ``DefaultAzureCredential`` instance so adding a second scope does
+    not pay for a second credential-chain probe.
+
     Honors ``AZURE_CLIENT_ID`` natively via ``DefaultAzureCredential``
     so users can select a specific user-assigned managed identity
     without passing anything to ASSERT.
     """
-    global _CACHED_PROVIDER, _CACHE_POPULATED
-    if _CACHE_POPULATED:
-        return _CACHED_PROVIDER
+    global _CACHED_CREDENTIAL, _IDENTITY_IMPORT_ATTEMPTED, _IDENTITY_AVAILABLE
+
+    if scope in _PROVIDER_CACHE:
+        return _PROVIDER_CACHE[scope]
+
+    if _IDENTITY_IMPORT_ATTEMPTED and not _IDENTITY_AVAILABLE:
+        # A prior call already discovered the dep is missing; don't
+        # re-pay the ImportError or re-log the install hint for every
+        # additional scope a caller asks about.
+        _PROVIDER_CACHE[scope] = None
+        return None
 
     try:
         from azure.identity import (  # type: ignore[import-not-found]
@@ -115,19 +145,25 @@ def get_azure_token_provider() -> Callable[[], str] | None:
             "azure-identity is not installed; AAD auth unavailable. "
             "Install with: pip install 'assert-ai[azure-aad]'"
         )
-        _CACHE_POPULATED = True
+        _IDENTITY_IMPORT_ATTEMPTED = True
+        _IDENTITY_AVAILABLE = False
+        _PROVIDER_CACHE[scope] = None
         return None
 
-    # Skip the interactive flows so CI / non-interactive shells fail
-    # fast instead of hanging on a browser prompt.
-    credential = DefaultAzureCredential(
-        exclude_interactive_browser_credential=True,
-        exclude_visual_studio_code_credential=True,
-    )
-    raw_provider = get_bearer_token_provider(credential, AZURE_OPENAI_SCOPE)
-    _CACHED_PROVIDER = _wrap_provider_with_provenance_log(credential, raw_provider)
-    _CACHE_POPULATED = True
-    return _CACHED_PROVIDER
+    _IDENTITY_IMPORT_ATTEMPTED = True
+    _IDENTITY_AVAILABLE = True
+
+    if _CACHED_CREDENTIAL is None:
+        # Skip the interactive flows so CI / non-interactive shells fail
+        # fast instead of hanging on a browser prompt.
+        _CACHED_CREDENTIAL = DefaultAzureCredential(
+            exclude_interactive_browser_credential=True,
+            exclude_visual_studio_code_credential=True,
+        )
+    raw_provider = get_bearer_token_provider(_CACHED_CREDENTIAL, scope)
+    provider = _wrap_provider_with_provenance_log(_CACHED_CREDENTIAL, raw_provider)
+    _PROVIDER_CACHE[scope] = provider
+    return provider
 
 
 def _wrap_provider_with_provenance_log(
@@ -262,10 +298,12 @@ def log_resolved_azure_auth_mode() -> None:
 
 
 def _reset_cache_for_tests() -> None:
-    """Clear the cached provider — for tests only."""
-    global _CACHED_PROVIDER, _CACHE_POPULATED
-    _CACHED_PROVIDER = None
-    _CACHE_POPULATED = False
+    """Clear the cached providers and credential — for tests only."""
+    global _CACHED_CREDENTIAL, _IDENTITY_IMPORT_ATTEMPTED, _IDENTITY_AVAILABLE
+    _PROVIDER_CACHE.clear()
+    _CACHED_CREDENTIAL = None
+    _IDENTITY_IMPORT_ATTEMPTED = False
+    _IDENTITY_AVAILABLE = False
 
 
 def _reset_auth_mode_cache_for_tests() -> None:
