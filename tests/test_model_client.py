@@ -1384,7 +1384,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         exc = fake_litellm.AuthenticationError("401: bad token")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
-             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", False):
             wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("Cognitive Services OpenAI User", str(wrapped))
@@ -1405,12 +1405,37 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         exc = fake_litellm.AuthenticationError("401: no api key supplied")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad-fallback"), \
-             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", True):
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", True):
             wrapped = model_client._classify_llm_error(exc, model="azure/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertIn("assert-ai[azure-aad]", str(wrapped))
         # The RBAC hint must not appear in this branch — it would be misleading.
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+
+    def test_install_hint_mentions_azure_ai_api_key_for_foundry_family(self) -> None:
+        """When the dep-missing install hint fires on an azure_ai/* call,
+        the env var named in the hint must be AZURE_AI_API_KEY, not
+        AZURE_API_KEY. Otherwise users go set the Azure OpenAI key and
+        wonder why their Foundry call still fails."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: no api key supplied")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", True), \
+             patch.dict("os.environ", {
+                 "ASSERT_AZURE_USE_AAD": "",
+                 "AZURE_API_KEY": "",
+                 "AZURE_AI_API_KEY": "",
+             }, clear=False):
+            wrapped = model_client._classify_llm_error(
+                exc, model="azure_ai/agents/asst_xxx"
+            )
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertIn("AZURE_AI_API_KEY", str(wrapped))
+        # The Azure OpenAI env var must not appear: it would send the
+        # user to the wrong resource's key.
+        self.assertNotIn("AZURE_API_KEY,", str(wrapped))
+        self.assertNotIn("export AZURE_API_KEY", str(wrapped))
 
     def test_auth_error_omits_azure_hints_for_non_azure_model(self) -> None:
         """A 401 on an ``openai/*`` model must not leak Azure-specific hints
@@ -1422,7 +1447,7 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         exc = fake_litellm.AuthenticationError("401: invalid api key")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
-             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", False):
             wrapped = model_client._classify_llm_error(exc, model="openai/gpt-5.4-mini")
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         # Neither the RBAC hint nor the install hint should appear on a
@@ -1439,11 +1464,84 @@ class ClassifyLlmErrorAadHintTest(unittest.TestCase):
         exc = fake_litellm.AuthenticationError("401")
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
-             patch.object(model_client.azure_auth, "_AZURE_AAD_DEP_MISSING", False):
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", False):
             wrapped = model_client._classify_llm_error(exc)
         self.assertIsInstance(wrapped, model_client.LLMAuthError)
         self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
         self.assertNotIn("assert-ai[azure-aad]", str(wrapped))
+
+    # ── azure_ai/* (Azure AI Foundry) hints ────────────────────────
+
+    def test_auth_error_uses_foundry_role_hint_for_azure_ai_family(self) -> None:
+        """A 401 on azure_ai/* must mention the Azure AI Foundry role and
+        AZURE_AI_API_KEY (not the Cognitive Services role and AZURE_API_KEY,
+        which would point users at the wrong resource)."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.AuthenticationError("401: bad token")
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "_AZURE_OPENAI_AAD_DEP_MISSING", False):
+            wrapped = model_client._classify_llm_error(
+                exc, model="azure_ai/agents/asst_xxx"
+            )
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertIn("Azure AI User", str(wrapped))
+        self.assertIn("AZURE_AI_API_KEY", str(wrapped))
+        self.assertNotIn("Cognitive Services OpenAI User", str(wrapped))
+
+    def test_azure_ai_missing_token_api_connection_error_becomes_auth_error(self) -> None:
+        """LiteLLM raises the missing-token validation error from azure_ai/agents
+        as APIConnectionError because the request never leaves the process.
+        Surface it as LLMAuthError with the install hint so users do not see
+        it classified as a retryable provider error."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.APIConnectionError(
+            "Azure_aiException - api_key (Azure AD token) is required for "
+            "Azure Foundry Agents. Either pass api_key directly, ..."
+        )
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            wrapped = model_client._classify_llm_error(
+                exc, model="azure_ai/agents/asst_xxx"
+            )
+        self.assertIsInstance(wrapped, model_client.LLMAuthError)
+        self.assertIn("assert-ai[azure-aad]", str(wrapped))
+        self.assertIn("az login", str(wrapped))
+        self.assertIn("AZURE_AI_API_KEY", str(wrapped))
+
+    def test_azure_ai_missing_api_base_becomes_input_error_with_hint(self) -> None:
+        """LiteLLM raises the missing-api_base validation as APIConnectionError too;
+        we reclassify as LLMInputError pointing at AZURE_AI_API_BASE."""
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.APIConnectionError(
+            "Azure_aiException - api_base is required for Azure AI Agents. "
+            "Set it via AZURE_AI_API_BASE env var or api_base parameter."
+        )
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            wrapped = model_client._classify_llm_error(
+                exc, model="azure_ai/agents/asst_xxx"
+            )
+        self.assertIsInstance(wrapped, model_client.LLMInputError)
+        self.assertIn("AZURE_AI_API_BASE", str(wrapped))
+
+    def test_azure_ai_missing_api_base_second_variant_also_classified(self) -> None:
+        """LiteLLM raises a second wording of the same error from main.py
+        ('Azure AI Agents requests require an api_base. Set `api_base` or
+        the AZURE_AI_API_BASE env var.'). The classifier must catch both
+        variants; before this fix it would retry the call 5 times before
+        giving up because the error was classified as a retryable provider
+        error.
+        """
+        fake_litellm = self._fake_litellm_with_auth_error()
+        exc = fake_litellm.APIConnectionError(
+            "Azure_aiException - Azure AI Agents requests require an api_base. "
+            "Set `api_base` or the AZURE_AI_API_BASE env var."
+        )
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm):
+            wrapped = model_client._classify_llm_error(
+                exc, model="azure_ai/agents/asst_xxx"
+            )
+        self.assertIsInstance(wrapped, model_client.LLMInputError)
+        self.assertIn("AZURE_AI_API_BASE", str(wrapped))
 
 
 if __name__ == "__main__":

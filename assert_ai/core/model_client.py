@@ -935,23 +935,49 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     from APIStatusError → APIError on some providers).
     """
     litellm = _get_litellm_module()
-    is_azure_model = bool(model) and model.startswith("azure/")
+    is_azure_family = bool(model) and _model_family(model) in {"azure", "azure_ai"}
+    # The cached azure-family mode is driven by AZURE_API_KEY; azure_ai
+    # needs its own per-family resolution against AZURE_AI_API_KEY for
+    # the hint-vs-no-hint decision to be accurate.
+    if is_azure_family and _model_family(model) == "azure_ai":
+        azure_mode = azure_auth.resolve_azure_auth_mode(family="azure_ai")
+    elif is_azure_family:
+        azure_mode = azure_auth._get_azure_auth_mode()
+    else:
+        azure_mode = "key"  # any non-aad value; the gate below filters azure-only paths
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         msg = f"Authentication failed: {exc}"
         # Azure-specific RBAC / install hints only apply when the failing
-        # call targeted an ``azure/*`` model. Without this gate, a user
+        # call targeted an Azure family (``azure/*`` for Azure OpenAI or
+        # ``azure_ai/*`` for Azure AI Foundry). Without this gate, a user
         # running an ``openai/*`` model in the same process while
-        # ``ASSERT_AZURE_USE_AAD=1`` is set would see "verify the
-        # 'Cognitive Services OpenAI User' role" on a vanilla OpenAI 401,
-        # which is misleading.
-        if is_azure_model and azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
-            if azure_auth._AZURE_AAD_DEP_MISSING:
+        # ``ASSERT_AZURE_USE_AAD=1`` is set would see Azure-only role
+        # text on a vanilla OpenAI 401, which is misleading.
+        if is_azure_family and azure_mode in {"aad", "aad-fallback"}:
+            if azure_auth._AZURE_OPENAI_AAD_DEP_MISSING:
+                if _model_family(model) == "azure_ai":
+                    msg += (
+                        "\nNo AZURE_AI_API_KEY is set and azure-identity is "
+                        "not installed. Either export AZURE_AI_API_KEY with "
+                        "a manually-minted token (`az account "
+                        "get-access-token --resource https://ai.azure.com`), "
+                        "or install Azure AD support with "
+                        "`pip install 'assert-ai[azure-aad]'`."
+                    )
+                else:
+                    msg += (
+                        "\nNo AZURE_API_KEY is set and azure-identity is not "
+                        "installed. Either export AZURE_API_KEY, or install "
+                        "Azure AD support with "
+                        "`pip install 'assert-ai[azure-aad]'`."
+                    )
+            elif _model_family(model) == "azure_ai":
                 msg += (
-                    "\nNo AZURE_API_KEY is set and azure-identity is not "
-                    "installed. Either export AZURE_API_KEY, or install "
-                    "Azure AD support with "
-                    "`pip install 'assert-ai[azure-aad]'`."
+                    "\nAzure AD auth is active. Verify the caller identity "
+                    "has the 'Azure AI User' role on the Azure AI Foundry "
+                    "project, or set AZURE_AI_API_KEY to a manually-minted "
+                    "bearer token to fall back to static-token auth."
                 )
             else:
                 msg += (
@@ -1066,6 +1092,39 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     # InternalServerError, ServiceUnavailableError, and Timeout
     # (all inherit from APIError or APIConnectionError).
     if isinstance(exc, (litellm.APIError, litellm.APIConnectionError)):
+        # Two LiteLLM-side validation errors for the azure_ai/agents
+        # provider come through as APIConnectionError because the
+        # request never leaves the process. They are not transient and
+        # should not be retried; surface them as LLMAuthError /
+        # LLMInputError with actionable hints so users know what to fix.
+        if is_azure_family and _model_family(model) == "azure_ai":
+            exc_text = str(exc)
+            if "api_key (Azure AD token) is required" in exc_text:
+                hint = (
+                    "Azure AI Foundry rejected the call because no bearer "
+                    "token was supplied. Install Azure AD support with "
+                    "`pip install 'assert-ai[azure-aad]'` and run "
+                    "`az login`, or export AZURE_AI_API_KEY with a "
+                    "manually-minted token (`az account get-access-token "
+                    "--resource https://ai.azure.com`)."
+                )
+                err = LLMAuthError(f"Authentication failed: {exc}\n{hint}")
+                err.__cause__ = exc
+                return err
+            # LiteLLM has two raise sites for the missing-api_base check
+            # ("api_base is required for Azure AI Agents..." in the
+            # provider transformation, and "Azure AI Agents requests
+            # require an api_base..." in main.py). Both mention the
+            # AZURE_AI_API_BASE env var, so anchor on that stable token.
+            if "AZURE_AI_API_BASE" in exc_text:
+                hint = (
+                    "Set AZURE_AI_API_BASE to your Foundry project endpoint "
+                    "(e.g. https://<resource>.services.ai.azure.com/api/"
+                    "projects/<project>) before running the eval."
+                )
+                err = LLMInputError(f"Bad request: {exc}\n{hint}")
+                err.__cause__ = exc
+                return err
         err = LLMProviderError(f"Provider error: {exc}")
         err.__cause__ = exc
         return err

@@ -248,11 +248,19 @@ def _wrap_provider_with_provenance_log(
 _AZURE_AUTH_MODE: Mode | None = None
 
 # True when the user's environment selects AAD (explicit or fallback)
-# but the ``azure-identity`` package is not importable. Used by
+# for the ``azure`` family (Azure OpenAI, AZURE_OPENAI_SCOPE) but the
+# ``azure-identity`` package is not importable. Used by
 # ``model_client._classify_llm_error`` to swap the RBAC hint for an
-# install hint. Updated alongside ``_AZURE_AUTH_MODE`` whenever the
-# cache is refreshed.
-_AZURE_AAD_DEP_MISSING: bool = False
+# install hint on ``azure/*`` calls. Updated alongside
+# ``_AZURE_AUTH_MODE`` whenever the cache is refreshed.
+#
+# The dep-availability check is family-agnostic in practice (the
+# import either works or it does not), so the install-hint branch in
+# the classifier reuses this flag for ``azure_ai/*`` calls too. The
+# name is scoped to ``OPENAI`` to make it explicit that the
+# ``_AZURE_AUTH_MODE`` half of the pair is azure-family only;
+# ``azure_ai/*`` re-resolves its own mode per request.
+_AZURE_OPENAI_AAD_DEP_MISSING: bool = False
 
 
 def refresh_azure_auth_mode(force: bool = False) -> Mode:
@@ -265,11 +273,11 @@ def refresh_azure_auth_mode(force: bool = False) -> Mode:
 
     Returns the resolved mode for the caller's convenience.
     """
-    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    global _AZURE_AUTH_MODE, _AZURE_OPENAI_AAD_DEP_MISSING
     if _AZURE_AUTH_MODE is not None and not force:
         return _AZURE_AUTH_MODE
     _AZURE_AUTH_MODE = resolve_azure_auth_mode()
-    _AZURE_AAD_DEP_MISSING = (
+    _AZURE_OPENAI_AAD_DEP_MISSING = (
         _AZURE_AUTH_MODE in ("aad", "aad-fallback")
         and get_azure_token_provider() is None
     )
@@ -300,7 +308,7 @@ def log_resolved_azure_auth_mode() -> None:
             "Azure OpenAI auth mode: AAD (forced via %s).",
             ENV_USE_AAD_FLAG,
         )
-        if _AZURE_AAD_DEP_MISSING:
+        if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.warning(
                 "%s is set but azure-identity is not installed; the next "
                 "azure/* request will fail. Install with: "
@@ -308,7 +316,7 @@ def log_resolved_azure_auth_mode() -> None:
                 ENV_USE_AAD_FLAG,
             )
     elif mode == "aad-fallback":
-        if _AZURE_AAD_DEP_MISSING:
+        if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.info(
                 "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "azure-identity not installed — install with: "
@@ -335,12 +343,12 @@ def _reset_cache_for_tests() -> None:
 def _reset_auth_mode_cache_for_tests() -> None:
     """Clear the cached auth-mode resolution — for tests only.
 
-    Resets both ``_AZURE_AUTH_MODE`` and ``_AZURE_AAD_DEP_MISSING`` to
-    their pre-resolution baseline so the next ``refresh_azure_auth_mode``
+    Resets both ``_AZURE_AUTH_MODE`` and ``_AZURE_OPENAI_AAD_DEP_MISSING``
+    to their pre-resolution baseline so the next ``refresh_azure_auth_mode``
     or ``_get_azure_auth_mode`` call resolves against the current env.
     Centralises the field list so future additions to the auth-mode
     cache do not require touching every test that needs a clean slate.
     """
-    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    global _AZURE_AUTH_MODE, _AZURE_OPENAI_AAD_DEP_MISSING
     _AZURE_AUTH_MODE = None
-    _AZURE_AAD_DEP_MISSING = False
+    _AZURE_OPENAI_AAD_DEP_MISSING = False
