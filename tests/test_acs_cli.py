@@ -11,6 +11,7 @@ from typing import Any
 
 from click.testing import CliRunner
 import pytest
+import yaml
 
 from assert_ai.cli import cli
 
@@ -149,6 +150,69 @@ def test_acs_generate_and_validate_round_trips_known_bad_example(
     assert "deny" in validate_result.output
     assert "handled 1/1" in validate_result.output
     assert "yes" in validate_result.output
+
+
+def _write_policy_manifest(path: Path) -> None:
+    path.write_text(
+        """
+agent_control_specification_version: "0.3"
+metadata:
+  name: customer_data_policy
+  description: Protect customer records from disclosure.
+intervention_points:
+  input:
+    policy_target: input
+    policy:
+      id: customer_data_guard
+      query: data.agent_control_specification.customer_data.input_verdict
+tools:
+  send_email:
+    type: Tool
+    id: send_email
+rules:
+  - name: block_account_numbers
+    point: input
+    decision: deny
+    reason: customer_data
+    message: Do not expose account numbers.
+    conditions:
+      - contains(input.policy_target.value, "account")
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
+def test_acs_eval_config_writes_reviewable_assert_config(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.yaml"
+    out = tmp_path / "eval_config.yaml"
+    _write_policy_manifest(manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "acs",
+            "eval-config",
+            "--manifest",
+            str(manifest),
+            "--target-callable",
+            "examples.my_agent:chat",
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Wrote ASSERT eval config: {out}" in result.output
+    payload = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert payload["pipeline"]["inference"]["target"]["callable"] == "examples.my_agent:chat"
+    assert set(payload["pipeline"]["judge"]["dimensions"]) >= {
+        "guardrail_policy_violation",
+        "allowed_request_regression",
+        "policy_gap",
+    }
+    assert "customer_data_policy" in payload["behavior"]["description"]
+    assert "target callable is expected to already be guarded" in payload["context"]
 
 
 def test_acs_missing_extra_prints_install_hint(

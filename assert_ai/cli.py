@@ -1534,6 +1534,48 @@ def acs_validate(
     _enforce_acs_validation_gate(report, fail_on_allow=fail_on_allow, require_block=require_block)
 
 
+@acs.command("eval-config", short_help="Generate an ASSERT eval config from an existing ACS manifest")
+@click.option(
+    "--manifest",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="ACS manifest.yaml to summarize.",
+)
+@click.option(
+    "--target-callable",
+    required=True,
+    help="Python callable reference for the already-guarded target, for example examples.my_agent:chat.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Where to write the ASSERT eval_config.yaml.",
+)
+@click.option("--model", default=None, help="Default LiteLLM model name for generation and judging.")
+def acs_eval_config(
+    manifest: Path,
+    target_callable: str,
+    out_path: Path,
+    model: str | None,
+):
+    """Generate a small ASSERT config to regression-check an existing ACS policy."""
+    write_eval_config = _load_acs_symbol("write_eval_config")
+    try:
+        written = write_eval_config(
+            manifest,
+            target_callable=target_callable,
+            out_path=out_path,
+            **({"default_model": model} if model else {}),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        _error(str(exc))
+        return
+    click.echo(f"Wrote ASSERT eval config: {written}")
+    click.echo("Target callable is expected to already be guarded by that ACS manifest.")
+
+
 @cli.group(cls=SuggestingGroup, short_help="Run post-hoc analysis commands")
 def analysis():
     """Post-hoc analysis commands for test_set and inspect logs."""
