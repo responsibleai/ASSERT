@@ -387,6 +387,48 @@ class TestTargetConfigCallable(unittest.TestCase):
             TargetConfig(callable="my_module:my_fn", connector="some.connector")
 
 
+class TestTargetConfigAzureAiHostedAgent(unittest.TestCase):
+    """Foundry-hosted agents (``azure_ai/agents/<id>``) own tools and
+    instructions server-side. The config validator must reject fields
+    that would silently be ignored at runtime, so users find out at
+    config-parse time instead of after a successful but wrong eval.
+    """
+
+    def test_hosted_agent_target_is_valid(self):
+        from assert_ai.core.config_model import TargetConfig
+        tc = TargetConfig(model="azure_ai/agents/asst_xxx")
+        self.assertIsNotNone(tc.model)
+
+    def test_hosted_agent_rejects_tools(self):
+        from assert_ai.core.config_model import TargetConfig, ToolsConfig
+        with self.assertRaisesRegex(ValueError, "azure_ai/agents"):
+            TargetConfig(
+                model="azure_ai/agents/asst_xxx",
+                tools=ToolsConfig(module="some.tools"),
+            )
+
+    def test_hosted_agent_rejects_system_prompt(self):
+        from assert_ai.core.config_model import TargetConfig
+        with self.assertRaisesRegex(ValueError, "azure_ai/agents"):
+            TargetConfig(
+                model="azure_ai/agents/asst_xxx",
+                system_prompt="ignored at runtime",
+            )
+
+    def test_non_hosted_azure_ai_model_still_allows_tools_and_prompt(self):
+        """Only the hosted-agent route is restricted. Other azure_ai/*
+        routes (chat completions, embeddings) are runtime-owned just like
+        azure/* and must keep working with tools / system_prompt."""
+        from assert_ai.core.config_model import TargetConfig, ToolsConfig
+        tc = TargetConfig(
+            model="azure_ai/gpt-4o",
+            system_prompt="hi",
+            tools=ToolsConfig(module="some.tools"),
+        )
+        self.assertIsNotNone(tc.tools)
+        self.assertEqual(tc.system_prompt, "hi")
+
+
 # ── SpanValidator tests ──────────────────────────────────────────
 
 
