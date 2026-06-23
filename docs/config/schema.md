@@ -173,7 +173,7 @@ pipeline:
 Accepted keys:
 
 - `target` — mapping. Required when `inference` is enabled.
-  - `model` — model config. Use for the [Prompt Agent target](../targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop).
+  - `model` — model config. Use for the [Prompt Agent target](../targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop). Also accepts `azure_ai/agents/<AGENT_ID>` to evaluate a hosted Azure AI Foundry agent; requires the `AZURE_AI_API_BASE` env var (Foundry project endpoint) and the same Azure auth setup as `azure/*` models. `target.tools` and `target.system_prompt` are not allowed in this mode since the hosted agent owns its tools and instructions server-side.
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
   - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
   - `connector` — external connector target (supported by parser/runtime, not recommended for customer-preview onboarding).
