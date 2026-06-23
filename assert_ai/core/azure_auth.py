@@ -82,23 +82,49 @@ _IDENTITY_IMPORT_ATTEMPTED = False
 _IDENTITY_AVAILABLE = False
 
 
+#: API-key env var per Azure model family. The Cognitive Services /
+#: Azure OpenAI resource and the Azure AI Foundry project are separate
+#: resources with separate keys, so an ``AZURE_API_KEY`` in the env is
+#: useless for a ``azure_ai/*`` call (it would be sent to the wrong
+#: endpoint and rejected). Family-aware mode resolution looks at the
+#: matching env var only.
+_FAMILY_KEY_ENV: Mapping[str, str] = {
+    "azure": "AZURE_API_KEY",
+    "azure_ai": "AZURE_AI_API_KEY",
+}
+
+
 def _is_truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() in _TRUTHY
 
 
-def resolve_azure_auth_mode(env: Mapping[str, str] | None = None) -> Mode:
-    """Decide which auth mode applies to Azure OpenAI calls.
+def resolve_azure_auth_mode(
+    env: Mapping[str, str] | None = None,
+    family: str = "azure",
+) -> Mode:
+    """Decide which auth mode applies to a given Azure model family.
 
     Pure function over the environment; safe to call repeatedly. The
     caller is responsible for checking whether the in-flight request is
-    actually an ``azure/*`` model before acting on the returned mode.
+    actually an Azure model before acting on the returned mode.
+
+    ``family`` selects which API-key env var counts as a static-key
+    auth signal:
+
+    - ``azure``: ``AZURE_API_KEY`` (Azure OpenAI / Cognitive Services).
+    - ``azure_ai``: ``AZURE_AI_API_KEY`` (Azure AI Foundry data plane).
+
+    The ``ASSERT_AZURE_USE_AAD`` flag still forces AAD across both
+    families. Defaults to ``family='azure'`` so all existing call sites
+    behave identically.
 
     Defaults to ``os.environ`` when no override is provided.
     """
     env = env if env is not None else os.environ
     if _is_truthy(env.get(ENV_USE_AAD_FLAG)):
         return "aad"
-    if (env.get("AZURE_API_KEY") or "").strip():
+    key_var = _FAMILY_KEY_ENV.get(family, "AZURE_API_KEY")
+    if (env.get(key_var) or "").strip():
         return "key"
     return "aad-fallback"
 

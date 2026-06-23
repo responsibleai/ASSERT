@@ -1070,9 +1070,31 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
     ) -> dict[str, object]:
         captured: dict[str, object] = {}
         fake_litellm = self._stub_litellm(captured)
+        # For azure_ai/* the injection layer re-resolves the auth mode
+        # against the family-specific env var (AZURE_AI_API_KEY); for
+        # azure/* it reads the cached _AZURE_AUTH_MODE. We patch both
+        # sides so a single ``mode`` arg drives the test regardless of
+        # family, and we wipe the relevant env vars so a stray
+        # AZURE_API_KEY in the dev shell does not leak into the per-family
+        # resolver.
+        env_overrides = {
+            "AZURE_API_KEY": "",
+            "AZURE_AI_API_KEY": "",
+            "ASSERT_AZURE_USE_AAD": "",
+        }
+        if mode == "key":
+            family = model.split("/", 1)[0]
+            if family == "azure_ai":
+                env_overrides["AZURE_AI_API_KEY"] = "fake-static-key"
+            else:
+                env_overrides["AZURE_API_KEY"] = "fake-static-key"
+        elif mode == "aad":
+            env_overrides["ASSERT_AZURE_USE_AAD"] = "1"
+        # mode == "aad-fallback" leaves all three blank.
         with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
              patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", mode), \
-             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=provider):
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=provider), \
+             patch.dict("os.environ", env_overrides, clear=False):
             await model_client.generate(model, "hi")
         return captured
 
@@ -1174,6 +1196,159 @@ class AzureAadTokenInjectionTest(unittest.IsolatedAsyncioTestCase):
              patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=lambda: "auto-token"):
             await model_client.generate("azure/gpt-4o-mini", "hi", opts)
         self.assertIs(captured["azure_ad_token_provider"], user_provider)
+
+    # ── azure_ai/* (Azure AI Foundry) injection ────────────────────
+
+    def test_aad_scope_for_model_dispatches_on_family(self) -> None:
+        """The scope picker must route each Azure family to the right audience."""
+        self.assertEqual(
+            model_client._aad_scope_for_model("azure/gpt-4o"),
+            model_client.azure_auth.AZURE_OPENAI_SCOPE,
+        )
+        self.assertEqual(
+            model_client._aad_scope_for_model("azure_ai/agents/asst_xxx"),
+            model_client.azure_auth.AZURE_FOUNDRY_SCOPE,
+        )
+        self.assertIsNone(model_client._aad_scope_for_model("openai/gpt-5-mini"))
+        self.assertIsNone(model_client._aad_scope_for_model("anthropic/claude-3"))
+
+    async def test_aad_mode_azure_ai_agent_injects_api_key_string(self) -> None:
+        """Foundry agents need a static bearer string, not a provider callable.
+
+        LiteLLM's azure_ai/agents provider sets ``Authorization: Bearer
+        <api_key>`` directly from ``payload['api_key']``; passing a
+        callable there would fail. We must call the provider once per
+        request to mint a fresh token.
+        """
+        captured = await self._run_chat(
+            model="azure_ai/agents/asst_xxx",
+            mode="aad",
+            provider=lambda: "foundry-token",
+        )
+        self.assertEqual(captured.get("api_key"), "foundry-token")
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    async def test_aad_fallback_azure_ai_agent_injects_api_key_string(self) -> None:
+        captured = await self._run_chat(
+            model="azure_ai/agents/asst_xxx",
+            mode="aad-fallback",
+            provider=lambda: "foundry-token",
+        )
+        self.assertEqual(captured.get("api_key"), "foundry-token")
+
+    async def test_key_mode_azure_ai_agent_no_injection(self) -> None:
+        """In key mode we leave the payload alone — LiteLLM resolves auth itself."""
+        captured = await self._run_chat(
+            model="azure_ai/agents/asst_xxx",
+            mode="key",
+            provider=lambda: "should-not-be-used",
+        )
+        self.assertNotIn("api_key", captured)
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    async def test_aad_mode_azure_ai_agent_missing_dep_raises(self) -> None:
+        with patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=None), \
+             patch.dict("os.environ", {
+                 "ASSERT_AZURE_USE_AAD": "1",
+                 "AZURE_API_KEY": "",
+                 "AZURE_AI_API_KEY": "",
+             }, clear=False):
+            with self.assertRaises(model_client.LLMAuthError) as ctx:
+                await model_client.generate("azure_ai/agents/asst_xxx", "hi")
+        self.assertIn("azure-identity", str(ctx.exception))
+        self.assertIn("assert-ai[azure-aad]", str(ctx.exception))
+
+    async def test_aad_fallback_azure_ai_agent_missing_dep_silently_skips(self) -> None:
+        captured = await self._run_chat(
+            model="azure_ai/agents/asst_xxx",
+            mode="aad-fallback",
+            provider=None,
+        )
+        self.assertNotIn("api_key", captured)
+        self.assertNotIn("azure_ad_token_provider", captured)
+
+    async def test_user_extra_kwargs_api_key_wins_for_azure_ai_agent(self) -> None:
+        """Explicit user-supplied api_key must override the auto-minted token."""
+        captured: dict[str, object] = {}
+        fake_litellm = self._stub_litellm(captured)
+        opts = model_client.GenerateOptions(
+            extra_kwargs={"api_key": "user-supplied-token"},
+        )
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(
+                 model_client.azure_auth,
+                 "get_azure_token_provider",
+                 return_value=lambda: "auto-token",
+             ), patch.dict("os.environ", {
+                 "ASSERT_AZURE_USE_AAD": "1",
+                 "AZURE_API_KEY": "",
+                 "AZURE_AI_API_KEY": "",
+             }, clear=False):
+            await model_client.generate("azure_ai/agents/asst_xxx", "hi", opts)
+        self.assertEqual(captured["api_key"], "user-supplied-token")
+
+    async def test_azure_api_key_in_env_does_not_block_foundry_aad(self) -> None:
+        """Regression: AZURE_API_KEY (Azure OpenAI key) must not gate AAD
+        injection for azure_ai/* targets. The two resources have separate
+        keys; mixing them silently sent users into key mode for the wrong
+        endpoint and surfaced as a 'no bearer token' error from Foundry.
+
+        Real-world setup that hit this: AZURE_API_KEY set so the
+        systematize/tester/judge azure/* calls work, no AZURE_AI_API_KEY,
+        target.model is azure_ai/agents/<id>. Pre-fix behavior: cached
+        mode='key' suppressed AAD injection for the Foundry call too.
+        """
+        captured: dict[str, object] = {}
+        fake_litellm = self._stub_litellm(captured)
+        stub_provider = lambda: "foundry-token"
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "key"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=stub_provider), \
+             patch.dict("os.environ", {
+                 "AZURE_API_KEY": "sk-azure-openai-key",
+                 "AZURE_AI_API_KEY": "",
+                 "ASSERT_AZURE_USE_AAD": "",
+             }, clear=False):
+            await model_client.generate("azure_ai/agents/asst_xxx", "hi")
+        # AZURE_AI_API_KEY is unset, so the Foundry-family resolver sees
+        # 'aad-fallback' and the new AAD token gets injected.
+        self.assertEqual(captured.get("api_key"), "foundry-token")
+
+    async def test_azure_ai_api_key_in_env_skips_foundry_aad_injection(self) -> None:
+        """When the user has set AZURE_AI_API_KEY explicitly, the family
+        resolver returns 'key' and we leave the payload alone so LiteLLM
+        can use the static token from the env. Symmetric to the azure/*
+        + AZURE_API_KEY path."""
+        captured: dict[str, object] = {}
+        fake_litellm = self._stub_litellm(captured)
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad-fallback"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=lambda: "should-not-be-injected"), \
+             patch.dict("os.environ", {
+                 "AZURE_API_KEY": "",
+                 "AZURE_AI_API_KEY": "user-supplied-foundry-key",
+                 "ASSERT_AZURE_USE_AAD": "",
+             }, clear=False):
+            await model_client.generate("azure_ai/agents/asst_xxx", "hi")
+        self.assertNotIn("api_key", captured)
+
+    async def test_assert_use_aad_flag_overrides_azure_ai_api_key(self) -> None:
+        """Explicit ASSERT_AZURE_USE_AAD=1 wins over a static
+        AZURE_AI_API_KEY too, matching the existing azure/* precedence."""
+        captured: dict[str, object] = {}
+        fake_litellm = self._stub_litellm(captured)
+        with patch.object(model_client, "_get_litellm_module", return_value=fake_litellm), \
+             patch.object(model_client.azure_auth, "_AZURE_AUTH_MODE", "aad"), \
+             patch.object(model_client.azure_auth, "get_azure_token_provider", return_value=lambda: "foundry-token"), \
+             patch.dict("os.environ", {
+                 "AZURE_API_KEY": "",
+                 "AZURE_AI_API_KEY": "ignored-when-flag-set",
+                 "ASSERT_AZURE_USE_AAD": "1",
+             }, clear=False):
+            await model_client.generate("azure_ai/agents/asst_xxx", "hi")
+        self.assertEqual(captured.get("api_key"), "foundry-token")
 
 
 class ClassifyLlmErrorAadHintTest(unittest.TestCase):

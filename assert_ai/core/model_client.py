@@ -359,11 +359,40 @@ def _model_family(model: str) -> str:
     return normalized
 
 
+def _aad_scope_for_model(model: str) -> str | None:
+    """Return the AAD scope to use for ``model``, or ``None`` for non-Azure families.
+
+    ``azure/*`` (Azure OpenAI) uses the Cognitive Services data-plane scope.
+    ``azure_ai/*`` (Azure AI Foundry: hosted agents, embeddings, chat) uses
+    the Azure AI Foundry data-plane scope. Other families are not Azure and
+    return ``None`` so injection is a no-op.
+    """
+    family = _model_family(model)
+    if family == "azure":
+        return azure_auth.AZURE_OPENAI_SCOPE
+    if family == "azure_ai":
+        return azure_auth.AZURE_FOUNDRY_SCOPE
+    return None
+
+
 def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
-    """Attach an Azure AD token provider to ``azure/*`` payloads when AAD is active.
+    """Attach Azure AD credentials to ``azure/*`` and ``azure_ai/*`` payloads.
 
     No-op for non-Azure models and for the ``key`` auth mode, so existing
     API-key users are completely unaffected.
+
+    For ``azure/*`` (Azure OpenAI): injects ``azure_ad_token_provider``,
+    a callable LiteLLM invokes per request so the underlying
+    ``DefaultAzureCredential`` cache handles refresh.
+
+    For ``azure_ai/*`` (Azure AI Foundry): the LiteLLM ``azure_ai/agents``
+    provider only accepts a static ``api_key`` string (it sets
+    ``Authorization: Bearer <api_key>`` on outbound requests), so we call
+    the provider once per request to mint a fresh token. The provider is
+    cached per scope; ``DefaultAzureCredential`` caches the token itself,
+    so the per-request call resolves from memory until the token nears
+    expiry. Same Service Principal env vars and ``az login`` flow as the
+    ``azure/*`` path — they flow through the same chain credential.
 
     When the resolved mode is ``aad`` (explicit opt-in via
     ``ASSERT_AZURE_USE_AAD=1``) but ``azure-identity`` is not installed,
@@ -376,14 +405,24 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
     install hint is then appended in :func:`_classify_llm_error`.
 
     Callers must invoke this *before* applying ``extra_kwargs`` so that
-    any explicit user-supplied ``azure_ad_token_provider`` still wins.
+    any explicit user-supplied ``azure_ad_token_provider`` / ``api_key``
+    still wins.
     """
-    if _model_family(model) != "azure":
+    scope = _aad_scope_for_model(model)
+    if scope is None:
         return
-    mode = azure_auth._get_azure_auth_mode()
+    # The cached ``_AZURE_AUTH_MODE`` only tracks the azure/* family
+    # (driven by AZURE_API_KEY). For azure_ai/* (Foundry agents) the
+    # relevant static-key env var is AZURE_AI_API_KEY, so we re-resolve
+    # per request with the right family. Cheap: three env reads.
+    family = _model_family(model)
+    if family == "azure_ai":
+        mode = azure_auth.resolve_azure_auth_mode(family="azure_ai")
+    else:
+        mode = azure_auth._get_azure_auth_mode()
     if mode == "key":
         return
-    provider = azure_auth.get_azure_token_provider()
+    provider = azure_auth.get_azure_token_provider(scope)
     if provider is None:
         if mode == "aad":
             raise LLMAuthError(
@@ -395,7 +434,11 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
         # aad-fallback path: silently skip — LiteLLM's own auth error
         # will be augmented with an install hint by _classify_llm_error.
         return
-    payload["azure_ad_token_provider"] = provider
+    if scope == azure_auth.AZURE_FOUNDRY_SCOPE:
+        # azure_ai/* providers want a static bearer string, not a callable.
+        payload["api_key"] = provider()
+    else:
+        payload["azure_ad_token_provider"] = provider
 
 
 def _supports_web_search_preview(model: str) -> bool:

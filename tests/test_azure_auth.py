@@ -54,6 +54,48 @@ class ResolveAzureAuthModeTest(unittest.TestCase):
         ):
             self.assertEqual(azure_auth.resolve_azure_auth_mode(), "aad")
 
+    # ── family-aware resolution ────────────────────────────────
+
+    def test_azure_ai_family_reads_azure_ai_api_key_not_azure_api_key(self) -> None:
+        """An AZURE_API_KEY in the env is for an Azure OpenAI resource and
+        is the wrong credential for an Azure AI Foundry endpoint. The
+        family-aware resolver must ignore it for the azure_ai family and
+        return aad-fallback so AAD injection kicks in.
+        """
+        env = {"AZURE_API_KEY": "sk-azure-openai-key"}
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad-fallback",
+        )
+
+    def test_azure_ai_family_returns_key_when_azure_ai_api_key_set(self) -> None:
+        env = {"AZURE_AI_API_KEY": "user-supplied-foundry-token"}
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "key",
+        )
+
+    def test_flag_wins_over_azure_ai_api_key(self) -> None:
+        env = {
+            "ASSERT_AZURE_USE_AAD": "1",
+            "AZURE_AI_API_KEY": "ignored-when-flag-set",
+        }
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad",
+        )
+
+    def test_default_family_is_azure(self) -> None:
+        """Existing zero-arg call sites (boot log, cache refresh) keep
+        seeing the azure family (AZURE_API_KEY) behaviour unchanged."""
+        env = {"AZURE_API_KEY": "sk-azure-openai-key"}
+        self.assertEqual(azure_auth.resolve_azure_auth_mode(env), "key")
+        # And azure_ai/* is unaffected by AZURE_API_KEY.
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad-fallback",
+        )
+
 
 # ── get_azure_token_provider ──────────────────────────────────
 
