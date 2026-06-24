@@ -39,6 +39,19 @@ function isMarkdownFile(filename: string): boolean {
 // Files (relative path, lowercased) that should NOT appear as their own doc
 // page. README is rendered as the docs index instead.
 const EXCLUDED_FILES = new Set(["readme.md", "readme.mdx"]);
+const EXCLUDED_PATH_PREFIXES = ["agents/"];
+
+function normalizeRelativePath(relativePath: string): string {
+	return relativePath.split(path.sep).join("/").toLowerCase();
+}
+
+function isExcludedDocPath(relativePath: string): boolean {
+	const normalized = normalizeRelativePath(relativePath);
+	return (
+		EXCLUDED_FILES.has(normalized) ||
+		EXCLUDED_PATH_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+	);
+}
 
 function walk(dir: string, base: string = dir): string[] {
 	if (!fs.existsSync(dir)) return [];
@@ -50,7 +63,7 @@ function walk(dir: string, base: string = dir): string[] {
 			files.push(...walk(full, base));
 		} else if (entry.isFile() && isMarkdownFile(entry.name)) {
 			const rel = path.relative(base, full);
-			if (EXCLUDED_FILES.has(rel.toLowerCase())) continue;
+			if (isExcludedDocPath(rel)) continue;
 			files.push(rel);
 		}
 	}
