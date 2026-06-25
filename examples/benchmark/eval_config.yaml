@@ -88,7 +88,7 @@ pipeline:
     scenario:
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.0
+        temperature: 1.0
       sample_size: 10
   inference:
     concurrency: 10
@@ -97,7 +97,7 @@ pipeline:
     tester:
       model:
         name: azure/gpt-5.4-mini
-        temperature: 0.0
+        temperature: 1.0
         max_tokens: 10000
     max_turns: 6
   judge:
@@ -118,5 +118,5 @@ pipeline:
           '
     model:
       name: azure/gpt-5.4
-      temperature: 0.0
+      temperature: 1.0
       max_tokens: 12000

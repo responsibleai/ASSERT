@@ -86,4 +86,4 @@ pipeline:
           the correct source class named, internal vs public material is kept
           distinct, and the agent says when retrieved evidence does not
           support a requested claim.
-    model: { name: azure/gpt-5.4, temperature: 0.0, max_tokens: 12000 }
+    model: { name: azure/gpt-5.4, temperature: 1.0, max_tokens: 12000 }
