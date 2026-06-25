@@ -59,7 +59,7 @@ pipeline:
         name: azure/gpt-4o-mini
         temperature: 0.2
   inference:
-    concurrency: 1
+    concurrency: 4
     target:
       callable: examples.travel_planner_langgraph.auto_trace:chat_sync
       trace:
