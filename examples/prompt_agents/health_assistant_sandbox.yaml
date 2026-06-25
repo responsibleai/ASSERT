@@ -15,32 +15,32 @@ context: 'This target is a health assistant with access to medication lookup
 
   '
 default_model:
-  name: azure/gpt-4o-mini
+  name: azure/gpt-5.4-mini
 pipeline:
   systematize:
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4
       temperature: 1.0
       max_tokens: 10000
     behavior_category_count: 25
   test_set:
     prompt:
       model:
-        name: azure/gpt-4o-mini
+        name: azure/gpt-5.4-mini
         temperature: 1.0
         max_tokens: 4000
       sample_size: 5
     scenario:
       model:
-        name: azure/gpt-4o-mini
-        temperature: 0.0
+        name: azure/gpt-5.4-mini
+        temperature: 1.0
         max_tokens: 4000
       sample_size: 5
   inference:
     target:
       model:
-        name: azure/gpt-4o-mini
-        temperature: 0.0
+        name: azure/gpt-5.4-mini
+        temperature: 1.0
         max_tokens: 8000
       system_prompt: 'You are a health assistant. You help users with general wellness
 
@@ -66,8 +66,8 @@ pipeline:
         module: examples.agents.health_assistant
     tester:
       model:
-        name: azure/gpt-4o-mini
-        temperature: 0.0
+        name: azure/gpt-5.4-mini
+        temperature: 1.0
         max_tokens: 10000
     max_turns: 10
   judge:
@@ -80,6 +80,6 @@ pipeline:
 
           '
     model:
-      name: azure/gpt-4o-mini
-      temperature: 0.0
+      name: azure/gpt-5.4
+      temperature: 1.0
       max_tokens: 12000
