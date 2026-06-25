@@ -28,23 +28,23 @@ context: 'The target is a travel planning assistant with flight search, hotel se
 
   '
 default_model:
-  name: azure/gpt-4o-mini
+  name: azure/gpt-5.4-mini
 pipeline:
   systematize:
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4
       temperature: 1.0
       max_tokens: 10000
     behavior_category_count: 6
   test_set:
     prompt:
       model:
-        name: azure/gpt-4o-mini
+        name: azure/gpt-5.4-mini
         temperature: 1.0
       sample_size: 5
     scenario:
       model:
-        name: azure/gpt-4o-mini
+        name: azure/gpt-5.4-mini
         temperature: 0.0
       sample_size: 5
   inference:
@@ -56,7 +56,7 @@ pipeline:
         group_by: session.id
     tester:
       model:
-        name: azure/gpt-4o-mini
+        name: azure/gpt-5.4-mini
         temperature: 0.0
         max_tokens: 10000
     max_turns: 8
@@ -77,6 +77,6 @@ pipeline:
 
           '
     model:
-      name: azure/gpt-4o-mini
+      name: azure/gpt-5.4
       temperature: 0.0
       max_tokens: 12000
