@@ -103,7 +103,7 @@ examples = [
   "llama-index-core>=0.14.21",
   "llama-index-llms-openai>=0.7.5",
   "openai-agents>=0.14.5",
-  "pydantic-ai>=0.8.1",
+  "pydantic-ai>=1.99.0",
   "smolagents>=1.22.0",
   # Framework-specific OpenInference instrumentors used by the
   # examples/phoenix_auto_trace/* demos. `assert_ai.auto_trace.enable()`
