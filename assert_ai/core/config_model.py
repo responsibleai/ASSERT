@@ -147,6 +147,26 @@ class TargetConfig:
             raise ValueError("endpoint target must not define target.tools")
         if self.tools is not None and not has_model:
             raise ValueError("target.tools requires target.model")
+        # azure_ai/agents/<id> routes to a Foundry-hosted agent that owns
+        # its own tools and instructions server-side. Accepting
+        # target.tools or target.system_prompt here would silently mislead
+        # users into thinking those fields apply when they do not.
+        if has_model:
+            assert isinstance(self.model, ModelConfig)
+            model_name = self.model.name.strip().lower()
+            if model_name.startswith("azure_ai/agents/"):
+                if self.tools is not None:
+                    raise ValueError(
+                        "target.tools is not supported when target.model is "
+                        "'azure_ai/agents/<id>'; the hosted Foundry agent "
+                        "owns its tools server-side."
+                    )
+                if self.system_prompt is not None:
+                    raise ValueError(
+                        "target.system_prompt is not supported when "
+                        "target.model is 'azure_ai/agents/<id>'; the hosted "
+                        "Foundry agent owns its instructions server-side."
+                    )
 
     @property
     def is_external(self) -> bool:

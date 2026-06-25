@@ -54,6 +54,48 @@ class ResolveAzureAuthModeTest(unittest.TestCase):
         ):
             self.assertEqual(azure_auth.resolve_azure_auth_mode(), "aad")
 
+    # ── family-aware resolution ────────────────────────────────
+
+    def test_azure_ai_family_reads_azure_ai_api_key_not_azure_api_key(self) -> None:
+        """An AZURE_API_KEY in the env is for an Azure OpenAI resource and
+        is the wrong credential for an Azure AI Foundry endpoint. The
+        family-aware resolver must ignore it for the azure_ai family and
+        return aad-fallback so AAD injection kicks in.
+        """
+        env = {"AZURE_API_KEY": "sk-azure-openai-key"}
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad-fallback",
+        )
+
+    def test_azure_ai_family_returns_key_when_azure_ai_api_key_set(self) -> None:
+        env = {"AZURE_AI_API_KEY": "user-supplied-foundry-token"}
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "key",
+        )
+
+    def test_flag_wins_over_azure_ai_api_key(self) -> None:
+        env = {
+            "ASSERT_AZURE_USE_AAD": "1",
+            "AZURE_AI_API_KEY": "ignored-when-flag-set",
+        }
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad",
+        )
+
+    def test_default_family_is_azure(self) -> None:
+        """Existing zero-arg call sites (boot log, cache refresh) keep
+        seeing the azure family (AZURE_API_KEY) behaviour unchanged."""
+        env = {"AZURE_API_KEY": "sk-azure-openai-key"}
+        self.assertEqual(azure_auth.resolve_azure_auth_mode(env), "key")
+        # And azure_ai/* is unaffected by AZURE_API_KEY.
+        self.assertEqual(
+            azure_auth.resolve_azure_auth_mode(env, family="azure_ai"),
+            "aad-fallback",
+        )
+
 
 # ── get_azure_token_provider ──────────────────────────────────
 
@@ -74,14 +116,14 @@ class GetAzureTokenProviderTest(unittest.TestCase):
         self.assertIsNone(provider)
 
     def test_returns_callable_when_azure_identity_available(self) -> None:
-        captured: dict[str, object] = {"cred_kwargs": None, "scope": None}
+        captured: dict[str, object] = {"cred_kwargs": None, "scopes": []}
 
         class FakeCred:
             def __init__(self, **kwargs: object) -> None:
                 captured["cred_kwargs"] = kwargs
 
         def fake_get_bearer_token_provider(cred: object, scope: str) -> object:
-            captured["scope"] = scope
+            captured["scopes"].append(scope)  # type: ignore[attr-defined]
             return lambda: "stub-token"
 
         fake_identity = ModuleType("azure.identity")
@@ -104,8 +146,8 @@ class GetAzureTokenProviderTest(unittest.TestCase):
         self.assertTrue(cred_kwargs["exclude_interactive_browser_credential"])
         self.assertTrue(cred_kwargs["exclude_visual_studio_code_credential"])
 
-        # Defensive: confirm the Azure OpenAI scope was requested.
-        self.assertEqual(captured["scope"], azure_auth.AZURE_OPENAI_SCOPE)
+        # Defensive: confirm the default scope is Azure OpenAI's audience.
+        self.assertEqual(captured["scopes"], [azure_auth.AZURE_OPENAI_SCOPE])
 
     def test_provider_is_cached_across_calls(self) -> None:
         construct_count = {"n": 0}
@@ -148,6 +190,62 @@ class GetAzureTokenProviderTest(unittest.TestCase):
             azure_auth.get_azure_token_provider()
 
         self.assertEqual(attempt_count["n"], 1)
+
+    def test_distinct_scopes_share_one_credential(self) -> None:
+        """Adding a Foundry-scope caller must not double up on DefaultAzureCredential.
+
+        Each scope gets its own bearer-token provider (different audience),
+        but the underlying credential-chain probe runs exactly once for the
+        process lifetime so the Foundry route does not pay for a second
+        ``az login`` / managed-identity round trip.
+        """
+        construct_count = {"n": 0}
+        scope_calls: list[str] = []
+
+        class FakeCred:
+            def __init__(self, **kwargs: object) -> None:
+                construct_count["n"] += 1
+
+        def fake_get_bearer_token_provider(cred: object, scope: str):
+            scope_calls.append(scope)
+            return lambda: f"token-for-{scope}"
+
+        fake_identity = ModuleType("azure.identity")
+        fake_identity.DefaultAzureCredential = FakeCred  # type: ignore[attr-defined]
+        fake_identity.get_bearer_token_provider = fake_get_bearer_token_provider  # type: ignore[attr-defined]
+
+        with patch.dict(
+            sys.modules,
+            {"azure": ModuleType("azure"), "azure.identity": fake_identity},
+        ):
+            openai_provider = azure_auth.get_azure_token_provider(
+                azure_auth.AZURE_OPENAI_SCOPE,
+            )
+            foundry_provider = azure_auth.get_azure_token_provider(
+                azure_auth.AZURE_FOUNDRY_SCOPE,
+            )
+            # Repeat calls must hit the per-scope cache.
+            assert openai_provider is azure_auth.get_azure_token_provider(
+                azure_auth.AZURE_OPENAI_SCOPE,
+            )
+            assert foundry_provider is azure_auth.get_azure_token_provider(
+                azure_auth.AZURE_FOUNDRY_SCOPE,
+            )
+
+        self.assertEqual(construct_count["n"], 1)
+        self.assertEqual(
+            sorted(scope_calls),
+            sorted([azure_auth.AZURE_OPENAI_SCOPE, azure_auth.AZURE_FOUNDRY_SCOPE]),
+        )
+        assert openai_provider is not None
+        assert foundry_provider is not None
+        self.assertIsNot(openai_provider, foundry_provider)
+        self.assertEqual(
+            openai_provider(), f"token-for-{azure_auth.AZURE_OPENAI_SCOPE}"
+        )
+        self.assertEqual(
+            foundry_provider(), f"token-for-{azure_auth.AZURE_FOUNDRY_SCOPE}"
+        )
 
 
 # ── provenance logging ────────────────────────────────────────

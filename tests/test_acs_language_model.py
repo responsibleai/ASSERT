@@ -131,7 +131,7 @@ def _patch_aad(monkeypatch, *, mode: str, provider) -> None:
     from assert_ai.core import azure_auth
 
     monkeypatch.setattr(azure_auth, "_AZURE_AUTH_MODE", mode)
-    monkeypatch.setattr(azure_auth, "get_azure_token_provider", lambda: provider)
+    monkeypatch.setattr(azure_auth, "get_azure_token_provider", lambda *a, **kw: provider)
 
 
 def test_assert_language_model_injects_aad_provider_for_azure_in_aad_mode(monkeypatch) -> None:

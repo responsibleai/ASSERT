@@ -12,11 +12,12 @@ Import side effects (intentional for the ``assert-ai`` CLI):
 * ``azure_auth.refresh_azure_auth_mode()`` reads ``ASSERT_AZURE_USE_AAD`` and
   ``AZURE_API_KEY`` lazily on first access (or eagerly when an
   entrypoint calls it with ``force=True`` after ``load_dotenv``) to
-  pick the Azure OpenAI auth mode for the process. When the resolved
-  mode is AAD, it pre-warms the ``azure-identity`` credential so
-  first-request latency stays low and missing-dep errors surface
-  early. The mode is read again per-request only as a cheap
-  module-global lookup, never re-derived.
+  pick the Azure auth mode for the process (applies to both ``azure/*``
+  and ``azure_ai/*`` LiteLLM routes). When the resolved mode is AAD,
+  it pre-warms the ``azure-identity`` credential so first-request
+  latency stays low and missing-dep errors surface early. The mode is
+  read again per-request only as a cheap module-global lookup, never
+  re-derived.
 * The first activation of the Chat Completions fallback (either via
   ``ASSERT_PREFER_CHAT_COMPLETIONS=1`` at import time, an explicit
   API preference, or a reactive recovery from a region error) calls
@@ -359,11 +360,40 @@ def _model_family(model: str) -> str:
     return normalized
 
 
+def _aad_scope_for_model(model: str) -> str | None:
+    """Return the AAD scope to use for ``model``, or ``None`` for non-Azure families.
+
+    ``azure/*`` (Azure OpenAI) uses the Cognitive Services data-plane scope.
+    ``azure_ai/*`` (Azure AI Foundry: hosted agents, embeddings, chat) uses
+    the Azure AI Foundry data-plane scope. Other families are not Azure and
+    return ``None`` so injection is a no-op.
+    """
+    family = _model_family(model)
+    if family == "azure":
+        return azure_auth.AZURE_OPENAI_SCOPE
+    if family == "azure_ai":
+        return azure_auth.AZURE_FOUNDRY_SCOPE
+    return None
+
+
 def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
-    """Attach an Azure AD token provider to ``azure/*`` payloads when AAD is active.
+    """Attach Azure AD credentials to ``azure/*`` and ``azure_ai/*`` payloads.
 
     No-op for non-Azure models and for the ``key`` auth mode, so existing
     API-key users are completely unaffected.
+
+    For ``azure/*`` (Azure OpenAI): injects ``azure_ad_token_provider``,
+    a callable LiteLLM invokes per request so the underlying
+    ``DefaultAzureCredential`` cache handles refresh.
+
+    For ``azure_ai/*`` (Azure AI Foundry): the LiteLLM ``azure_ai/agents``
+    provider only accepts a static ``api_key`` string (it sets
+    ``Authorization: Bearer <api_key>`` on outbound requests), so we call
+    the provider once per request to mint a fresh token. The provider is
+    cached per scope; ``DefaultAzureCredential`` caches the token itself,
+    so the per-request call resolves from memory until the token nears
+    expiry. Same Service Principal env vars and ``az login`` flow as the
+    ``azure/*`` path — they flow through the same chain credential.
 
     When the resolved mode is ``aad`` (explicit opt-in via
     ``ASSERT_AZURE_USE_AAD=1``) but ``azure-identity`` is not installed,
@@ -376,14 +406,24 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
     install hint is then appended in :func:`_classify_llm_error`.
 
     Callers must invoke this *before* applying ``extra_kwargs`` so that
-    any explicit user-supplied ``azure_ad_token_provider`` still wins.
+    any explicit user-supplied ``azure_ad_token_provider`` / ``api_key``
+    still wins.
     """
-    if _model_family(model) != "azure":
+    scope = _aad_scope_for_model(model)
+    if scope is None:
         return
-    mode = azure_auth._get_azure_auth_mode()
+    # The cached ``_AZURE_AUTH_MODE`` only tracks the azure/* family
+    # (driven by AZURE_API_KEY). For azure_ai/* (Foundry agents) the
+    # relevant static-key env var is AZURE_AI_API_KEY, so we re-resolve
+    # per request with the right family. Cheap: three env reads.
+    family = _model_family(model)
+    if family == "azure_ai":
+        mode = azure_auth.resolve_azure_auth_mode(family="azure_ai")
+    else:
+        mode = azure_auth._get_azure_auth_mode()
     if mode == "key":
         return
-    provider = azure_auth.get_azure_token_provider()
+    provider = azure_auth.get_azure_token_provider(scope)
     if provider is None:
         if mode == "aad":
             raise LLMAuthError(
@@ -395,7 +435,11 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
         # aad-fallback path: silently skip — LiteLLM's own auth error
         # will be augmented with an install hint by _classify_llm_error.
         return
-    payload["azure_ad_token_provider"] = provider
+    if scope == azure_auth.AZURE_FOUNDRY_SCOPE:
+        # azure_ai/* providers want a static bearer string, not a callable.
+        payload["api_key"] = provider()
+    else:
+        payload["azure_ad_token_provider"] = provider
 
 
 def _supports_web_search_preview(model: str) -> bool:
@@ -892,23 +936,49 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     from APIStatusError → APIError on some providers).
     """
     litellm = _get_litellm_module()
-    is_azure_model = bool(model) and model.startswith("azure/")
+    is_azure_family = bool(model) and _model_family(model) in {"azure", "azure_ai"}
+    # The cached azure-family mode is driven by AZURE_API_KEY; azure_ai
+    # needs its own per-family resolution against AZURE_AI_API_KEY for
+    # the hint-vs-no-hint decision to be accurate.
+    if is_azure_family and _model_family(model) == "azure_ai":
+        azure_mode = azure_auth.resolve_azure_auth_mode(family="azure_ai")
+    elif is_azure_family:
+        azure_mode = azure_auth._get_azure_auth_mode()
+    else:
+        azure_mode = "key"  # any non-aad value; the gate below filters azure-only paths
     # 401 — bad credentials
     if isinstance(exc, litellm.AuthenticationError):
         msg = f"Authentication failed: {exc}"
         # Azure-specific RBAC / install hints only apply when the failing
-        # call targeted an ``azure/*`` model. Without this gate, a user
+        # call targeted an Azure family (``azure/*`` for Azure OpenAI or
+        # ``azure_ai/*`` for Azure AI Foundry). Without this gate, a user
         # running an ``openai/*`` model in the same process while
-        # ``ASSERT_AZURE_USE_AAD=1`` is set would see "verify the
-        # 'Cognitive Services OpenAI User' role" on a vanilla OpenAI 401,
-        # which is misleading.
-        if is_azure_model and azure_auth._get_azure_auth_mode() in {"aad", "aad-fallback"}:
-            if azure_auth._AZURE_AAD_DEP_MISSING:
+        # ``ASSERT_AZURE_USE_AAD=1`` is set would see Azure-only role
+        # text on a vanilla OpenAI 401, which is misleading.
+        if is_azure_family and azure_mode in {"aad", "aad-fallback"}:
+            if azure_auth._AZURE_OPENAI_AAD_DEP_MISSING:
+                if _model_family(model) == "azure_ai":
+                    msg += (
+                        "\nNo AZURE_AI_API_KEY is set and azure-identity is "
+                        "not installed. Either export AZURE_AI_API_KEY with "
+                        "a manually-minted token (`az account "
+                        "get-access-token --resource https://ai.azure.com`), "
+                        "or install Azure AD support with "
+                        "`pip install 'assert-ai[azure-aad]'`."
+                    )
+                else:
+                    msg += (
+                        "\nNo AZURE_API_KEY is set and azure-identity is not "
+                        "installed. Either export AZURE_API_KEY, or install "
+                        "Azure AD support with "
+                        "`pip install 'assert-ai[azure-aad]'`."
+                    )
+            elif _model_family(model) == "azure_ai":
                 msg += (
-                    "\nNo AZURE_API_KEY is set and azure-identity is not "
-                    "installed. Either export AZURE_API_KEY, or install "
-                    "Azure AD support with "
-                    "`pip install 'assert-ai[azure-aad]'`."
+                    "\nAzure AD auth is active. Verify the caller identity "
+                    "has the 'Azure AI User' role on the Azure AI Foundry "
+                    "project, or set AZURE_AI_API_KEY to a manually-minted "
+                    "bearer token to fall back to static-token auth."
                 )
             else:
                 msg += (
@@ -1023,6 +1093,39 @@ def _classify_llm_error(exc: Exception, model: str | None = None) -> Exception:
     # InternalServerError, ServiceUnavailableError, and Timeout
     # (all inherit from APIError or APIConnectionError).
     if isinstance(exc, (litellm.APIError, litellm.APIConnectionError)):
+        # Two LiteLLM-side validation errors for the azure_ai/agents
+        # provider come through as APIConnectionError because the
+        # request never leaves the process. They are not transient and
+        # should not be retried; surface them as LLMAuthError /
+        # LLMInputError with actionable hints so users know what to fix.
+        if is_azure_family and _model_family(model) == "azure_ai":
+            exc_text = str(exc)
+            if "api_key (Azure AD token) is required" in exc_text:
+                hint = (
+                    "Azure AI Foundry rejected the call because no bearer "
+                    "token was supplied. Install Azure AD support with "
+                    "`pip install 'assert-ai[azure-aad]'` and run "
+                    "`az login`, or export AZURE_AI_API_KEY with a "
+                    "manually-minted token (`az account get-access-token "
+                    "--resource https://ai.azure.com`)."
+                )
+                err = LLMAuthError(f"Authentication failed: {exc}\n{hint}")
+                err.__cause__ = exc
+                return err
+            # LiteLLM has two raise sites for the missing-api_base check
+            # ("api_base is required for Azure AI Agents..." in the
+            # provider transformation, and "Azure AI Agents requests
+            # require an api_base..." in main.py). Both mention the
+            # AZURE_AI_API_BASE env var, so anchor on that stable token.
+            if "AZURE_AI_API_BASE" in exc_text:
+                hint = (
+                    "Set AZURE_AI_API_BASE to your Foundry project endpoint "
+                    "(e.g. https://<resource>.services.ai.azure.com/api/"
+                    "projects/<project>) before running the eval."
+                )
+                err = LLMInputError(f"Bad request: {exc}\n{hint}")
+                err.__cause__ = exc
+                return err
         err = LLMProviderError(f"Provider error: {exc}")
         err.__cause__ = exc
         return err
