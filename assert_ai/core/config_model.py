@@ -218,6 +218,7 @@ class JudgeConfig:
     model: ModelConfig | str
     n: int = 1
     dimensions: list[dict[str, Any]] = field(default_factory=list)
+    disabled_dimensions: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if isinstance(self.model, str):
@@ -229,6 +230,14 @@ class JudgeConfig:
         for dimension in self.dimensions:
             if not isinstance(dimension, dict):
                 raise ValueError("judge.dimensions entries must be mappings")
+        if not isinstance(self.disabled_dimensions, list):
+            raise ValueError("judge.disabled_dimensions must be a list")
+        normalized_disabled: list[str] = []
+        for name in self.disabled_dimensions:
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("judge.disabled_dimensions entries must be non-empty strings")
+            normalized_disabled.append(name.strip())
+        self.disabled_dimensions = normalized_disabled
 
 
 @dataclass

@@ -120,7 +120,12 @@ def infer_judge_status(record: Dict[str, Any]) -> str:
     """Infer judge status from the strict event-based verdict contract."""
     status = record.get("judge_status")
     verdict = cast(Optional[Dict[str, Any]], record.get("verdict"))
-    success = has_successful_judge_verdict(verdict)
+    raw_score_keys = record.get("score_keys")
+    if isinstance(raw_score_keys, list) and all(isinstance(key, str) for key in raw_score_keys):
+        score_keys = list(raw_score_keys)
+    else:
+        score_keys = None
+    success = has_successful_judge_verdict(verdict, score_keys)
     if status == "scoring_skipped":
         return "scoring_skipped"
     if status == "ok":
@@ -130,17 +135,26 @@ def infer_judge_status(record: Dict[str, Any]) -> str:
     return "ok" if success else "judge_failed"
 
 
-def has_successful_judge_verdict(verdict: Optional[Dict[str, Any]]) -> bool:
-    """Return True when a verdict contains required base dimensions and a node matrix."""
+def has_successful_judge_verdict(
+    verdict: Optional[Dict[str, Any]],
+    required_dimension_names: list[str] | None = None,
+) -> bool:
+    """Return True when a verdict contains required dimensions and a node matrix."""
     if not isinstance(verdict, dict):
         return False
     node_judgments = verdict.get(NODE_JUDGMENTS_KEY)
-    if isinstance(node_judgments, list) and BUILT_IN_DIMENSIONS:
-        return all(
-            is_valid_event_flag(get_verdict_dimension(verdict, dim["name"]))
-            for dim in BUILT_IN_DIMENSIONS
-        )
-    return False
+    dimensions = verdict.get(DIMENSIONS_KEY)
+    if not isinstance(node_judgments, list) or not isinstance(dimensions, dict):
+        return False
+    required_names = (
+        required_dimension_names
+        if required_dimension_names is not None
+        else [dim["name"] for dim in BUILT_IN_DIMENSIONS]
+    )
+    return all(
+        is_valid_event_flag(get_verdict_dimension(verdict, name))
+        for name in required_names
+    )
 
 
 def build_judge_schema(
@@ -277,15 +291,25 @@ def build_judge_contract(
     template: str,
     policy_raw: Dict[str, Any],
     judge_dimensions: list[JudgeDimension] | None = None,
+    disabled_dimensions: list[str] | None = None,
     schema_name: str = "judgment",
 ) -> JudgeContract:
     """Build the shared judge prompt/schema contract for a workflow."""
+    disabled = set(disabled_dimensions or [])
+    builtin_names = {dim["name"] for dim in BUILT_IN_DIMENSIONS}
+    unknown_disabled = sorted(disabled.difference(builtin_names))
+    if unknown_disabled:
+        raise ValueError(f"unknown disabled judge dimension: {', '.join(unknown_disabled)}")
+
     dims_by_name: dict[str, JudgeDimension] = {}
     for dim in BUILT_IN_DIMENSIONS:
-        dims_by_name[dim["name"]] = dim
+        if dim["name"] not in disabled:
+            dims_by_name[dim["name"]] = dim
     for dim in judge_dimensions or []:
         dims_by_name[dim["name"]] = dim
     dims = list(dims_by_name.values())
+    if not dims:
+        raise ValueError("judge must define at least one enabled dimension")
     behavior_categories = policy_raw.get("behavior_categories")
     behavior_names: list[str] | None = None
     if isinstance(behavior_categories, list):
@@ -589,12 +613,7 @@ def aggregate_judge_verdicts(
             warnings_list.append("aggregate_policy_violation_overridden_to_violated")
         aggregated["judgment_warnings"] = sorted(set(warnings_list))
 
-    required_dimensions = BUILT_IN_DIMENSIONS
-    agreement_key = (
-        required_dimensions[0]["name"]
-        if required_dimensions
-        else (score_keys[0] if score_keys else "")
-    )
+    agreement_key = score_keys[0] if score_keys else ""
     agreement_votes = mj_votes.get(agreement_key, [])
     agreement_value = aggregated_dimensions.get(agreement_key)
     agreement = (
@@ -696,6 +715,7 @@ async def _single_judge_call(
     system_msg: Message,
     user_msg: Message,
     response_schema: Optional[Any],
+    score_keys: list[str],
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """Run one judge call. Returns (parsed_verdict_or_None, raw_text)."""
     schema_name, json_schema = _coerce_response_schema(response_schema)
@@ -708,11 +728,11 @@ async def _single_judge_call(
             options=options,
         )
         raw = out.text
-        if has_successful_judge_verdict(cast(Optional[Dict[str, Any]], out.parsed)):
+        if has_successful_judge_verdict(cast(Optional[Dict[str, Any]], out.parsed), score_keys):
             verdict = out.parsed
         else:
             verdict, _ = _parse_json_with_fallbacks(raw)
-        if has_successful_judge_verdict(cast(Optional[Dict[str, Any]], verdict)):
+        if has_successful_judge_verdict(cast(Optional[Dict[str, Any]], verdict), score_keys):
             return verdict, raw
         if not judge_model.startswith("github_copilot/"):
             return cast(Optional[Dict[str, Any]], verdict), raw
@@ -746,6 +766,7 @@ async def _run_judge_attempts(
     user_msg: Message,
     response_schema: Optional[Any],
     judge_n: int,
+    score_keys: list[str],
 ) -> Tuple[List[Dict[str, Any]], List[str], int]:
     parseable_verdicts: List[Dict[str, Any]] = []
     parseable_raws: List[str] = []
@@ -758,6 +779,7 @@ async def _run_judge_attempts(
             system_msg,
             user_msg,
             response_schema,
+            score_keys,
         )
         if isinstance(verdict, dict):
             parseable_verdicts.append(verdict)
@@ -767,7 +789,7 @@ async def _run_judge_attempts(
         return parseable_verdicts, parseable_raws, transport_failures
 
     tasks = [
-        _single_judge_call(judge_model, options, system_msg, user_msg, response_schema)
+        _single_judge_call(judge_model, options, system_msg, user_msg, response_schema, score_keys)
         for _ in range(judge_n)
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -823,13 +845,14 @@ async def multi_judge(
         user_msg,
         response_schema,
         judge_n,
+        score_keys,
     )
 
     verdicts: List[Dict[str, Any]] = []
     raws: List[str] = []
     invalid_failures = 0
     for index, verdict in enumerate(parseable_verdicts):
-        if has_successful_judge_verdict(verdict):
+        if has_successful_judge_verdict(verdict, score_keys):
             verdicts.append(verdict)
             raws.append(parseable_raws[index] if index < len(parseable_raws) else "")
             continue
@@ -843,7 +866,7 @@ async def multi_judge(
             "verdict": verdict,
             "raw": raw,
             "multi_judge": None,
-            "success": has_successful_judge_verdict(verdict),
+            "success": has_successful_judge_verdict(verdict, score_keys),
             "failures": n_failures,
             "parseable_verdicts": parseable_verdicts,
             "parseable_raws": parseable_raws,
@@ -905,7 +928,7 @@ async def run_judge(
     raw = result.get("raw") or ""
     multi_judge_envelope = result.get("multi_judge")
 
-    if not has_successful_judge_verdict(verdict):
+    if not has_successful_judge_verdict(verdict, score_keys):
         return {
             "judge_status": "judge_failed",
             "verdict": {"error": "judge_failed"},
@@ -969,6 +992,7 @@ async def run_transcript_judge(
         user_msg,
         response_schema,
         judge_n,
+        score_keys,
     )
 
     normalized_verdicts: list[dict[str, Any]] = []
