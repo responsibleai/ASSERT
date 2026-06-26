@@ -62,6 +62,28 @@ pipeline:
         questions when user constraints are missing.
 ```
 
+## Foundry hosted agent target
+
+When the hosted target is an agent already deployed in Azure AI Foundry — one whose tools and instructions live server-side, not in your YAML — set `target.model` to `azure_ai/agents/<AGENT_ID>`:
+
+```yaml
+pipeline:
+  inference:
+    target:
+      model:
+        name: azure_ai/agents/asst_xxxxxxxxxxxxxxxx
+        temperature: 0.0
+        max_tokens: 8000
+      # Do NOT set system_prompt or tools here — the hosted agent
+      # owns both server-side, and the config parser rejects them
+      # for azure_ai/agents/* model names.
+```
+
+Requirements:
+
+- `AZURE_AI_API_BASE` env var set to the Foundry project endpoint (not `AZURE_API_BASE`).
+- Same Azure auth setup as `azure/*` models — `pip install -e ".[azure-aad]"` and `az login` (or Service Principal env vars). See [Getting Started → Azure AAD](../getting-started.md) for the full setup.
+
 ## When to switch to the callable target
 
 The Prompt Agent target is for agents declared in YAML — one model in a runtime-owned tool loop. Once you have a real agent implemented in code (LangGraph, CrewAI, LlamaIndex, OpenAI Agents SDK, AutoGen / MAF, DSPy, custom orchestration, …), switch to the [callable target](callable.md). At that point your code owns the loop, and the recommended OTel-traced integration captures routing, sub-agent decisions, and intermediate tool calls — visibility the Prompt Agent target cannot give you because, by design, you didn't write the loop.

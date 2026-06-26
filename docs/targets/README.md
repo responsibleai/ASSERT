@@ -9,6 +9,7 @@ Pick a target based on how your agent is built.
 | Your target looks like... | Use this path | Start here |
 |---|---|---|
 | A system prompt + tool schema, no orchestration code yet | **Prompt Agent target** (`target.model`, `target.system_prompt`, `target.tools`): the runtime owns the tool-call loop (up to 10 rounds, real or simulated tools). Best for test-driven prompt + toolset design before any agent is implemented | [Prompt Agent Target (model + tools)](model-and-tools.md) |
+| An Azure AI Foundry **hosted agent** (the agent's tools and instructions live server-side in Foundry) | **Foundry hosted-agent target**: `target.model: azure_ai/agents/<AGENT_ID>` — do not set `target.system_prompt` or `target.tools`; the hosted agent owns both. Requires `AZURE_AI_API_BASE` (Foundry project endpoint) and the same Azure auth setup as `azure/*` models | [Prompt Agent Target → Foundry hosted agent](model-and-tools.md#foundry-hosted-agent-target) |
 | Any agent or multi-agent system you can invoke from Python (LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen / MAF, custom orchestration, and others) | **Callable target with OTel traces (recommended)**: point `target.callable` at your entry function and add `target.trace` so Phoenix/OpenInference (or your own OTel SDK spans) feed tool calls, routing, model calls, and latency to the judge | [Callable Target](callable.md) |
 | A black-box API you cannot instrument | **Plain callable (customization fallback, not recommended)**: `target.callable` with no `target.trace`. The judge sees only the final response; use only when instrumentation is impossible | [Callable Target (without traces)](callable.md#customization-without-traces) |
 
@@ -47,6 +48,7 @@ The callable target also accepts a plain Python function with no `target.trace` 
 |---|---|---|---|
 | Callable target with OTel traces (recommended) | You (your callable runs the loop; ASSERT reads the OTel spans) | Any agent or multi-agent system you can invoke from Python | `target.callable` + `target.trace` |
 | Prompt Agent (model + tools) | ASSERT runtime (declared in YAML; runtime orchestrates up to 10 rounds) | Test-driven prompt + toolset design; agents that haven't been written yet | `target.model`, `target.system_prompt`, `target.tools` |
+| Foundry hosted agent | The Foundry-hosted agent (server-side; ASSERT just sends the user turn) | Evaluating an agent already deployed in Azure AI Foundry whose tools and instructions live server-side | `target.model: azure_ai/agents/<AGENT_ID>` (no `system_prompt`, no `tools`) |
 | Plain callable (customization fallback) | Whoever (ASSERT doesn't see inside) | Black-box APIs you cannot instrument; pipeline smoke tests | `target.callable` (no `target.trace`) |
 
 ## Current support
