@@ -24,7 +24,7 @@ from langgraph.prebuilt import ToolNode
 load_dotenv()
 
 _AZURE_AI_SCOPE = "https://ai.azure.com/.default"
-_DEPLOYMENT = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5.1")
+_DEPLOYMENT = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5.4")
 
 
 def simulate_tool(tool_name: str, params: dict) -> str:

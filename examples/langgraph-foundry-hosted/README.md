@@ -65,7 +65,7 @@ langgraph-foundry-hosted/
 - **Azure subscription** with a Microsoft Foundry project
 - **Foundry project endpoint** (e.g.
   `https://<resource>.services.ai.azure.com/api/projects/<project>`)
-- **Model deployment** in Foundry (e.g. `gpt-5.1`)
+- **Model deployment** in Foundry (e.g. `gpt-5.4`)
 - **Azure CLI** signed in: `az login`
 - **Azure Developer CLI** (`azd`) for deployment
 - **`assert-ai`** installed (from the repo root: `pip install -e ".[otel,langgraph]"`)
@@ -82,8 +82,17 @@ cp .env.example .env             # Windows: Copy-Item .env.example .env
 | Variable | Used by | Notes |
 |---|---|---|
 | `FOUNDRY_PROJECT_ENDPOINT` | `agent.py` (the graph's LLM calls) | Auto-injected in hosted containers; set manually only when running locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `agent.py` | Must match a model deployment in your Foundry project. Defaults to `gpt-5.1`. |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `agent.py` | Must match a model deployment in your Foundry project. Defaults to `gpt-5.4`. |
 | `FOUNDRY_AGENT_ENDPOINT` | `auto_trace.py` (eval target) | The deployed agent's Responses endpoint, printed by `azd deploy`. |
+| `AZURE_API_BASE` | `assert-ai` (eval pipeline) | Azure OpenAI endpoint for the `azure/gpt-5.4` model that runs systematize / test generation / tester / judge. Separate from the agent above. |
+| `AZURE_API_KEY` | `assert-ai` (eval pipeline) | API key for `AZURE_API_BASE`. Omit if using Entra ID (AAD) auth instead. |
+
+> **ASSERT model auth:** the eval pipeline calls `azure/gpt-5.4` via LiteLLM
+> for every stage, which is a *separate* credential from the hosted agent.
+> Provide either an `AZURE_API_KEY` + `AZURE_API_BASE` pair, or use Entra ID
+> auth (`pip install -e ".[azure-aad]"`, set `ASSERT_AZURE_USE_AAD=1`, and grant
+> the caller the **Cognitive Services OpenAI User** role on the Azure OpenAI
+> resource). See [`.env.example`](.env.example) for the full template.
 
 ## Run the agent host locally
 
@@ -140,7 +149,7 @@ azd env set AZURE_TENANT_ID                "<tenant-id>"
 azd env set AZURE_RESOURCE_GROUP           "<resource-group>"
 azd env set AZURE_LOCATION                 "<region>"          # e.g. eastus2
 azd env set AZURE_AI_PROJECT_ID            "<full ARM project resource id>"
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.1"           # an existing deployment
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.4"           # an existing deployment
 azd deploy --no-prompt
 ```
 
@@ -168,6 +177,17 @@ the **live deployed agent** over the Responses protocol (using
 `DefaultAzureCredential` for an AAD token) — it does not run the graph locally.
 Set `FOUNDRY_AGENT_ENDPOINT` first.
 
+> **Why a callable wrapper here (vs. the native `target.model` path)?**
+> As of [#252](https://github.com/microsoft/adaptive-eval/pull/252), ASSERT can
+> target a Foundry agent natively with
+> `target.model: azure_ai/agents/<asst_id>` — that is the preferred path for
+> the **v1 Assistants** surface. This sample instead targets a **custom hosted
+> agent over the Responses (v2) protocol**, which the native path does not cover
+> yet, so it uses the `target.callable: auto_trace:chat_sync` wrapper to hit the
+> agent's `/responses` endpoint directly. Use the native `target.model` path for
+> v1 Assistants; use this callable-wrapper path for Responses/custom hosted
+> agents. ASSERT does **not** require a wrapper for all Foundry hosted agents.
+
 ```bash
 cd examples/langgraph-foundry-hosted
 assert-ai run --config eval_config.yaml
@@ -184,7 +204,7 @@ assert-ai results status travel-planner-langgraph-v1 demo-1
 or view in the browser:
 
 ```bash
-cd viewer && npm run dev
+cd ../../viewer && npm run dev
 # open http://localhost:5174/suite/travel-planner-langgraph-v1/demo-1
 ```
 
