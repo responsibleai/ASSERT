@@ -119,7 +119,7 @@ Two built-in judge dimensions — `policy_violation` and `overrefusal` — are a
 **Prerequisite — do NOT emit `"propose"` until every check below is "yes":**
 
 1. **Application Context** — Do I have enough detail for a rich `context` field (what it does, who uses it, tools, constraints)?
-2. **Target Type** — Do I know if it's callable/model/endpoint and the specific path, model name, or URL? If it's `model`, did I also collect `target.system_prompt` as a separate field?
+2. **Target Type** — Do I know if it's callable/model/endpoint and the specific path, model name, or URL? If it's `model` and the user wants a hosted chat model, did I also collect `target.system_prompt` as a separate field? If it's `model: azure_ai/agents/<id>` (a Foundry hosted agent), did I confirm I am NOT collecting `system_prompt` or `tools` — the hosted agent owns both server-side?
 3. **Pipeline Default Model** — Did I confirm a `default_model` for the eval driver (not blindly reused from the target)?
 4. **Behavior Definition** — Do I have a focused, specific behavior spec (not a laundry list)?
 5. **Test Set Generation** — Did I confirm sample sizes and whether dimensions are needed?
@@ -284,7 +284,10 @@ Runs the target system against test cases.
 pipeline:
   inference:
     target:
-      # Exactly one of: callable, model, or endpoint
+      # Exactly one of: callable, model, or endpoint.
+      # `model` covers both raw hosted chat models and Foundry hosted agents
+      # (`azure_ai/agents/<AGENT_ID>`); see "Target Types" decision tree below for
+      # which fields are allowed in each sub-case.
       callable: my_package.agent:chat_sync
       trace:                    # recommended for callable targets
         backend: phoenix        # or "otel" — OpenTelemetry trace capture
@@ -307,7 +310,12 @@ Use this decision tree:
    - Example: if their agent code is in `src/my_agent/bot.py` and the function is `run_chat`, the callable is `src.my_agent.bot:run_chat`.
    - The function should take a `message` string and return a string response.
 
-2. **model**: The user has a hosted model + system prompt, optionally with tools. Set `target.model.name`, `target.system_prompt`, and optionally `target.tools` for tool schemas. The runtime owns the tool-call loop.
+2. **model**: The user has a hosted model. Two sub-cases:
+
+   - **2a. Hosted chat model + system prompt (+ optional tools).** Set `target.model.name`, `target.system_prompt`, and optionally `target.tools` for tool schemas. The runtime owns the tool-call loop. Use this when the user describes a system prompt they wrote, or wants to attach a tool schema themselves.
+
+   - **2b. Foundry hosted agent.** Set `target.model: azure_ai/agents/<AGENT_ID>` and stop — the hosted agent owns its instructions and tools server-side. **Do NOT propose `target.system_prompt` or `target.tools` in this sub-case**; the config parser rejects both fields when the model name starts with `azure_ai/agents/`. Requires the `AZURE_AI_API_BASE` env var (Foundry project endpoint) and the same Azure auth setup as `azure/*` models. Route here when the user mentions "Foundry agent", "hosted agent", "agent ID", or hands you a model string starting with `azure_ai/agents/`.
+
 3. **endpoint**: The user has an HTTP endpoint. Set `target.endpoint` to the URL. The endpoint must accept POST with `{"message": "...", "history": [...]}` and return `{"response": "..."}`. Last resort — use callable or model when possible.
 
 ## pipeline.judge
@@ -422,7 +430,7 @@ For callable targets, always include `target.trace` with `backend: phoenix` (or 
 In the generated YAML, consider adding short `# customize:` comments next to fields where you made a judgment call or used a default the user didn't explicitly confirm. These are suggestions — not every field needs a comment. Common candidates:
 
 - Numeric tuning: `sample_size`, `concurrency`, `max_turns`, `max_tool_calls`
-- Target verification: `inference.target.callable` module/function path, `inference.target.endpoint` URL, `inference.target.trace` backend
+- Target verification: `inference.target.callable` module/function path, `inference.target.endpoint` URL, `inference.target.trace` backend, and — for Foundry hosted agents — the `<AGENT_ID>` in `inference.target.model: azure_ai/agents/<AGENT_ID>` (add a `# review:` comment so the user double-checks the agent ID)
 - Model choices: `default_model` (per-stage `model:` overrides are commented-only unless the user asked to override — see above)
 - Content you inferred: `behavior.description`, `context`, `stratify.dimensions`, judge `dimensions` rubrics
 
