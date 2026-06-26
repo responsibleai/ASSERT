@@ -664,6 +664,32 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
     return dimensions
 
 
+def parse_disabled_judge_dimensions(raw: Any, *, field_name: str) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_name} must be a list")
+
+    from assert_ai.core.judge import BUILT_IN_DIMENSIONS
+
+    builtin_names = {dimension["name"] for dimension in BUILT_IN_DIMENSIONS}
+    disabled: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str):
+            raise ValueError(f"{field_name}[{index}] must be a string")
+        name = value.strip()
+        if not name:
+            raise ValueError(f"{field_name}[{index}] must not be empty")
+        if name not in builtin_names:
+            raise ValueError(f"unknown disabled judge dimension: {name}")
+        if name in seen:
+            continue
+        seen.add(name)
+        disabled.append(name)
+    return disabled
+
+
 def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
     pipeline_raw = raw.get("pipeline")
     if pipeline_raw is None:
@@ -752,12 +778,16 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
         reject_unknown_keys(
             scorer_stage,
             field_name="pipeline.judge",
-            allowed={"model", "n", "dimensions", "inference_set_path", "taxonomy_path", "save_dir",
+            allowed={"model", "n", "dimensions", "disabled_dimensions", "inference_set_path", "taxonomy_path", "save_dir",
                        "enabled", "file_path", "preset"},
         )
         if judge_enabled:
             model_raw = scorer_stage.get("model", default_model_raw)
             require(model_raw is not None, "pipeline.judge.model or default_model is required when judge is configured")
+            disabled_dimensions = parse_disabled_judge_dimensions(
+                scorer_stage.get("disabled_dimensions"),
+                field_name="pipeline.judge.disabled_dimensions",
+            )
             judge_preset_names = _parse_preset_names(
                 scorer_stage.get("preset"),
                 field_name="pipeline.judge.preset",
@@ -790,6 +820,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
                 ),
                 n=_coalesce(_optional_int(scorer_stage.get("n"), field_name="pipeline.judge.n"), 1),
                 dimensions=dimensions,
+                disabled_dimensions=disabled_dimensions,
             )
 
     evaluation = None

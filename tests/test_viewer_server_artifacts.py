@@ -151,6 +151,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                         "judge_model": "judge-model",
                         "target": "target-model",
                         "judge_status": "ok",
+                        "score_keys": ["policy_violation"],
                         "verdict": {
                             "dimensions": {"policy_violation": False},
                             "justification": "clear",
@@ -183,6 +184,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertFalse((run_dir / "viewer_prompt_rows.json").exists())
             self.assertFalse((run_dir / "viewer_score_index.json").exists())
             self.assertNotIn("permissible", prompt_rows[0])
+            self.assertEqual(prompt_rows[0]["score_keys"], ["policy_violation"])
             self.assertEqual(audit_rows, [])
 
     def test_build_viewer_read_model_uses_versioned_seed_artifact_from_manifest(self) -> None:

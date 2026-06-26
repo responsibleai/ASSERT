@@ -37,12 +37,12 @@ context: |-
   naming provenance.
 
 default_model:
-  name: azure/gpt-4o-mini
+  name: azure/gpt-5.4-mini
 
 pipeline:
   systematize:
     behavior_category_count: 12
-    model: { name: azure/gpt-4o, temperature: 1.0, max_tokens: 8000 }
+    model: { name: azure/gpt-5.4, temperature: 1.0, max_tokens: 8000 }
 
   test_set:
     prompt:
@@ -86,4 +86,4 @@ pipeline:
           the correct source class named, internal vs public material is kept
           distinct, and the agent says when retrieved evidence does not
           support a requested claim.
-    model: { name: azure/gpt-4o, temperature: 0.0, max_tokens: 12000 }
+    model: { name: azure/gpt-5.4, temperature: 1.0, max_tokens: 12000 }

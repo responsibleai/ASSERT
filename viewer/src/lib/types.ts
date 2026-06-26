@@ -199,6 +199,7 @@ export interface JudgedSample {
 	verdict?: Verdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
+	score_keys?: string[] | null;
 	messages?: InteractionMessage[];
 	llm_calls?: LlmCallTrace[];
 	target_runtime_mode?: string | null;
@@ -223,6 +224,7 @@ export interface ViewerResultItem {
 	verdict?: Verdict | AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
+	score_keys?: string[] | null;
 	multi_judge?: MultiJudge;
 	messages: InteractionMessage[];
 	llm_calls: LlmCallTrace[];
@@ -428,6 +430,7 @@ export interface AuditScore {
 	verdict?: AuditVerdict | JudgmentErrorVerdict | null;
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
+	score_keys?: string[] | null;
 	target_runtime_mode?: string | null;
 	metadata: {
 		turns_count: number;

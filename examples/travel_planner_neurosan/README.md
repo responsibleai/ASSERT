@@ -64,7 +64,7 @@ assert-ai run --config examples/travel_planner_neurosan/eval_config.yaml
 ```
 
 There is no separate NeurOSan extra in `pyproject.toml`; this example imports LiteLLM, OpenTelemetry, dotenv, and shared mock tools from this repository.
-Required env vars are `AZURE_API_BASE` and `AZURE_API_KEY`; set `ASSERT_TARGET_MODEL` only if the target agent should use a different LiteLLM model than `azure/gpt-5.4-mini`.
+Required env vars are `AZURE_API_BASE` and `AZURE_API_KEY`; set `ASSERT_TARGET_MODEL` only if the target agent should use a different LiteLLM model than `azure/gpt-4o-mini`.
 
 ## How to use
 

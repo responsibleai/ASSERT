@@ -43,6 +43,27 @@ class ResultsTest(unittest.TestCase):
         self.assertNotIn("permissible_overrefusal_rate", metrics)
         self.assertNotIn("not_permissible_policy_violation_rate", metrics)
 
+    def test_compute_prompt_metrics_tolerates_disabled_builtin_dimensions(self) -> None:
+        rows = [
+            {
+                "dimensions": {"behavior": "guarded-behavior"},
+                "score_keys": ["guardrail_policy_violation"],
+                "judge_status": "ok",
+                "judge_error": None,
+                "verdict": {
+                    "dimensions": {"guardrail_policy_violation": False},
+                    "node_judgments": [],
+                },
+            },
+        ]
+
+        metrics = compute_prompt_metrics(rows)
+
+        assert metrics is not None
+        self.assertIsNone(metrics["policy_violation_rate"])
+        self.assertIsNone(metrics["overrefusal_rate"])
+        self.assertEqual(metrics["dimensions"]["guardrail_policy_violation"]["rate"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
