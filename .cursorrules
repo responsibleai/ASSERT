@@ -1,3 +1,6 @@
 Read AGENTS.md first. It is the source of truth for helping with this ASSERT private-preview repository.
 
+The authoritative Cursor rule lives at .cursor/rules/assert.mdc (always applied). It contains repo
+orientation and the run-assert-eval evaluation workflow. Keep this file and that rule aligned.
+
 Never read, print, commit, or infer secrets from .env or other local environment files.
