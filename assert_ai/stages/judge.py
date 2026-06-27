@@ -60,6 +60,7 @@ def _judge_config_fingerprint(
     judge_reasoning_effort: str | None,
     judge_n: int,
     judge_dimensions: list[dict[str, Any]],
+    disabled_dimensions: list[str],
     policy_raw: dict[str, Any],
     system_prompt: str,
     inference_set_path: Path,
@@ -74,6 +75,7 @@ def _judge_config_fingerprint(
             "judge_reasoning_effort": judge_reasoning_effort,
             "judge_n": judge_n,
             "judge_dimensions": judge_dimensions,
+            "disabled_dimensions": disabled_dimensions,
             "taxonomy": policy_raw,
             "system_prompt_sha": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
             "inference_set_sha": inference_set_sha,
@@ -90,6 +92,7 @@ async def run_judge(
     save_dir: str | None = None,
     evaluation: Any,
     judge_dimensions: list[dict[str, Any]] | None = None,
+    disabled_dimensions: list[str] | None = None,
     forced: bool = False,
     heartbeat: Any = None,
 ) -> dict[str, Any]:
@@ -99,6 +102,16 @@ async def run_judge(
     judge_max_tokens = evaluation.judge.model.max_tokens
     judge_reasoning_effort = evaluation.judge.model.reasoning_effort
     judge_n = evaluation.judge.n
+    effective_judge_dimensions = (
+        judge_dimensions
+        if judge_dimensions is not None
+        else getattr(evaluation.judge, "dimensions", [])
+    )
+    effective_disabled_dimensions = (
+        disabled_dimensions
+        if disabled_dimensions is not None
+        else getattr(evaluation.judge, "disabled_dimensions", [])
+    )
     resolved_inference_set_path = resolve_path(inference_set_path)
     rows = load_jsonl(resolved_inference_set_path)
     if not rows:
@@ -120,7 +133,8 @@ async def run_judge(
     judge_contract = build_judge_contract(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
-        judge_dimensions=judge_dimensions or [],
+        judge_dimensions=effective_judge_dimensions,
+        disabled_dimensions=effective_disabled_dimensions,
         schema_name="transcript_judgment",
     )
 
@@ -142,6 +156,7 @@ async def run_judge(
                 "tester_model": row.get("tester_model", ""),
                 "judge_status": "scoring_skipped",
                 "judge_error": f"scoring_skipped: {stop_reason}",
+                "score_keys": judge_contract["score_keys"],
                 "verdict": {},
             }
             dimensions = row_factors(row)
@@ -191,9 +206,11 @@ async def run_judge(
             "judge_model": judge_model,
             "target": row.get("target", ""),
             "tester_model": row.get("tester_model", ""),
+            "score_keys": judge_contract["score_keys"],
             "judge_status": infer_judge_status({
                 "judge_status": judge_result["judge_status"],
                 "verdict": judge_result["verdict"],
+                "score_keys": judge_contract["score_keys"],
             }),
             "judge_error": judge_result["judge_error"],
             "verdict": judge_result["verdict"],
@@ -268,6 +285,7 @@ async def run_judge(
                 "tester_model": row.get("tester_model", ""),
                 "judge_status": "filter_skipped",
                 "judge_error": f"judge_input_refused: {exc}",
+                "score_keys": judge_contract["score_keys"],
                 "verdict": {},
             }
             if dimensions:
@@ -319,7 +337,8 @@ async def run_judge(
         judge_max_tokens=judge_max_tokens,
         judge_reasoning_effort=judge_reasoning_effort,
         judge_n=judge_n,
-        judge_dimensions=judge_dimensions or [],
+        judge_dimensions=effective_judge_dimensions,
+        disabled_dimensions=effective_disabled_dimensions,
         policy_raw=policy_raw,
         system_prompt=judge_contract["system_prompt"],
         inference_set_path=resolved_inference_set_path,
@@ -466,6 +485,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     if evaluation is None or not evaluation.judge.model:
         raise ValueError("judge stage requires evaluation.judge.model")
     judge_dimensions = evaluation.judge.dimensions if evaluation.judge is not None else []
+    disabled_dimensions = evaluation.judge.disabled_dimensions if evaluation.judge is not None else []
     cfg = resolve_stage_paths(
         {
             "inference_set_path": raw_cfg.get("inference_set_path") or str(Path(ctx["run_root"]) / INFERENCE_SET_FILE),
@@ -481,6 +501,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         save_dir=cfg.get("save_dir"),
         evaluation=ctx["evaluation"],
         judge_dimensions=judge_dimensions,
+        disabled_dimensions=disabled_dimensions,
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
     )

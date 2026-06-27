@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: langgraph-foundry-hosted
+metadata:
+    template: langgraph-chat-responses@1.0.0
+services:
+    langgraph-chat-responses:
+        project: .
+        host: azure.ai.agent
+        language: python
+        config:
+            container:
+                resources:
+                    cpu: "0.25"
+                    memory: 0.5Gi
+            deployments:
+                - model:
+                    format: OpenAI
+                    name: gpt-5.4
+                    version: "2026-03-05"
+                  name: gpt-5.4
+                  sku:
+                    capacity: 500
+                    name: GlobalStandard
