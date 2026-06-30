@@ -1265,6 +1265,124 @@ class LiveOTelExporter:
 # These productize Arize's notebook utility functions as typed, tested APIs.
 
 
+# ── Convention-aware field accessors (issue #241) ──────────────────
+# Layer B (direct extraction + tree serialization) historically read only
+# OpenInference keys. These accessors add gen_ai.* fallbacks for pure-GenAI
+# spans while preserving OpenInference behavior: span.convention returns
+# "openinference" whenever openinference.span.kind is present, so dual-emitting
+# spans keep OpenInference precedence and only pure-gen_ai spans take the
+# fallback path.
+
+
+def _genai_input_text(value: Any) -> str:
+    """Concatenated user/system/tool text from a gen_ai input-messages value.
+
+    Mirrors _genai_text_from_messages (which surfaces assistant output) but for
+    the input side, so the model's prompt is not silently blank on gen_ai spans.
+    """
+    messages = _coerce_json(value)
+    if messages is None:
+        return ""
+    if isinstance(messages, str):
+        return messages
+    if isinstance(messages, dict):
+        messages = [messages]
+    if not isinstance(messages, list):
+        return ""
+    texts: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") in ("assistant", "model"):
+            continue
+        text = _message_text(msg)
+        if text:
+            texts.append(text)
+    return "\n".join(texts)
+
+
+def _span_input_text(span: OTelSpan) -> str:
+    val = span.attributes.get(_INPUT_VALUE_KEY, "")
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return _genai_input_text(span.attributes.get(_GENAI_INPUT_MESSAGES_KEY))
+    return ""
+
+
+def _span_output_text(span: OTelSpan) -> str:
+    val = span.attributes.get(_OUTPUT_VALUE_KEY, "")
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return _genai_text_from_messages(span.attributes.get(_GENAI_OUTPUT_MESSAGES_KEY))
+    return ""
+
+
+def _span_model(span: OTelSpan) -> str:
+    val = span.attributes.get(_LLM_MODEL_KEY, "")
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return (
+            span.attributes.get(_GENAI_RESPONSE_MODEL_KEY)
+            or span.attributes.get(_GENAI_REQUEST_MODEL_KEY, "")
+            or ""
+        )
+    return ""
+
+
+def _span_input_tokens(span: OTelSpan) -> int:
+    val = span.attributes.get(_LLM_INPUT_TOKENS_KEY, 0)
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return span.attributes.get(_GENAI_INPUT_TOKENS_KEY, 0) or 0
+    return val
+
+
+def _span_output_tokens(span: OTelSpan) -> int:
+    val = span.attributes.get(_LLM_OUTPUT_TOKENS_KEY, 0)
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return span.attributes.get(_GENAI_OUTPUT_TOKENS_KEY, 0) or 0
+    return val
+
+
+def _span_tool_name(span: OTelSpan) -> str:
+    val = span.attributes.get(_TOOL_NAME_KEY)
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        gn = span.attributes.get(_GENAI_TOOL_NAME_KEY)
+        if gn:
+            return gn
+    return span.name
+
+
+def _span_tool_args(span: OTelSpan) -> Any:
+    """Parsed tool arguments dict, OpenInference-first with gen_ai fallback."""
+    tool_input = span.attributes.get(_INPUT_VALUE_KEY, "")
+    if tool_input:
+        try:
+            return json.loads(tool_input) if tool_input else {}
+        except (json.JSONDecodeError, TypeError):
+            return {"raw": tool_input}
+    if span.convention == "gen_ai":
+        return _genai_tool_args(span.attributes.get(_GENAI_TOOL_CALL_ARGS_KEY))
+    return {}
+
+
+def _span_tool_result(span: OTelSpan) -> str:
+    val = span.attributes.get(_OUTPUT_VALUE_KEY, "")
+    if val:
+        return val
+    if span.convention == "gen_ai":
+        return _genai_tool_result_str(span.attributes.get(_GENAI_TOOL_CALL_RESULT_KEY))
+    return ""
+
+
 def extract_span_inputs(
     spans: list[OTelSpan],
     *,
@@ -1285,11 +1403,11 @@ def extract_span_inputs(
         results.append({
             "span_id": span.span_id,
             "trace_id": span.trace_id,
-            "query": span.attributes.get(_INPUT_VALUE_KEY, ""),
-            "response": span.attributes.get(_OUTPUT_VALUE_KEY, ""),
-            "model": span.attributes.get(_LLM_MODEL_KEY, ""),
-            "input_tokens": span.attributes.get(_LLM_INPUT_TOKENS_KEY, 0),
-            "output_tokens": span.attributes.get(_LLM_OUTPUT_TOKENS_KEY, 0),
+            "query": _span_input_text(span),
+            "response": _span_output_text(span),
+            "model": _span_model(span),
+            "input_tokens": _span_input_tokens(span),
+            "output_tokens": _span_output_tokens(span),
             "latency_ms": span.latency_ms,
             "node": span.attributes.get(_LANGGRAPH_NODE_KEY, span.name),
         })
@@ -1333,20 +1451,15 @@ def extract_trajectory_inputs(
         for span in group_spans:
             if span.kind == "LLM":
                 if not user_input:
-                    user_input = span.attributes.get(_INPUT_VALUE_KEY, "")
+                    user_input = _span_input_text(span)
                 node = span.attributes.get(_LANGGRAPH_NODE_KEY, span.name)
                 if node and node not in node_path:
                     node_path.append(node)
-                total_input_tokens += span.attributes.get(_LLM_INPUT_TOKENS_KEY, 0)
-                total_output_tokens += span.attributes.get(_LLM_OUTPUT_TOKENS_KEY, 0)
+                total_input_tokens += _span_input_tokens(span)
+                total_output_tokens += _span_output_tokens(span)
             elif span.kind == "TOOL":
-                tool_name = span.attributes.get(_TOOL_NAME_KEY, span.name)
-                tool_input = span.attributes.get(_INPUT_VALUE_KEY, "")
-                try:
-                    args = json.loads(tool_input) if tool_input else {}
-                except (json.JSONDecodeError, TypeError):
-                    args = {"raw": tool_input}
-                tool_calls.append({"name": tool_name, "arguments": args})
+                tool_name = _span_tool_name(span)
+                tool_calls.append({"name": tool_name, "arguments": _span_tool_args(span)})
 
         results.append({
             "trace_id": group_id,
@@ -1391,15 +1504,18 @@ def extract_session_inputs(
         for span in session_spans:
             trace_ids.add(span.trace_id)
             if span.kind == "LLM":
-                inp = span.attributes.get(_INPUT_VALUE_KEY, "")
-                out = span.attributes.get(_OUTPUT_VALUE_KEY, "")
+                inp = _span_input_text(span)
+                out = _span_output_text(span)
                 if inp and inp not in user_inputs:
                     user_inputs.append(inp)
                 if out:
                     output_messages.append(out)
             elif span.kind == "TOOL":
-                tool_name = span.attributes.get(_TOOL_NAME_KEY, span.name)
+                tool_name = _span_tool_name(span)
                 tool_input = span.attributes.get(_INPUT_VALUE_KEY, "")
+                if not tool_input and span.convention == "gen_ai":
+                    _ga_args = _genai_tool_args(span.attributes.get(_GENAI_TOOL_CALL_ARGS_KEY))
+                    tool_input = json.dumps(_ga_args) if _ga_args else ""
                 tool_calls.append(f"{tool_name}({tool_input})")
 
         results.append({
@@ -1455,26 +1571,25 @@ class SpanNode:
             "latency_ms": round(self.span.latency_ms, 1),
         }
         if self.span.kind == "LLM":
-            d["model"] = self.span.attributes.get(_LLM_MODEL_KEY, "")
+            d["model"] = _span_model(self.span)
             d["tokens"] = {
-                "input": self.span.attributes.get(_LLM_INPUT_TOKENS_KEY, 0),
-                "output": self.span.attributes.get(_LLM_OUTPUT_TOKENS_KEY, 0),
+                "input": _span_input_tokens(self.span),
+                "output": _span_output_tokens(self.span),
             }
         if self.span.kind == "TOOL":
-            d["tool_name"] = self.span.attributes.get(_TOOL_NAME_KEY, self.span.name)
-            tool_input = self.span.attributes.get(_INPUT_VALUE_KEY, "")
-            tool_output = self.span.attributes.get(_OUTPUT_VALUE_KEY, "")
-            try:
-                d["tool_args"] = json.loads(tool_input) if tool_input else {}
-            except (json.JSONDecodeError, TypeError):
-                d["tool_args"] = {"raw": tool_input[:max_content_chars]}
+            d["tool_name"] = _span_tool_name(self.span)
+            tool_args = _span_tool_args(self.span)
+            if isinstance(tool_args, dict) and set(tool_args) == {"raw"} and isinstance(tool_args["raw"], str):
+                tool_args = {"raw": tool_args["raw"][:max_content_chars]}
+            d["tool_args"] = tool_args
+            tool_output = _span_tool_result(self.span)
             d["tool_result"] = tool_output[:max_content_chars] if tool_output else ""
 
         if include_input:
-            inp = self.span.attributes.get(_INPUT_VALUE_KEY, "")
+            inp = _span_input_text(self.span)
             d["input"] = inp[:max_content_chars] if inp else ""
         if include_output:
-            out = self.span.attributes.get(_OUTPUT_VALUE_KEY, "")
+            out = _span_output_text(self.span)
             d["output"] = out[:max_content_chars] if out else ""
 
         if self.children:
