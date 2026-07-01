@@ -34,7 +34,7 @@ import {
 	computeRunMetrics,
 	emptyScoreCounts
 } from './metrics.js';
-import { getRecordFlag } from '$lib/judgment.js';
+import { getRecordFlag, isNotApplicableRecordDimension } from '$lib/judgment.js';
 import { normalizePromptResult, normalizeScenarioResult, scenarioStopReasonDisplay } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
@@ -69,8 +69,8 @@ interface PromptMetricView {
 	judgeFailures: number;
 	judgeFailureRate: number;
 	counts: BinaryCounts;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -84,8 +84,8 @@ interface AuditMetricView {
 	judgeFailures: number;
 	judgeFailureRate: number;
 	counts: BinaryCounts;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -103,9 +103,10 @@ interface InferencePreviewRow {
 }
 
 interface CompareDimensionSummary {
-	rate: number;
+	rate: number | null;
 	counts: BinaryCounts;
 	n: number;
+	notApplicable?: number;
 }
 
 interface CompareRunSummary {
@@ -118,8 +119,8 @@ interface CompareRunSummary {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	counts: BinaryCounts;
 	dimensions: Record<string, CompareDimensionSummary>;
 	samples: JudgedSample[];
@@ -128,9 +129,10 @@ interface CompareRunSummary {
 }
 
 interface CompareMetricSummary {
-	rate: number;
+	rate: number | null;
 	counts: BinaryCounts;
 	n: number;
+	notApplicable?: number;
 }
 
 interface BehaviorComparison {
@@ -747,8 +749,8 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		judgeFailures: 0,
 		judgeFailureRate: 0,
 		counts: emptyScoreCounts(),
-		policyViolationRate: 0,
-		overrefusalRate: 0,
+		policyViolationRate: null,
+		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -764,8 +766,8 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		judgeFailures: 0,
 		judgeFailureRate: 0,
 		counts: emptyScoreCounts(),
-		policyViolationRate: 0,
-		overrefusalRate: 0,
+		policyViolationRate: null,
+		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -893,7 +895,8 @@ function buildCompareRunSummary(runId: string, manifest: Manifest | null, sample
 			{
 				rate: value.rate,
 				counts: value.counts,
-				n: value.count
+				n: value.count,
+				notApplicable: value.not_applicable_count ?? 0
 			}
 		])
 	);
@@ -961,17 +964,22 @@ function buildBehaviorComparisons(
 				const scores = emptyScoreCounts();
 				let count = 0;
 
+				let notApplicable = 0;
 				for (const sample of samples) {
 					const value = getRecordFlag(sample, metric);
-					if (value === null) continue;
+					if (value === null) {
+						if (isNotApplicableRecordDimension(sample, metric)) notApplicable += 1;
+						continue;
+					}
 					scores[value ? 1 : 0] += 1;
 					count += 1;
 				}
 
 				comparison.metrics[metric][run.run_id] = {
-					rate: count > 0 ? scores[1] / count : 0,
+					rate: count > 0 ? scores[1] / count : null,
 					counts: scores,
-					n: count
+					n: count,
+					notApplicable
 				};
 			}
 		}

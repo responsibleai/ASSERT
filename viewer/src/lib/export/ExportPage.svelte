@@ -97,13 +97,14 @@
 		if (flag === null) return 'text-text-muted';
 		return flag ? 'text-score-fail' : 'text-score-pass';
 	}
-	function metricRateClass(rate: number): string {
+	function metricRateClass(rate: number | null): string {
+		if (rate == null) return 'text-text-muted';
 		if (rate >= 0.5) return 'text-score-fail';
 		if (rate > 0) return 'text-score-border';
 		return 'text-score-pass';
 	}
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
 	function binaryBar(counts: BinaryCounts | undefined): { clear: number; flagged: number } {
 		if (!counts) return { clear: 0, flagged: 0 };
@@ -254,7 +255,7 @@
 						<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}
 					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
+						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? null)}">{metricRateText(m.summary?.rate ?? null)}</span>
 						<span class="text-sm text-text-muted">flagged</span>
 					</div>
 					{#if (m.summary?.count ?? 0) > 0}
@@ -368,7 +369,7 @@
 						<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}
 					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
+						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? null)}">{metricRateText(m.summary?.rate ?? null)}</span>
 						<span class="text-sm text-text-muted">flagged</span>
 					</div>
 					{#if (m.summary?.count ?? 0) > 0}

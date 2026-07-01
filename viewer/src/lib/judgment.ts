@@ -10,6 +10,7 @@ export interface JudgmentRecordLike {
 	judge_status?: JudgeStatus | string | null;
 	judge_error?: string | null;
 	score_keys?: string[] | null;
+	not_applicable_score_keys?: string[] | null;
 }
 
 export function isBooleanFlag(value: unknown): value is boolean {
@@ -45,12 +46,29 @@ export function getVerdictFlag(verdict: VerdictLike, metric: string): boolean | 
 	return isBooleanFlag(value) ? value : null;
 }
 
+export function isNotApplicableVerdictDimension(verdict: VerdictLike, metric: string): boolean {
+	if (!verdict || typeof verdict !== 'object') return false;
+	const dimensions = readDimensions(verdict);
+	if (!dimensions || !(metric in dimensions) || dimensions[metric] !== null) return false;
+	const applicability = verdict.dimension_applicability;
+	return Boolean(
+		applicability &&
+			typeof applicability === 'object' &&
+			!Array.isArray(applicability) &&
+			(applicability as Record<string, unknown>)[metric] === false
+	);
+}
+
 export function getRecordFlag(record: JudgmentRecordLike, metric: string): boolean | null {
 	return getVerdictFlag(record.verdict, metric);
 }
 
 export function getRecordMetricValue(record: JudgmentRecordLike, metric: string): unknown {
 	return getVerdictMetricValue(record.verdict, metric);
+}
+
+export function isNotApplicableRecordDimension(record: JudgmentRecordLike, metric: string): boolean {
+	return isNotApplicableVerdictDimension(record.verdict, metric);
 }
 
 function requiredMetricsForRecord(
@@ -64,10 +82,26 @@ function requiredMetricsForRecord(
 	return defaultRequiredBaseMetrics;
 }
 
-function hasSuccessfulJudgeVerdict(verdict: VerdictLike, requiredMetrics: string[]): boolean {
+function notApplicableMetricsForRecord(record: JudgmentRecordLike): string[] {
+	const scoreKeys = record.not_applicable_score_keys;
+	if (Array.isArray(scoreKeys) && scoreKeys.every((key) => typeof key === 'string')) {
+		return [...scoreKeys];
+	}
+	return [];
+}
+
+function hasSuccessfulJudgeVerdict(
+	verdict: VerdictLike,
+	requiredMetrics: string[],
+	notApplicableMetrics: string[]
+): boolean {
 	const dimensions = readDimensions(verdict);
 	if (dimensions && Array.isArray(verdict?.node_judgments)) {
-		return requiredMetrics.every((metric) => isBooleanFlag(dimensions[metric]));
+		return requiredMetrics.every(
+			(metric) =>
+				isBooleanFlag(dimensions[metric]) ||
+				(notApplicableMetrics.includes(metric) && isNotApplicableVerdictDimension(verdict, metric))
+		);
 	}
 	return false;
 }
@@ -77,15 +111,16 @@ export function inferJudgeStatus(
 	requiredBaseMetrics: string[]
 ): JudgeStatus {
 	const requiredMetrics = requiredMetricsForRecord(record, requiredBaseMetrics);
+	const notApplicableMetrics = notApplicableMetricsForRecord(record);
 	if (record.judge_status === 'scoring_skipped') {
 		return 'scoring_skipped';
 	}
 	if (record.judge_status != null) {
-		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics)
+		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics)
 			? 'ok'
 			: 'judge_failed';
 	}
-	return hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics) ? 'ok' : 'judge_failed';
+	return hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics) ? 'ok' : 'judge_failed';
 }
 
 export function isSuccessfulJudgment(

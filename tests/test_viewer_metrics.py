@@ -43,6 +43,9 @@ class ViewerMetricsTest(unittest.TestCase):
                       const value = record?.verdict?.dimensions?.[name];
                       return typeof value === 'boolean' ? value : null;
                     }
+                    export function isNotApplicableRecordDimension(record, name) {
+                      return record?.verdict?.dimensions?.[name] === null && record?.verdict?.dimension_applicability?.[name] === false;
+                    }
                     export function isSuccessfulJudgment(record) { return record?.judge_status !== 'error'; }
                     """
                 ),

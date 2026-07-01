@@ -635,7 +635,7 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
         reject_unknown_keys(
             dimension_raw,
             field_name=dimension_field_name,
-            allowed={"description", "rubric", "required_base"},
+            allowed={"description", "rubric", "required_base", "allow_not_applicable"},
         )
         description = _optional_str(
             dimension_raw.get("description"),
@@ -652,14 +652,19 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
         required_base = dimension_raw.get("required_base")
         if required_base is not None and not isinstance(required_base, bool):
             raise ValueError(f"{dimension_field_name}.required_base must be a boolean")
+        allow_not_applicable = dimension_raw.get("allow_not_applicable")
+        if allow_not_applicable is not None and not isinstance(allow_not_applicable, bool):
+            raise ValueError(f"{dimension_field_name}.allow_not_applicable must be a boolean")
 
-        dimension = {
+        dimension: dict[str, Any] = {
             "name": name,
             "description": description,
             "rubric": rubric,
         }
         if required_base is not None:
             dimension["required_base"] = required_base
+        if allow_not_applicable is not None:
+            dimension["allow_not_applicable"] = allow_not_applicable
         dimensions.append(dimension)
     return dimensions
 

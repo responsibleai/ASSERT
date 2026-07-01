@@ -127,7 +127,8 @@ export interface NodeJudgment {
 }
 
 export interface Verdict {
-	dimensions: Record<string, boolean>;
+	dimensions: Record<string, boolean | null>;
+	dimension_applicability?: Record<string, boolean>;
 	justification: string;
 	narrative?: string;
 	dimension_justifications?: Record<string, string>;
@@ -200,6 +201,7 @@ export interface JudgedSample {
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
 	score_keys?: string[] | null;
+	not_applicable_score_keys?: string[] | null;
 	messages?: InteractionMessage[];
 	llm_calls?: LlmCallTrace[];
 	target_runtime_mode?: string | null;
@@ -225,6 +227,7 @@ export interface ViewerResultItem {
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
 	score_keys?: string[] | null;
+	not_applicable_score_keys?: string[] | null;
 	multi_judge?: MultiJudge;
 	messages: InteractionMessage[];
 	llm_calls: LlmCallTrace[];
@@ -264,8 +267,10 @@ export interface BinaryCounts {
 }
 
 export interface DimensionMetrics {
-	rate: number;
+	rate: number | null;
 	count: number;
+	applicable_count?: number;
+	not_applicable_count?: number;
 	flagged_count: number;
 	clear_count: number;
 	counts: BinaryCounts;
@@ -277,8 +282,8 @@ export interface RunMetrics {
 	judge_failures: number;
 	judge_failure_rate: number;
 	counts: BinaryCounts;
-	policy_violation_rate: number;
-	overrefusal_rate: number;
+	policy_violation_rate: number | null;
+	overrefusal_rate: number | null;
 	policy_violation_on_permissible: DimensionMetrics | null;
 	policy_violation_on_not_permissible: DimensionMetrics | null;
 	target: string;
@@ -307,8 +312,8 @@ export interface AuditRunMetrics {
 	judge_failures: number;
 	judge_failure_rate: number;
 	counts: BinaryCounts;
-	policy_violation_rate: number;
-	overrefusal_rate: number;
+	policy_violation_rate: number | null;
+	overrefusal_rate: number | null;
 	policy_violation_on_permissible: DimensionMetrics | null;
 	policy_violation_on_not_permissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -372,7 +377,8 @@ export interface AuditCitation {
 }
 
 export interface AuditVerdict {
-	dimensions: Record<string, boolean>;
+	dimensions: Record<string, boolean | null>;
+	dimension_applicability?: Record<string, boolean>;
 	justification: string;
 	dimension_justifications?: Record<string, string>;
 	node_judgments: NodeJudgment[];
@@ -431,6 +437,7 @@ export interface AuditScore {
 	judge_status?: JudgeStatus | null;
 	judge_error?: string | null;
 	score_keys?: string[] | null;
+	not_applicable_score_keys?: string[] | null;
 	target_runtime_mode?: string | null;
 	metadata: {
 		turns_count: number;
