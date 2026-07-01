@@ -38,6 +38,10 @@ artifacts/results/<suite>/
 
 > **Tip**: After a run, start with `metrics.json` first then see the `scores.jsonl` before inspecting the `inference_set.jsonl` more closely.
 
+## Interpreting dimension rates
+
+Judge dimension rates use the number of applicable scored rows as the denominator. For regular boolean dimensions, every valid judged row is applicable. For dimensions configured with `allow_not_applicable: true`, rows where the judge returns `null` and `dimension_applicability.<name>: false` are counted as not applicable, preserved in `scores.jsonl`, and excluded from that dimension's rate.
+
 ## Useful CLI commands for viewing results
 
 ```bash

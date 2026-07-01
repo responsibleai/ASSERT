@@ -45,8 +45,8 @@
 		if (flag === null) return 'text-text-muted';
 		return flag ? 'text-score-fail' : 'text-score-pass';
 	}
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
 	function metricDotColor(flag: boolean): string {
 		return flag ? 'var(--color-score-fail)' : 'var(--color-score-pass)';

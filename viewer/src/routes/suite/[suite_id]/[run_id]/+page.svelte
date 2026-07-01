@@ -181,14 +181,15 @@
 		return null;
 	}
 
-	function metricRateClass(rate: number): string {
+	function metricRateClass(rate: number | null): string {
+		if (rate == null) return 'text-text-muted';
 		if (rate >= 0.5) return 'text-score-fail';
 		if (rate > 0) return 'text-score-border';
 		return 'text-score-pass';
 	}
 
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
 
 	function binaryBar(counts: BinaryCounts): { clear: number; flagged: number } {
@@ -985,7 +986,7 @@
 				<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{total} {activeTab === 'audit' ? 'conversations' : 'prompts'}</span>
 			</div>
 			<div class="mt-3 flex items-baseline gap-1.5">
-				<span class="text-3xl font-bold tabular-nums {metricRateClass(headlineMetric.summary?.rate ?? 0)}">{metricRateText(headlineMetric.summary?.rate ?? 0)}</span>
+				<span class="text-3xl font-bold tabular-nums {metricRateClass(headlineMetric.summary?.rate ?? null)}">{metricRateText(headlineMetric.summary?.rate ?? null)}</span>
 				<span class="text-sm text-text-muted">Flagged</span>
 			</div>
 			{#if total > 0}

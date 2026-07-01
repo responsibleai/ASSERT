@@ -25,7 +25,7 @@ from assert_ai.core.io import (
     row_behavior,
     row_factors,
 )
-from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_not_applicable_dimension, is_valid_event_flag
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 
 EXPORT_DIR_NAME = "exports"
@@ -160,7 +160,8 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
             key
             for row in records
             for key, value in (((row.get("verdict") or {}).get("dimensions")) or {}).items()
-            if isinstance(row.get("verdict"), dict) and is_valid_event_flag(value)
+            if isinstance(row.get("verdict"), dict)
+            and (is_valid_event_flag(value) or is_not_applicable_dimension(row.get("verdict"), key))
         }
     )
 
@@ -177,15 +178,21 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
         }
         for dim in all_dims:
             raw_values = []
+            not_applicable_count = 0
             for item in scored_items:
-                value = get_verdict_dimension(item.get("verdict"), dim)
+                verdict = item.get("verdict")
+                value = get_verdict_dimension(verdict, dim)
                 if is_valid_event_flag(value):
                     raw_values.append(bool(value))
+                elif is_not_applicable_dimension(verdict, dim):
+                    not_applicable_count += 1
             flagged_count = sum(1 for value in raw_values if value)
             clear_count = len(raw_values) - flagged_count
             rate = flagged_count / len(raw_values) if raw_values else None
             result["dimensions"][dim] = {
                 "count": len(raw_values),
+                "applicable_count": len(raw_values),
+                "not_applicable_count": not_applicable_count,
                 "flagged_count": flagged_count,
                 "clear_count": clear_count,
                 "rate": rate,
@@ -226,17 +233,27 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
         node_dimensions: dict[str, dict[str, Any]] = {}
         for dim in all_dims:
             flagged_count = 0
+            applicable_count = 0
+            not_applicable_count = 0
             for row in relevant_rows:
-                value = get_verdict_dimension(row.get("verdict"), dim)
-                if not is_valid_event_flag(value):
-                    raise ValueError(f"missing or invalid dimension '{dim}' in scored row")
-                flagged_count += int(value)
-            clear_count = support - flagged_count
+                verdict = row.get("verdict")
+                value = get_verdict_dimension(verdict, dim)
+                if is_valid_event_flag(value):
+                    applicable_count += 1
+                    flagged_count += int(value)
+                    continue
+                if is_not_applicable_dimension(verdict, dim):
+                    not_applicable_count += 1
+                    continue
+                raise ValueError(f"missing or invalid dimension '{dim}' in scored row")
+            clear_count = applicable_count - flagged_count
             node_dimensions[dim] = {
-                "count": support,
+                "count": applicable_count,
+                "applicable_count": applicable_count,
+                "not_applicable_count": not_applicable_count,
                 "flagged_count": flagged_count,
                 "clear_count": clear_count,
-                "rate": flagged_count / support if support else 0.0,
+                "rate": flagged_count / applicable_count if applicable_count else 0.0,
             }
 
         by_relevant_node.append(
@@ -409,6 +426,8 @@ def _relevant_node_row(
         summary_payload = dimensions.get(dimension)
         summary = summary_payload if isinstance(summary_payload, dict) else {}
         row[f"{dimension}_count"] = summary.get("count", "")
+        row[f"{dimension}_applicable_count"] = summary.get("applicable_count", summary.get("count", ""))
+        row[f"{dimension}_not_applicable_count"] = summary.get("not_applicable_count", "")
         row[f"{dimension}_flagged_count"] = summary.get("flagged_count", "")
         row[f"{dimension}_clear_count"] = summary.get("clear_count", "")
         row[f"{dimension}_rate"] = summary.get("rate", "")
@@ -771,6 +790,8 @@ def load_suite_tables(
                 for dimension in relevant_dimension_names
                 for field in (
                     f"{dimension}_count",
+                    f"{dimension}_applicable_count",
+                    f"{dimension}_not_applicable_count",
                     f"{dimension}_flagged_count",
                     f"{dimension}_clear_count",
                     f"{dimension}_rate",

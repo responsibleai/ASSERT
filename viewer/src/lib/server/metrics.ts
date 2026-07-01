@@ -5,6 +5,7 @@ import {
 	getRecordFlag,
 	getRequiredBaseMetricNames,
 	isBooleanFlag,
+	isNotApplicableRecordDimension,
 	isSuccessfulJudgment
 } from '$lib/judgment.js';
 import type {
@@ -27,6 +28,7 @@ type EventDimensionAggregate = {
 	count: number;
 	flagged_count: number;
 	clear_count: number;
+	not_applicable_count: number;
 	counts: BinaryCounts;
 };
 
@@ -35,13 +37,15 @@ export function emptyScoreCounts(): BinaryCounts {
 }
 
 function emptyDimensionAggregate(): EventDimensionAggregate {
-	return { count: 0, flagged_count: 0, clear_count: 0, counts: emptyScoreCounts() };
+	return { count: 0, flagged_count: 0, clear_count: 0, not_applicable_count: 0, counts: emptyScoreCounts() };
 }
 
 function finalizeDimensionAggregate(aggregate: EventDimensionAggregate): DimensionMetrics {
 	return {
-		rate: aggregate.count > 0 ? aggregate.flagged_count / aggregate.count : 0,
+		rate: aggregate.count > 0 ? aggregate.flagged_count / aggregate.count : null,
 		count: aggregate.count,
+		applicable_count: aggregate.count,
+		not_applicable_count: aggregate.not_applicable_count,
 		flagged_count: aggregate.flagged_count,
 		clear_count: aggregate.clear_count,
 		counts: aggregate.counts
@@ -107,8 +111,13 @@ function collectDimensionNames(records: EventScoredRecord[]): string[] {
 		if (!verdict || typeof verdict !== 'object' || Array.isArray(verdict)) continue;
 		const dimensions = verdict.dimensions;
 		if (!dimensions || typeof dimensions !== 'object' || Array.isArray(dimensions)) continue;
+		const applicability = verdict.dimension_applicability;
+		const applicableMap =
+			applicability && typeof applicability === 'object' && !Array.isArray(applicability)
+				? (applicability as Record<string, unknown>)
+				: null;
 		for (const [name, value] of Object.entries(dimensions)) {
-			if (isBooleanFlag(value)) names.add(name);
+			if (isBooleanFlag(value) || (value === null && applicableMap?.[name] === false)) names.add(name);
 		}
 	}
 	return [...names];
@@ -118,7 +127,7 @@ function initDimensionAggregates(names: string[]): Record<string, EventDimension
 	return Object.fromEntries(
 		names.map((name) => [
 			name,
-			{ count: 0, flagged_count: 0, clear_count: 0, counts: emptyScoreCounts() }
+			emptyDimensionAggregate()
 		])
 	);
 }
@@ -129,13 +138,7 @@ function finalizeDimensions(
 	return Object.fromEntries(
 		Object.entries(aggregates).map(([name, aggregate]) => [
 			name,
-			{
-				rate: aggregate.count > 0 ? aggregate.flagged_count / aggregate.count : 0,
-				count: aggregate.count,
-				flagged_count: aggregate.flagged_count,
-				clear_count: aggregate.clear_count,
-				counts: aggregate.counts
-			}
+			finalizeDimensionAggregate(aggregate)
 		])
 	);
 }
@@ -151,8 +154,8 @@ function addFlag(aggregate: EventDimensionAggregate, value: boolean): void {
 	aggregate.counts[0] += 1;
 }
 
-function dimensionRate(dimensions: Record<string, DimensionMetrics>, name: string): number {
-	return dimensions[name]?.rate ?? 0;
+function dimensionRate(dimensions: Record<string, DimensionMetrics>, name: string): number | null {
+	return dimensions[name]?.rate ?? null;
 }
 
 export function computeAuditRunMetrics(
@@ -173,7 +176,12 @@ export function computeAuditRunMetrics(
 
 		for (const dimensionName of dimensionNames) {
 			const dimensionFlag = getRecordFlag(score, dimensionName);
-			if (dimensionFlag === null) continue;
+			if (dimensionFlag === null) {
+				if (isNotApplicableRecordDimension(score, dimensionName)) {
+					dimensionAggregates[dimensionName].not_applicable_count += 1;
+				}
+				continue;
+			}
 			addFlag(dimensionAggregates[dimensionName], dimensionFlag);
 		}
 	}
@@ -218,7 +226,12 @@ export function computeRunMetrics(
 
 		for (const dimensionName of dimensionNames) {
 			const dimensionFlag = getRecordFlag(sample, dimensionName);
-			if (dimensionFlag === null) continue;
+			if (dimensionFlag === null) {
+				if (isNotApplicableRecordDimension(sample, dimensionName)) {
+					dimensionAggregates[dimensionName].not_applicable_count += 1;
+				}
+				continue;
+			}
 			addFlag(dimensionAggregates[dimensionName], dimensionFlag);
 		}
 	}

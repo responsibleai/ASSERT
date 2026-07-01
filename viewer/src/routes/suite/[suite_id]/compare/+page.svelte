@@ -85,13 +85,15 @@ function toggleRow(behavior: string) {
 // Show-all tracker per behavior
 let showAllMap = $state<Record<string, boolean>>({});
 
-function rateColor(rate: number): string {
+function rateColor(rate: number | null): string {
+	if (rate == null) return 'var(--theme-text-muted)';
 	if (rate >= 0.5) return 'var(--theme-score-fail)';
 	if (rate > 0) return 'var(--theme-score-border)';
 	return 'var(--theme-score-pass)';
 }
 
-function rateTextClass(rate: number): string {
+function rateTextClass(rate: number | null): string {
+	if (rate == null) return 'text-text-muted';
 	if (rate >= 0.5) return 'text-score-fail';
 	if (rate > 0) return 'text-score-border';
 	return 'text-score-pass';
@@ -125,11 +127,12 @@ let orderedRuns = $derived([
 let runColor = $derived(
 	Object.fromEntries(data.runs.map((r, i) => [r.run_id, RUN_COLORS[i]])) as Record<string, string>
 );
-function baselineDeltaFor(run: { run_id: string; policyViolationRate: number; dimensions: Record<string, { rate: number }> }) {
+function baselineDeltaFor(run: { run_id: string; policyViolationRate: number | null; dimensions: Record<string, { rate: number | null }> }) {
 	const baseline = data.runs[baselineIdx];
-	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? 0);
-	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? 0);
-	return { avg, baselineAvg, delta: run.run_id === baseline.run_id ? 0 : avg - baselineAvg };
+	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? null);
+	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? null);
+	const delta = avg !== null && baselineAvg !== null && run.run_id !== baseline.run_id ? avg - baselineAvg : 0;
+	return { avg, baselineAvg, delta };
 }
 
 function getMatchedSamples(behavior: string) {
@@ -334,7 +337,7 @@ function capitalize(s: string): string {
 
 					<!-- Big number -->
 					<div class="mt-3 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums text-text">{(avg * 100).toFixed(0)}%</span>
+						<span class="text-3xl font-bold tabular-nums text-text">{avg === null ? 'N/A' : `${(avg * 100).toFixed(0)}%`}</span>
 						<span class="text-sm text-text-muted">Flagged</span>
 						{#if !isBaseline && Math.abs(delta) >= 0.005}
 							<span class="ml-1 text-sm font-semibold tabular-nums {deltaClass(delta)}">

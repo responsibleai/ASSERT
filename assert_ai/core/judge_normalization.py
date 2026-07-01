@@ -17,6 +17,7 @@ from assert_ai.core.judge_citations import (
 from assert_ai.core.transcript import Transcript
 
 DIMENSIONS_KEY = "dimensions"
+DIMENSION_APPLICABILITY_KEY = "dimension_applicability"
 NODE_JUDGMENTS_KEY = "node_judgments"
 INLINE_CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
@@ -31,6 +32,7 @@ def _normalize_transcript_judge_verdict_impl(
     policy_raw: dict[str, Any],
     extract_xml_citations_fn: Callable[..., list[dict[str, Any]]],
     summary_justification_fn: Callable[[dict[str, Any], list[str]], str],
+    not_applicable_score_keys: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     normalized = dict(verdict)
     highlights = str(normalized.pop("highlights", "") or "")
@@ -80,9 +82,24 @@ def _normalize_transcript_judge_verdict_impl(
     dimensions = normalized.get(DIMENSIONS_KEY)
     if not isinstance(dimensions, dict):
         return None, "missing_dimensions"
+    not_applicable_names = set(not_applicable_score_keys or [])
+    applicability = normalized.get(DIMENSION_APPLICABILITY_KEY)
+    if not_applicable_names:
+        if not isinstance(applicability, dict):
+            return None, "missing_dimension_applicability"
+        for key in not_applicable_names:
+            value = applicability.get(key)
+            if not isinstance(value, bool):
+                return None, f"invalid_dimension_applicability:{key}"
     for key in score_keys:
-        if not isinstance(dimensions.get(key), bool):
-            return None, f"invalid_dimension:{key}"
+        value = dimensions.get(key)
+        if isinstance(value, bool):
+            continue
+        if key in not_applicable_names and value is None:
+            if isinstance(applicability, dict) and applicability.get(key) is False:
+                continue
+            return None, f"invalid_dimension_applicability:{key}"
+        return None, f"invalid_dimension:{key}"
 
     dimension_justifications = normalized.get("dimension_justifications")
     if not isinstance(dimension_justifications, dict):

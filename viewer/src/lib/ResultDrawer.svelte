@@ -166,8 +166,8 @@
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
 	}
 
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
 
 	function judgmentWarningLabel(warning: string): string {
