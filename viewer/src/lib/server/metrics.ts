@@ -148,14 +148,35 @@ export function computePolicyViolationByPermissibility(
 	const notPermissible = emptyDimensionAggregate();
 
 	for (const record of records) {
+		let hasRelevantPermissible = false;
+		let hasRelevantNotPermissible = false;
+		let violatedPermissible = false;
+		let violatedNotPermissible = false;
+
 		for (const node of readNodeJudgments(record.verdict)) {
-			if (node.relevant !== true) continue;
+			// Normalized judgments carry an explicit relevance flag. Sparse legacy
+			// judgments omit it and contain only nodes the judge considered relevant.
+			if ('relevant' in node && node.relevant !== true) continue;
 			if (!isBooleanFlag(node.violated)) continue;
 			const name = typeof node.node_name === 'string' ? node.node_name.trim() : '';
 			if (!name || !permissibilityIndex.has(name)) continue;
-			const bucket = permissibilityIndex.get(name) ? permissible : notPermissible;
-			addFlag(bucket, node.violated);
+			if (permissibilityIndex.get(name)) {
+				hasRelevantPermissible = true;
+				violatedPermissible ||= node.violated;
+			} else {
+				hasRelevantNotPermissible = true;
+				violatedNotPermissible ||= node.violated;
+			}
 		}
+
+		// Each conversation contributes at most one Boolean to each bucket:
+		// whether any relevant behavior of that permissibility was violated.
+		// Conversations with no relevant behavior in a bucket are not applicable
+		// and therefore do not dilute that bucket's rate.
+		if (hasRelevantPermissible) addFlag(permissible, violatedPermissible);
+		else permissible.not_applicable_count += 1;
+		if (hasRelevantNotPermissible) addFlag(notPermissible, violatedNotPermissible);
+		else notPermissible.not_applicable_count += 1;
 	}
 
 	return {
