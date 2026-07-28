@@ -1640,7 +1640,7 @@
 
 				<div class="mb-5">
 					<h3 class="mb-1 text-base font-semibold text-text">Measurement suite & run identity</h3>
-					<p class="mb-3 text-xs text-text-muted">Measurement suites group policy + seeds; runs hold measurement results.</p>
+					<p class="mb-3 text-xs text-text-muted">Measurement suites group a behavior and its test set; runs hold measurement results.</p>
 					<div class="grid grid-cols-2 gap-4">
 						<div>
 							<label for="suite-id" class="mb-1 block text-xs font-semibold text-text-secondary">Measurement suite ID</label>

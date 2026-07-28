@@ -221,7 +221,7 @@
 	}
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		seeds: 'Seed Generation',
+		seeds: 'Test Set Generation',
 		inference: 'Inference',
 		judge: 'Scoring',
 	};
@@ -481,7 +481,7 @@
 
 	async function openSampleModal(sample: JudgedSample) {
 		if (!sample.test_case_id) {
-			promptDrawerError = 'Prompt is missing a seed id.';
+			promptDrawerError = 'Prompt is missing a test case ID.';
 			return;
 		}
 		const token = bumpPromptDrawerLoadToken();
@@ -1069,7 +1069,7 @@
 				<p>{auditRefusedCount} {auditRefusedCount === 1 ? 'scenario was' : 'scenarios were'} refused before producing a transcript.</p>
 			{/if}
 			{#if activeTab === 'audit' && auditErroredCount > 0}
-				<p>{auditErroredCount} {auditErroredCount === 1 ? 'scenario' : 'scenarios'} hit an inference error and {auditErroredCount === 1 ? 'was' : 'were'} excluded from the rates.</p>
+				<p>{auditErroredCount} {auditErroredCount === 1 ? 'scenario' : 'scenarios'} encountered an error during Inference and {auditErroredCount === 1 ? 'was' : 'were'} excluded from the rates.</p>
 			{/if}
 		</div>
 	{/if}
