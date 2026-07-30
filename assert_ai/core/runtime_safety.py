@@ -339,23 +339,50 @@ def _detach_executor_from_atexit(executor: ThreadPoolExecutor) -> None:
     is closed" tracebacks as their resources GC against the closed
     loop) until the OS reaps them at process exit; we cannot stop them
     cleanly from Python.
+
+    Every attribute reached here is private to CPython or to
+    ``concurrent.futures``, so each access is guarded and a failure is reported
+    at WARNING rather than DEBUG. This runs on the graceful-teardown path, and a
+    silent failure here means worker threads block process exit with nothing
+    explaining why.
     """
+    worker_threads = getattr(executor, "_threads", None)
+    if worker_threads is None:
+        log.warning(
+            "Could not read the executor's worker threads (ThreadPoolExecutor "
+            "internals changed in this Python build), so they were not detached "
+            "from interpreter shutdown. Leaked worker threads may delay process "
+            "exit."
+        )
+        return
+
     try:
         threads_queues = getattr(_cft, "_threads_queues", None)
         if threads_queues is not None:
-            for t in list(executor._threads):
+            for t in list(worker_threads):
                 threads_queues.pop(t, None)
+        else:
+            log.warning(
+                "concurrent.futures._threads_queues is unavailable; the "
+                "executor was not detached from its atexit handler and may "
+                "delay process exit."
+            )
     except Exception:  # noqa: BLE001
-        log.debug(
-            "Failed to detach executor from concurrent.futures atexit",
+        log.warning(
+            "Failed to detach executor from the concurrent.futures atexit "
+            "handler; leaked worker threads may delay process exit.",
             exc_info=True,
         )
     try:
         shutdown_locks = getattr(threading, "_shutdown_locks", None)
         shutdown_locks_lock = getattr(threading, "_shutdown_locks_lock", None)
         if shutdown_locks is None:
+            # Expected on Python 3.13+, where this join moved behind C-level
+            # thread handles and _AbandonableThreadPoolExecutor avoids it by
+            # creating daemon workers instead. Not a problem worth warning about.
+            log.debug("threading._shutdown_locks is unavailable; nothing to detach")
             return
-        for t in list(executor._threads):
+        for t in list(worker_threads):
             lock = getattr(t, "_tstate_lock", None)
             if lock is None:
                 continue
@@ -365,8 +392,9 @@ def _detach_executor_from_atexit(executor: ThreadPoolExecutor) -> None:
             else:
                 shutdown_locks.discard(lock)
     except Exception:  # noqa: BLE001
-        log.debug(
-            "Failed to detach executor from threading._shutdown",
+        log.warning(
+            "Failed to detach executor from threading._shutdown; leaked worker "
+            "threads may delay process exit.",
             exc_info=True,
         )
 

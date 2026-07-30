@@ -278,6 +278,11 @@ class RunManifest:
     progress: dict[str, Any] | None = None
     artifact_versions: dict[str, dict[str, Any]] = field(default_factory=dict)
     stage_timings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Set when metrics.json could not be written. Without this a failed write
+    # loses the entire cost record while the run still reports success, so the
+    # gap has to be recorded somewhere durable rather than only in the log.
+    metrics_write_failed: bool | None = None
+    metrics_write_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         empty_collection_keys = {"artifact_versions", "stage_timings"}
