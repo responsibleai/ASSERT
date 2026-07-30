@@ -1,0 +1,76 @@
+# Dependency vulnerability audit.
+#
+# Complements Dependabot: Dependabot proposes upgrades, this reports what is
+# vulnerable right now, including on pull requests that change a manifest.
+#
+# Deliberately advisory for the npm trees to begin with. The viewer and website
+# lockfiles carry existing advisories, so failing hard on day one would block
+# every unrelated PR. `continue-on-error` makes the finding visible without
+# gating; remove it once the backlog is cleared.
+name: Dependency audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'viewer/package*.json'
+      - 'website/package*.json'
+      - '.github/workflows/dependency-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'viewer/package*.json'
+      - 'website/package*.json'
+      - '.github/workflows/dependency-audit.yml'
+  schedule:
+    - cron: '30 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      # Audits the resolved runtime dependency set rather than the declared
+      # ranges, so the result reflects what a user would actually install.
+      - name: Audit resolved dependencies
+        run: |
+          python -m pip install -e .
+          pip-audit --strict --progress-spinner off
+
+  npm:
+    name: npm (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true   # advisory until the existing backlog is cleared
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [viewer, website]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit ${{ matrix.project }}
+        working-directory: ${{ matrix.project }}
+        run: npm audit --audit-level=high
