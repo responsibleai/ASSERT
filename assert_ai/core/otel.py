@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from assert_ai.core.security import redact_text
+
 log = logging.getLogger(__name__)
 
 
@@ -410,7 +412,43 @@ def _spans_to_events(
         "llm_call_count": acc.llm_call_count,
     }
 
-    return acc.events, aggregate
+    return _redact_events(acc.events), aggregate
+
+
+def _redact_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Redact credentials from span-derived transcript events.
+
+    Span attributes carry tool call arguments, tool results, and message content
+    straight into ``inference_set.jsonl``, which the viewer then renders. The
+    redaction helpers were applied on the model-client and connector paths but
+    not here, so an agent whose tool call carried an API key wrote it verbatim.
+    Inconsistent redaction is worse than none, because an operator who has seen
+    it work reasonably assumes it applies everywhere.
+
+    Only credential shapes are matched, so ordinary evaluation content passes
+    through unchanged. Set ``ASSERT_REDACT_SPAN_CONTENT=0`` to disable if a
+    match ever corrupts a result.
+    """
+    if os.environ.get("ASSERT_REDACT_SPAN_CONTENT", "").strip() == "0":
+        return events
+    return [_redact_value(event) for event in events]
+
+
+def _redact_value(value: Any, *, depth: int = 0, max_depth: int = 12) -> Any:
+    if depth > max_depth:
+        return value
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {
+            key: _redact_value(item, depth=depth + 1, max_depth=max_depth)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _redact_value(item, depth=depth + 1, max_depth=max_depth) for item in value
+        ]
+    return value
 
 
 def _openinference_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
