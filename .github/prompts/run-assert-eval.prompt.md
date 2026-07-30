@@ -106,7 +106,7 @@ See `docs/guides/use-local-viewer.md` for the full layout.
 Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
 
 ```
-read https://raw.githubusercontent.com/responsibleai/assert-action/main/ONBOARD.md
+read https://raw.githubusercontent.com/changliu2/assert-ai-action/main/ONBOARD.md
 ```
 
 ## Output format
