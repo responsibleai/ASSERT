@@ -183,18 +183,51 @@ class ValidateEndpointUrlTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg="blocked IP range"):
                 validate_endpoint_url("http://evil-rebind.attacker.com/api")
 
-    def test_dns_failure_allows_passthrough(self) -> None:
+    def test_dns_failure_fails_closed(self) -> None:
+        """An unresolvable host cannot be checked, so it must be rejected."""
         with patch(
             "assert_ai.core.security.socket.getaddrinfo",
             side_effect=socket.gaierror("Name resolution failed"),
         ):
-            # Should not raise — will fail at connection time
-            validate_endpoint_url("http://nonexistent.example.com/api")
+            with self.assertRaises(ValueError):
+                validate_endpoint_url("https://nonexistent.example.com/api")
+
+    def test_dns_failure_passthrough_requires_explicit_opt_in(self) -> None:
+        with patch(
+            "assert_ai.core.security.socket.getaddrinfo",
+            side_effect=socket.gaierror("Name resolution failed"),
+        ):
+            with patch.dict(
+                "os.environ", {"ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS": "1"}
+            ):
+                validate_endpoint_url("https://nonexistent.example.com/api")
+
+    # ── Transport security ──
+
+    def test_plaintext_http_to_public_host_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_endpoint_url("http://93.184.216.34/api")
+
+    def test_plaintext_http_allowed_to_loopback(self) -> None:
+        """localhost reaches the plaintext check and is permitted there."""
+        with patch("assert_ai.core.security.socket.getaddrinfo") as mock_dns:
+            validate_endpoint_url("http://localhost:8080/api")
+            mock_dns.assert_not_called()
+
+    def test_plaintext_http_allowed_with_explicit_opt_in(self) -> None:
+        fake_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+        ]
+        with patch(
+            "assert_ai.core.security.socket.getaddrinfo", return_value=fake_addrinfo
+        ):
+            with patch.dict("os.environ", {"ASSERT_ALLOW_PLAINTEXT_HTTP": "1"}):
+                validate_endpoint_url("http://api.example.com/v1/chat")
 
     # ── Allowed URLs ──
 
-    def test_public_ip_allowed(self) -> None:
-        validate_endpoint_url("http://93.184.216.34/api")
+    def test_public_ip_over_tls_allowed(self) -> None:
+        validate_endpoint_url("https://93.184.216.34/api")
 
     def test_public_hostname_with_public_ip_allowed(self) -> None:
         fake_addrinfo = [

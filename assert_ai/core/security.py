@@ -147,6 +147,30 @@ _LOCAL_DEV_HOSTNAMES = {
 }
 
 
+def _env_flag(name: str) -> bool:
+    """Return True when environment variable ``name`` is set to a truthy value."""
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Return True when ``hostname`` names the local machine without a DNS lookup."""
+    if hostname.lower() in _LOCAL_DEV_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_plaintext_permitted(hostname: str) -> bool:
+    """Return True when plaintext HTTP is acceptable for ``hostname``.
+
+    Loopback traffic never leaves the machine, so TLS adds no confidentiality
+    there. Everything else requires an explicit operator opt-out.
+    """
+    return _is_loopback_host(hostname) or _env_flag("ASSERT_ALLOW_PLAINTEXT_HTTP")
+
+
 def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
     """Validate an HTTP endpoint URL to prevent SSRF attacks.
 
@@ -204,20 +228,51 @@ def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
         if hostname.lower() not in _LOCAL_DEV_HOSTNAMES:
             _validate_resolved_ips(hostname)
 
+    # Transport security, checked last so that an SSRF verdict on a blocked host
+    # is reported as such. Plaintext HTTP is permitted only to loopback, where the
+    # traffic never traverses a network, or behind an explicit opt-out. Otherwise
+    # the whole evaluation — prompts, responses, and any bearer token — is
+    # readable by anything on the path.
+    if parsed.scheme == "http" and not _is_plaintext_permitted(hostname):
+        raise ValueError(
+            f"Endpoint '{url}' uses plaintext HTTP. Use https, or set "
+            "ASSERT_ALLOW_PLAINTEXT_HTTP=1 to allow plaintext for a local test server."
+        )
+
 
 def _validate_resolved_ips(hostname: str) -> None:
     """Resolve a hostname via DNS and validate all returned IPs against blocked ranges.
+
+    Fails closed: a hostname that cannot be resolved is rejected rather than
+    allowed through. Letting an unresolvable name pass means the guard is
+    skipped entirely whenever an attacker can make resolution fail here but
+    succeed in the HTTP client.
+
+    Set ``ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS=1`` on split-horizon networks where
+    the validating process genuinely cannot resolve a legitimate internal name.
+
+    Note: this check remains time-of-check/time-of-use. The HTTP client resolves
+    the name again when it connects, and a short-TTL record can change between
+    the two lookups. Closing that gap requires pinning the validated address at
+    the transport layer, which is not done here.
 
     Raises ValueError if any resolved IP falls within a blocked range.
     """
     try:
         addrinfo = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        # If DNS resolution fails, allow the request through — it will fail
-        # at connection time with a clear error. This avoids false positives
-        # for hosts that are only resolvable from certain networks.
-        log.debug("DNS resolution failed for '%s'; skipping IP validation", hostname)
-        return
+    except socket.gaierror as e:
+        if _env_flag("ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS"):
+            log.warning(
+                "DNS resolution failed for '%s'; allowed by "
+                "ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS. SSRF checks did not run.",
+                hostname,
+            )
+            return
+        raise ValueError(
+            f"URL hostname '{hostname}' could not be resolved, so it cannot be "
+            "checked against blocked IP ranges. Set "
+            "ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS=1 to allow unresolvable hosts."
+        ) from e
 
     for family, _type, _proto, _canonname, sockaddr in addrinfo:
         ip_str = sockaddr[0]
