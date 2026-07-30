@@ -281,8 +281,12 @@ class RunManifest:
 
     def to_dict(self) -> dict[str, Any]:
         empty_collection_keys = {"artifact_versions", "stage_timings"}
-        return {
+        payload = {
             k: v
             for k, v in asdict(self).items()
             if v is not None and not (k in empty_collection_keys and not v)
         }
+        # Self-describing, so an older reader can tell it is looking at a
+        # manifest it may not fully understand.
+        payload["schema_version"] = 1
+        return payload

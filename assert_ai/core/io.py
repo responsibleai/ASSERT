@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from importlib.resources import files as _resource_files
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -19,6 +20,127 @@ from typing import Any, Dict, Iterable
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+# Version of the primary artifact contracts: taxonomy.json, test_set.jsonl,
+# inference_set.jsonl, scores.jsonl, manifest.json. Bump when a change would
+# make an older reader misinterpret an artifact rather than merely miss a field.
+ARTIFACT_SCHEMA_VERSION = 1
+
+_SCHEMA_SIDECAR_SUFFIX = ".schema.json"
+
+
+def write_artifact_schema(
+    artifact_path: Path,
+    *,
+    artifact: str,
+    version: int = ARTIFACT_SCHEMA_VERSION,
+) -> Path:
+    """Record the schema version of a JSONL artifact in a sidecar file.
+
+    Only ``metrics.json`` carried a ``schema_version``; the primary artifacts did
+    not, so one produced by a newer ASSERT is consumed silently by an older
+    viewer or analysis script. For a tool whose output is meant to be durable
+    evaluation evidence, the artifacts should say what they are.
+
+    A sidecar is used rather than a header line inside the JSONL. A header would
+    be read as a data record by any reader that does not know about it -
+    including the previous version of ASSERT - which turns a version stamp into
+    a corrupt first row. A sidecar is ignored harmlessly instead.
+    """
+    sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
+    write_json(
+        sidecar,
+        {"artifact": artifact, "schema_version": version},
+    )
+    return sidecar
+
+
+def read_artifact_schema_version(artifact_path: Path) -> int | None:
+    """Return the recorded schema version for an artifact, if there is one."""
+    sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
+    if not sidecar.exists():
+        return None
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = payload.get("schema_version") if isinstance(payload, dict) else None
+    return version if isinstance(version, int) else None
+
+
+def check_artifact_schema(artifact_path: Path) -> bool:
+    """Warn when an artifact was written by an incompatible ASSERT version.
+
+    Returns True when the artifact is safe to read. An artifact with no recorded
+    version predates the stamp and is assumed compatible, so existing runs keep
+    working.
+    """
+    version = read_artifact_schema_version(artifact_path)
+    if version is None or version == ARTIFACT_SCHEMA_VERSION:
+        return True
+    if version > ARTIFACT_SCHEMA_VERSION:
+        log.warning(
+            "%s was written with artifact schema v%d but this ASSERT understands "
+            "v%d. Fields may be missing or mean something different; read the "
+            "results with care.",
+            artifact_path.name, version, ARTIFACT_SCHEMA_VERSION,
+        )
+    else:
+        log.warning(
+            "%s uses artifact schema v%d, older than this ASSERT's v%d.",
+            artifact_path.name, version, ARTIFACT_SCHEMA_VERSION,
+        )
+    return False
+
+
+def archive_artifact(path: Path, *, reason: str) -> Path | None:
+    """Move a stale artifact aside instead of deleting it.
+
+    Resume and ``--force-stage`` previously called ``unlink()`` on
+    ``inference_set.jsonl`` and ``scores.jsonl``. Those files are the evaluation
+    evidence - every transcript, every verdict - and a config hash mismatch is
+    not always the operator's intention. Deleting them outright means an
+    accidental edit costs a full re-run, and the fact that anything was
+    destroyed is not recorded anywhere.
+
+    The file is renamed to ``<name>.<UTC timestamp>.bak`` beside the original
+    and the new path is logged. Returns the backup path, or ``None`` when the
+    file did not exist.
+
+    Backups are never pruned automatically, because pruning evidence is the
+    behaviour being fixed. Set ``ASSERT_DISCARD_STALE_ARTIFACTS=1`` to restore
+    the previous delete-outright behaviour.
+    """
+    if not path.exists():
+        return None
+
+    if os.environ.get("ASSERT_DISCARD_STALE_ARTIFACTS", "").lower() in ("1", "true", "yes"):
+        path.unlink()
+        log.info("Discarded %s (%s); ASSERT_DISCARD_STALE_ARTIFACTS is set", path, reason)
+        return None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    backup = path.with_name(f"{path.name}.{stamp}.bak")
+    suffix = 1
+    while backup.exists():
+        backup = path.with_name(f"{path.name}.{stamp}.{suffix}.bak")
+        suffix += 1
+
+    try:
+        path.rename(backup)
+    except OSError as e:
+        # Preserving the file is best-effort. Failing the stage because a backup
+        # could not be written would be worse than proceeding, but the operator
+        # needs to know the evidence is about to go.
+        log.warning(
+            "Could not preserve %s as a backup (%s); removing it instead (%s)",
+            path, e, reason,
+        )
+        path.unlink(missing_ok=True)
+        return None
+
+    log.info("Preserved %s as %s (%s)", path.name, backup.name, reason)
+    return backup
 
 
 def resolve_path(path: str | Path) -> Path:
