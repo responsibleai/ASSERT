@@ -7,6 +7,19 @@ The callable target has two integration paths:
 - **Recommended (happy path):** OTel-traced agent — central auto-instrumentation helper across supported OpenInference frameworks. The judge cites tool calls, routing decisions, model calls, and latency as evidence.
 - **Customization:** for unsupported frameworks (emit your own OTel spans) or for cases where instrumentation is impossible or unnecessary (plain callable / HTTP endpoint, no traces).
 
+> ## Security model
+>
+> **A config naming a callable is executable content.** `target.callable` and
+> `target.tools.module` cause ASSERT to import and execute the Python module you name,
+> in-process, with your full user privileges — including access to your `.env` credentials.
+> Importing a module runs its top-level code, so execution begins before any evaluation
+> does. The guard in front of the import rejects a small set of path substrings; it is a
+> hygiene filter, not a sandbox.
+>
+> Only run configs you wrote or have reviewed. See
+> [Concepts › Security model](../concepts.md#security-model) for the full statement,
+> including artifact sensitivity and the supported deployment.
+
 ## What the judge sees, by integration path
 
 Pick the path that exposes enough internals for the judge to score what matters. OTel is recommended because every other path is strictly narrower.

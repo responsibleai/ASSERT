@@ -101,6 +101,29 @@ Use of this system may also result in meaningful compute and inference costs. Yo
 - **This is not a substitute for human review.** High-stakes conclusions should be supported by expert review, grounded evidence, and, where appropriate, additional statistical validation.
 - **Reproducibility may be imperfect.** Results can vary across model versions, deployments, tool backends, and runtime settings.
 
+## Security model
+
+**An ASSERT eval config is executable content.** `target.callable`, `target.connector` and
+`target.tools.module` cause ASSERT to import and execute the Python module you name,
+in-process, with your full user privileges — including access to your `.env` credentials.
+The guard in front of that import rejects a small set of path substrings; it is a hygiene
+filter, not a sandbox. Treat a config file exactly as you would treat source code: only run
+configs you wrote or have reviewed.
+
+**Evaluation artifacts may contain sensitive data.** `inference_set.jsonl` records full
+transcripts, and — when OpenTelemetry trace capture is enabled — tool arguments and tool
+results verbatim. `test_set.jsonl` is by construction a corpus of working adversarial
+prompts against your system. Handle both accordingly, and prefer a short retention window.
+
+**The local viewer is unauthenticated.** It binds `127.0.0.1` and must stay there. Do not
+expose it with `--host`, port-forwarding, or on a shared machine.
+
+**Supported deployment.** A single-tenant developer workstation. ASSERT is not currently
+designed to run as a shared or hosted multi-user service. On a shared build agent, a config
+arriving in a pull request would execute on that agent.
+
+To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+
 ## Related docs
 
 - [Getting Started](getting-started.md)

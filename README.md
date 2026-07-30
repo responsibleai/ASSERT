@@ -66,6 +66,27 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
         </tr>
 </table>
 
+## Security model
+
+**An ASSERT eval config is executable content.** `target.callable`, `target.connector` and
+`target.tools.module` cause ASSERT to import and execute the Python module you name,
+in-process, with your full user privileges — including access to your `.env` credentials.
+Treat a config file exactly as you would treat source code: only run configs you wrote or
+have reviewed.
+
+**Evaluation artifacts may contain sensitive data.** `inference_set.jsonl` records full
+transcripts, and — when OpenTelemetry trace capture is enabled — tool arguments and tool
+results verbatim. `test_set.jsonl` is by construction a corpus of working adversarial
+prompts against your system. Handle both accordingly.
+
+**The local viewer is unauthenticated.** It binds `127.0.0.1` and must stay there. Do not
+expose it with `--host`, port-forwarding, or on a shared machine.
+
+**Supported deployment.** A single-tenant developer workstation. ASSERT is not currently
+designed to run as a shared or hosted multi-user service.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Acknowledgments
 
 ASSERT's core method is **AI-assisted systematization** — turning a broad, contested behavior concept into an explicit, measurable specification — following **[Agarwal et al. (2026), *AI-Assisted Systematization for Evaluating GenAI Systems*](https://www.microsoft.com/en-us/research/publication/ai-assisted-systematization-for-evaluating-genai-systems/)** from Microsoft Research. The staged pipeline that turns that specification into generated scenarios, runs them against a target, and judges the results is modeled in spirit on the design of **[Bloom](https://github.com/safety-research/bloom)** and **[Petri](https://github.com/safety-research/petri)**, open-source behavioral-evaluation frameworks from the Anthropic alignment team (Safety Research, MIT licensed).

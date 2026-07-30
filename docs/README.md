@@ -18,6 +18,7 @@ Begin with the essential overview and first-run walkthrough.
 
 - [Getting Started](getting-started.md): Run your first evaluation with a canonical example
 - [Concepts](concepts.md): Understand the concepts of the ASSERT evaluation framework, its pipeline mental model and key terminology.
+- [Security model](concepts.md#security-model): **Read before running a config you did not write** — an eval config is executable content, and artifacts may contain sensitive data.
 
 ## How-to guides
 

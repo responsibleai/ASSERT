@@ -2,6 +2,18 @@
 
 This page documents the `eval_config.yaml` schema for the standard `behavior -> systematize -> test_set -> inference -> judge` pipeline.
 
+> ## Security model
+>
+> **An ASSERT eval config is executable content.** The `target.callable`,
+> `target.connector` and `target.tools.module` keys documented on this page cause ASSERT to
+> import and execute the Python module you name, in-process, with your full user privileges
+> — including access to your `.env` credentials. Treat a config file exactly as you would
+> treat source code: only run configs you wrote or have reviewed.
+>
+> Evaluation artifacts may contain sensitive data, the local viewer is unauthenticated, and
+> the supported deployment is a single-tenant developer workstation. See
+> [Concepts › Security model](../concepts.md#security-model) for the full statement.
+
 ## Top-level keys
 
 ### `suite`

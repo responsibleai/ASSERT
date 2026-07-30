@@ -39,3 +39,32 @@ We prefer all communications to be in English.
 Microsoft follows the principle of [Coordinated Vulnerability Disclosure](https://aka.ms/security.md/cvd).
 
 <!-- END MICROSOFT SECURITY.MD BLOCK -->
+
+## ASSERT security model
+
+The section below is specific to this project. It describes intended, documented behaviour —
+not vulnerabilities — so that operators can make an informed decision before running ASSERT.
+
+**An ASSERT eval config is executable content.** `target.callable`, `target.connector` and
+`target.tools.module` cause ASSERT to import and execute the Python module you name,
+in-process, with your full user privileges — including access to your `.env` credentials.
+Importing a module runs its top-level code, so execution begins before any evaluation does.
+The guard in front of the import rejects a small set of path substrings; it is a hygiene
+filter, not a sandbox. Treat a config file exactly as you would treat source code: only run
+configs you wrote or have reviewed.
+
+**Evaluation artifacts may contain sensitive data.** `inference_set.jsonl` records full
+transcripts, and — when OpenTelemetry trace capture is enabled — tool arguments and tool
+results verbatim. `test_set.jsonl` is by construction a corpus of working adversarial
+prompts against your system. Handle both accordingly, and prefer a short retention window.
+
+**The local viewer is unauthenticated.** It binds `127.0.0.1` and must stay there. Do not
+expose it with `--host`, port-forwarding, or on a shared machine.
+
+**Supported deployment.** A single-tenant developer workstation. ASSERT is not currently
+designed to run as a shared or hosted multi-user service. On a shared build agent, a config
+arriving in a pull request would execute on that agent.
+
+If you believe you have found a vulnerability that goes beyond the behaviour described here,
+please report it through MSRC as described above rather than in a public issue.
+
