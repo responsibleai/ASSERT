@@ -64,7 +64,22 @@ class AutoTraceTest(unittest.TestCase):
         mock_register.assert_not_called()
         self.assertFalse(self.auto_trace._enabled)
 
-    def test_probes_default_otlp_and_phoenix_ports(self) -> None:
+    def test_does_not_probe_ports_by_default(self) -> None:
+        """A local listener must not silently turn on trace egress."""
+        mock_register = MagicMock()
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+
+        with patch.dict("sys.modules", {"phoenix.otel": MagicMock(register=mock_register)}, clear=False), \
+             patch.dict("os.environ", {}, clear=True), \
+             patch.object(self.auto_trace, "_enable_entrypoint_instrumentors"), \
+             patch.object(self.auto_trace.socket, "create_connection", return_value=connection) as mock_connect:
+            self.assertFalse(self.auto_trace.enable())
+
+        mock_connect.assert_not_called()
+        mock_register.assert_not_called()
+
+    def test_probes_default_otlp_and_phoenix_ports_when_opted_in(self) -> None:
         mock_register = MagicMock()
         calls: list[tuple[tuple[str, int], float | None]] = []
 
@@ -77,7 +92,7 @@ class AutoTraceTest(unittest.TestCase):
             return connection
 
         with patch.dict("sys.modules", {"phoenix.otel": MagicMock(register=mock_register)}, clear=False), \
-             patch.dict("os.environ", {}, clear=True), \
+             patch.dict("os.environ", {"ASSERT_TRACE_AUTODETECT": "1"}, clear=True), \
              patch.object(self.auto_trace, "_enable_entrypoint_instrumentors"), \
              patch.object(self.auto_trace.socket, "create_connection", side_effect=fake_create_connection):
             self.assertTrue(self.auto_trace.enable())

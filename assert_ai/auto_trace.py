@@ -33,18 +33,32 @@ def _can_connect(host: str, port: int, *, timeout: float) -> bool:
 
 
 def _collector_available(*, timeout: float = 0.1) -> bool:
-    """Detect whether Phoenix/OTLP export is explicitly configured or local."""
+    """Detect whether Phoenix/OTLP export is explicitly configured.
+
+    Export sends tool arguments, tool results, and message content off the
+    machine, so it is enabled only when the operator asks for it. Earlier
+    versions probed localhost:4317 and localhost:6006 and enabled export if
+    anything answered, which meant an unrelated local listener silently turned
+    on continuous egress. That probe is now behind ASSERT_TRACE_AUTODETECT=1.
+    """
     if os.environ.get("PHOENIX_DISABLE_AUTO_INSTRUMENT") == "1":
         return False
 
     for name in ("PHOENIX_COLLECTOR_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"):
-        if os.environ.get(name):
-            log.info("%s is set; enabling Phoenix export", name)
+        endpoint = os.environ.get(name)
+        if endpoint:
+            log.info("%s is set; enabling Phoenix export to %s", name, endpoint)
             return True
 
     if os.environ.get("ASSERT_EXPORT_TRACES", "").strip() == "1":
-        log.info("ASSERT_EXPORT_TRACES=1; enabling Phoenix export")
+        log.info(
+            "ASSERT_EXPORT_TRACES=1; enabling Phoenix export to the default "
+            "local collector endpoint"
+        )
         return True
+
+    if os.environ.get("ASSERT_TRACE_AUTODETECT", "").strip() != "1":
+        return False
 
     ports: list[int] = []
     grpc_port = os.environ.get("PHOENIX_GRPC_PORT", "")
@@ -58,6 +72,12 @@ def _collector_available(*, timeout: float = 0.1) -> bool:
             continue
         seen.add(port)
         if _can_connect("localhost", port, timeout=timeout):
+            log.warning(
+                "ASSERT_TRACE_AUTODETECT=1: detected a listener on localhost:%d "
+                "and enabling trace export to it. Span content including tool "
+                "arguments and results will be sent to that endpoint.",
+                port,
+            )
             return True
     return False
 
