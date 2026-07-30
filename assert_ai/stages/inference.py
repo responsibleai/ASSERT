@@ -53,6 +53,7 @@ from assert_ai.core.session import (
     TurnResult,
     serialize_response,
 )
+from assert_ai.core.prompt_safety import fill_template, wrap_untrusted
 from assert_ai.core.tool_backend import ToolBackendResolver, inspect_tool_module
 from assert_ai.core.tools import load_toolset_file, normalize_tool_defs
 from assert_ai.core.transcript import (
@@ -170,6 +171,8 @@ def _inference_config_fingerprint(
         sort_keys=True,
     )
     return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+DESCRIPTION_TAG = "untrusted_scenario"
 
 TESTER_SYSTEM_PROMPT = load_prompt_text("inference_tester_system.md")
 TOOL_SIM_PROMPT = load_prompt_text("inference_toolsim_user.md")
@@ -944,8 +947,15 @@ async def _run_scenario_test_case(
         )
     )
 
-    system_prompt = TESTER_SYSTEM_PROMPT.replace("{{description}}", str(test_case_data.get("description") or ""))
-    system_prompt = system_prompt.replace("{{max_turns}}", str(evaluation.inference.max_turns))
+    system_prompt = fill_template(
+        TESTER_SYSTEM_PROMPT,
+        {
+            "description": wrap_untrusted(
+                str(test_case_data.get("description") or ""), DESCRIPTION_TAG
+            ),
+            "max_turns": str(evaluation.inference.max_turns),
+        },
+    )
 
     target_messages: list[Message] = []
     target_system_prompt = str(target.system_prompt or "").strip() or None

@@ -15,6 +15,7 @@ from assert_ai.core.config_model import DEFAULT_JUDGE_MAX_TOKENS, DEFAULT_MODEL_
 from assert_ai.core.judge_citations import CITE_XML_EXAMPLE, CITE_XML_PATTERN, extract_xml_citations
 from assert_ai.core.judge_normalization import _normalize_transcript_judge_verdict_impl
 from assert_ai.core.model_client import GenerateOptions, Message, generate, generate_structured
+from assert_ai.core.prompt_safety import fill_template, wrap_untrusted
 from assert_ai.core.transcript import Transcript
 
 log = logging.getLogger(__name__)
@@ -363,6 +364,10 @@ def render_dimensions_prompt(dimensions: list[JudgeDimension]) -> str:
     return "\n".join(lines)
 
 
+TAXONOMY_TAG = "untrusted_taxonomy"
+DIMENSIONS_TAG = "untrusted_dimensions"
+
+
 def render_taxonomy_json(taxonomy: Dict[str, Any]) -> str:
     """Render taxonomy as structured JSON for judge consumption."""
     return json.dumps(taxonomy or {}, indent=2, ensure_ascii=True)
@@ -431,12 +436,23 @@ def build_judge_system_prompt(
     policy_raw: Dict[str, Any],
     dimensions: list[JudgeDimension],
 ) -> str:
-    """Assemble the judge system prompt with taxonomy and dimension sections."""
-    return (
-        template
-        .replace("{{taxonomy_json}}", render_taxonomy_json(policy_raw))
-        .replace("{{dimensions_section}}", render_dimensions_prompt(dimensions))
-        .replace("{{output_schema}}", render_output_schema(dimensions, include_citations=True))
+    """Assemble the judge system prompt with taxonomy and dimension sections.
+
+    The taxonomy and dimension text originate outside ASSERT, so both are fenced
+    in named tags that the template declares as data. Substitution is a single
+    pass so a placeholder appearing inside either value is never expanded.
+    """
+    return fill_template(
+        template,
+        {
+            "taxonomy_json": wrap_untrusted(
+                render_taxonomy_json(policy_raw), TAXONOMY_TAG
+            ),
+            "dimensions_section": wrap_untrusted(
+                render_dimensions_prompt(dimensions), DIMENSIONS_TAG
+            ),
+            "output_schema": render_output_schema(dimensions, include_citations=True),
+        },
     )
 
 
