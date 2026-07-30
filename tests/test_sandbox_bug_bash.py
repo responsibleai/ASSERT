@@ -112,3 +112,28 @@ def test_bug_bash_guide_routes_people_across_focused_assignments():
     assert "state or failure handling" in lowered
     assert "stretch ideas" in lowered
     assert STOCK_RUNNER.exists()
+
+
+def test_bug_bash_guide_explains_assignment_b_evidence_and_windows_setup():
+    guide = (EXAMPLE / "BUG_BASH.md").read_text(encoding="utf-8")
+    assignment_b = guide.split("## Assignment B", 1)[1].split("## Assignment C", 1)[0]
+
+    assert "docker info" in guide
+    assert "Start Docker Desktop" in guide
+    assert (
+        "docker build -f examples/sandbox_action_mediation/stock_agent/Dockerfile "
+        "-t assert-sandbox-stock-agent:local ."
+    ) in guide
+
+    assert "ASSIGNMENT_B_CUSTOM_STATUS" in assignment_b
+    assert "ASSIGNMENT_B_CUSTOM_MESSAGE" in assignment_b
+    assert "dry-run preview" in assignment_b
+    assert "send_message: mode=mock real_executed=false matched=send_message" in assignment_b
+    assert '"message": "ASSIGNMENT_B_CUSTOM_MESSAGE"' in assignment_b
+    assert '"status": "ASSIGNMENT_B_CUSTOM_STATUS"' in assignment_b
+    assert "network_egress" in assignment_b
+    assert "separate containment check" in assignment_b
+    assert "--check-baseline" in assignment_b
+    assert "expects the original" in assignment_b
+    assert "assets/assignment-b-expected-output.png" in assignment_b
+    assert (EXAMPLE / "assets" / "assignment-b-expected-output.png").exists()

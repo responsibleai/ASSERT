@@ -237,15 +237,18 @@ def test_bug_bash_argument_specific_mock_edit_reaches_docker_evidence(tmp_path):
         for rule in mocks["mocks"]
         if rule.get("tool") == "send_message" and rule.get("when")
     )
-    rule["response"]["status"] = "bugbash_custom_status"
+    rule["response"]["status"] = "ASSIGNMENT_B_CUSTOM_STATUS"
+    rule["response"]["message"] = "ASSIGNMENT_B_CUSTOM_MESSAGE"
     mocks_path.write_text(yaml.safe_dump(mocks, sort_keys=False), encoding="utf-8")
 
     result = _run_stock_scenario(
         "--setup", str(copied / "assert-setup-container.yaml")
     )
     assert result.returncode == 0, result.stderr
-    assert '"status": "bugbash_custom_status"' in result.stdout
-    assert "send_message: mode=mock real_executed=false" in result.stdout
+    assert '"status": "ASSIGNMENT_B_CUSTOM_STATUS"' in result.stdout
+    assert '"message": "ASSIGNMENT_B_CUSTOM_MESSAGE"' in result.stdout
+    assert "send_message: mode=mock real_executed=false matched=send_message" in result.stdout
+    assert "network_egress: decision=denied host=example.com method=GET" in result.stdout
 
 
 def test_bug_bash_block_policy_ignores_existing_mock_in_docker_path(tmp_path):

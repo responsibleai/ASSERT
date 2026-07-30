@@ -25,6 +25,15 @@ scenarios. Do not read or complete every scenario.
 
 From a clean checkout of `jake/action-mediation-bugbash`:
 
+Start Docker Desktop on Windows/macOS, or start the Docker daemon on Linux. Do
+not continue until this command succeeds:
+
+```bash
+docker info
+```
+
+For bash/zsh:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -37,8 +46,17 @@ docker build \
 python examples/sandbox_action_mediation/run_stock_scenario.py --check-baseline
 ```
 
-PowerShell activation is `.\.venv\Scripts\Activate.ps1`; the remaining commands
-are the same when Docker Desktop is available.
+For PowerShell, use the one-line Docker build command instead of bash-style `\`
+line continuations:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+docker info
+docker build -f examples/sandbox_action_mediation/stock_agent/Dockerfile -t assert-sandbox-stock-agent:local .
+python examples/sandbox_action_mediation/run_stock_scenario.py --check-baseline
+```
 
 The baseline should print the artifact path and report:
 
@@ -74,8 +92,19 @@ for unclear evidence and documentation friction, not only crashes.
 or Dockerfile?
 
 1. In `mocks.yaml`, find the `send_message` rule for recipients that are not
-   `555-123-2002` and give its response an unmistakable status or message.
-2. Check the setup and rule before running Docker:
+   `555-123-2002`. Change only that rule's response to include these exact values
+   so they are easy to recognize later:
+
+```yaml
+response:
+  status: ASSIGNMENT_B_CUSTOM_STATUS
+  message: ASSIGNMENT_B_CUSTOM_MESSAGE
+  message_id: msg-mock-0002
+  delivered_at: "2026-07-28T12:00:00Z"
+```
+
+2. Validate the setup, then use `resolve` as a **dry-run preview** of the policy
+   and mock rules for the same arguments the sample agent will use:
 
 ```bash
 python -m assert_ai.integrations.sandbox.cli validate \
@@ -86,13 +115,44 @@ python -m assert_ai.integrations.sandbox.cli resolve \
   send_message --args '{"recipient":"555-000-9999","channel":"sms"}'
 ```
 
-3. Run the Docker scenario without `--check-baseline`:
+The preview should report `policy: mode=mock` and show both custom values under
+`agent would receive`. This does not start Docker or call the agent. It confirms
+that the edited rule will be selected for those arguments.
+
+3. Run the end-to-end Docker scenario **without** `--check-baseline`:
 
 ```bash
 python examples/sandbox_action_mediation/run_stock_scenario.py
 ```
 
-4. Confirm the edited response appears in action evidence.
+`--check-baseline` expects the original `status: sent`, so it would intentionally
+fail after this edit. Running without the flag still executes the container and
+prints its evidence without comparing the response to the original fixture.
+
+4. Find this `send_message` evidence block in the output:
+
+```text
+send_message: mode=mock real_executed=false matched=send_message
+  returned={..., "message": "ASSIGNMENT_B_CUSTOM_MESSAGE", ..., "status": "ASSIGNMENT_B_CUSTOM_STATUS"}
+```
+
+Assignment B succeeds when `mode=mock`, `real_executed=false`, and both edited
+values appear inside `send_message.returned`. That is the end-to-end confirmation
+that the real container used the same mock predicted by `resolve`.
+
+The output also contains this independent line:
+
+```text
+network_egress: decision=denied host=example.com method=GET
+```
+
+This is a **separate containment check** made by the sample agent during the same
+turn. It does not describe `send_message`, and it does not mean the edited mock
+failed. A successful run is expected to show both the custom `send_message`
+response and the denied `network_egress` probe.
+
+![Expected Assignment B output showing the custom send_message response and the separate denied egress check](assets/assignment-b-expected-output.png)
+
 5. Add one narrower rule or mismatched argument and explore whether specificity,
    fallback behavior, and validation are understandable.
 
