@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from assert_ai.core.io import PROMPTS_DIR, write_json
+from assert_ai.core.io import file_sha256 as _file_sha256
 
 
 log = logging.getLogger(__name__)
@@ -652,8 +653,10 @@ def hash_payload(payload: Any) -> str:
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# Re-exported so existing callers keep working. The implementation lives in
+# core.io, reads in chunks rather than loading the whole file, and is shared
+# with the artifact provenance sidecars so both compute the digest identically.
+file_sha256 = _file_sha256
 
 
 def _stage_descriptor(

@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 from assert_ai.config import resolve_stage_paths
 from assert_ai.core.io import SCORES_FILE, INFERENCE_SET_FILE, row_factors
-from assert_ai.core.io import append_jsonl_row, archive_artifact, load_jsonl, load_prompt_text, resolve_path, write_artifact_schema
+from assert_ai.core.io import append_jsonl_row, archive_artifact, assert_version, load_jsonl, load_prompt_text, resolve_path, write_artifact_schema
 from assert_ai.core.judge import (
     build_judge_contract,
     infer_judge_status,
@@ -520,7 +520,15 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
     )
     scores_out = Path(result["scores_path"])
     if scores_out.exists():
-        write_artifact_schema(scores_out, artifact="scores")
+        write_artifact_schema(
+            scores_out,
+            artifact="scores",
+            produced_by={
+                "stage": "judge",
+                "assert_version": assert_version(),
+                "run_id": str(ctx.get("run_id") or ""),
+            },
+        )
     return {
         "scores_path": result["scores_path"],
         "_summary": {

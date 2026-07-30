@@ -34,6 +34,7 @@ from assert_ai.core.io import (
     INFERENCE_SET_FILE,
     append_jsonl_row,
     archive_artifact,
+    assert_version,
     get_permissible_flag,
     load_jsonl,
     load_prompt_text,
@@ -1379,7 +1380,16 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target_model = target_obj.model.name or ""
     inference_set_out = Path(result["inference_set_path"])
     if inference_set_out.exists():
-        write_artifact_schema(inference_set_out, artifact="inference_set")
+        write_artifact_schema(
+            inference_set_out,
+            artifact="inference_set",
+            produced_by={
+                "stage": "inference",
+                "assert_version": assert_version(),
+                "target_model": target_model,
+                "run_id": str(ctx.get("run_id") or ""),
+            },
+        )
     return {
         "inference_set_path": result["inference_set_path"],
         "test_set_artifact_version": test_set_artifact_ref,

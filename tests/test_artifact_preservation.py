@@ -15,8 +15,10 @@ from unittest.mock import patch
 from assert_ai.core.io import (
     ARTIFACT_SCHEMA_VERSION,
     archive_artifact,
+    assert_version,
     check_artifact_schema,
     read_artifact_schema_version,
+    verify_artifact_provenance,
     write_artifact_schema,
 )
 
@@ -144,3 +146,60 @@ class TestArtifactSchema:
 
         payload = RunManifest(started_at="2026-01-01T00:00:00Z").to_dict()
         assert payload["schema_version"] == 1
+
+
+class TestArtifactProvenance:
+    def test_records_producing_stage_and_version(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scores.jsonl"
+            path.write_text("{}\n", encoding="utf-8")
+            sidecar = write_artifact_schema(
+                path,
+                artifact="scores",
+                produced_by={"stage": "judge", "assert_version": "9.9.9"},
+            )
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+            assert payload["produced_by"]["stage"] == "judge"
+            assert payload["produced_by"]["assert_version"] == "9.9.9"
+            assert len(payload["content_sha256"]) == 64
+
+    def test_untouched_artifact_verifies(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scores.jsonl"
+            path.write_text('{"a": 1}\n', encoding="utf-8")
+            write_artifact_schema(path, artifact="scores")
+            assert verify_artifact_provenance(path) is True
+
+    def test_edited_artifact_fails_verification(self):
+        """A stage cannot otherwise tell its input from an edited file."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scores.jsonl"
+            path.write_text('{"policy_violation": true}\n', encoding="utf-8")
+            write_artifact_schema(
+                path, artifact="scores", produced_by={"stage": "judge"}
+            )
+
+            path.write_text('{"policy_violation": false}\n', encoding="utf-8")
+            assert verify_artifact_provenance(path) is False
+
+    def test_edit_is_reported_with_the_producing_stage(self, caplog):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scores.jsonl"
+            path.write_text("a", encoding="utf-8")
+            write_artifact_schema(
+                path, artifact="scores", produced_by={"stage": "judge"}
+            )
+            path.write_text("b", encoding="utf-8")
+            with caplog.at_level("WARNING"):
+                verify_artifact_provenance(path)
+            assert "judge" in caplog.text
+
+    def test_unstamped_artifact_still_verifies(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scores.jsonl"
+            path.write_text("{}\n", encoding="utf-8")
+            assert verify_artifact_provenance(path) is True
+
+    def test_version_is_read_from_package_metadata(self):
+        """A provenance record must not be able to claim a version it is not."""
+        assert assert_version() != "unknown"

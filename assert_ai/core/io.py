@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import os
 import re
 import tempfile
@@ -29,34 +30,73 @@ ARTIFACT_SCHEMA_VERSION = 1
 _SCHEMA_SIDECAR_SUFFIX = ".schema.json"
 
 
+def assert_version() -> str:
+    """Return the installed assert-ai version, or 'unknown' if unavailable.
+
+    Read from package metadata rather than hardcoded, so a provenance record
+    cannot claim a version the running code is not.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("assert-ai")
+    except Exception:  # noqa: BLE001 - provenance must never fail a stage
+        return "unknown"
+
+
 def write_artifact_schema(
     artifact_path: Path,
     *,
     artifact: str,
     version: int = ARTIFACT_SCHEMA_VERSION,
+    produced_by: Dict[str, Any] | None = None,
 ) -> Path:
-    """Record the schema version of a JSONL artifact in a sidecar file.
+    """Record schema version and provenance for an artifact in a sidecar file.
+
+    Two problems share one fix.
 
     Only ``metrics.json`` carried a ``schema_version``; the primary artifacts did
     not, so one produced by a newer ASSERT is consumed silently by an older
-    viewer or analysis script. For a tool whose output is meant to be durable
-    evaluation evidence, the artifacts should say what they are.
+    viewer or analysis script.
+
+    Separately, stages hand work to each other through files and no stage can
+    tell whether its input came from the previous stage, from a cache hit, or
+    from someone editing the file. Recording which stage and model produced an
+    artifact, together with a digest of its bytes, lets a consumer answer that.
 
     A sidecar is used rather than a header line inside the JSONL. A header would
     be read as a data record by any reader that does not know about it -
     including the previous version of ASSERT - which turns a version stamp into
     a corrupt first row. A sidecar is ignored harmlessly instead.
     """
+    payload: Dict[str, Any] = {
+        "artifact": artifact,
+        "schema_version": version,
+    }
+    try:
+        payload["content_sha256"] = file_sha256(artifact_path)
+    except OSError:
+        # A digest is useful, not essential; never fail a stage over it.
+        log.debug("Could not hash %s for its provenance sidecar", artifact_path)
+    if produced_by:
+        payload["produced_by"] = produced_by
+
     sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
-    write_json(
-        sidecar,
-        {"artifact": artifact, "schema_version": version},
-    )
+    write_json(sidecar, payload)
     return sidecar
 
 
-def read_artifact_schema_version(artifact_path: Path) -> int | None:
-    """Return the recorded schema version for an artifact, if there is one."""
+def file_sha256(path: Path) -> str:
+    """Return the hex sha256 of a file, read in chunks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_artifact_sidecar(artifact_path: Path) -> Dict[str, Any] | None:
+    """Return the parsed provenance sidecar for an artifact, if there is one."""
     sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
     if not sidecar.exists():
         return None
@@ -64,8 +104,45 @@ def read_artifact_schema_version(artifact_path: Path) -> int | None:
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    version = payload.get("schema_version") if isinstance(payload, dict) else None
+    return payload if isinstance(payload, dict) else None
+
+
+def read_artifact_schema_version(artifact_path: Path) -> int | None:
+    """Return the recorded schema version for an artifact, if there is one."""
+    payload = read_artifact_sidecar(artifact_path)
+    if payload is None:
+        return None
+    version = payload.get("schema_version")
     return version if isinstance(version, int) else None
+
+
+def verify_artifact_provenance(artifact_path: Path) -> bool:
+    """Warn when an artifact's bytes differ from what its producer recorded.
+
+    Returns True when the artifact matches, or when there is nothing to check
+    against - an unstamped artifact predates this and must stay readable.
+    """
+    payload = read_artifact_sidecar(artifact_path)
+    if payload is None:
+        return True
+    recorded = payload.get("content_sha256")
+    if not isinstance(recorded, str):
+        return True
+    try:
+        actual = file_sha256(artifact_path)
+    except OSError:
+        return True
+    if actual == recorded:
+        return True
+    producer = payload.get("produced_by") or {}
+    log.warning(
+        "%s does not match the digest recorded when %s produced it. The file "
+        "changed after it was written; results derived from it describe "
+        "something other than that stage's output.",
+        artifact_path.name,
+        producer.get("stage") or "the producing stage",
+    )
+    return False
 
 
 def check_artifact_schema(artifact_path: Path) -> bool:
