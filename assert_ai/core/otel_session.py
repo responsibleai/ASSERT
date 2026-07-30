@@ -29,6 +29,7 @@ from typing import Any
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.collector import SpanCollector
 from assert_ai.core.model_client import Message
+from assert_ai.core.security import sanitize_callable_ref
 from assert_ai.core.otel import (
     InMemoryTraceExporter,
     OTelSpan,
@@ -115,10 +116,9 @@ class OTelTracedSession:
         import io
         import sys
 
-        from assert_ai.core.security import validate_callable_ref
         from assert_ai.core.tool_backend import import_callable_module
 
-        validate_callable_ref(self._callable_ref)
+        sanitize_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
         if self._live_otel:
             from assert_ai import auto_trace

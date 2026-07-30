@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from assert_ai.core.async_utils import invoke_callable
+from assert_ai.core.security import sanitize_module_ref, validate_sys_path_addition
 
 log = logging.getLogger(__name__)
 
@@ -56,8 +57,6 @@ def _load_module_from_file(module_ref: str, path: Path) -> Any:
 
 @contextlib.contextmanager
 def _temporary_sys_path(path: Path, *, config_path: Path | None = None):
-    from assert_ai.core.security import validate_sys_path_addition
-
     validate_sys_path_addition(path, config_path=config_path)
     sys.path.insert(0, str(path))
     try:
@@ -85,9 +84,7 @@ def _module_classes(module: Any) -> list[type[Any]]:
 
 
 def load_tool_module(module_ref: str, *, config_path: Path | None = None) -> Any:
-    from assert_ai.core.security import validate_module_ref
-
-    validate_module_ref(module_ref, config_path=config_path)
+    sanitize_module_ref(module_ref, config_path=config_path)
 
     direct_path = Path(module_ref).expanduser()
     if _is_direct_module_path(module_ref):
@@ -154,7 +151,7 @@ def import_callable_module(module_ref: str, *, config_path: Path | None = None) 
     callable target defined in the user's repo resolves whether the user is
     running ``assert-ai`` from the repo root, from the config directory, or from
     elsewhere. The caller is expected to have validated ``module_ref`` via
-    :func:`assert_ai.core.security.validate_callable_ref` first.
+    :func:`assert_ai.core.security.sanitize_callable_ref` first.
     """
     return _smart_import(module_ref, config_path=config_path, kind="callable module")
 

@@ -30,8 +30,14 @@ _DANGEROUS_MODULE_PATTERNS = re.compile(
 )
 
 
-def validate_callable_ref(callable_ref: str, *, config_path: Path | None = None) -> None:
-    """Validate a callable reference before dynamic import.
+def sanitize_callable_ref(callable_ref: str, *, config_path: Path | None = None) -> None:
+    """Reject obviously-wrong callable references before dynamic import.
+
+    **This is a hygiene filter, not a security boundary.** It checks the shape of
+    the reference and rejects four path substrings. Any other importable module
+    named here will be imported and executed with the privileges of the ASSERT
+    process. A configuration file that can set ``target.callable`` is therefore
+    equivalent to arbitrary code execution, and must be trusted accordingly.
 
     Raises ValueError if the reference is malformed or contains disallowed path segments.
     """
@@ -53,8 +59,12 @@ def validate_callable_ref(callable_ref: str, *, config_path: Path | None = None)
         )
 
 
-def validate_module_ref(module_ref: str, *, config_path: Path | None = None) -> None:
-    """Validate a tool/connector module reference before dynamic import.
+def sanitize_module_ref(module_ref: str, *, config_path: Path | None = None) -> None:
+    """Reject obviously-wrong tool/connector module references before dynamic import.
+
+    **This is a hygiene filter, not a security boundary.** See
+    :func:`sanitize_callable_ref`: anything not matching the four disallowed path
+    substrings is imported and executed.
 
     Raises ValueError if the reference looks dangerous.
     """
@@ -65,6 +75,13 @@ def validate_module_ref(module_ref: str, *, config_path: Path | None = None) -> 
         raise ValueError(
             f"Module reference '{module_ref}' contains a disallowed path segment"
         )
+
+
+# Deprecated aliases. The previous names read as though the reference had been
+# validated against a policy, which is how a hygiene filter comes to be relied on
+# as a control. Kept for one release so external callers do not break.
+validate_callable_ref = sanitize_callable_ref
+validate_module_ref = sanitize_module_ref
 
 
 def validate_sys_path_addition(path: Path, *, config_path: Path | None = None) -> None:

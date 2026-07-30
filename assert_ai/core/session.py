@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from assert_ai.core.async_utils import invoke_callable
+from assert_ai.core.security import (
+    sanitize_callable_ref,
+    sanitize_module_ref,
+    validate_endpoint_url,
+)
 from assert_ai.core.model_client import (
     GenerateOptions,
     Message,
@@ -492,10 +497,9 @@ class CallableSession:
         return "callable"
 
     async def open(self) -> None:
-        from assert_ai.core.security import validate_callable_ref
         from assert_ai.core.tool_backend import import_callable_module
 
-        validate_callable_ref(self._callable_ref)
+        sanitize_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
         mod = import_callable_module(module_path, config_path=self._config_path)
         try:
@@ -652,8 +656,6 @@ class HTTPEndpointSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
     ) -> None:
-        from assert_ai.core.security import validate_endpoint_url
-
         validate_endpoint_url(endpoint)
         self._endpoint = endpoint
         self._headers = headers or {}
@@ -743,9 +745,7 @@ class ExternalSession:
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
     ) -> None:
-        from assert_ai.core.security import validate_module_ref
-
-        validate_module_ref(connector_ref, config_path=config_path)
+        sanitize_module_ref(connector_ref, config_path=config_path)
         connector_cls = _discover_connector_class(load_tool_module(connector_ref, config_path=config_path))
         self._startup_timeout_s = startup_timeout_s
         self._message_timeout_s = message_timeout_s
