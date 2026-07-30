@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import logging
 import sys
 import types
 import uuid
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from assert_ai.core.async_utils import invoke_callable
+
+log = logging.getLogger(__name__)
 
 
 def _search_roots(config_path: Path | None) -> list[tuple[str, Path]]:
@@ -315,12 +318,49 @@ def _tool_spec_from_method(method_name: str, method: Any) -> dict[str, Any]:
 
 
 def _derive_tool_schemas(tools_cls: type[Any]) -> list[dict[str, Any]]:
+    """Derive callable tool schemas from a tools class.
+
+    A class may declare ``__assert_tools__`` as an explicit allow-list of method
+    names. That is the recommended form: without it, every public method is
+    reachable by the model under test, so adding an ordinary helper to the class
+    silently widens the attack surface. The per-run call budget limits how many
+    calls are made, not which methods are available.
+
+    When no allow-list is declared the previous behaviour is kept, so existing
+    tools modules continue to work, but the exposed set is logged.
+    """
     reserved_methods = {"open", "close", "session_info"}
-    schemas = [
-        _tool_spec_from_method(name, member)
+    members = {
+        name: member
         for name, member in inspect.getmembers(tools_cls, predicate=inspect.isfunction)
         if name != "__init__" and not name.startswith("_") and name not in reserved_methods
-    ]
+    }
+
+    declared = getattr(tools_cls, "__assert_tools__", None)
+    if declared is not None:
+        if isinstance(declared, str) or not isinstance(declared, (list, tuple, set, frozenset)):
+            raise ValueError(
+                f"{tools_cls.__name__}.__assert_tools__ must be a list of method names"
+            )
+        allowed = list(dict.fromkeys(declared))
+        unknown = [name for name in allowed if name not in members]
+        if unknown:
+            raise ValueError(
+                f"{tools_cls.__name__}.__assert_tools__ names methods that are not "
+                f"public tool methods: {', '.join(sorted(unknown))}"
+            )
+        schemas = [_tool_spec_from_method(name, members[name]) for name in allowed]
+    else:
+        schemas = [_tool_spec_from_method(name, member) for name, member in members.items()]
+        if schemas:
+            log.warning(
+                "%s does not declare __assert_tools__, so all %d public methods are "
+                "exposed to the target: %s. Declare __assert_tools__ to restrict this.",
+                tools_cls.__name__,
+                len(schemas),
+                ", ".join(sorted(members)),
+            )
+
     if not schemas:
         raise ValueError(f"{tools_cls.__name__} does not define any public tool methods")
     return schemas
