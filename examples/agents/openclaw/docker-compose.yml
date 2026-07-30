@@ -1,5 +1,10 @@
 # OpenClaw eval container
 # Talked to via: docker exec <id> openclaw agent --session-id X --message "..." --json
+#
+# This container runs an agent that executes untrusted model output during
+# adversarial evaluation, so it is confined. Examples get copied into real
+# systems, so the isolation flags belong in the example itself rather than in a
+# note someone may not read.
 
 services:
   openclaw-gateway:
@@ -7,8 +12,30 @@ services:
     environment:
       - AZURE_OPENAI_ENDPOINT=${AZURE_API_BASE:-}
       - AZURE_OPENAI_API_KEY=${AZURE_API_KEY:-}
+
+    # Blocks setuid binaries from granting privileges the container did not start with.
+    security_opt:
+      - no-new-privileges:true
+
+    # The agent needs no kernel capabilities.
+    cap_drop:
+      - ALL
+
+    # A runaway or hostile agent should not be able to exhaust the host.
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: "2.0"
+
+    # Everything the agent legitimately writes lives under the named volume or
+    # in tmpfs. If a tool needs another writable path, add a tmpfs mount for it
+    # rather than removing read_only.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+      - /run:size=16m
+
     volumes:
-      - openclaw-data:/root/.openclaw
+      - openclaw-data:/home/agent/.openclaw
 
 volumes:
   openclaw-data:

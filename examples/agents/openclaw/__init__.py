@@ -22,7 +22,7 @@ from typing import Any
 COMPOSE_FILE = Path(__file__).resolve().parent / "docker-compose.yml"
 MESSAGE_TIMEOUT_S = 300
 CONTAINER_SERVICE = "openclaw-gateway"
-SESSION_DIR = "/root/.openclaw/agents/main/sessions"
+SESSION_DIR = "/home/agent/.openclaw/agents/main/sessions"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 

@@ -13,7 +13,9 @@ if [ -n "$AZURE_BASE_URL" ]; then
 fi
 
 # Write Azure OpenAI config at runtime so env vars are available
-CONFIG_FILE="/root/.openclaw/openclaw.json"
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+mkdir -p "$OPENCLAW_HOME"
+CONFIG_FILE="$OPENCLAW_HOME/openclaw.json"
 cat > "$CONFIG_FILE" <<EOF
 {
   "agents": {
@@ -36,7 +38,7 @@ cat > "$CONFIG_FILE" <<EOF
 EOF
 
 # Write Azure OpenAI auth into OpenClaw's auth store
-AUTH_FILE="/root/.openclaw/agents/main/agent/auth-profiles.json"
+AUTH_FILE="$OPENCLAW_HOME/agents/main/agent/auth-profiles.json"
 if [ -n "$AZURE_OPENAI_API_KEY" ] && [ ! -f "$AUTH_FILE" ]; then
     mkdir -p "$(dirname "$AUTH_FILE")"
     cat > "$AUTH_FILE" <<EOF
