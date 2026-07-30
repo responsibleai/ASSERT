@@ -146,6 +146,7 @@ def _inference_config_fingerprint(
     evaluation: EvaluationConfig | None,
     max_tokens: int,
     test_set_path: Path | None = None,
+    config_path: Path | None = None,
 ) -> str:
     """Deterministic hash of config values that affect inference output.
 
@@ -154,10 +155,23 @@ def _inference_config_fingerprint(
     test case ids are deterministic enough that the resume path silently
     reuses inference rows from prior test_set.jsonl content.
     """
-    target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or "")
+    target_name = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or "")
     test_set_sha = ""
     if test_set_path is not None and test_set_path.exists():
         test_set_sha = hashlib.sha256(test_set_path.read_bytes()).hexdigest()
+    sandbox_sha = ""
+    if target.sandbox:
+        from assert_ai.integrations.sandbox import load_setup
+
+        setup_path = Path(target.sandbox).expanduser()
+        if not setup_path.is_absolute() and config_path is not None:
+            setup_path = config_path.parent / setup_path
+        setup = load_setup(setup_path.resolve())
+        sandbox_hash = hashlib.sha256()
+        for path in (setup.source_path, setup.policy_path, setup.mocks_path):
+            if path is not None and path.exists():
+                sandbox_hash.update(path.read_bytes())
+        sandbox_sha = sandbox_hash.hexdigest()
     key = json_module.dumps(
         {
             "target": target_name,
@@ -166,6 +180,7 @@ def _inference_config_fingerprint(
             "concurrency": evaluation.inference.concurrency if evaluation else None,
             "tester": evaluation.tester.model.name if evaluation and evaluation.tester else None,
             "test_set_sha": test_set_sha,
+            "sandbox_sha": sandbox_sha,
         },
         sort_keys=True,
     )
@@ -202,7 +217,7 @@ def _record_system_message(transcript: Transcript, system_message: str) -> None:
 def _record_runtime_metadata(
     transcript: Transcript,
     *,
-    runtime: HostedSession | ExternalSession | CallableSession | HTTPEndpointSession,
+    runtime: Any,
     status: str,
     error: Exception | None = None,
 ) -> None:
@@ -525,8 +540,20 @@ def _build_target_session(
     max_tokens: int,
     config_path: Path | None,
     call_label: str | None = None,
-) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession:
+) -> HostedSession | ExternalSession | CallableSession | HTTPEndpointSession | Any:
     """Create the runtime session for one test-case inference."""
+    if target.is_sandbox:
+        if not target.sandbox:
+            raise ValueError("sandbox target requires a setup YAML path")
+        from assert_ai.integrations.sandbox.session import SandboxedEndpointSession
+
+        return SandboxedEndpointSession(
+            setup_path=target.sandbox,
+            config_path=config_path,
+            message_timeout_s=inference.tool_timeout_s,
+            startup_timeout_s=inference.startup_timeout_s,
+        )
+
     if target.is_endpoint:
         if not target.endpoint:
             raise ValueError("endpoint target requires an endpoint URL")
@@ -618,7 +645,7 @@ async def _run_prompt_test_case(
         config_path=config_path,
         call_label=f"target:{test_case_id}",
     )
-    target_id = str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or "")
+    target_id = target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or "")
     transcript = Transcript(
         metadata=TranscriptMetadata(
             kind="prompt",
@@ -936,7 +963,7 @@ async def _run_scenario_test_case(
             kind="scenario",
             test_case_id=test_case_id,
             behavior=str(test_case.get("behavior") or ""),
-            target=str(target.model.name) if target.model else (target.connector or target.callable or target.endpoint or ""),
+            target=target.model.name if isinstance(target.model, ModelConfig) else (target.connector or target.callable or target.endpoint or target.sandbox or ""),
             tester_model=str(tester.model.name),
             target_reasoning_effort=target.model.reasoning_effort if target.model else None,
             tester_reasoning_effort=tester.model.reasoning_effort,
@@ -1010,8 +1037,10 @@ async def run_inference(
     rewrite_test_set_path: bool = True,
 ) -> dict[str, Any]:
     """Run all test-case inferences and write the transcript artifact."""
-    if not target.model and not target.connector and not target.callable and not target.endpoint:
-        raise ValueError("inference requires target.model, target.connector, target.callable, or target.endpoint")
+    if not target.model and not target.connector and not target.callable and not target.endpoint and not target.sandbox:
+        raise ValueError(
+            "inference requires target.model, target.connector, target.callable, target.endpoint, or target.sandbox"
+        )
 
     tool_source = _infer_tool_source(target)
 
@@ -1060,6 +1089,7 @@ async def run_inference(
         evaluation,
         resolved_max_tokens,
         test_set_path=resolved_test_set_path,
+        config_path=config_path,
     )
     config_hash_path = out_dir / _INFERENCE_CONFIG_HASH_FILE
     if inference_set_path.exists():

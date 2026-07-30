@@ -47,6 +47,7 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 | Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
 | See runtime + eval close the loop on a real workflow | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
 | Generate ACS guardrails from ASSERT findings | `acs_guardrails/README.md` | Offline ASSERT→ACS adapter demo: synthetic findings generate `manifest.yaml` + Rego, validate known-bad outputs, then guard a callable target. |
+| Evaluate actions without causing outside-world side effects | `sandbox_action_mediation/README.md` | Stock Docker sandbox with pass/mock/block policy, per-use-case mock YAML, deny-by-default audited egress, and judge-visible action evidence. |
 
 ## Layout
 
@@ -57,6 +58,7 @@ examples/
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── prompt_agents/              simple hosted-model and Prompt Agent configs
 ├── azure_managed_identity/     minimal Azure OpenAI eval that uses Entra ID auth
+├── sandbox_action_mediation/   mediated endpoint, mock setup, and action evidence
 ├── behavior_specs/             reusable behavior examples and references in markdown files
 └── agents/                     simple tool modules and tool schemas
 ```

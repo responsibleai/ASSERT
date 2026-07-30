@@ -187,7 +187,8 @@ Accepted keys:
 - `target` — mapping. Required when `inference` is enabled.
   - `model` — model config. Use for the [Prompt Agent target](../targets/model-and-tools.md) (hosted model + system prompt + optional tools, runtime owns the loop). Also accepts `azure_ai/agents/<AGENT_ID>` to evaluate a hosted Azure AI Foundry agent; requires the `AZURE_AI_API_BASE` env var (Foundry project endpoint) and the same Azure auth setup as `azure/*` models. `target.tools` and `target.system_prompt` are not allowed in this mode since the hosted agent owns its tools and instructions server-side.
   - `callable` — Python callable reference in `package.module:function` form. Use for any agent or multi-agent system with a Python entrypoint, including local apps, framework agents, and custom orchestration.
-  - `endpoint` — HTTP endpoint URL. Use only when a Python callable is not available.
+  - `endpoint` — HTTP endpoint URL. Use when a Python callable is not available. Expects `{"response": "..."}` and optionally accepts top-level adapter-shaped `events` so tool/action evidence becomes part of the judge transcript.
+  - `sandbox` — path to a sandbox setup YAML, resolved relative to the eval config. The setup selects an already-running endpoint or a stock Docker container that ASSERT starts and removes per test case. See [`examples/sandbox_action_mediation`](../../examples/sandbox_action_mediation/README.md).
   - `connector` — external connector target (supported by parser/runtime, not recommended for customer-preview onboarding).
   - `system_prompt` — string. Optional.
   - `trace` — mapping. Optional. Use with callable targets that emit OpenTelemetry spans.

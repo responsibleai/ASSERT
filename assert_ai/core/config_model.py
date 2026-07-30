@@ -123,6 +123,7 @@ class TargetConfig:
     connector: str | None = None
     callable: str | None = None
     endpoint: str | None = None
+    sandbox: str | None = None
     trace: TraceConfig | None = None
 
     def __post_init__(self) -> None:
@@ -130,14 +131,16 @@ class TargetConfig:
             self.model = ModelConfig(name=self.model)
         self.system_prompt = _normalize_optional_string(self.system_prompt)
         self.connector = _normalize_optional_string(self.connector)
+        self.sandbox = _normalize_optional_string(self.sandbox)
         has_model = bool(self.model)
         has_connector = bool(self.connector)
         has_callable = bool(self.callable)
         has_endpoint = bool(self.endpoint)
-        count = sum([has_model, has_connector, has_callable, has_endpoint])
+        has_sandbox = bool(self.sandbox)
+        count = sum([has_model, has_connector, has_callable, has_endpoint, has_sandbox])
         if count != 1:
             raise ValueError(
-                "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"
+                "target requires exactly one of 'model', 'connector', 'callable', 'endpoint', or 'sandbox'"
             )
         if self.tools is not None and has_connector:
             raise ValueError("external target must not define target.tools")
@@ -145,6 +148,8 @@ class TargetConfig:
             raise ValueError("callable target must not define target.tools")
         if self.tools is not None and has_endpoint:
             raise ValueError("endpoint target must not define target.tools")
+        if self.tools is not None and has_sandbox:
+            raise ValueError("sandbox target must not define target.tools")
         if self.tools is not None and not has_model:
             raise ValueError("target.tools requires target.model")
         # azure_ai/agents/<id> routes to a Foundry-hosted agent that owns
@@ -179,6 +184,10 @@ class TargetConfig:
     @property
     def is_endpoint(self) -> bool:
         return self.endpoint is not None
+
+    @property
+    def is_sandbox(self) -> bool:
+        return self.sandbox is not None
 
 
 @dataclass

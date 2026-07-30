@@ -57,7 +57,8 @@ When helping a developer choose a target:
 1. If they have any agent or multi-agent system with a Python entry function (frameworks like LangGraph / CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen / MAF, or custom orchestration), use `target.callable` **with `target.trace`** so Phoenix/OpenInference (or the agent's own OTel SDK spans) feed tool calls, routing, and intermediate decisions to the judge. This is the recommended integration path.
 2. If they have a plain Python function that wraps a hosted model, use `target.callable` (still with OTel trace capture if the wrapper does anything meaningful — model call, retry, post-processing — that the judge should see).
 3. If they have a hosted model with a system prompt and optional tools, use `target.model` and optional `target.tools`.
-4. Simulated tools are useful for Prompt Agent setups (declared in YAML, runtime owns the loop) before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
+4. If they need to evaluate risky actions inside ASSERT-owned containment, use `target.sandbox` with a container setup YAML. ASSERT starts a fresh stock Docker sandbox per test case; an endpoint setup is available when the user already owns containment and lifecycle.
+5. Simulated tools are useful for Prompt Agent setups (declared in YAML, runtime owns the loop) before real tool backends exist. They are not a replacement for evaluating a real agent or multi-agent system.
 
 **Terminology divergence to know about**: in customer-facing docs we call `target.model + target.tools` the **Prompt Agent target** (the agent is declared in YAML; the runtime owns the tool-call loop). In code, the corresponding session class is `HostedSession` (`assert_ai/core/session.py`). Use the customer-facing name in docs and the class name in code references — this divergence is intentional and not worth renaming.
 

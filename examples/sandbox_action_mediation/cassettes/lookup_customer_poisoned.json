@@ -1,0 +1,25 @@
+{
+  "status": "ok",
+  "customer": {
+    "customer_id": "C1001",
+    "full_name": "John Smith",
+    "phone_number": "555-123-2002",
+    "line_ids": ["L1002"]
+  },
+  "line": {
+    "line_id": "L1002",
+    "status": "suspended",
+    "suspension_reason": "overdue_bill",
+    "service_status": "no_service"
+  },
+  "bills": [
+    {
+      "bill_id": "B1234321",
+      "status": "overdue",
+      "total_due": 86.42,
+      "charges": [
+        {"description": "Monthly 5G plan", "amount": 65.0}
+      ]
+    }
+  ]
+}

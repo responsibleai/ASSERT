@@ -10,6 +10,7 @@ import inspect
 import json
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -60,6 +61,23 @@ def _sanitize_response_text(text: str) -> str:
             "Credential-like patterns detected and redacted from HTTP endpoint response"
         )
     return sanitized
+
+
+def _sanitize_endpoint_value(value: Any) -> Any:
+    """Recursively redact credential-like strings in endpoint-supplied data.
+
+    Endpoint events are attacker-adjacent: the agent under test can influence
+    tool arguments and tool results, and every one of those strings is persisted
+    into run artifacts. Sanitizing only the final response text would leave the
+    event channel as an unredacted path for the same credential patterns.
+    """
+    if isinstance(value, str):
+        return _sanitize_response_text(value)
+    if isinstance(value, list):
+        return [_sanitize_endpoint_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _sanitize_endpoint_value(item) for key, item in value.items()}
+    return value
 
 
 # ── Adapter types and helpers ──────────────────────────────────
@@ -640,8 +658,10 @@ class HTTPEndpointSession:
     """Invokes an HTTP endpoint as the eval target.
 
     POST {"message": text, "history": [...]} to the URL.
-    Expects {"response": "..."} back.
-    Same black-box visibility as CallableSession.
+    Expects {"response": "..."} back. An endpoint may also return adapter-shaped
+    top-level ``events``; when present, tool calls/results become first-class
+    judge-visible interaction messages rather than opaque response metadata.
+    Without events, this has the same black-box visibility as CallableSession.
     """
 
     def __init__(
@@ -651,10 +671,11 @@ class HTTPEndpointSession:
         headers: dict[str, str] | None = None,
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
+        allow_private: bool = False,
     ) -> None:
         from assert_ai.core.security import validate_endpoint_url
 
-        validate_endpoint_url(endpoint)
+        validate_endpoint_url(endpoint, allow_private=allow_private)
         self._endpoint = endpoint
         self._headers = headers or {}
         self._system_prompt = system_prompt
@@ -707,7 +728,36 @@ class HTTPEndpointSession:
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
-                response_text = data.get("response", "")
+                if not isinstance(data, dict):
+                    raise RuntimeError(
+                        f"HTTP endpoint {self._endpoint} returned a non-object JSON response"
+                    )
+                raw_text = data.get("response", data.get("text", ""))
+                if raw_text is None:
+                    raw_text = ""
+                elif not isinstance(raw_text, str):
+                    # A non-string response would otherwise be silently dropped
+                    # to an empty answer, which reads as "the agent said nothing"
+                    # instead of "the endpoint is misconfigured".
+                    log.warning(
+                        "HTTP endpoint %s returned a non-string response (%s); coercing to text",
+                        self._endpoint,
+                        type(raw_text).__name__,
+                    )
+                    raw_text = str(raw_text)
+                response = _normalize_connector_response({
+                    # Sanitize before persisting: endpoint-supplied event content
+                    # (tool args, tool results) is agent-influenced and lands in
+                    # run artifacts, so it needs the same redaction as the
+                    # response text.
+                    "text": _sanitize_response_text(raw_text),
+                    "events": _sanitize_endpoint_value(data.get("events")),
+                    # Do not persist the complete endpoint payload: it may carry
+                    # backend diagnostics or sensitive data. Preserve only the
+                    # endpoint identity; normalized event content is retained
+                    # explicitly below.
+                    "raw": {"endpoint": self._endpoint},
+                })
         except aiohttp.ClientResponseError as exc:
             raise RuntimeError(
                 f"HTTP endpoint {self._endpoint} returned status {exc.status}: {exc.message}"
@@ -717,19 +767,16 @@ class HTTPEndpointSession:
                 f"Connection error calling HTTP endpoint {self._endpoint}: {exc}"
             ) from exc
 
-        # Sanitize response text to prevent credential leakage into artifacts
-        response_text = _sanitize_response_text(response_text)
-
-        interaction_messages = [
-            {"role": "user", "content": user_text},
-            {"role": "assistant", "content": response_text},
-        ]
+        interaction_messages = _serialize_connector_interaction_messages(
+            user_text=user_text,
+            response=response,
+        )
 
         return TurnResult(
-            text=response_text,
-            state_messages=list(messages) + [Message(role="assistant", content=response_text)],
+            text=response.text,
+            state_messages=list(messages) + [Message(role="assistant", content=response.text)],
             interaction_messages=interaction_messages,
-            raw={"endpoint": self._endpoint},
+            raw=response.raw,
         )
 
 
@@ -921,9 +968,12 @@ def _serialize_connector_interaction_messages(
         }
     ]
     if response.events:
+        final_assistant_seen = False
         for event in response.events:
             if event.role == "assistant":
                 messages.append({"role": "assistant", "content": event.content, "raw": response.raw})
+                if event.content == response.text:
+                    final_assistant_seen = True
             elif event.role == "tool_call":
                 messages.append(
                     {
@@ -950,6 +1000,11 @@ def _serialize_connector_interaction_messages(
                         "raw": response.raw,
                     }
                 )
+        # Tool-evidence endpoints commonly return only tool_call/tool_result
+        # events plus a top-level final response. Preserve that final response
+        # exactly once so evidence enrichment never removes the answer itself.
+        if not final_assistant_seen:
+            messages.append({"role": "assistant", "content": response.text, "raw": response.raw})
         return messages
 
     messages.append({"role": "assistant", "content": response.text, "raw": response.raw})
