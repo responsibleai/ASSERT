@@ -147,7 +147,7 @@ _LOCAL_DEV_HOSTNAMES = {
 }
 
 
-def _env_flag(name: str) -> bool:
+def env_flag(name: str) -> bool:
     """Return True when environment variable ``name`` is set to a truthy value."""
     return os.environ.get(name, "").lower() in ("1", "true", "yes")
 
@@ -168,7 +168,7 @@ def _is_plaintext_permitted(hostname: str) -> bool:
     Loopback traffic never leaves the machine, so TLS adds no confidentiality
     there. Everything else requires an explicit operator opt-out.
     """
-    return _is_loopback_host(hostname) or _env_flag("ASSERT_ALLOW_PLAINTEXT_HTTP")
+    return _is_loopback_host(hostname) or env_flag("ASSERT_ALLOW_PLAINTEXT_HTTP")
 
 
 def validate_endpoint_url(url: str, *, allow_private: bool = False) -> None:
@@ -261,7 +261,7 @@ def _validate_resolved_ips(hostname: str) -> None:
     try:
         addrinfo = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
-        if _env_flag("ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS"):
+        if env_flag("ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS"):
             log.warning(
                 "DNS resolution failed for '%s'; allowed by "
                 "ASSERT_ALLOW_UNRESOLVABLE_ENDPOINTS. SSRF checks did not run.",
@@ -303,6 +303,63 @@ _SENSITIVE_KEYS = re.compile(
 )
 
 _REDACTED = "[REDACTED]"
+
+# Free-text redaction. sanitize_payload() keys off dict keys, so it cannot see a
+# secret embedded in a string — a traceback or a span attribute value carries its
+# secrets inline. These patterns are deliberately narrow: over-redaction silently
+# corrupts evaluation data, which is a different kind of harm, so only
+# high-confidence credential shapes are matched.
+
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?P<key>api[_-]?key|auth[_-]?token|secret|password|passwd|credential|"
+    r"authorization|access[_-]?token|refresh[_-]?token|private[_-]?key|"
+    r"client[_-]?secret|azure[_-]?ad[_-]?token)"
+    r"(?P<sep>[\"']?\s*[:=]\s*[\"']?)"
+    r"(?P<value>[^\s\"',;)}\]]+)",
+    re.IGNORECASE,
+)
+
+_AUTH_SCHEME_RE = re.compile(
+    r"\b(?P<scheme>Bearer|Basic)\s+(?P<token>[A-Za-z0-9._\-+/=]+)",
+    re.IGNORECASE,
+)
+
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?P<prefix>[a-z][a-z0-9+.\-]*://[^:/@\s]+:)(?P<password>[^@/\s]+)@",
+    re.IGNORECASE,
+)
+
+_TOKEN_SHAPE_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{16,}"          # OpenAI-style keys
+    r"|AKIA[0-9A-Z]{16}"                    # AWS access key IDs
+    r"|gh[pousr]_[A-Za-z0-9]{16,}"          # GitHub tokens
+    r"|eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)"  # JWTs
+)
+
+
+def redact_text(text: str) -> str:
+    """Redact credentials embedded in free text.
+
+    Complements :func:`sanitize_payload`, which can only redact whole values
+    whose *key* looks sensitive. Use this on diagnostic and telemetry strings —
+    tracebacks, span attribute values — where the secret is inline.
+
+    This is best-effort pattern matching, not a guarantee. It will not catch a
+    credential with no recognisable prefix or surrounding key name.
+    """
+    if not text:
+        return text
+    out = _URL_CREDENTIALS_RE.sub(
+        lambda m: f"{m.group('prefix')}{_REDACTED}@", str(text)
+    )
+    # Auth schemes are matched before key/value assignments. In
+    # "Authorization: Bearer <token>" the assignment pattern would otherwise
+    # capture the literal word "Bearer" as the value and leave the token intact.
+    out = _AUTH_SCHEME_RE.sub(lambda m: f"{m.group('scheme')} {_REDACTED}", out)
+    out = _SECRET_ASSIGNMENT_RE.sub(
+        lambda m: f"{m.group('key')}{m.group('sep')}{_REDACTED}", out
+    )
+    return _TOKEN_SHAPE_RE.sub(_REDACTED, out)
 
 
 def sanitize_payload(payload: Any, *, depth: int = 0, max_depth: int = 10) -> Any:

@@ -53,6 +53,7 @@ from assert_ai.core.session import (
     TurnResult,
     serialize_response,
 )
+from assert_ai.core.security import env_flag, redact_text
 from assert_ai.core.tool_backend import ToolBackendResolver, inspect_tool_module
 from assert_ai.core.tools import load_toolset_file, normalize_tool_defs
 from assert_ai.core.transcript import (
@@ -896,10 +897,24 @@ async def _run_tester_target_loop(
             raise
         except Exception as exc:
             tb = traceback.format_exc()
+            # The judge needs to know the target errored, but the full traceback
+            # carries absolute paths, module layout, and frequently the
+            # connection string that caused the failure. The transcript is
+            # persisted to inference_set.jsonl and rendered in the viewer, so
+            # only the exception type and message go there by default; the trace
+            # goes to the log.
+            log.error(
+                "Target call failed for test case %s: %s\n%s",
+                test_case_id, exc, tb,
+            )
+            error_summary = f"{type(exc).__name__}: {exc}"
+            content = f"[TARGET ERROR: {error_summary}]"
+            if env_flag("ASSERT_TRANSCRIPT_TRACEBACKS"):
+                content += "\n" + redact_text(tb)
             transcript.add_event(TranscriptEvent(
                 view=["target", "combined"],
                 actor="system",
-                edit=AddMessageEdit(message=TranscriptMessage(role="system", content=f"[TARGET ERROR: {exc}]\n{tb}")),
+                edit=AddMessageEdit(message=TranscriptMessage(role="system", content=content)),
             ))
             tester_messages.append(Message(role="user", content=f"<target_error>{exc}</target_error>"))
             stop_reason = "target_error"
