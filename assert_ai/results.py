@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections import Counter
 from pathlib import Path
@@ -83,6 +85,69 @@ def format_coverage(coverage: dict[str, Any]) -> str:
         )
         line += f"   ! {detail}"
     return line
+
+
+def compute_judge_agreement(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Chance-corrected agreement between judges, per dimension, across a run.
+
+    Returns ``None`` for single-judge runs, which have no agreement to measure.
+
+    A 2-1 split and a 3-0 consensus otherwise produce identical output, so the
+    one signal indicating how much to trust a verdict is lost. The existing
+    ``multi_judge.agreement`` field is raw percent agreement on one dimension of
+    one row; it does not subtract the agreement expected by chance, which on a
+    skewed base rate is most of it.
+
+    Kappa is a property of the run, not of a row: it needs many items to
+    estimate the marginal category distribution, so votes are pooled across all
+    rows here rather than computed per row.
+    """
+    from assert_ai.analysis.stats import KAPPA_WARN_THRESHOLD, fleiss_kappa
+
+    per_dimension: dict[str, list[list[Any]]] = {}
+    judge_counts: set[int] = set()
+
+    for row in rows:
+        envelope = row.get("multi_judge")
+        if not isinstance(envelope, dict):
+            continue
+        votes = envelope.get("votes")
+        if not isinstance(votes, dict):
+            continue
+        for dimension, dimension_votes in votes.items():
+            if not isinstance(dimension_votes, list) or len(dimension_votes) < 2:
+                continue
+            per_dimension.setdefault(dimension, []).append(list(dimension_votes))
+            judge_counts.add(len(dimension_votes))
+
+    if not per_dimension:
+        return None
+
+    by_dimension: dict[str, Any] = {}
+    for dimension, ratings in sorted(per_dimension.items()):
+        kappa = fleiss_kappa(ratings)
+        by_dimension[dimension] = {
+            "kappa": round(kappa, 4) if kappa is not None else None,
+            "items": len(ratings),
+            "raters": len(ratings[0]) if ratings else 0,
+            "low_agreement": bool(kappa is not None and kappa < KAPPA_WARN_THRESHOLD),
+        }
+        if kappa is not None and kappa < KAPPA_WARN_THRESHOLD:
+            log.warning(
+                "Low inter-rater agreement on '%s' (Fleiss kappa=%.2f over %d rows, "
+                "%d judges). The consensus verdict for this dimension is not a "
+                "reliable one.",
+                dimension,
+                kappa,
+                len(ratings),
+                len(ratings[0]),
+            )
+
+    return {
+        "method": "fleiss_kappa",
+        "judges": sorted(judge_counts),
+        "by_dimension": by_dimension,
+    }
 
 
 def current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
@@ -331,6 +396,75 @@ def compute_policy_violation_by_permissibility(
     }
 
 
+def compute_judge_fingerprint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Identify the judge configuration that produced these scores.
+
+    Swapping a judge model or editing the judge prompt moves measured rates on
+    an unchanged target. Without something to compare against, that shift reads
+    as a real change in the system under test - someone switches judge model to
+    cut cost, rates move several points, and the move gets attributed to the
+    target.
+
+    The fingerprint is a stable digest of what would change the measurement, so
+    two runs of the same suite can be checked for comparability before their
+    numbers are put side by side.
+    """
+    judge_model = _first_str(rows, "judge_model")
+    prompt_hashes = sorted(
+        {
+            value
+            for row in rows
+            for value in [row.get("judge_prompt_sha") or row.get("judge_system_prompt_sha")]
+            if isinstance(value, str) and value
+        }
+    )
+    dimension_names = sorted(detect_dimensions(rows))
+    judge_counts = sorted(
+        {
+            envelope["n"]
+            for row in rows
+            for envelope in [row.get("multi_judge")]
+            if isinstance(envelope, dict) and isinstance(envelope.get("n"), int)
+        }
+    )
+
+    material = json.dumps(
+        {
+            "judge_model": judge_model,
+            "prompt_hashes": prompt_hashes,
+            "dimensions": dimension_names,
+            "judges": judge_counts,
+        },
+        sort_keys=True,
+    )
+    return {
+        "judge_model": judge_model,
+        "prompt_hashes": prompt_hashes,
+        "dimensions": dimension_names,
+        "judges": judge_counts,
+        "fingerprint": hashlib.sha256(material.encode("utf-8")).hexdigest()[:16],
+    }
+
+
+def warn_if_judge_changed(
+    current: dict[str, Any] | None,
+    previous: dict[str, Any] | None,
+) -> bool:
+    """Warn when the judge configuration differs between two runs of a suite."""
+    if not isinstance(current, dict) or not isinstance(previous, dict):
+        return False
+    if current.get("fingerprint") == previous.get("fingerprint"):
+        return False
+    log.warning(
+        "Judge configuration changed since the previous run (%s -> %s). Rates "
+        "from these two runs are not directly comparable; a difference may come "
+        "from the judge rather than the target.",
+        previous.get("judge_model") or "unknown",
+        current.get("judge_model") or "unknown",
+    )
+    return True
+
+
 def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     for row in rows:
         value = row.get(key)
@@ -375,6 +509,14 @@ def _compute_test_set_metrics(
         "target": _first_str(rows, "target"),
         "judge_model": _first_str(rows, "judge_model"),
     }
+
+    agreement = compute_judge_agreement(scored_rows)
+    if agreement is not None:
+        metrics["judge_agreement"] = agreement
+
+    fingerprint = compute_judge_fingerprint(rows)
+    if fingerprint is not None:
+        metrics["judge_fingerprint"] = fingerprint
 
     permissibility_split = compute_policy_violation_by_permissibility(
         scored_rows,

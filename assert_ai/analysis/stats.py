@@ -33,6 +33,83 @@ def _wilson_ci(k: int, n: int, alpha: float = 0.10) -> tuple[float, float]:
     return (max(0.0, center - spread), min(1.0, center + spread))
 
 
+# Landis & Koch (1977) benchmarks. Below this, agreement is weak enough that a
+# consensus verdict should not be read as a reliable one.
+KAPPA_WARN_THRESHOLD = 0.60
+
+
+def fleiss_kappa(ratings: list[list[Any]]) -> float | None:
+    """Chance-corrected inter-rater agreement across a fixed number of raters.
+
+    ``ratings`` is one list of votes per item, each containing one vote per
+    judge. Votes may be any hashable label; ``None`` is a category like any
+    other, so a judge marking a dimension not-applicable is a real position
+    rather than a missing value.
+
+    Raw percent agreement is not a substitute for this. With a skewed base rate
+    - and violation rates usually are skewed - two judges voting independently
+    agree most of the time by chance alone, so a high raw figure can describe
+    almost no real reliability. Kappa subtracts that expected agreement.
+
+    Returns ``None`` when kappa is undefined: fewer than two items, fewer than
+    two raters, or a ragged number of raters across items. Returns ``1.0`` when
+    every rater agrees on every item, including the degenerate case where only
+    one category was ever used and expected agreement is also 1.
+    """
+    if len(ratings) < 1:
+        return None
+    n_raters = len(ratings[0])
+    if n_raters < 2:
+        return None
+    if any(len(item) != n_raters for item in ratings):
+        return None
+
+    categories = sorted({_kappa_label(vote) for item in ratings for vote in item})
+    if not categories:
+        return None
+
+    n_items = len(ratings)
+    counts: list[list[int]] = []
+    for item in ratings:
+        row = {category: 0 for category in categories}
+        for vote in item:
+            row[_kappa_label(vote)] += 1
+        counts.append([row[category] for category in categories])
+
+    # Observed agreement: mean over items of the proportion of rater pairs that
+    # agree.
+    p_item = [
+        (sum(count * count for count in row) - n_raters) / (n_raters * (n_raters - 1))
+        for row in counts
+    ]
+    p_observed = sum(p_item) / n_items
+
+    # Expected agreement from the marginal distribution of categories.
+    total_ratings = n_items * n_raters
+    p_category = [
+        sum(row[index] for row in counts) / total_ratings
+        for index in range(len(categories))
+    ]
+    p_expected = sum(p * p for p in p_category)
+
+    denominator = 1.0 - p_expected
+    if denominator <= 1e-12:
+        # Only one category was used anywhere, so chance agreement is already
+        # total and kappa is 0/0. Every rater did agree on every item, which is
+        # the sense in which this is 1.0 rather than undefined.
+        return 1.0
+    return (p_observed - p_expected) / denominator
+
+
+def _kappa_label(vote: Any) -> str:
+    """Map a vote to a stable category label, keeping None a real category."""
+    if vote is None:
+        return "\x00none"
+    if isinstance(vote, bool):
+        return f"bool:{vote}"
+    return f"{type(vote).__name__}:{vote}"
+
+
 def binary_rate_ci(
     outcomes: list[bool],
     *,
