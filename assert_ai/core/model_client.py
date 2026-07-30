@@ -161,6 +161,16 @@ class UsageAccumulator:
     cached_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     per_model: dict[str, dict[str, int]] = field(default_factory=dict)
+    # Whole-run ceilings, checked after each call. None means unlimited, which
+    # is the behaviour when no limits: block is configured.
+    limits: Any = None
+    # Consumption from earlier stages. track_usage() is entered once per stage,
+    # so without a baseline a run-level ceiling would reset at every stage
+    # boundary and never bind.
+    baseline_calls: int = 0
+    baseline_tokens: int = 0
+    started_at: float = field(default_factory=time.monotonic)
+    _limit_warned: bool = False
 
     def add(self, usage: UsageStats | None, *, model: str | None = None) -> None:
         """Fold one call's normalized usage into this accumulator."""
@@ -191,6 +201,52 @@ class UsageAccumulator:
         bucket["output_tokens"] += opt
         bucket["cached_input_tokens"] += cit
         bucket["cache_creation_input_tokens"] += cct
+        self.check_limits()
+
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def run_calls(self) -> int:
+        """Calls made across the whole run, including earlier stages."""
+        return self.baseline_calls + self.calls
+
+    def run_tokens(self) -> int:
+        """Tokens used across the whole run, including earlier stages."""
+        return self.baseline_tokens + self.total_tokens()
+
+    def elapsed_s(self) -> float:
+        return time.monotonic() - self.started_at
+
+    def exceeded(self) -> str | None:
+        """Return a description of the first breached limit, or None."""
+        limits = self.limits
+        if limits is None or not getattr(limits, "is_active", lambda: False)():
+            return None
+        max_calls = getattr(limits, "max_total_calls", None)
+        if max_calls is not None and self.run_calls() > max_calls:
+            return f"max_total_calls ({self.run_calls()} > {max_calls})"
+        max_tokens = getattr(limits, "max_total_tokens", None)
+        if max_tokens is not None and self.run_tokens() > max_tokens:
+            return f"max_total_tokens ({self.run_tokens()} > {max_tokens})"
+        max_wall = getattr(limits, "max_wall_time_s", None)
+        if max_wall is not None and self.elapsed_s() > max_wall:
+            return f"max_wall_time_s ({self.elapsed_s():.0f}s > {max_wall:.0f}s)"
+        return None
+
+    def check_limits(self) -> None:
+        """Raise or warn when a configured whole-run ceiling has been passed."""
+        breach = self.exceeded()
+        if breach is None:
+            return
+        if getattr(self.limits, "on_exceed", "stop") == "warn":
+            if not self._limit_warned:
+                self._limit_warned = True
+                log.warning(
+                    "Run limit exceeded: %s. Continuing because on_exceed is 'warn'.",
+                    breach,
+                )
+            return
+        raise BudgetExceededError(f"Run limit exceeded: {breach}")
 
     def cache_hit_rate(self) -> float:
         """Return cached_input_tokens / input_tokens, or 0.0 when no input tokens."""
@@ -218,7 +274,13 @@ _USAGE_ACCUMULATOR: contextvars.ContextVar[UsageAccumulator | None] = contextvar
 
 
 @contextlib.contextmanager
-def track_usage() -> Iterator[UsageAccumulator]:
+def track_usage(
+    limits: Any = None,
+    *,
+    baseline_calls: int = 0,
+    baseline_tokens: int = 0,
+    started_at: float | None = None,
+) -> Iterator[UsageAccumulator]:
     """Capture token usage from every ``generate*`` call within the block.
 
     Uses a ``ContextVar`` so that ``asyncio.run(...)`` blocks invoked inside the
@@ -226,8 +288,17 @@ def track_usage() -> Iterator[UsageAccumulator]:
     the same object. The accumulator only sees calls made on the same ``async``
     stack (or the same thread) — independent threads or coroutines that are
     started in a fresh context will not contribute.
+
+    ``limits`` is an optional :class:`~assert_ai.core.config_model.RunLimits`.
+    When supplied and active, each recorded call is checked against it and
+    :class:`BudgetExceededError` is raised once a ceiling is passed.
     """
-    accumulator = UsageAccumulator()
+    accumulator = UsageAccumulator(
+        limits=limits,
+        baseline_calls=baseline_calls,
+        baseline_tokens=baseline_tokens,
+        started_at=started_at if started_at is not None else time.monotonic(),
+    )
     token = _USAGE_ACCUMULATOR.set(accumulator)
     try:
         yield accumulator
@@ -749,6 +820,15 @@ class LLMRateLimitError(Exception):
 
 class LLMProviderError(Exception):
     """Provider-side error (5xx) — may be retryable."""
+
+
+class BudgetExceededError(Exception):
+    """A configured whole-run consumption ceiling was passed.
+
+    Deliberately not an ``LLM*Error``: the provider call succeeded, and this is
+    the harness stopping on the operator's own instruction. The retry and
+    fallback paths must not treat it as a transient provider failure.
+    """
 
 
 class _ResponsesApiNotAvailableError(LLMProviderError):
