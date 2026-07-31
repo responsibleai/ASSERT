@@ -1747,7 +1747,7 @@ def library():
 @library.command("list", short_help="List available presets")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Filter by preset kind.",
 )
@@ -1782,7 +1782,7 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.argument("name")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Preset kind (auto-detected if omitted).",
 )
