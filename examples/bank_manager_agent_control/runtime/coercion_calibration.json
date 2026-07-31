@@ -1,0 +1,12 @@
+{
+  "fit": {
+    "a": 0.4260382595445743,
+    "b": 1.6248900092504506,
+    "escalate_lo": 0.2882,
+    "deny_hi": 0.6823,
+    "model": "gpt-4o-mini",
+    "max_fpr_budget": 0.1,
+    "split_every": 3,
+    "n_cal": 18
+  }
+}
