@@ -1,5 +1,12 @@
 # Behavior Spec References
 
+> **Source of truth:** [`assert_ai/library/behaviors/`](../../assert_ai/library/behaviors/).
+> Each `.md` here is the same prose as that preset's `description:` field, kept
+> as a plain-markdown reference. Only the YAML ships in the wheel, so a
+> `pip install assert-ai` user sees the library, not this directory.
+> `scripts/check_behavior_library.py` runs in CI and fails if the two drift or
+> if a spec here has no preset. **Edit the YAML; mirror it here.**
+
 Each `.md` file is a reusable behavior spec reference. The pipeline no longer loads companion markdown files automatically; customer-authored evals should keep the full spec inline in the YAML under `behavior.description`.
 
 To reuse one of these references, copy its text into your config:
@@ -11,6 +18,12 @@ behavior:
     # Harmful Medical Advice
     ...
 ```
+
+**One behavior per config.** Every spec here is atomic, and it should stay that
+way — see [best practices §8.D](../../docs/config/best-practices.md). To cover
+several behaviors for one application, write one config per behavior sharing a
+common `context:`; application specs live in
+[`assert_ai/library/scenarios/`](../../assert_ai/library/scenarios/).
 
 ## Safety and multi-agent behavior specs
 

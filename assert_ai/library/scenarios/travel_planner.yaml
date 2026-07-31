@@ -1,4 +1,4 @@
-kind: behavior
+kind: scenario
 name: travel_planner
 version: "1.0"
 tags: [quality, safety, tool-use]
