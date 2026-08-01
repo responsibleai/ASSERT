@@ -9,6 +9,7 @@
 		inferJudgeStatus,
 		isNotApplicableVerdictDimension
 	} from '$lib/judgment.js';
+	import { metricTitleLabel } from '$lib/labels.js';
 	import {
 		getCitationDisplayRanges,
 		parseCitationReferences
@@ -149,8 +150,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		const spaced = metric.replace(/_/g, ' ');
-		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+		return metricTitleLabel(metric);
 	}
 
 	function metricOutcomeText(flag: boolean | number | string | null): string {

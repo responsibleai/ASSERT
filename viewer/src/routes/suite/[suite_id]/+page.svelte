@@ -5,7 +5,8 @@
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
-	import { judgeDimensionLabel } from '$lib/labels.js';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { orderMetricNames } from '$lib/permissibility.js';
 	import { renderMarkdown } from '$lib/markdown.js';
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef } from '$lib/types.js';
@@ -226,10 +227,11 @@
 		}
 		return Array.from(names);
 	});
-	let dimNames = $derived(allDimNames);
+	// Tracked headline pair leads the table so A/B runs are compared on harm vs.
+	// permissible-behavior violations first; every other dim stays selectable.
+	let dimNames = $derived(orderMetricNames(allDimNames));
 	function dimColumnLabel(name: string): string {
-		const spaced = name.replace(/_/g, ' ');
-		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+		return metricTitleLabel(name);
 	}
 	let visibleDimNames = $derived(
 		dimNames.filter((name) =>
@@ -243,7 +245,7 @@
 	// from the URL search param ``metrics`` so links are shareable and reloads
 	// preserve the user's column choice. Default = first MAX_METRIC_COLS entries
 	// of visibleDimNames, preserving the existing ordering.
-	const MAX_METRIC_COLS = 3;
+	const MAX_METRIC_COLS = 2;
 	let selectedMetricCols = $derived.by<(string | null)[]>(() => {
 		const populated = visibleDimNames;
 		const numCols = Math.min(MAX_METRIC_COLS, populated.length);
@@ -372,11 +374,6 @@
 		if (allRuns.length <= 3) expandedRunIds = new Set(allRuns.map((run) => run.run_id));
 		else expandedRunIds = new Set();
 	});
-
-	function metricLabel(metric: string): string {
-		const label = judgeDimensionLabel(metric);
-		return label.charAt(0).toUpperCase() + label.slice(1);
-	}
 
 	function metricRateClass(rate: number | null): string {
 		if (rate == null) return 'text-text-muted';
