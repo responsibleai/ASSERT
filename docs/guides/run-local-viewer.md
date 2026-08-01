@@ -87,7 +87,8 @@ assert-ai run --config artifacts/results/<suite>/<run>/config.yaml --resume --fo
 
 The viewer expects each successful score row to include:
 
-- `verdict.dimensions` with binary event flags for the configured judge dimensions (by default `policy_violation` and `overrefusal`). Dimensions configured with `allow_not_applicable: true` may use `null` plus `verdict.dimension_applicability.<name>: false` for N/A cases.
+- `verdict.dimensions` with binary event flags or declared ordinal integer/string grades for the configured judge dimensions (by default `policy_violation` and `overrefusal` are binary). Dimensions configured with `allow_not_applicable: true` may use `null` plus `verdict.dimension_applicability.<name>: false` for N/A cases.
+- `dimension_scales` when a score row contains ordinal grades. The viewer reads the scale and grade labels from the artifact instead of relying on the current config or a static dimension registry.
 - `verdict.dimension_applicability` when any dimension is N/A; aggregate metrics exclude N/A rows from that dimension's denominator.
 - `verdict.dimension_justifications` for every dimension in `verdict.dimensions`
 - `verdict.node_judgments` in taxonomy order with `node_name` matching `taxonomy.json` names

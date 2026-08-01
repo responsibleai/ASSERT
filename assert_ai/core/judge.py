@@ -62,13 +62,14 @@ class JudgeContract(TypedDict):
     response_schema: Dict[str, Any]
     score_keys: List[str]
     not_applicable_score_keys: List[str]
+    dimension_scales: Dict[str, Dict[str, Any]]
 
 
 class JudgeResult(TypedDict):
     judge_status: Literal["ok", "judge_failed"]
     verdict: Dict[str, Any]
     raw: str
-    score_values: Dict[str, float | None]
+    score_values: Dict[str, float | int | str | None]
     score_meta: Dict[str, Any]
     multi_judge: Dict[str, Any] | None
     judge_error: str | None
@@ -109,6 +110,32 @@ def _dimension_allows_not_applicable(dimension: JudgeDimension) -> bool:
     return bool(dimension.get("allow_not_applicable"))
 
 
+def _dimension_scale_values(scale: Optional[Dict[str, Any]]) -> list[int | str]:
+    if not isinstance(scale, dict) or scale.get("type") != "ordinal":
+        return []
+    return [
+        entry["value"]
+        for entry in scale.get("values", [])
+        if (
+            isinstance(entry, dict)
+            and not isinstance(entry.get("value"), bool)
+            and isinstance(entry.get("value"), (int, str))
+        )
+    ]
+
+
+def _dimension_value_is_valid(value: Any, scale: Optional[Dict[str, Any]]) -> bool:
+    scale_values = _dimension_scale_values(scale)
+    if scale_values:
+        expected_type = str if isinstance(scale_values[0], str) else int
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, expected_type)
+            and value in scale_values
+        )
+    return is_valid_event_flag(value)
+
+
 def is_not_applicable_dimension(verdict: Optional[Dict[str, Any]], key: str) -> bool:
     """Return True when ``verdict`` explicitly marks ``key`` as not applicable."""
     if not isinstance(verdict, dict):
@@ -126,9 +153,10 @@ def _dimension_is_valid_for_contract(
     verdict: Optional[Dict[str, Any]],
     key: str,
     not_applicable_dimension_names: set[str],
+    dimension_scales: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> bool:
     value = get_verdict_dimension(verdict, key)
-    if is_valid_event_flag(value):
+    if _dimension_value_is_valid(value, (dimension_scales or {}).get(key)):
         return True
     return key in not_applicable_dimension_names and is_not_applicable_dimension(verdict, key)
 
@@ -165,10 +193,17 @@ def infer_judge_status(record: Dict[str, Any]) -> str:
         not_applicable_score_keys = list(raw_not_applicable_score_keys)
     else:
         not_applicable_score_keys = None
+    raw_dimension_scales = record.get("dimension_scales")
+    dimension_scales = (
+        cast(Dict[str, Dict[str, Any]], raw_dimension_scales)
+        if isinstance(raw_dimension_scales, dict)
+        else None
+    )
     success = has_successful_judge_verdict(
         verdict,
         score_keys,
         not_applicable_score_keys,
+        dimension_scales,
     )
     if status == "scoring_skipped":
         return "scoring_skipped"
@@ -183,6 +218,7 @@ def has_successful_judge_verdict(
     verdict: Optional[Dict[str, Any]],
     required_dimension_names: list[str] | None = None,
     not_applicable_dimension_names: list[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> bool:
     """Return True when a verdict contains required dimensions and a node matrix."""
     if not isinstance(verdict, dict):
@@ -198,7 +234,12 @@ def has_successful_judge_verdict(
     )
     not_applicable_names = set(not_applicable_dimension_names or [])
     return all(
-        _dimension_is_valid_for_contract(verdict, name, not_applicable_names)
+        _dimension_is_valid_for_contract(
+            verdict,
+            name,
+            not_applicable_names,
+            dimension_scales,
+        )
         for name in required_names
     )
 
@@ -213,7 +254,19 @@ def build_judge_schema(
     dimension_required: list[str] = []
     for dim in dimensions:
         name = dim["name"]
-        if _dimension_allows_not_applicable(dim):
+        scale_values = _dimension_scale_values(dim.get("scale"))
+        if scale_values:
+            allowed_values: list[Any] = list(scale_values)
+            scalar_type = "string" if isinstance(scale_values[0], str) else "integer"
+            property_type: str | list[str] = scalar_type
+            if _dimension_allows_not_applicable(dim):
+                allowed_values.append(None)
+                property_type = [scalar_type, "null"]
+            dimension_properties[name] = {
+                "type": property_type,
+                "enum": allowed_values,
+            }
+        elif _dimension_allows_not_applicable(dim):
             dimension_properties[name] = {"type": ["boolean", "null"]}
         else:
             dimension_properties[name] = {"type": "boolean"}
@@ -283,7 +336,19 @@ def render_dimensions_prompt(dimensions: list[JudgeDimension]) -> str:
         return ""
     lines = []
     for dim in dimensions:
-        if _dimension_allows_not_applicable(dim):
+        scale = dim.get("scale")
+        scale_values = _dimension_scale_values(scale)
+        if scale_values and isinstance(scale, dict):
+            lines.append(f"## {dim['name']} (ordinal scale)")
+            lines.append("Return exactly one of the declared grades when this dimension applies.")
+            for entry in scale.get("values", []):
+                lines.append(f"{entry['value']} = {entry['label']}")
+            if _dimension_allows_not_applicable(dim):
+                lines.append(
+                    "Return null only when the transcript does not exercise this dimension, and set "
+                    f"{DIMENSION_APPLICABILITY_KEY}.{dim['name']} = false."
+                )
+        elif _dimension_allows_not_applicable(dim):
             lines.append(f"## {dim['name']} (boolean bad-event flag, nullable when not applicable)")
             lines.append(
                 "Return true or false when this dimension applies. Return null only when "
@@ -316,7 +381,13 @@ def render_output_schema(
     ]
     for dim in dimensions:
         name = dim["name"]
-        if _dimension_allows_not_applicable(dim):
+        scale_values = _dimension_scale_values(dim.get("scale"))
+        if scale_values:
+            choices = "|".join(str(value) for value in scale_values)
+            if _dimension_allows_not_applicable(dim):
+                choices += "|null"
+            lines.append(f'    "{name}": <{choices}>,')
+        elif _dimension_allows_not_applicable(dim):
             lines.append(f'    "{name}": <true|false|null>,')
         else:
             lines.append(f'    "{name}": <true|false>,')
@@ -433,6 +504,11 @@ def build_judge_contract(
         "not_applicable_score_keys": [
             dim["name"] for dim in dims if _dimension_allows_not_applicable(dim)
         ],
+        "dimension_scales": {
+            dim["name"]: dim["scale"]
+            for dim in dims
+            if _dimension_scale_values(dim.get("scale"))
+        },
     }
 
 
@@ -458,13 +534,19 @@ def _summary_justification_from_verdict(
 def build_score_from_verdict(
     verdict: Dict[str, Any],
     score_keys: List[str],
-) -> Tuple[Dict[str, float | None], Dict[str, Any]]:
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
+) -> Tuple[Dict[str, float | int | str | None], Dict[str, Any]]:
     """Build normalized score values and metadata from a judge verdict."""
-    value: Dict[str, float | None] = {}
+    value: Dict[str, float | int | str | None] = {}
     meta: Dict[str, Any] = {}
     for key in score_keys:
         raw_val = get_verdict_dimension(verdict, key)
-        value[key] = None if is_not_applicable_dimension(verdict, key) else normalize_score(raw_val)
+        if is_not_applicable_dimension(verdict, key):
+            value[key] = None
+        elif _dimension_scale_values((dimension_scales or {}).get(key)):
+            value[key] = cast(int | str, raw_val)
+        else:
+            value[key] = normalize_score(raw_val)
         meta[f"{key}_raw"] = raw_val
     meta["justification"] = _summary_justification_from_verdict(verdict, score_keys)
     return value, meta
@@ -478,6 +560,7 @@ def normalize_transcript_judge_verdict(
     score_keys: list[str],
     policy_raw: dict[str, Any],
     not_applicable_score_keys: list[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     return _normalize_transcript_judge_verdict_impl(
         verdict,
@@ -488,6 +571,7 @@ def normalize_transcript_judge_verdict(
         extract_xml_citations_fn=extract_xml_citations,
         summary_justification_fn=_summary_justification_from_verdict,
         not_applicable_score_keys=not_applicable_score_keys,
+        dimension_scales=dimension_scales,
     )
 
 
@@ -495,6 +579,7 @@ def _verdict_distance(
     verdict: Dict[str, Any],
     target_scores: Dict[str, Any],
     score_keys: List[str],
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> float:
     distance = 0.0
     for key in score_keys:
@@ -506,17 +591,42 @@ def _verdict_distance(
         if isinstance(target, bool) and isinstance(current, bool):
             distance += 0.0 if target == current else 1.0
             continue
+        scale_values = _dimension_scale_values((dimension_scales or {}).get(key))
+        if scale_values and target in scale_values and current in scale_values:
+            target_index = scale_values.index(target)
+            current_index = scale_values.index(current)
+            distance += abs(target_index - current_index)
+            continue
         distance += 10.0
     return distance
 
 
-def _aggregate_dimension_values(values: list[Any]) -> tuple[Any, float]:
+def _aggregate_dimension_values(
+    values: list[Any],
+    scale: Dict[str, Any] | None = None,
+) -> tuple[Any, float | None]:
     if values and all(isinstance(value, bool) for value in values):
         true_count = sum(1 for value in values if value)
         false_count = len(values) - true_count
         aggregated = true_count >= false_count
         return aggregated, true_count / len(values)
-    return None, 0.0
+    scale_values = _dimension_scale_values(scale)
+    ordinal_values = [
+        value
+        for value in values
+        if not isinstance(value, bool) and value in scale_values
+    ]
+    if scale_values and len(ordinal_values) == len(values) and ordinal_values:
+        order = {value: index for index, value in enumerate(scale_values)}
+        ordered = sorted(ordinal_values, key=order.__getitem__)
+        aggregate = ordered[(len(ordered) - 1) // 2]
+        numeric_mean = (
+            sum(value for value in ordered if isinstance(value, int)) / len(ordered)
+            if all(isinstance(value, int) for value in ordered)
+            else None
+        )
+        return aggregate, numeric_mean
+    return None, None
 
 
 def _confidence_rank(label: str) -> int:
@@ -629,6 +739,7 @@ def aggregate_judge_verdicts(
     verdicts: List[Dict[str, Any]],
     raws: List[str],
     score_keys: List[str],
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
     """Aggregate successful judge verdicts and pick a representative explanation."""
     if not verdicts:
@@ -639,22 +750,37 @@ def aggregate_judge_verdicts(
     aggregated_dimensions: Dict[str, Any] = {}
     aggregated_applicability: Dict[str, bool] = {}
     mj_votes: Dict[str, List[Any]] = {}
+    mj_applicability_votes: Dict[str, List[bool]] = {}
+    mj_applicability_agreement: Dict[str, float] = {}
     mj_means: Dict[str, float] = {}
     for key in score_keys:
-        applicable_values = [
-            score for verdict in verdicts
-            if (score := get_verdict_dimension(verdict, key)) is not None
-        ]
+        all_values = [get_verdict_dimension(verdict, key) for verdict in verdicts]
+        applicable_values = [value for value in all_values if value is not None]
         not_applicable_count = sum(1 for verdict in verdicts if is_not_applicable_dimension(verdict, key))
-        mj_votes[key] = applicable_values
-        aggregated_value, mean_value = _aggregate_dimension_values(applicable_values)
-        mj_means[key] = mean_value
+        mj_votes[key] = all_values
+        applicability_votes = [value is not None for value in all_values]
+        mj_applicability_votes[key] = applicability_votes
+        applicable_vote_count = sum(applicability_votes)
+        mj_applicability_agreement[key] = round(
+            max(applicable_vote_count, len(applicability_votes) - applicable_vote_count)
+            / len(applicability_votes),
+            3,
+        )
+        aggregated_value, mean_value = _aggregate_dimension_values(
+            applicable_values,
+            (dimension_scales or {}).get(key),
+        )
+        if mean_value is not None:
+            mj_means[key] = mean_value
         aggregated_dimensions[key] = aggregated_value
         if not_applicable_count:
             aggregated_applicability[key] = bool(applicable_values)
 
     voted_policy_violation = aggregated_dimensions.get("policy_violation")
-    if "policy_violation" in score_keys:
+    if (
+        "policy_violation" in score_keys
+        and not _dimension_scale_values((dimension_scales or {}).get("policy_violation"))
+    ):
         aggregated_dimensions["policy_violation"] = any(
             node.get("relevant") is True and node.get("violated") is True
             for node in aggregated_nodes
@@ -663,7 +789,12 @@ def aggregate_judge_verdicts(
     representative_index = min(
         range(len(verdicts)),
         key=lambda index: (
-            _verdict_distance(verdicts[index], {DIMENSIONS_KEY: aggregated_dimensions}, score_keys),
+            _verdict_distance(
+                verdicts[index],
+                {DIMENSIONS_KEY: aggregated_dimensions},
+                score_keys,
+                dimension_scales,
+            ),
             index,
         ),
     )
@@ -720,6 +851,8 @@ def aggregate_judge_verdicts(
         "n": len(verdicts),
         "n_failed": 0,
         "votes": mj_votes,
+        "applicability_votes": mj_applicability_votes,
+        "applicability_agreement": mj_applicability_agreement,
         "means": mj_means,
         "agreement": round(agreement, 3),
         "justifications": [
@@ -811,6 +944,7 @@ async def _single_judge_call(
     response_schema: Optional[Any],
     score_keys: list[str],
     not_applicable_score_keys: list[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """Run one judge call. Returns (parsed_verdict_or_None, raw_text)."""
     schema_name, json_schema = _coerce_response_schema(response_schema)
@@ -827,6 +961,7 @@ async def _single_judge_call(
             cast(Optional[Dict[str, Any]], out.parsed),
             score_keys,
             not_applicable_score_keys,
+            dimension_scales,
         ):
             verdict = out.parsed
         else:
@@ -835,6 +970,7 @@ async def _single_judge_call(
             cast(Optional[Dict[str, Any]], verdict),
             score_keys,
             not_applicable_score_keys,
+            dimension_scales,
         ):
             return verdict, raw
         if not judge_model.startswith("github_copilot/"):
@@ -871,6 +1007,7 @@ async def _run_judge_attempts(
     judge_n: int,
     score_keys: list[str],
     not_applicable_score_keys: list[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> Tuple[List[Dict[str, Any]], List[str], int]:
     parseable_verdicts: List[Dict[str, Any]] = []
     parseable_raws: List[str] = []
@@ -885,6 +1022,7 @@ async def _run_judge_attempts(
             response_schema,
             score_keys,
             not_applicable_score_keys,
+            dimension_scales,
         )
         if isinstance(verdict, dict):
             parseable_verdicts.append(verdict)
@@ -902,6 +1040,7 @@ async def _run_judge_attempts(
             response_schema,
             score_keys,
             not_applicable_score_keys,
+            dimension_scales,
         )
         for _ in range(judge_n)
     ]
@@ -931,6 +1070,7 @@ async def multi_judge(
     response_schema: Optional[Any] = None,
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: List[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """Call the judge ``judge_n`` times and aggregate results."""
     if judge_n > 1 and judge_n % 2 == 0:
@@ -961,13 +1101,19 @@ async def multi_judge(
         judge_n,
         score_keys,
         not_applicable_score_keys,
+        dimension_scales,
     )
 
     verdicts: List[Dict[str, Any]] = []
     raws: List[str] = []
     invalid_failures = 0
     for index, verdict in enumerate(parseable_verdicts):
-        if has_successful_judge_verdict(verdict, score_keys, not_applicable_score_keys):
+        if has_successful_judge_verdict(
+            verdict,
+            score_keys,
+            not_applicable_score_keys,
+            dimension_scales,
+        ):
             verdicts.append(verdict)
             raws.append(parseable_raws[index] if index < len(parseable_raws) else "")
             continue
@@ -981,7 +1127,12 @@ async def multi_judge(
             "verdict": verdict,
             "raw": raw,
             "multi_judge": None,
-            "success": has_successful_judge_verdict(verdict, score_keys, not_applicable_score_keys),
+            "success": has_successful_judge_verdict(
+                verdict,
+                score_keys,
+                not_applicable_score_keys,
+                dimension_scales,
+            ),
             "failures": n_failures,
             "parseable_verdicts": parseable_verdicts,
             "parseable_raws": parseable_raws,
@@ -1002,6 +1153,7 @@ async def multi_judge(
         verdicts,
         raws,
         score_keys,
+        dimension_scales,
     )
     multi_judge_envelope["n_failed"] = n_failures
     return {
@@ -1027,6 +1179,7 @@ async def run_judge(
     response_schema: Optional[Any] = None,
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: List[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> JudgeResult:
     """Run the shared judge path and normalize the result envelope."""
     result = await multi_judge(
@@ -1040,12 +1193,18 @@ async def run_judge(
         response_schema=response_schema,
         reasoning_effort=reasoning_effort,
         not_applicable_score_keys=not_applicable_score_keys,
+        dimension_scales=dimension_scales,
     )
     verdict = result.get("verdict")
     raw = result.get("raw") or ""
     multi_judge_envelope = result.get("multi_judge")
 
-    if not has_successful_judge_verdict(verdict, score_keys, not_applicable_score_keys):
+    if not has_successful_judge_verdict(
+        verdict,
+        score_keys,
+        not_applicable_score_keys,
+        dimension_scales,
+    ):
         return {
             "judge_status": "judge_failed",
             "verdict": {"error": "judge_failed"},
@@ -1058,10 +1217,14 @@ async def run_judge(
             "parseable_raws": cast(List[str], result.get("parseable_raws") or []),
         }
 
-    score_values, score_meta = build_score_from_verdict(verdict, score_keys)
+    score_values, score_meta = build_score_from_verdict(
+        cast(Dict[str, Any], verdict),
+        score_keys,
+        dimension_scales,
+    )
     return {
         "judge_status": "ok",
-        "verdict": verdict,
+        "verdict": cast(Dict[str, Any], verdict),
         "raw": raw,
         "score_values": score_values,
         "score_meta": score_meta,
@@ -1087,6 +1250,7 @@ async def run_transcript_judge(
     response_schema: Optional[Any] = None,
     reasoning_effort: Optional[str] = None,
     not_applicable_score_keys: list[str] | None = None,
+    dimension_scales: Dict[str, Dict[str, Any]] | None = None,
 ) -> JudgeResult:
     if judge_n > 1 and judge_temperature is not None and judge_temperature < 0.3:
         log.warning(
@@ -1112,6 +1276,7 @@ async def run_transcript_judge(
         judge_n,
         score_keys,
         not_applicable_score_keys,
+        dimension_scales,
     )
 
     normalized_verdicts: list[dict[str, Any]] = []
@@ -1125,6 +1290,7 @@ async def run_transcript_judge(
             score_keys=score_keys,
             policy_raw=policy_raw,
             not_applicable_score_keys=not_applicable_score_keys,
+            dimension_scales=dimension_scales,
         )
         if normalized is None:
             if error:
@@ -1153,6 +1319,7 @@ async def run_transcript_judge(
         normalized_verdicts,
         normalized_raws,
         score_keys,
+        dimension_scales,
     )
     multi_judge = None
     if judge_n > 1:
@@ -1160,7 +1327,11 @@ async def run_transcript_judge(
         multi_judge["n_failed"] = total_failures
         multi_judge["verdicts"] = normalized_verdicts
 
-    score_values, score_meta = build_score_from_verdict(aggregated_verdict, score_keys)
+    score_values, score_meta = build_score_from_verdict(
+        aggregated_verdict,
+        score_keys,
+        dimension_scales,
+    )
     return {
         "judge_status": "ok",
         "verdict": aggregated_verdict,

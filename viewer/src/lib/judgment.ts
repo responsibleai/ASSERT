@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import type { DimensionDef, JudgeStatus, MultiJudge } from './types.js';
+import type { DimensionDef, DimensionScales, JudgeStatus, MultiJudge } from './types.js';
 
 type VerdictLike = Record<string, unknown> | null | undefined;
 
@@ -11,6 +11,7 @@ export interface JudgmentRecordLike {
 	judge_error?: string | null;
 	score_keys?: string[] | null;
 	not_applicable_score_keys?: string[] | null;
+	dimension_scales?: DimensionScales | null;
 }
 
 export function isBooleanFlag(value: unknown): value is boolean {
@@ -93,13 +94,18 @@ function notApplicableMetricsForRecord(record: JudgmentRecordLike): string[] {
 function hasSuccessfulJudgeVerdict(
 	verdict: VerdictLike,
 	requiredMetrics: string[],
-	notApplicableMetrics: string[]
+	notApplicableMetrics: string[],
+	dimensionScales: DimensionScales | null | undefined
 ): boolean {
 	const dimensions = readDimensions(verdict);
 	if (dimensions && Array.isArray(verdict?.node_judgments)) {
 		return requiredMetrics.every(
 			(metric) =>
 				isBooleanFlag(dimensions[metric]) ||
+				(
+					(typeof dimensions[metric] === 'number' || typeof dimensions[metric] === 'string') &&
+					Boolean(dimensionScales?.[metric]?.values.some((entry) => entry.value === dimensions[metric]))
+				) ||
 				(notApplicableMetrics.includes(metric) && isNotApplicableVerdictDimension(verdict, metric))
 		);
 	}
@@ -116,11 +122,11 @@ export function inferJudgeStatus(
 		return 'scoring_skipped';
 	}
 	if (record.judge_status != null) {
-		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics)
+		return record.judge_status === 'ok' && hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics, record.dimension_scales)
 			? 'ok'
 			: 'judge_failed';
 	}
-	return hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics) ? 'ok' : 'judge_failed';
+	return hasSuccessfulJudgeVerdict(record.verdict, requiredMetrics, notApplicableMetrics, record.dimension_scales) ? 'ok' : 'judge_failed';
 }
 
 export function isSuccessfulJudgment(
@@ -140,14 +146,28 @@ export function getJudgeError(record: JudgmentRecordLike): string | null {
 }
 
 export function scoreSortValue(record: JudgmentRecordLike, metric: string): number {
+	const rawValue = getRecordMetricValue(record, metric);
+	if (typeof rawValue === 'number') return rawValue;
+	if (typeof rawValue === 'string') {
+		const index = record.dimension_scales?.[metric]?.values.findIndex((entry) => entry.value === rawValue) ?? -1;
+		return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+	}
 	const value = getRecordFlag(record, metric);
 	if (value === null) return 2;
 	return value ? 0 : 1;
 }
 
-function multiJudgeVotes(multiJudge: MultiJudge | null | undefined, metric: string): boolean[] {
+function multiJudgeVotes(
+	multiJudge: MultiJudge | null | undefined,
+	metric: string
+): Array<boolean | number | string | null> {
 	const votes = multiJudge?.votes?.[metric];
-	return Array.isArray(votes) ? votes.filter((vote) => typeof vote === 'boolean') : [];
+	return Array.isArray(votes)
+		? votes.filter(
+				(vote): vote is boolean | number | string | null =>
+					vote === null || typeof vote === 'boolean' || typeof vote === 'number' || typeof vote === 'string'
+			)
+		: [];
 }
 
 function multiJudgeMetricNames(
@@ -164,8 +184,9 @@ function multiJudgeDimensionAgreement(
 ): number | null {
 	const votes = multiJudgeVotes(multiJudge, metric);
 	if (votes.length === 0) return null;
-	const trueCount = votes.filter(Boolean).length;
-	const agreeing = Math.max(trueCount, votes.length - trueCount);
+	const counts = new Map<boolean | number | string | null, number>();
+	for (const vote of votes) counts.set(vote, (counts.get(vote) ?? 0) + 1);
+	const agreeing = Math.max(...counts.values());
 	return agreeing / votes.length;
 }
 
@@ -187,8 +208,7 @@ export function multiJudgeHasDisagreement(
 	return multiJudgeMetricNames(multiJudge, metrics).some((name) => {
 		const votes = multiJudgeVotes(multiJudge, name);
 		if (votes.length < 2) return false;
-		const trueCount = votes.filter(Boolean).length;
-		return trueCount > 0 && trueCount < votes.length;
+		return new Set(votes).size > 1;
 	});
 }
 
@@ -198,7 +218,8 @@ export function multiJudgeDimensionAgreementLabel(
 ): string | null {
 	const votes = multiJudgeVotes(multiJudge, metric);
 	if (votes.length === 0) return null;
-	const trueCount = votes.filter(Boolean).length;
-	const agreeing = Math.max(trueCount, votes.length - trueCount);
+	const counts = new Map<boolean | number | string | null, number>();
+	for (const vote of votes) counts.set(vote, (counts.get(vote) ?? 0) + 1);
+	const agreeing = Math.max(...counts.values());
 	return `${agreeing}/${votes.length} agree`;
 }

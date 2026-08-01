@@ -614,6 +614,47 @@ def _parse_dimensions(raw: Any) -> list[dict[str, Any]] | None:
     return dimensions
 
 
+def _parse_judge_scale(raw: Any, *, field_name: str) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    reject_unknown_keys(raw, field_name=field_name, allowed={"type", "values"})
+    scale_type = raw.get("type")
+    if scale_type != "ordinal":
+        raise ValueError(f"{field_name}.type must be 'ordinal'")
+    values_raw = raw.get("values")
+    if not isinstance(values_raw, dict):
+        raise ValueError(f"{field_name}.values must be a mapping")
+    if len(values_raw) < 2:
+        raise ValueError(f"{field_name}.values must define at least two grades")
+
+    values: list[dict[str, Any]] = []
+    value_type: type[int] | type[str] | None = None
+    seen_values: set[int | str] = set()
+    for raw_value, raw_label in values_raw.items():
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, str)):
+            raise ValueError(
+                f"{field_name}.values keys must be integers or non-empty strings"
+            )
+        value: int | str = raw_value.strip() if isinstance(raw_value, str) else raw_value
+        if isinstance(value, str) and not value:
+            raise ValueError(
+                f"{field_name}.values keys must be integers or non-empty strings"
+            )
+        current_type = str if isinstance(value, str) else int
+        if value_type is not None and current_type is not value_type:
+            raise ValueError(f"{field_name}.values keys must all use the same type")
+        value_type = current_type
+        if value in seen_values:
+            raise ValueError(f"{field_name}.values contains duplicate grade {value!r}")
+        seen_values.add(value)
+        if not isinstance(raw_label, str) or not raw_label.strip():
+            raise ValueError(f"{field_name}.values[{raw_value}] must be a non-empty string")
+        values.append({"value": value, "label": raw_label.strip()})
+    return {"type": "ordinal", "values": values}
+
+
 def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]:
     if raw in (None, {}):
         return []
@@ -635,7 +676,7 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
         reject_unknown_keys(
             dimension_raw,
             field_name=dimension_field_name,
-            allowed={"description", "rubric", "required_base", "allow_not_applicable"},
+            allowed={"description", "rubric", "required_base", "allow_not_applicable", "scale"},
         )
         description = _optional_str(
             dimension_raw.get("description"),
@@ -655,6 +696,10 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
         allow_not_applicable = dimension_raw.get("allow_not_applicable")
         if allow_not_applicable is not None and not isinstance(allow_not_applicable, bool):
             raise ValueError(f"{dimension_field_name}.allow_not_applicable must be a boolean")
+        scale = _parse_judge_scale(
+            dimension_raw.get("scale"),
+            field_name=f"{dimension_field_name}.scale",
+        )
 
         dimension: dict[str, Any] = {
             "name": name,
@@ -665,6 +710,8 @@ def parse_judge_dimensions(raw: Any, *, field_name: str) -> list[dict[str, Any]]
             dimension["required_base"] = required_base
         if allow_not_applicable is not None:
             dimension["allow_not_applicable"] = allow_not_applicable
+        if scale is not None:
+            dimension["scale"] = scale
         dimensions.append(dimension)
     return dimensions
 

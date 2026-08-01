@@ -33,6 +33,7 @@ def _normalize_transcript_judge_verdict_impl(
     extract_xml_citations_fn: Callable[..., list[dict[str, Any]]],
     summary_justification_fn: Callable[[dict[str, Any], list[str]], str],
     not_applicable_score_keys: list[str] | None = None,
+    dimension_scales: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     normalized = dict(verdict)
     highlights = str(normalized.pop("highlights", "") or "")
@@ -93,7 +94,26 @@ def _normalize_transcript_judge_verdict_impl(
                 return None, f"invalid_dimension_applicability:{key}"
     for key in score_keys:
         value = dimensions.get(key)
-        if isinstance(value, bool):
+        scale = (dimension_scales or {}).get(key)
+        if isinstance(scale, dict):
+            scale_values = [
+                entry.get("value")
+                for entry in scale.get("values", [])
+                if (
+                    isinstance(entry, dict)
+                    and not isinstance(entry.get("value"), bool)
+                    and isinstance(entry.get("value"), (int, str))
+                )
+            ]
+            expected_type = str if scale_values and isinstance(scale_values[0], str) else int
+            if (
+                scale_values
+                and not isinstance(value, bool)
+                and isinstance(value, expected_type)
+                and value in scale_values
+            ):
+                continue
+        elif isinstance(value, bool):
             continue
         if key in not_applicable_names and value is None:
             if isinstance(applicability, dict) and applicability.get(key) is False:

@@ -159,7 +159,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 				});
 			}
 		}
-		if (allScores.length === 0) throw error(404, 'No inference scores found across runs');
+		if (allScores.length === 0) throw error(404, 'No scenario scores found across runs');
 
 		const judgeDims = [...allJudgeDims].sort();
 		const dimensions = [...allDimensions].sort();

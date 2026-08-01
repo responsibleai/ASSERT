@@ -121,6 +121,8 @@ async def score_transcripts(
                 judge_temperature=config.temperature,
                 judge_max_tokens=config.max_tokens,
                 response_schema=judge_contract["response_schema"],
+                not_applicable_score_keys=judge_contract["not_applicable_score_keys"],
+                dimension_scales=judge_contract["dimension_scales"],
             )
             score_row = {
                 "test_case_id": row.get("test_case_id", ""),
@@ -133,7 +135,11 @@ async def score_transcripts(
                 "judge_status": judge_result["judge_status"],
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
+                "score_keys": judge_contract["score_keys"],
+                "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
             }
+            if judge_contract["dimension_scales"]:
+                score_row["dimension_scales"] = judge_contract["dimension_scales"]
             behavior = row_behavior(row)
             score_row["dimensions"] = {"behavior": behavior}
             score_row["permissible"] = policy_permissible(permissible_by_name, behavior)

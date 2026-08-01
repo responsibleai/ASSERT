@@ -126,8 +126,20 @@ export interface NodeJudgment {
 	reasoning: string;
 }
 
+export interface OrdinalScaleValue {
+	value: number | string;
+	label: string;
+}
+
+export interface OrdinalScale {
+	type: 'ordinal';
+	values: OrdinalScaleValue[];
+}
+
+export type DimensionScales = Record<string, OrdinalScale>;
+
 export interface Verdict {
-	dimensions: Record<string, boolean | null>;
+	dimensions: Record<string, boolean | number | string | null>;
 	dimension_applicability?: Record<string, boolean>;
 	justification: string;
 	narrative?: string;
@@ -149,7 +161,9 @@ export type JudgeStatus = 'ok' | 'judge_failed' | 'scoring_skipped';
 export interface MultiJudge {
 	n: number;
 	n_failed: number;
-	votes: Record<string, boolean[]>;
+	votes: Record<string, Array<boolean | number | string | null>>;
+	applicability_votes?: Record<string, boolean[]>;
+	applicability_agreement?: Record<string, number>;
 	means: Record<string, number>;
 	agreement: number;
 	justifications: string[];
@@ -202,6 +216,7 @@ export interface JudgedSample {
 	judge_error?: string | null;
 	score_keys?: string[] | null;
 	not_applicable_score_keys?: string[] | null;
+	dimension_scales?: DimensionScales | null;
 	messages?: InteractionMessage[];
 	llm_calls?: LlmCallTrace[];
 	target_runtime_mode?: string | null;
@@ -228,6 +243,7 @@ export interface ViewerResultItem {
 	judge_error?: string | null;
 	score_keys?: string[] | null;
 	not_applicable_score_keys?: string[] | null;
+	dimension_scales?: DimensionScales | null;
 	multi_judge?: MultiJudge;
 	messages: InteractionMessage[];
 	llm_calls: LlmCallTrace[];
@@ -259,6 +275,7 @@ export interface DimensionDef {
 	required_base?: boolean;
 	kind?: string;
 	polarity?: string;
+	scale?: OrdinalScale;
 }
 
 export interface BinaryCounts {
@@ -267,13 +284,18 @@ export interface BinaryCounts {
 }
 
 export interface DimensionMetrics {
+	kind?: 'binary' | 'ordinal';
 	rate: number | null;
 	count: number;
 	applicable_count?: number;
 	not_applicable_count?: number;
-	flagged_count: number;
-	clear_count: number;
-	counts: BinaryCounts;
+	flagged_count?: number;
+	clear_count?: number;
+	counts: BinaryCounts | Record<string, number>;
+	rates?: Record<string, number>;
+	median?: number | string | null;
+	mean?: number | null;
+	scale?: OrdinalScale;
 }
 
 export interface RunMetrics {
@@ -377,7 +399,7 @@ export interface AuditCitation {
 }
 
 export interface AuditVerdict {
-	dimensions: Record<string, boolean | null>;
+	dimensions: Record<string, boolean | number | string | null>;
 	dimension_applicability?: Record<string, boolean>;
 	justification: string;
 	dimension_justifications?: Record<string, string>;
@@ -438,6 +460,7 @@ export interface AuditScore {
 	judge_error?: string | null;
 	score_keys?: string[] | null;
 	not_applicable_score_keys?: string[] | null;
+	dimension_scales?: DimensionScales | null;
 	target_runtime_mode?: string | null;
 	metadata: {
 		turns_count: number;

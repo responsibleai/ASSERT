@@ -54,7 +54,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
 	if (type === 'audit_scores') {
 		const scores = loadAuditScores(suite_id, run_id);
-		if (scores.length === 0) throw error(404, 'No inference scores found');
+		if (scores.length === 0) throw error(404, 'No scenario scores found');
 
 		const transcripts = loadAuditTranscripts(suite_id, run_id);
 		const transcriptMap = new Map<string, AuditTranscript>();

@@ -177,12 +177,18 @@ function turnRoleLabel(role: InteractionMessage['role']): string {
 	return role;
 }
 
-function pctBar(counts: BinaryCounts): { clear: number; flagged: number } {
-	const total = counts[0] + counts[1];
+function binaryCounts(counts: BinaryCounts | Record<string, number>): BinaryCounts {
+	const values = counts as Record<string, number>;
+	return { 0: values['0'] ?? 0, 1: values['1'] ?? 0 };
+}
+
+function pctBar(counts: BinaryCounts | Record<string, number>): { clear: number; flagged: number } {
+	const normalized = binaryCounts(counts);
+	const total = normalized[0] + normalized[1];
 	if (total === 0) return { clear: 0, flagged: 0 };
 	return {
-		clear: (counts[0] / total) * 100,
-		flagged: (counts[1] / total) * 100
+		clear: (normalized[0] / total) * 100,
+		flagged: (normalized[1] / total) * 100
 	};
 }
 
@@ -317,8 +323,9 @@ function capitalize(s: string): string {
 				{@const avg = dInfo.avg}
 				{@const delta = dInfo.delta}
 				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
-				{@const pct = pctBar(runScores)}
-				{@const totalSamples = runScores[0] + runScores[1]}
+				{@const normalizedScores = binaryCounts(runScores)}
+				{@const pct = pctBar(normalizedScores)}
+				{@const totalSamples = normalizedScores[0] + normalizedScores[1]}
 				<div class="rounded-lg border border-border bg-surface px-5 py-4">
 					<!-- Header: run name + sample count -->
 					<div class="flex items-start justify-between gap-3">

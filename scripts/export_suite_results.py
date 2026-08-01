@@ -27,6 +27,7 @@ from assert_ai.core.io import (
 )
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_not_applicable_dimension, is_valid_event_flag
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
+from assert_ai.results import compute_dimension_summary, compute_policy_violation_by_permissibility, detect_dimensions
 
 EXPORT_DIR_NAME = "exports"
 CSV_FORMAT = "csv"
@@ -155,15 +156,7 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
     not_permissible_records = [
         row for row in records if not _row_permissible(row, permissible_by_name)
     ]
-    all_dims = sorted(
-        {
-            key
-            for row in records
-            for key, value in (((row.get("verdict") or {}).get("dimensions")) or {}).items()
-            if isinstance(row.get("verdict"), dict)
-            and (is_valid_event_flag(value) or is_not_applicable_dimension(row.get("verdict"), key))
-        }
-    )
+    all_dims = detect_dimensions(records)
 
     def compute_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
         scored_items = [item for item in items if infer_judge_status(item) == "ok"]
@@ -177,27 +170,9 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
             "dimensions": {},
         }
         for dim in all_dims:
-            raw_values = []
-            not_applicable_count = 0
-            for item in scored_items:
-                verdict = item.get("verdict")
-                value = get_verdict_dimension(verdict, dim)
-                if is_valid_event_flag(value):
-                    raw_values.append(bool(value))
-                elif is_not_applicable_dimension(verdict, dim):
-                    not_applicable_count += 1
-            flagged_count = sum(1 for value in raw_values if value)
-            clear_count = len(raw_values) - flagged_count
-            rate = flagged_count / len(raw_values) if raw_values else None
-            result["dimensions"][dim] = {
-                "count": len(raw_values),
-                "applicable_count": len(raw_values),
-                "not_applicable_count": not_applicable_count,
-                "flagged_count": flagged_count,
-                "clear_count": clear_count,
-                "rate": rate,
-            }
-            result[f"{dim}_rate"] = rate
+            summary = compute_dimension_summary(scored_items, dim)
+            result["dimensions"][dim] = summary
+            result[f"{dim}_rate"] = summary.get("rate")
         return result
 
     by_behavior: dict[str, dict[str, Any]] = {}
@@ -230,31 +205,13 @@ def _build_score_metrics(records: list[dict[str, Any]], *, policy_raw: dict[str,
                 node_violated_count += 1
 
         support = len(relevant_rows)
-        node_dimensions: dict[str, dict[str, Any]] = {}
-        for dim in all_dims:
-            flagged_count = 0
-            applicable_count = 0
-            not_applicable_count = 0
-            for row in relevant_rows:
-                verdict = row.get("verdict")
-                value = get_verdict_dimension(verdict, dim)
-                if is_valid_event_flag(value):
-                    applicable_count += 1
-                    flagged_count += int(value)
-                    continue
-                if is_not_applicable_dimension(verdict, dim):
-                    not_applicable_count += 1
-                    continue
-                raise ValueError(f"missing or invalid dimension '{dim}' in scored row")
-            clear_count = applicable_count - flagged_count
-            node_dimensions[dim] = {
-                "count": applicable_count,
-                "applicable_count": applicable_count,
-                "not_applicable_count": not_applicable_count,
-                "flagged_count": flagged_count,
-                "clear_count": clear_count,
-                "rate": flagged_count / applicable_count if applicable_count else 0.0,
-            }
+        node_dimensions: dict[str, dict[str, Any]] = {
+            dim: compute_dimension_summary(relevant_rows, dim)
+            for dim in all_dims
+        }
+        for summary in node_dimensions.values():
+            if summary.get("kind") != "ordinal" and summary.get("rate") is None:
+                summary["rate"] = 0.0
 
         by_relevant_node.append(
             {
@@ -366,9 +323,38 @@ def _score_row(
         "judge_model": str(score_row.get("judge_model") or ""),
         "justification": str(verdict_payload.get("justification") or ""),
     }
+    raw_scales = score_row.get("dimension_scales")
+    dimension_scales = raw_scales if isinstance(raw_scales, dict) else {}
     for dimension in score_dimensions:
         value = get_verdict_dimension(verdict_payload, dimension)
-        row[dimension] = value if is_valid_event_flag(value) else ""
+        is_grade = (
+            isinstance(value, bool)
+            or (
+                not isinstance(value, bool)
+                and isinstance(value, (int, str))
+            )
+        )
+        row[dimension] = value if is_grade else ""
+        row[f"{dimension}_applicable"] = (
+            False
+            if is_not_applicable_dimension(verdict_payload, dimension)
+            else True if is_grade else ""
+        )
+        scale = dimension_scales.get(dimension)
+        scale_values = scale.get("values") if isinstance(scale, dict) else None
+        grade_entry = next(
+            (
+                entry
+                for entry in scale_values
+                if isinstance(entry, dict) and entry.get("value") == value
+            ),
+            None,
+        ) if isinstance(scale_values, list) else None
+        row[f"{dimension}_grade_label"] = (
+            str(grade_entry.get("label"))
+            if isinstance(grade_entry, dict) and grade_entry.get("label") is not None
+            else ""
+        )
         justification = justifications.get(dimension)
         row[f"{dimension}_justification"] = (
             str(justification) if isinstance(justification, str) else ""
@@ -431,6 +417,23 @@ def _relevant_node_row(
         row[f"{dimension}_flagged_count"] = summary.get("flagged_count", "")
         row[f"{dimension}_clear_count"] = summary.get("clear_count", "")
         row[f"{dimension}_rate"] = summary.get("rate", "")
+        row[f"{dimension}_median"] = summary.get("median", "")
+        row[f"{dimension}_mean"] = summary.get("mean", "")
+        scale = summary.get("scale")
+        scale_values = scale.get("values") if isinstance(scale, dict) else None
+        raw_counts = summary.get("counts")
+        counts: dict[str, Any] = raw_counts if isinstance(raw_counts, dict) else {}
+        raw_rates = summary.get("rates")
+        rates: dict[str, Any] = raw_rates if isinstance(raw_rates, dict) else {}
+        if isinstance(scale_values, list):
+            for entry in scale_values:
+                if not isinstance(entry, dict) or entry.get("value") is None:
+                    continue
+                value = entry["value"]
+                key = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_").lower() or "grade"
+                row[f"{dimension}_{key}_label"] = str(entry.get("label") or "")
+                row[f"{dimension}_{key}_count"] = counts.get(str(value), 0)
+                row[f"{dimension}_{key}_rate"] = rates.get(str(value), 0.0)
     return row
 
 
@@ -616,14 +619,10 @@ def load_suite_tables(
                 }
             )
 
+        score_dimensions.update(detect_dimensions(score_rows))
         for score_row in score_rows:
             raw_score_rows.append((run_id, score_row))
             verdict = score_row.get("verdict")
-            dimensions_payload = verdict.get("dimensions") if isinstance(verdict, dict) else None
-            if isinstance(dimensions_payload, dict):
-                for key, value in dimensions_payload.items():
-                    if is_valid_event_flag(value):
-                        score_dimensions.add(str(key))
             node_judgments = verdict.get("node_judgments") if isinstance(verdict, dict) else None
             if isinstance(node_judgments, list):
                 for entry in node_judgments:
@@ -644,16 +643,17 @@ def load_suite_tables(
                 for key in dimensions_payload:
                     relevant_dimensions.add(str(key))
 
+        ok_score_rows = [
+            row for row in score_rows if infer_judge_status(row) == "ok"
+        ]
         permissible_scores = [
-            row for row in score_rows
-            if infer_judge_status(row) == "ok"
-            and _row_permissible(row, permissible_by_name)
+            row for row in ok_score_rows
+            if _row_permissible(row, permissible_by_name)
         ]
-        not_permissible_scores = [
-            row for row in score_rows
-            if infer_judge_status(row) == "ok"
-            and not _row_permissible(row, permissible_by_name)
-        ]
+        policy_violation_split = compute_policy_violation_by_permissibility(
+            ok_score_rows,
+            taxonomy.get("behavior_categories") or [],
+        )
         run_rows.append(
             {
                 "suite_id": suite_id,
@@ -672,10 +672,9 @@ def load_suite_tables(
                 "policy_violation_rate": _event_rate(score_rows, "policy_violation"),
                 "overrefusal_rate": _event_rate(score_rows, "overrefusal"),
                 "permissible_overrefusal_rate": _event_rate(permissible_scores, "overrefusal"),
-                "not_permissible_policy_violation_rate": _event_rate(
-                    not_permissible_scores,
-                    "policy_violation",
-                ),
+                "not_permissible_policy_violation_rate": (
+                    policy_violation_split["not_permissible"] or {}
+                ).get("rate"),
             }
         )
 
@@ -799,6 +798,17 @@ def load_suite_tables(
             ],
         ],
     }
+    for table_name, rows in tables.items():
+        known = set(columns[table_name])
+        extras = sorted(
+            {
+                key
+                for row in rows
+                for key in row
+                if key not in known
+            }
+        )
+        columns[table_name].extend(extras)
     return tables, columns
 
 

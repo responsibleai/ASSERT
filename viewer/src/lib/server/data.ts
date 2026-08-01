@@ -42,6 +42,7 @@ import type {
 	AuditScore,
 	AuditTranscript,
 	BinaryCounts,
+	DimensionScales,
 	DimensionMetrics,
 	LlmCallTrace,
 	PromptSeed,
@@ -103,8 +104,9 @@ interface InferencePreviewRow {
 }
 
 interface CompareDimensionSummary {
+	kind?: 'binary' | 'ordinal';
 	rate: number | null;
-	counts: BinaryCounts;
+	counts: BinaryCounts | Record<string, number>;
 	n: number;
 	notApplicable?: number;
 }
@@ -489,15 +491,17 @@ function buildJudgedSampleRow(
 		judge_status:
 			typeof scoreRow.judge_status === 'string' ? (scoreRow.judge_status as JudgeStatus) : null,
 		judge_error: typeof scoreRow.judge_error === 'string' ? scoreRow.judge_error : null,
-		score_keys:
-			Array.isArray(scoreRow.score_keys) &&
-			scoreRow.score_keys.every((key) => typeof key === 'string')
-				? (scoreRow.score_keys as string[])
-				: null,
-		not_applicable_score_keys:
-			Array.isArray(scoreRow.not_applicable_score_keys) &&
-			scoreRow.not_applicable_score_keys.every((key) => typeof key === 'string')
-				? (scoreRow.not_applicable_score_keys as string[])
+		score_keys: Array.isArray(scoreRow.score_keys)
+			? scoreRow.score_keys.filter((key): key is string => typeof key === 'string')
+			: null,
+		not_applicable_score_keys: Array.isArray(scoreRow.not_applicable_score_keys)
+			? scoreRow.not_applicable_score_keys.filter((key): key is string => typeof key === 'string')
+			: null,
+		dimension_scales:
+			scoreRow.dimension_scales &&
+			typeof scoreRow.dimension_scales === 'object' &&
+			!Array.isArray(scoreRow.dimension_scales)
+				? (scoreRow.dimension_scales as DimensionScales)
 				: null,
 		messages,
 		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
@@ -903,6 +907,7 @@ function buildCompareRunSummary(runId: string, manifest: Manifest | null, sample
 		Object.entries(metrics.dimensions).map(([name, value]) => [
 			name,
 			{
+				kind: value.kind,
 				rate: value.rate,
 				counts: value.counts,
 				n: value.count,
@@ -1534,7 +1539,9 @@ export function loadComparePageData(
 		if (samples.length === 0) return null;
 
 		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples);
-		for (const dimensionName of Object.keys(summary.dimensions)) metricNames.add(dimensionName);
+		for (const [dimensionName, dimension] of Object.entries(summary.dimensions)) {
+			if (dimension.kind !== 'ordinal') metricNames.add(dimensionName);
+		}
 		runSummaries.push(summary);
 	}
 

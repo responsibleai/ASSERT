@@ -29,6 +29,15 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	const payload = loadComparePageData(suite_id, runIds, kind);
 	if (payload) return payload;
 
+	// Auto-fallback: the default kind is 'prompts', but a scenarios-only suite
+	// (no prompt samples) would otherwise 404. When the user did not explicitly
+	// pin a kind, fall back to scenarios so the comparison renders instead of
+	// erroring. (An explicit ?kind=scenarios keeps the empty-state handling below.)
+	if (kind === 'prompts') {
+		const scenariosPayload = loadComparePageData(suite_id, runIds, 'scenarios');
+		if (scenariosPayload) return scenariosPayload;
+	}
+
 	// Scenarios-mode empty state: when one or more runs have no scenario
 	// samples, we still want to render the toggle so the user can switch back
 	// to Prompts. Reuse the prompts payload for the shared metadata (runs,

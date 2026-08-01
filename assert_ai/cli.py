@@ -23,6 +23,11 @@ from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_b
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
+from assert_ai.results import (
+    compute_dimension_summary,
+    compute_policy_violation_by_permissibility,
+    detect_dimensions,
+)
 from assert_ai.stages import STAGE_NAMES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -139,6 +144,32 @@ def _fmt_binary_counts(counts: dict[int, int]) -> str:
 def _fmt_flagged_pass(counts: dict[int, int]) -> str:
     """Render the flagged/pass counts using the viewer's terminology."""
     return f"{counts.get(1, 0)} flagged / {counts.get(0, 0)} pass"
+
+
+def _fmt_dimension_summary(summary: dict[str, Any]) -> tuple[str, str, str]:
+    count = int(summary.get("count") or 0)
+    if summary.get("kind") == "ordinal":
+        raw_counts = summary.get("counts")
+        counts: dict[str, Any] = raw_counts if isinstance(raw_counts, dict) else {}
+        raw_scale = summary.get("scale")
+        scale: dict[str, Any] = raw_scale if isinstance(raw_scale, dict) else {}
+        raw_scale_values = scale.get("values")
+        scale_values: list[Any] = raw_scale_values if isinstance(raw_scale_values, list) else []
+        ordered_keys = [
+            str(entry.get("value"))
+            for entry in scale_values
+            if isinstance(entry, dict) and entry.get("value") is not None
+        ]
+        distribution = ", ".join(f"{key}:{counts.get(key, 0)}" for key in ordered_keys)
+        not_applicable = int(summary.get("not_applicable_count") or 0)
+        if not_applicable:
+            distribution = f"{distribution}, N/A:{not_applicable}" if distribution else f"N/A:{not_applicable}"
+        return f"median {summary.get('median', 'N/A')}", str(count), distribution or "-"
+    return (
+        _fmt_percent(summary.get("rate")),
+        str(count),
+        _fmt_flagged_pass(summary.get("counts", {})),
+    )
 
 
 def _metric_label(metric: str) -> str:
@@ -337,38 +368,11 @@ def _current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
 
 
 def _detect_dimensions(rows: Iterable[dict[str, Any]]) -> list[str]:
-    seen: set[str] = set()
-    for row in rows:
-        verdict = row.get("verdict")
-        if not isinstance(verdict, dict):
-            continue
-        dimensions = verdict.get("dimensions")
-        if not isinstance(dimensions, dict):
-            continue
-        for key, value in dimensions.items():
-            if is_valid_event_flag(value):
-                seen.add(key)
-    return sorted(seen)
+    return detect_dimensions(rows)
 
 
 def _compute_dimension_summary(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, Any]:
-    counts = {0: 0, 1: 0}
-    total = 0
-    for row in rows:
-        if infer_judge_status(row) != "ok":
-            continue
-        value = get_verdict_dimension(row.get("verdict"), metric)
-        if not is_valid_event_flag(value):
-            continue
-        counts[int(value)] += 1
-        total += 1
-    return {
-        "rate": counts[1] / total if total else 0.0,
-        "counts": counts,
-        "count": total,
-        "flagged_count": counts[1],
-        "clear_count": counts[0],
-    }
+    return compute_dimension_summary(rows, metric)
 
 
 def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
@@ -382,7 +386,23 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     return float(rate) if isinstance(rate, (int, float)) else None
 
 
-def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str) -> None:
+    for run_summary in run_summaries:
+        for key in ("prompt_metrics", "scenario_metrics"):
+            metrics = run_summary.get(key)
+            dimensions = metrics.get("dimensions") if isinstance(metrics, dict) else None
+            summary = dimensions.get(metric) if isinstance(dimensions, dict) else None
+            if isinstance(summary, dict) and summary.get("kind") == "ordinal":
+                _error(
+                    f"Metric '{metric}' uses ordered grades and has no violation-rate delta. "
+                    "Use 'assert-ai results status' or the viewer for its grade distribution."
+                )
+
+
+def _compute_prompt_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     if not rows:
         return None
 
@@ -409,9 +429,12 @@ def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None
         ),
     ) or "-"
     permissible_rows = [row for row in scored_rows if get_permissible_flag(row, default=False)]
-    not_permissible_rows = [row for row in scored_rows if not get_permissible_flag(row, default=False)]
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
 
-    return {
+    metrics: dict[str, Any] = {
         "total": len(rows),
         "scored_total": scored_total,
         "judge_failures": judge_failures,
@@ -419,17 +442,31 @@ def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None
         "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
         "permissible_overrefusal_rate": _compute_dimension_summary(permissible_rows, "overrefusal")["rate"],
-        "not_permissible_policy_violation_rate": _compute_dimension_summary(
-            not_permissible_rows,
-            "policy_violation",
-        )["rate"],
         "dimensions": dimensions,
         "target": target,
         "judge_model": judge_model,
     }
 
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
 
-def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return metrics
+
+
+def _compute_scenario_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     if not rows:
         return None
 
@@ -465,7 +502,12 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         ),
     ) or "-"
 
-    return {
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
+
+    metrics: dict[str, Any] = {
         "total": len(rows),
         "scored_total": scored_total,
         "judge_failures": judge_failures,
@@ -478,10 +520,29 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         "judge_model": judge_model,
     }
 
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
+
+    return metrics
+
 
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
+    taxonomy = load_json(run_dir.parent / "taxonomy.json")
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        behavior_categories = []
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -502,8 +563,8 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "current_stage": current_stage,
         "started_at": (manifest or {}).get("started_at"),
         "ended_at": (manifest or {}).get("ended_at"),
-        "prompt_metrics": _compute_prompt_metrics(prompt_rows),
-        "scenario_metrics": _compute_scenario_metrics(scenario_rows),
+        "prompt_metrics": _compute_prompt_metrics(prompt_rows, behavior_categories),
+        "scenario_metrics": _compute_scenario_metrics(scenario_rows, behavior_categories),
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }
@@ -973,15 +1034,16 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         if prompt_metrics.get("dimensions"):
             dim_table = Table(title="Prompt Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Summary", style="white", no_wrap=True)
             dim_table.add_column("Scored", style="white", no_wrap=True)
-            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
+            dim_table.add_column("Distribution", style="white", no_wrap=True)
             for name, summary in sorted(prompt_metrics["dimensions"].items()):
+                summary_text, scored_text, distribution_text = _fmt_dimension_summary(summary)
                 dim_table.add_row(
                     label_metric(name),
-                    _fmt_percent(summary.get("rate")),
-                    str(summary.get("count", 0)),
-                    _fmt_flagged_pass(summary.get("counts", {})),
+                    summary_text,
+                    scored_text,
+                    distribution_text,
                 )
             console.print(dim_table)
 
@@ -1000,15 +1062,16 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         if scenario_metrics.get("dimensions"):
             dim_table = Table(title="Scenario Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
-            dim_table.add_column("Flagged rate", style="white", no_wrap=True)
+            dim_table.add_column("Summary", style="white", no_wrap=True)
             dim_table.add_column("Scored", style="white", no_wrap=True)
-            dim_table.add_column("Flagged / Pass", style="white", no_wrap=True)
+            dim_table.add_column("Distribution", style="white", no_wrap=True)
             for name, summary in sorted(scenario_metrics["dimensions"].items()):
+                summary_text, scored_text, distribution_text = _fmt_dimension_summary(summary)
                 dim_table.add_row(
                     label_metric(name),
-                    _fmt_percent(summary.get("rate")),
-                    str(summary.get("count", 0)),
-                    _fmt_flagged_pass(summary.get("counts", {})),
+                    summary_text,
+                    scored_text,
+                    distribution_text,
                 )
             console.print(dim_table)
 
@@ -1121,6 +1184,7 @@ def _run_within_suite_compare(
         available_metrics.update(_detect_dimensions(run_summary.get("prompt_rows") or []))
     if metric not in available_metrics:
         _error(f"Metric '{metric}' was not found in the compared prompt judgments. Available: {sorted(available_metrics)}")
+    _reject_ordinal_compare(run_summaries, metric)
 
     behavior_category_deltas: list[dict[str, Any]] = []
     if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
@@ -1291,6 +1355,8 @@ def results_compare_suites(
         run_summary["suite_id"] = suite_id
         run_summaries.append(run_summary)
         labels.append(f"{suite_id}/{run_id}")
+
+    _reject_ordinal_compare(run_summaries, metric)
 
     # Count structural visibility from inference rows
     structural: list[dict[str, Any]] = []
