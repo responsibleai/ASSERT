@@ -76,13 +76,8 @@ pip install -e ".[otel]"
 cp examples/change_control_agent/.env.example examples/change_control_agent/.env
 # Edit the .env: AZURE_API_KEY and AZURE_API_BASE are required.
 
-assert-ai run --config examples/change_control_agent/evals/fabricated-fields/eval_config.yaml
+assert-ai run --config examples/change_control_agent/eval_config.yaml
 ```
-
-> This example ships one baseline/governed config pair per risk under
-> `evals/<risk>/` (`fabricated-fields`, `authority-misrepresentation`). Swap the
-> path above for the risk you want to run; the ACS-governed variant is
-> `eval_config.governed.yaml` in the same folder.
 
 Required env vars (in `examples/change_control_agent/.env`):
 

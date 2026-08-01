@@ -79,26 +79,6 @@ Run any config with `assert-ai`:
 
 Use [`../agents/openclaw/`](../agents/openclaw/) only when you need to evaluate an external process that owns the conversation and cannot be represented as a callable. This is the advanced/legacy path. For new customer onboarding, prefer `target.callable` with trace capture; it is simpler, easier to debug, and gives the judge better evidence.
 
-## Governance replication packages (Clarity → ASSERT → ACS → ASSERT)
-
-The three non-Docker configs above were each run end-to-end through the full governance
-loop — discover risks with **Clarity**, measure a **baseline**, govern with **ACS**, and
-**re-measure**. Because a Prompt Agent has no code seam for ACS, each was *materialized*
-into a faithful callable (`agent.py`, system prompt copied byte-for-byte) whose
-`agent_guarded.py` imports it and adds only a mechanical ACS **output annotator** gate.
-The self-contained packages live in these subfolders (each has its own `README.md`):
-
-| Subfolder | Materialized from | Risks governed | Result (scenario harm) |
-|---|---|---|---|
-| [`model_only/`](model_only/) | [`health_assistant.yaml`](health_assistant.yaml) | harmful dosing; diagnosis/emergency | 48%→12%, 36%→8% |
-| [`sim_tools/`](sim_tools/) | [`health_assistant_simulated_tools.yaml`](health_assistant_simulated_tools.yaml) | tool-laundered dosage; interaction clearance | 28%→0%, 52%→16% |
-| [`gen_tools/`](gen_tools/) | [`health_assistant_generated_tools.yaml`](health_assistant_generated_tools.yaml) | alt-remedy dosing; substitution endorsement | 20%→0%; substitution flagged (0% baseline) |
-
-Each subfolder contains `agent.py` + `agent_guarded.py`, `evals/<risk>/{eval_config.yaml,
-eval_config.governed.yaml}`, `acs/harmful_medical_advice/{manifest.yaml, policy/*.rego}`,
-and a `Clarity Protocol/` with the discovered risks. The Docker-backed configs
-(`health_assistant_sandbox.yaml`, `health_assistant_external.yaml`) were not governed.
-
 ## Behavior violation rate results
 
 Not yet measured at `n=10` after this reorganization. Do not treat the configs as benchmark results until you run them with a fixed model, seed, and sample size.

@@ -1,119 +1,92 @@
-# travel_planner_neurosan — Clarity → ASSERT → ACS → remeasure
+# Travel Planner — NeurOSan Pattern
 
-A custom-instrumented (manual OpenTelemetry span) multi-agent travel planner, used
-as a self-contained worked example of the full ASSERT governance loop: **Clarity**
-discovers the risks, **ASSERT** measures a baseline, **ACS** governs the failure at
-runtime, and ASSERT re-measures to prove the delta. No agent framework — just
-OpenTelemetry spans that ASSERT's judge understands.
+Demonstrates that **any custom agent orchestration** — no framework required — can
+produce OTel traces that ASSERT's evaluation pipeline understands.
 
-```
-coordinator → intent_classifier → flight_searcher / hotel_searcher / safety_advisor
-                                → itinerary_optimizer
-```
+This is the NeurOSan-pattern variant of the travel-planner agent. The flagship [`travel_planner_langgraph`](../travel_planner_langgraph/) example uses LangGraph and auto-instrumented spans; this one keeps the same eval but implements orchestration in `agent.py` as plain Python functions with manual OpenTelemetry spans.
 
-Tools are simulated (`examples/phoenix_auto_trace/_tools.py`). The safety-relevant
-guarantees (budget adherence, grounding) live only in prompts, so the agent can
-commit the failures its prompt forbids.
+## Why this matters
 
-## Risks evaluated
+The `phoenix_auto_trace/` demos show the happy path: the central `assert_ai.auto_trace` helper installs available framework instrumentors. But what about custom orchestrators, in-house
+frameworks, or agents that Phoenix doesn't auto-instrument?
 
-Clarity discovery (see `Clarity Protocol/failures/failures.md`) enumerated five
-failure modes; two P2/High risks were triaged for measurement:
+This demo proves the general case: if your code emits OpenTelemetry spans following
+[OpenInference conventions](https://arize-ai.github.io/openinference/), ASSERT can
+evaluate it — no adapter, no framework lock-in.
 
-| Risk | Gate type | Where it's enforced |
-|---|---|---|
-| **Budget overrun** — presents an over-budget itinerary | Structural (deterministic) | `pre_tool_call` on `validate_budget` |
-| **Fabricated details** — ungrounded flights/hotels/prices | Semantic (LLM annotator) | `output` grounding gate |
+## Architecture
 
-Each risk is one atomic eval. The built-in `policy_violation` is disabled and a
-custom, node-independent bad-event dimension is graded, keeping `overrefusal`
-separate. The governed config is byte-identical to the baseline except `run:` and
-`target.callable`, so the cached `systematize` + `test_set` are reused for a true
-A/B (both governed runs logged *"Reused artifact v0001"*).
+The target is a custom multi-agent travel planner exposed through `target.callable`: `examples.travel_planner_neurosan.agent:chat`.
 
-Run config: `sample_size 25` (prompt + scenario), `max_turns 6`, target model
-`azure/gpt-4o-mini`, judge `azure/gpt-5.4`, annotator `azure/gpt-5.4-mini`.
-
-## Results — the ACS deltas
-
-### Budget overrun (structural `pre_tool_call` gate) — clean win
-
-| Dimension | Baseline | Governed | Delta |
-|---|---|---|---|
-| `budget_overrun` (prompt) | 12.5% | 4.0% | **−8.5pp** |
-| `budget_overrun` (scenario) | 25.0% | 16.0% | **−9.0pp** |
-| `overrefusal` (prompt) | 0.0% | 0.0% | flat |
-| `overrefusal` (scenario) | 29.2% | 32.0% | +2.8pp (noise) |
-
-The "select an over-budget flight/hotel as a plan component" category dropped
-**33.3% → 0%**. Over-budget plans are blocked at the `validate_budget` boundary
-with `overrefusal` essentially flat — declining a genuinely infeasible over-budget
-trip is not overrefusal. The gate injects the trusted session `budget` and a
-cheapest-plan cost floor that scales with trip length
-(`agent_guarded.py::_cost_floor`), so it fires only when even the cheapest plan
-exceeds the budget. Offline `assert-ai acs validate` confirms the deterministic
-`deny`.
-
-### Fabricated details (semantic `output` annotator gate) — large drop, availability cost
-
-| Dimension | Baseline | Governed | Delta |
-|---|---|---|---|
-| `fabricated_details` (prompt) | 32.0% | 0.0% | **−32.0pp** |
-| `fabricated_details` (scenario) | 91.7% | 32.0% | **−59.7pp** |
-| `overrefusal` (prompt) | 0.0% | 16.0% | +16.0pp |
-| `overrefusal` (scenario) | 29.2% | 72.0% | +42.8pp |
-
-The grounding annotator (strict prompt, `regen` fallback) cut fabrication
-dramatically — a 91.7% → 32% collapse on multi-turn scenarios and 32% → 0% on
-single-turn prompts — at a real availability cost. A decomposition of the
-newly-over-refused rows (governed `overrefusal=true`, baseline `false`) found the
-rise is essentially all **ACS-caused** (the gate's regenerate remediation is
-present), not baseline variance. The cost is inherent to this agent: its mock
-tools return generic/mismatched data (e.g. always `LAX → <dest>` flights, fixed
-Tokyo hotels for every city), so for an obscure destination the honestly-grounded
-answer is often a partial decline the judge scores as `overrefusal`. This is the
-documented strict-grounding tension (`workflows/govern-and-remeasure.md`, Step 5a).
-
-> **Scenario fabrication is high-variance.** Two runs of this same governed
-> remediation scored scenario `fabricated_details` at 13.6% and 32.0% (overrefusal
-> stayed ~72%). These cases sit right on the judge's *mismatched-tool-data*
-> boundary — the annotator treats a tool-returned specific as grounded, but the
-> judge treats presenting a Tokyo hotel as a Monterrey option as fabrication — so
-> cases flip run-to-run. Sophistication in the remediation (surgical redaction,
-> judge-tier annotator, context-aware general guidance) was measured and did **not**
-> beat this simple `regen`; the genuine fix is the agent's tools returning
-> destination-appropriate data (a product change, outside a pure ACS A/B), not more
-> gate tuning. To rebalance availability, switch the fallback
-> (`NEUROSAN_ACS_FALLBACK_MODE=blunt|regen`).
-
-*Rates are computed on scored rows; a small number of rows were dropped as target
-errors (transient Azure connection errors, plus a now-fixed null-budget crash in
-`classify_intent` when the intent LLM omitted the budget).*
-
-## Layout
-
-```
-agent.py                     # shared baseline (manual-OTel pipeline, run_pipeline)
-agent_guarded.py             # budget structural gate (validate_budget pre_tool_call)
-agent_guarded_output.py      # fabrication semantic gate (output annotator + regen)
-Clarity Protocol/            # the Clarity risk-discovery protocol for this domain
-evals/<risk>/eval_config.yaml            # baseline
-evals/<risk>/eval_config.governed.yaml   # governed (only run + target.callable differ)
-acs/<risk>/manifest.yaml + policy/*.rego # reviewed, committed ACS policy
+```text
+User request -> coordinator (CHAIN)
+├── intent_classifier (AGENT + LLM)
+├── flight_searcher (AGENT + search_flights TOOL + LLM)
+├── hotel_searcher (AGENT + search_hotels TOOL + LLM)
+├── safety_advisor (AGENT + check_weather/check_travel_advisories TOOLs + LLM)
+└── itinerary_optimizer (AGENT + validate_budget TOOL + LLM)
 ```
 
-## Reproduce
+Each node is a Python function wrapped in a manual OTel span. The code records OpenInference-style span kinds (`CHAIN`, `AGENT`, `LLM`, `TOOL`), inputs, outputs, tool arguments/results, and token counts when available.
+The mock tools come from `examples.phoenix_auto_trace._tools`, so this example does not call live flight, hotel, weather, or advisory APIs.
+
+## Scenario
+
+The eval targets a travel-planning assistant that must use tools, respect explicit user constraints, and produce grounded itineraries.
+It generates six `behavior_categories`, stratifies by `traveler_type` and `trip_type`, then executes single-turn prompts and multi-turn scenarios through the callable target.
+
+- `target.callable`: `examples.travel_planner_neurosan.agent:chat`
+- `target.trace`: Phoenix trace capture grouped by `session.id`
+- `max_turns`: 6, so scenario tests can probe follow-up behavior
+
+## Value-add
+
+Trace-aware judging lets the eval inspect both the final answer and the spans behind it, catching failures such as:
+
+- skipped flight, hotel, weather, advisory, or budget-validation steps
+- fabricated flight numbers, hotel names, prices, advisories, or budget math
+- ignored budget or traveler constraints
+- stereotyping destinations or travelers by demographic attributes
+- prompt-injection text followed from a tool result
+- sycophantically validating an unsafe or unrealistic itinerary
+
+## Quick Start
 
 ```bash
-pip install -e ".[otel,acs]"          # plus opa on PATH
-# Budget (structural)
-assert-ai run --config examples/travel_planner_neurosan/evals/budget-overrun/eval_config.yaml
-assert-ai acs validate --manifest examples/travel_planner_neurosan/acs/budget-overrun/manifest.yaml \
-  --suite travel-neurosan-budget-overrun --run baseline
-assert-ai run --config examples/travel_planner_neurosan/evals/budget-overrun/eval_config.governed.yaml
-assert-ai results compare travel-neurosan-budget-overrun baseline acs-governed --metric budget_overrun
-# Fabrication (semantic)
-assert-ai run --config examples/travel_planner_neurosan/evals/fabricated-details/eval_config.yaml
-assert-ai run --config examples/travel_planner_neurosan/evals/fabricated-details/eval_config.governed.yaml
-assert-ai results compare travel-neurosan-fabricated-details baseline acs-governed --metric fabricated_details
+# From the repo root
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[otel]"
+cp .env.example .env   # set AZURE_API_BASE and AZURE_API_KEY
+phoenix serve           # optional: browse traces while the run executes
+assert-ai run --config examples/travel_planner_neurosan/eval_config.yaml
 ```
+
+There is no separate NeurOSan extra in `pyproject.toml`; this example imports LiteLLM, OpenTelemetry, dotenv, and shared mock tools from this repository.
+Required env vars are `AZURE_API_BASE` and `AZURE_API_KEY`; set `ASSERT_TARGET_MODEL` only if the target agent should use a different LiteLLM model than `azure/gpt-4o-mini`.
+
+## How to use
+
+After a run, inspect the suite and run artifacts:
+
+```bash
+assert-ai results status travel-planner-neurosan-v1 custom-otel
+cd viewer
+npm install
+npm run dev
+# Open http://localhost:5174 and select travel-planner-neurosan-v1 / custom-otel.
+```
+
+Key files:
+
+- `artifacts/results/travel-planner-neurosan-v1/taxonomy.json` — generated behavior categories
+- `artifacts/results/travel-planner-neurosan-v1/test_set.jsonl` — generated test cases
+- `artifacts/results/travel-planner-neurosan-v1/custom-otel/inference_set.jsonl` — responses and trace references
+- `artifacts/results/travel-planner-neurosan-v1/custom-otel/scores.jsonl` — per-test-case judge verdicts
+- `artifacts/results/travel-planner-neurosan-v1/custom-otel/metrics.json` — behavior violation rates
+
+## Behavior violation rate results
+
+This README does not include a measured n=10 behavior violation rate yet. Run the eval, check `metrics.json`, and report the model, sample size, and run ID alongside any rate.
+Do not compare this variant to LangGraph until both have the same config, model settings, and sample size.

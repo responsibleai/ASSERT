@@ -69,12 +69,8 @@ cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 # Optional: set ASSERT_AZURE_DEPLOYMENT; default is gpt-5.4-mini.
 phoenix serve  # optional trace UI
-assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
-
-> One baseline/governed config pair per risk lives under `evals/<risk>/`
-> (`budget-overrun`, `fabricated-details`). Swap the path for the risk you want; the
-> ACS-governed variant is `eval_config.governed.yaml` in the same folder.
 
 | Variable | Required | Notes |
 |---|---|---|
