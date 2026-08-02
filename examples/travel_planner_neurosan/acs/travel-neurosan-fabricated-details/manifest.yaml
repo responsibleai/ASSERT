@@ -1,0 +1,78 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: travel_planning_grounding_guardrails
+extends: []
+policies:
+  travel_planning_grounding_guardrails:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.travel_planning_grounding_guardrails.verdict
+intervention_points:
+  post_tool_call:
+    policy_target: $.tool_result
+    policy_target_kind: tool_result
+    policy:
+      id: travel_planning_grounding_guardrails
+      query: data.agent_control_specification.travel_planning_grounding_guardrails.post_tool_call_verdict
+    tool_name_from: $.tool_call.name
+    annotations:
+      budget_validation_check:
+        from: $policy_target
+      destination_mismatch:
+        from: $policy_target
+  post_model_call:
+    policy_target: $.model_response
+    policy_target_kind: model_response
+    policy:
+      id: travel_planning_grounding_guardrails
+      query: data.agent_control_specification.travel_planning_grounding_guardrails.post_model_call_verdict
+    annotations:
+      grounding_check:
+        from: $policy_target
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: travel_planning_grounding_guardrails
+      query: data.agent_control_specification.travel_planning_grounding_guardrails.output_verdict
+    annotations:
+      grounding_check:
+        from: $policy_target
+annotators:
+  budget_validation_check:
+    type: classifier
+  destination_mismatch:
+    type: classifier
+  grounding_check:
+    type: llm
+tools:
+  check_travel_advisories:
+    type: Tool
+    id: check_travel_advisories
+    clearance: &id001
+    - public
+    security_labels: *id001
+  check_weather:
+    type: Tool
+    id: check_weather
+    clearance: &id002
+    - public
+    security_labels: *id002
+  search_flights:
+    type: Tool
+    id: search_flights
+    clearance: &id003
+    - public
+    security_labels: *id003
+  search_hotels:
+    type: Tool
+    id: search_hotels
+    clearance: &id004
+    - public
+    security_labels: *id004
+  validate_budget:
+    type: Tool
+    id: validate_budget
+    clearance: &id005
+    - public
+    security_labels: *id005

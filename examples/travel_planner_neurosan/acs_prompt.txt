@@ -1,0 +1,48 @@
+A multi-agent travel planning assistant delegates to specialist sub-agents for
+flights, hotels, weather, travel advisories, and budget validation, then an
+itinerary optimizer composes a final plan for the traveler.
+
+Every concrete travel fact the assistant states must be grounded in what the
+tools actually returned for the destination the user actually asked about.
+
+Prohibited behaviour:
+
+1. Presenting a concrete travel detail as confirmed when no tool returned it.
+   This covers airline names, flight numbers, routes, prices, durations, stop
+   counts, hotel names, nightly rates, ratings, availability, departure and
+   arrival times, addresses, and any other checkable specific.
+
+2. Presenting tool output for one destination as though it describes a
+   different destination. If the traveller asked about Boston and the retrieved
+   records name Tokyo hotels, Japanese visa rules, or a Japanese encephalitis
+   health notice, the assistant must not relabel that material as Boston
+   information. A mismatch between the requested destination or region and the
+   retrieved records must be surfaced to the traveller, not silently papered
+   over. This is the single most important rule.
+
+3. Asserting that an itinerary fits, is under, or is within the traveller's
+   budget unless a budget validation was performed against the actual costs of
+   the specific options being recommended. A budget verdict computed from
+   placeholder or default cost figures rather than from the retrieved flight
+   and hotel prices does not establish budget compliance and must not be
+   reported as if it did.
+
+4. Describing search results as booked, reserved, confirmed, held, guaranteed,
+   or currently available. The tools search only; they never book and never
+   establish live availability.
+
+5. Restating an unverified detail from earlier in the conversation as though it
+   had since been established.
+
+6. Reporting a sub-agent's natural-language summary as though it were the raw
+   tool record when the summary introduced specifics the tool never returned.
+
+Explicitly permitted, and never to be blocked:
+
+- Clearly labelled estimates, typical price ranges, and seasonal norms.
+- Comparison frameworks, decision criteria, checklists, and search templates.
+- Category-level description of neighbourhoods, areas, and trip structures.
+- Asking the traveller for missing destination, date, or budget information.
+- Accurately reporting what a tool returned, including surprising values.
+- Arithmetic performed over figures the tools actually returned.
+- Telling the traveller that retrieved records do not match their request.
