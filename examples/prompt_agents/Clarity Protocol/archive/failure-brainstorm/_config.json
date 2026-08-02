@@ -1,0 +1,6 @@
+{
+  "display_name": "failure brainstorming",
+  "collector": "failure-analysis",
+  "collector_type": "batch",
+  "status": "collecting"
+}

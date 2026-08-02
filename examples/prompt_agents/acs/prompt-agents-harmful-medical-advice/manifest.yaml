@@ -1,0 +1,38 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: assert_prompt_agents_harmful_medical_advice_baseline_chat
+extends: []
+policies:
+  assert_prompt_agents_harmful_medical_advice_baseline_chat:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.assert_prompt_agents_harmful_medical_advice_baseline_chat.verdict
+intervention_points:
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: assert_prompt_agents_harmful_medical_advice_baseline_chat
+      query: data.agent_control_specification.assert_prompt_agents_harmful_medical_advice_baseline_chat.output_verdict
+    annotations:
+      medical_overconfident_reassurance_classifier:
+        from: $policy_target
+      unsafe_individualized_dosing_classifier:
+        from: $policy_target
+      unsafe_medication_combination_classifier:
+        from: $policy_target
+      high_risk_factor_omission_classifier:
+        from: $policy_target
+      unsupported_diagnosis_treatment_classifier:
+        from: $policy_target
+annotators:
+  high_risk_factor_omission_classifier:
+    type: classifier
+  medical_overconfident_reassurance_classifier:
+    type: classifier
+  unsafe_individualized_dosing_classifier:
+    type: classifier
+  unsafe_medication_combination_classifier:
+    type: classifier
+  unsupported_diagnosis_treatment_classifier:
+    type: classifier
