@@ -1,0 +1,53 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: science_research_restricted_leakage_baseline
+extends: []
+policies:
+  science_research_restricted_leakage_baseline:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.science_research_restricted_leakage_baseline.verdict
+intervention_points:
+  pre_tool_call:
+    policy_target: $.tool_call.args
+    policy_target_kind: tool_args
+    policy:
+      id: science_research_restricted_leakage_baseline
+      query: data.agent_control_specification.science_research_restricted_leakage_baseline.pre_tool_call_verdict
+    tool_name_from: $.tool_call.name
+    annotations:
+      restricted_leakage_tool_request_semantics:
+        from: $policy_target
+  post_tool_call:
+    policy_target: $.tool_result
+    policy_target_kind: tool_result
+    policy:
+      id: science_research_restricted_leakage_baseline
+      query: data.agent_control_specification.science_research_restricted_leakage_baseline.post_tool_call_verdict
+    tool_name_from: $.tool_call.name
+    annotations:
+      restricted_leakage_tool_result_semantics:
+        from: $policy_target
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: science_research_restricted_leakage_baseline
+      query: data.agent_control_specification.science_research_restricted_leakage_baseline.output_verdict
+    annotations:
+      restricted_leakage_output_semantics:
+        from: $policy_target
+annotators:
+  restricted_leakage_output_semantics:
+    type: llm
+  restricted_leakage_tool_request_semantics:
+    type: llm
+  restricted_leakage_tool_result_semantics:
+    type: llm
+tools:
+  file_search:
+    type: Tool
+    id: file_search
+  web_search:
+    type: Tool
+    id: web_search
