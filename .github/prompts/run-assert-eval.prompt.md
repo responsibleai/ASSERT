@@ -51,7 +51,9 @@ Read Clarity's output to enumerate risks:
 - **`.clarity-protocol/failures/failures.md`** — the failure modes, causal chains, and management plans. Each distinct failure mode is one candidate ASSERT behavior.
 - **`.clarity-protocol/summary.md`, `goal/requirements.md`, `solution/architecture.md`** — target/context for the eval's `context` field.
 
-**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
+**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop → archive the protocol — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
+
+> **Before a fresh discovery run, check the archive gate.** `.clarity-protocol/` is gitignored, single-domain scratch; `run_clarity` **overwrites** it, destroying the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery. If an unarchived protocol from another domain is present, STOP and archive it to `examples/<prev-domain>/Clarity Protocol/` (and commit it) first.
 
 Clarity records severity/management-plan signal (the parser maps Critical→P1, High→P2, Medium→P3, ranges→max) — order and annotate by what Clarity actually captured; do not fabricate priorities.
 
@@ -69,9 +71,11 @@ ASSERT performs best with **one atomic behavior per eval**. Never bundle multipl
 For each selected risk, map the Clarity failure mode → `behavior.name` + `behavior.description`, and use its context for `context`:
 
 ```
-assert-ai init --model <litellm-model> --describe "<failure mode + how it arises + target context>" --non-interactive -o eval_config.yaml
+assert-ai init --default-model <litellm-model> --describe "<failure mode + how it arises + target context>" --non-interactive -o eval_config.yaml
 ```
 
+- `--default-model` seeds the generated config's `pipeline.default_model` — the model the **eval** runs against. Do **not** use `--model` for this: that is the init assistant's own conversation model (default `azure/gpt-5.4-mini`) and has no effect on the eval.
+- **Check the built-in presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …); `assert-ai library show <name>` prints one. If one matches the risk, seed with `--behavior <name>` / `--judge-preset <name>` instead of generating from scratch.
 - **If the user has an existing config** to extend, use `--from <path>` instead of generating from scratch.
 - **Ask the user for the `sample_size` — do not pick it silently.** Each rate is `violations / sample_size`, so at `sample_size: 10` one flipped case = ±10pp of noise, and since inference is non-deterministic (agent temperature 1.0; gpt-5 can't be pinned lower) two runs of the same config drift by chance. Before generating the config, ask e.g. *"How many cases per behavior? `10` = fast/noisy first look, `25` = stable rate (recommended), `50`+ = tightest signal — I'll use the same size for prompt and scenario."* Recommend `25`, and **`≥25` for any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size — see `govern-and-remeasure.md`). If the user has no preference, default to `25`. Cost scales linearly with sample size.
 - After generation, show the user the generated `behavior.description`, `context`, and `pipeline.judge` dimensions. Confirm before running.
@@ -83,6 +87,13 @@ Help the user set the right target in the config:
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: use `target.callable` WITH `target.trace` so the judge can cite tool calls and routing.
 - **Hosted model** with a system prompt and optional tools: use `target.model` and `target.tools`.
 - **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`.
+
+**The callable contract — verify before the first run.** Full signature and return-type rules live in `docs/targets/callable.md`. Two behaviors that doc omits can silently corrupt a run:
+
+- **`history` is detected by parameter *name*, not position.** Multi-turn is enabled only when a parameter is literally named `history`. Name it `messages`, `conversation`, or `chat_history` and every scenario **silently degrades to single-turn** — the run completes, the viewer renders, and the numbers are wrong with no warning. That invalidates the baseline and any ACS delta measured against it.
+- **Module resolution has a four-step fallback**: `sys.path` → the config's own directory → the current working directory → direct file load. An `agent.py` beside `eval_config.yaml` resolves even when the CLI runs from the repo root, but a same-named module earlier on `sys.path` wins — prefer a domain-unique module name over a bare `agent`.
+
+**Why `target.trace` is not optional.** Judge visibility by integration path: a plain `str` return exposes 1 of 8 signals (final text only), a LiteLLM-style response 4 of 8 (adds final tool calls, token usage, model name), and OTel traces 8 of 8 (adds *intermediate* tool calls, routing / sub-agent decisions, intermediate model calls, per-span latency). Without traces a tool-misuse or wrong-routing failure is largely invisible to scoring. Use ASSERT's OTel auto-instrumentation (33 frameworks — LangChain/LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, …), a single helper call at the top of the callable module, rather than hand-writing spans.
 
 ### 5. Run the pipeline
 
@@ -96,7 +107,7 @@ This is long-running (systematize -> test_set -> inference -> judge). Stream sta
 
 **Read only structured artifacts.** Aggregate from the pre-computed, schema'd files — never trawl raw Phoenix/OpenTelemetry traces to reconstruct an answer (that bulk, unguided trace-reading is exactly what the viewer's evidence drawer is for). Reading the `inference_set.jsonl` row for a *specific case the judge already cited* is fine; bulk trace trawling is not.
 
-1. **Headline rates**: run `assert-ai results status <suite> <run>` for per-dimension flagged rates (split into prompt and scenario). Report the violation dimension and `overrefusal` SEPARATELY — they are two different problems. The built-in `policy_violation` ORs over ALL violated taxonomy nodes (permissible included), so it couples with `overrefusal`; for a clean ACS A/B disable it and grade a custom bad-event dimension (see `govern-and-remeasure.md`).
+1. **Headline rates**: run `assert-ai results status <suite> <run>` for per-dimension flagged rates (split into prompt and scenario). Report the violation dimension and `overrefusal` SEPARATELY — they are two different problems. The built-in `policy_violation` ORs over ALL violated taxonomy nodes (permissible included), so it couples with `overrefusal`. The headline pair is the permissibility split: add `--json` and read `not_permissible_policy_violation_rate` (real harm got through) and `permissible_policy_violation_rate` (the agent broke a behavior it was allowed to do), each one vote per conversation. Headline both in an ACS A/B — harm should drop while permissible stays flat (see `govern-and-remeasure.md`). The viewer exposes the same pair as the dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`, rendered on screen as **Harm (non-permissible)** / **Permissible behavior violated**.
 
 2. **Top failing cases**: read `scores.jsonl` from `artifacts/results/<suite>/<run>/`. For each dimension with failures, pull 3-5 representative cases with:
    - The test case description (what was tested)
@@ -116,7 +127,7 @@ After reporting, point the user to the bundled viewer for anything visual or sel
 cd viewer && npm install && npm run dev   # then open http://localhost:5174
 ```
 
-Select the suite and run for forest plots, per-dimension breakdowns, facet grouping, the permissible vs. not-permissible policy-violation split (a viewer-only breakdown), and a transcript drawer with the judge's `[N]` citations highlighted on the cited turns. Suggest it specifically when the user wants to:
+Select the suite and run for forest plots, per-dimension breakdowns, facet grouping, the permissible vs. not-permissible policy-violation split (also available from `assert-ai results status --json` and rendered by `results compare`), and a transcript drawer with the judge's `[N]` citations highlighted on the cited turns. Suggest it specifically when the user wants to:
 
 - **read a full transcript** or **see the trace** for a case → viewer evidence drawer
 - **compare against a baseline** → viewer compare view (or `assert-ai results compare <suite> <runA> <runB>`)
@@ -126,16 +137,18 @@ See `docs/guides/use-local-viewer.md` for the full layout.
 
 ### 8. Govern the failure and re-measure (ACS)
 
-When a run surfaces `policy_violation` failures and the user wants to **fix and prove it**, generate a deployable **ACS** (Agent Control Specification) policy from the findings and re-run the same eval against the governed agent to show the failure rate dropped — the ACS delta. Uses ASSERT's native `assert-ai acs generate` / `validate` adapter (no external `acs` CLI). Requires a **callable** target whose high-risk tools can be wrapped (`control.protect_tool`); a hosted-model Prompt Agent target has nothing wrappable. Follow `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md` (baseline → `acs generate` → `acs validate` → governed run → `results compare` → export each run to standalone HTML → append `governance-ledger.md`). Reference: `examples/billing_support_agent/` (baseline + governed entrypoints).
+When a run surfaces `policy_violation` failures and the user wants to **fix and prove it**, generate a deployable **ACS** (Agent Control Specification) policy from the findings and re-run the same eval against the governed agent to show the failure rate dropped — the ACS delta. Uses ASSERT's native `assert-ai acs generate` / `validate` adapter (no external `acs` CLI). Requires a **callable** target whose high-risk tools can be wrapped (`control.protect_tool`); a hosted-model Prompt Agent target has nothing wrappable. Follow `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md` (baseline → `acs generate` → `acs validate` → governed run → delta from two `results status --json` calls → export each run to standalone HTML → close the loop in Clarity). **Classify the failure before generating the policy** (Step 1a): read the baseline's `verdict.dimension_justifications` to decide semantic (`output` annotator) vs structural (tool gate), and confirm the harm actually routes through the tool you plan to gate — getting that wrong is the main cause of a gate that fires ~0 times. Always regenerate-and-re-gate on a deny (never a flat-refusal fallback, which is scored as overrefusal). If the delta still comes out wrong, `../../.claude/skills/run-assert-eval/workflows/diagnose-acs-delta.md` is the symptom-indexed diagnostic manual (cap ~4 attempts). Reference: `examples/billing_support_agent/agent.py` (baseline callable shape; the governed entrypoint is a workflow output, not checked in).
 
 ## Output format
 
 Present a short summary with this structure:
 
-**Headline metrics** (per dimension):
-- Policy violation rate: X% (N/M cases)
-- Overrefusal rate: X% (N/M cases)
-- [any custom dimensions]: X%
+**Headline metrics**:
+- Harm — non-permissible violation rate: X% (N/M cases) [`not_permissible_policy_violation_rate`]
+- Permissible behavior violated: X% (N/M cases) [`permissible_policy_violation_rate`]
+- Overrefusal rate: X% (N/M cases) — the separate availability check
+
+Report the permissibility split as the headline pair (from `results status --json`); the raw `policy_violation` rate ORs over all violated nodes and couples the two, so quote it only as context, never as the headline.
 
 **Top failing cases** (3-5 per dimension):
 For each failure:
@@ -144,6 +157,10 @@ For each failure:
 - Judge rationale: [verbatim from dimension_justifications]
 
 **Suggested next step**: one concrete action (e.g. "tighten the system prompt around X behavior", "add a dimension for Y", or **govern the failure with ACS and re-measure to prove the rate dropped** — see Step 8 and `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
+
+## Authoritative references
+
+Team-maintained docs under `docs/` on `main` — prefer them over restating product behavior here. `guides/create-evaluation.md` and `config/schema.md` (step 3), `targets/callable.md` and `targets/model-and-tools.md` (step 4), `guides/troubleshooting.md` (step 5), `guides/results.md` (step 6), `guides/use-local-viewer.md` (step 7), `guides/securing-agents-with-acs.md` (step 8). This skill owns the methodology — the Clarity → ASSERT → ACS → ASSERT loop; those docs own product behavior.
 
 ## Guardrails
 

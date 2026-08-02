@@ -22,6 +22,8 @@ or failures for their agent, model, or app.
 
 1. **If `.clarity-protocol/failures/failures.md` exists** → go to **Step 1 (Parse)**.
 2. **If it does not exist** → run discovery first:
+   - **Run the archive gate below first** — a fresh discovery run destroys any
+     unarchived protocol from a previous domain.
    - Call the Clarity MCP tool **`run_clarity`**. Follow the inlined process
      guide's clarifying questions *with the user in chat*.
    - Persist findings via **`write_protocol_document`** and **`record_failure`**.
@@ -32,13 +34,25 @@ or failures for their agent, model, or app.
      `clarity embed`, reload MCP servers, confirm `run_clarity` is callable. Do
      **not** substitute a plain-language risk guess — that produces low-signal evals.
 
-> **Switching domains?** `.clarity-protocol/` is a single, non-namespaced scratch
-> directory — a fresh discovery run **overwrites** the prior domain's `failures/`,
-> `goal/`, and `solution/`. Before starting discovery for a *different* agent/domain,
-> move the finished protocol into that domain's example folder as
-> `examples/<prev-domain>/Clarity Protocol/` (colocated with the agent it describes),
-> so it is preserved alongside that domain's `evals/` and `acs/`. Clarity re-scaffolds
-> a clean `.clarity-protocol/` on the next `run_clarity`.
+### Archive gate (blocking — check before any fresh `run_clarity`)
+
+`.clarity-protocol/` is a single, non-namespaced scratch directory at the repo
+root, and it is **gitignored**. A fresh discovery run **overwrites** the prior
+domain's `failures/`, `goal/`, and `solution/` — and because the directory was
+never committed, that content is **unrecoverable**.
+
+Before calling `run_clarity` for a *new* agent/domain:
+
+1. **Check** whether `.clarity-protocol/` exists and is non-empty.
+2. **If it does**, determine whether it has already been archived — i.e. an
+   `examples/<prev-domain>/Clarity Protocol/` copy exists whose `failures/` matches.
+3. **If it has not been archived, STOP.** Do not call `run_clarity`. Tell the user
+   which domain the existing protocol belongs to and offer to archive it now
+   (Step 9). Proceed only once it is archived or the user explicitly says to
+   discard it.
+
+Skip this gate only when `.clarity-protocol/` is absent or empty. Clarity
+re-scaffolds a clean one on the next `run_clarity`.
 
 ## Step 1 — Parse
 
@@ -89,11 +103,15 @@ own directory: `evals/<failure-slug>/eval_config.yaml`. Never bundle.
 
 Config generation, in order of preference:
 
-1. **Domain template first.** Check the ASSERT `examples/` directory for a vetted
+1. **Built-in preset first.** `assert-ai library list` shows the bundled behavior
+   and judge presets (e.g. `prompt_injection`, `doxxing`, `stereotyping`,
+   `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`);
+   `assert-ai library show <name>` prints one. If a preset matches the risk, seed
+   from it: `assert-ai init --behavior <name>` and/or `--judge-preset <name>`.
+2. **Domain template next.** Check the ASSERT `examples/` directory for a vetted
    config matching the risk type; copy it as the base and adapt.
-2. **Otherwise** generate from the schema (or `assert-ai init --describe "<text>"`
-   if the installed version accepts a description seed and output path — verify
-   with `assert-ai init --help`).
+3. **Otherwise** generate from the schema:
+   `assert-ai init --default-model <litellm-model> --describe "<text>" --non-interactive -o <path>`.
 
 Fill from the candidate behavior (real schema field names):
 
@@ -109,14 +127,19 @@ Fill from the candidate behavior (real schema field names):
 | `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
 | `pipeline.judge.preset` + `dimensions` | keep the violation metric **and** `overrefusal` as **separate** dimensions (see the coupling note below) |
 
-> **Built-in `policy_violation` couples with `overrefusal`.** The built-in
-> `policy_violation` dimension is the logical-OR over ALL violated taxonomy nodes
-> — including *permissible* ones — so over-gating a permissible behavior also trips
-> it, and it can never be fully separate from `overrefusal`. For a plain baseline
-> that's usually fine, but for a clean ACS before/after A/B (see
-> `govern-and-remeasure.md`) `disabled_dimensions: [policy_violation]` and add a
-> custom, node-independent bad-event dimension (e.g. `unverified_high_risk_action`)
-> graded by its own rubric, keeping the built-in `overrefusal`.
+> **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
+> The built-in `policy_violation` dimension is the logical-OR over ALL violated
+> taxonomy nodes — including *permissible* ones — so over-gating a permissible
+> behavior also trips it, and it can never be fully separate from `overrefusal`.
+> For a plain baseline that's usually fine. When you need the decoupled numbers
+> (any ACS before/after A/B — see `govern-and-remeasure.md`), don't restructure the
+> config: `assert-ai results status <suite> <run> --json` already reports the
+> headline pair — `not_permissible_policy_violation_rate` (real harm) and
+> `permissible_policy_violation_rate` (allowed behavior broken) — each one vote per
+> conversation. The split is derived from stored judgments, so it needs no config
+> change and works on existing runs. In the viewer the same pair appears as the
+> dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
+> labelled **Harm (non-permissible)** / **Permissible behavior violated**.
 
 > **Sizing for noise (why the first-run "10" is often too small).** Each rate is
 > `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the
@@ -135,8 +158,6 @@ Fill from the candidate behavior (real schema field names):
 > config is a byte-identical copy that inherits this size — see
 > `govern-and-remeasure.md`). If the user has no preference, default to `25` (or
 > their first-look `10` only if they explicitly want a throwaway pass).
-> (`examples/incident_triage_agent`, the repo's reference governance A/B, ran at
-> `sample_size: 200`.)
 
 > **Set `pipeline.inference.max_turns: 10`; do not leave it low (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
@@ -157,12 +178,17 @@ Fill from the candidate behavior (real schema field names):
 
 **Target shape:**
 - Framework agent (LangGraph, CrewAI, …) with a Python entry function →
-  `pipeline.inference.target.callable` **with** `target.trace` (so the judge can
-  cite tool calls and routing). **The callable MUST accept a `history` parameter**
-  (`def chat(message, history=None)`) — ASSERT detects multi-turn support by the
-  presence of that parameter, and a history-less callable silently receives only
-  the latest turn, breaking multi-turn scenario cases (prior verification/context
-  is dropped, inflating both the violation and `overrefusal` rates).
+  `pipeline.inference.target.callable` **with** `target.trace`. Without traces the judge
+  sees only 1 of 8 observability signals (final text); OTel traces expose all 8, including
+  *intermediate* tool calls and routing — so tool-misuse and wrong-routing failures are
+  effectively unscoreable without them. Use ASSERT's OTel auto-instrumentation
+  (33 frameworks) rather than hand-writing spans; see `docs/targets/callable.md`.
+  **The callable MUST accept a parameter named exactly `history`**
+  (`def chat(message, history=None)`) — ASSERT detects multi-turn support by that
+  parameter's *name*, so a callable that omits it (or calls it `messages` /
+  `conversation`) silently receives only the latest turn, breaking multi-turn scenario
+  cases (prior verification/context is dropped, inflating both the violation and
+  `overrefusal` rates).
 - Hosted model + system prompt (+ optional tools) → `target.model` / `target.tools`.
 - Pre-collected traces → `assert-ai judge-traces --traces <path> --config <path>`.
 
@@ -216,9 +242,38 @@ Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that t
 failure mode now has a **measured baseline** and where the eval lives
 (`evals/<slug>/`). This keeps Clarity's staleness tracking aware of the eval.
 
+## Step 9 — Archive the protocol into the example folder
+
+Do this **at the end of the domain you just measured**, not at the start of the
+next one — waiting means the archive depends on remembering, and the entry-gate
+above is only a backstop.
+
+Copy the finished protocol out of the gitignored scratch directory and into that
+domain's self-contained example folder, colocated with the agent it describes:
+
+```
+.clarity-protocol/  →  examples/<domain>/Clarity Protocol/
+```
+
+- Preserve the durable docs — `goal/`, `solution/`, `failures/`. `transcripts/`
+  (and usually `mailboxes/`) can be left behind.
+- **Commit it.** The point of the move is that the destination is tracked while
+  the source is not; an uncommitted copy solves nothing.
+- This is the `Clarity Protocol/` slot of the per-example replication package in
+  `SKILL.md`, alongside that domain's `evals/` and `acs/`.
+- Confirm the copy is readable before any subsequent `run_clarity` overwrites the
+  source.
+
+If the user declines, note explicitly that the protocol will be **destroyed** by
+the next discovery run and is not recoverable from git.
+
 ## Constraints (all mandatory)
 
 - **One atomic behavior per config.** Never bundle.
+- **Never start a fresh `run_clarity` over an unarchived protocol.** `.clarity-protocol/`
+  is gitignored scratch; overwriting it destroys the prior domain's discovery record
+  with no git recovery. Run the archive gate first (Entry conditions), archive via
+  Step 9, or get an explicit discard instruction from the user.
 - **Triage gate + pre-run confirmation are human decisions.** Never auto-run all
   discovered risks. Declining writes nothing and runs nothing.
 - **`.clarity-protocol/` files are the source of truth.** Parser JSON is a
@@ -246,7 +301,13 @@ failure mode now has a **measured baseline** and where the eval lives
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
    user chose, applied to `scenario` too), `inference.max_turns: 10`,
    `judge.dimensions` = `policy_violation` + `overrefusal`.
-6. Confirm → `assert-ai run` → results table: one `user_disengagement` column,
-   `policy_violation` X% and `overrefusal` Y%, 3–5 cited examples.
+6. Confirm → `assert-ai run` → results table: one `user_disengagement` column.
+   Headline the permissibility split from `results status --json` —
+   `not_permissible_policy_violation_rate` (real harm got through) and
+   `permissible_policy_violation_rate` (an allowed behavior was broken) — with
+   `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
 7. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
    measured baseline at evals/user-disengagement/."
+8. Archive the protocol (Step 9): copy `.clarity-protocol/` to
+   `examples/support_bot/Clarity Protocol/` and commit it, before any future
+   `run_clarity` overwrites the scratch directory.

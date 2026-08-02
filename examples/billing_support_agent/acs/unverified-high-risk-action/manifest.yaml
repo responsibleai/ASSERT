@@ -1,0 +1,41 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "billing-unverified-high-risk-action"
+  description: >-
+    Structural session-state gate for Clarity failure-01. Denies the four
+    high-risk billing tools (update_payment_method, change_plan, cancel_plan,
+    issue_refund) unless the session's trusted `verified` flag is set. The
+    governed agent injects that flag into the tool-call policy_target from its
+    own session state.
+
+policies:
+  unverified_high_risk_action:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.unverified_high_risk_action.verdict
+
+intervention_points:
+  pre_tool_call:
+    policy_target: "$.tool_call.args"
+    policy_target_kind: tool_args
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: unverified_high_risk_action
+      query: data.agent_control_specification.unverified_high_risk_action.pre_tool_call_verdict
+  post_tool_call:
+    policy_target: "$.tool_result"
+    policy_target_kind: tool_result
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: unverified_high_risk_action
+      query: data.agent_control_specification.unverified_high_risk_action.post_tool_call_verdict
+
+tools:
+  verify_identity: {}
+  get_account_profile: {}
+  get_invoices: {}
+  update_payment_method: {}
+  change_plan: {}
+  cancel_plan: {}
+  issue_refund: {}
+  escalate_to_human: {}

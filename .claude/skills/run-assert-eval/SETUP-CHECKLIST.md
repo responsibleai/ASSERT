@@ -72,6 +72,8 @@ once per workspace, then the `run-assert-eval` skill's discovery front door
   output. In **your own product's repo**, the protocol describes your product, so
   prefer committing the durable docs (`goal/`, `solution/`, `failures/`) and
   ignoring only `transcripts/` (and optionally `mailboxes/`). When you finish a
-  domain here, move its protocol into `examples/<domain>/Clarity Protocol/` so it is
-  preserved alongside that domain's `evals/` and `acs/` (see the per-example
-  replication package in `SKILL.md`).
+  domain here, archive its protocol into `examples/<domain>/Clarity Protocol/` and
+  **commit it** so it is preserved alongside that domain's `evals/` and `acs/` —
+  this is Step 9 of `workflows/measure-clarity-failures.md`, and a blocking gate
+  before any fresh `run_clarity` enforces it (the source dir is gitignored, so an
+  overwrite is unrecoverable). See the per-example replication package in `SKILL.md`.

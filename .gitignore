@@ -90,3 +90,9 @@ README_preannounce.md
 
 # Per-run tool-state SQLite DBs written by example agents' real tools (regenerable scratch).
 examples/**/.state.db
+
+# Clarity Agent
+/clarity
+/clarity.ps1
+/clarity.bat
+/.clarity-protocol/transcripts/

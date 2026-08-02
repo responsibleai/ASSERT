@@ -12,8 +12,9 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `SKILL.md` | Claude Code skill entry (the canonical instructions). |
 | `../../.github/prompts/run-assert-eval.prompt.md` | GitHub Copilot mirror. |
 | `../../.cursor/rules/assert.mdc` | Cursor mirror. |
-| `workflows/measure-clarity-failures.md` | The 8-step measurement workflow (parse → triage → configs → run → report → close loop). |
+| `workflows/measure-clarity-failures.md` | The 9-step measurement workflow (parse → triage → configs → run → report → close loop → archive protocol). |
 | `workflows/govern-and-remeasure.md` | The ACS governance workflow: turn a measured failure into a deployable ACS policy (`assert-ai acs generate`), wrap the agent, and re-run the same eval to prove the failure rate dropped. |
+| `workflows/diagnose-acs-delta.md` | Fallback reference manual for when a governed run's delta comes out wrong (no drop, or over-gating rose) — symptom-indexed, 15 rules. Most are prevented by the pre-flight classification in `govern-and-remeasure.md` Step 1a. |
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
 | `tests/` | Pytest suite + real Clarity fixtures for the parser. |
 | `SETUP-CHECKLIST.md` | One-time in-IDE MCP setup + end-to-end verification. |
@@ -31,16 +32,23 @@ methodologically aligned when changing the flow.
 2. **Handoff (files, not JSON):** Clarity writes `.clarity-protocol/`. The
    measurement side reads `failures/failures.md` (index) and `failure-NN-*.md`
    (individual docs). Those files are the **source of truth**; the parser's JSON is
-   a disposable cache.
+   a disposable cache. Note it is **gitignored, single-domain scratch** — the next
+   `run_clarity` overwrites it, so each domain's protocol is archived to
+   `examples/<domain>/Clarity Protocol/` at the end of its run (Step 9), guarded by
+   a blocking check before any fresh discovery.
 3. **Measurement (this skill):** `clarity_intake.py` turns failure docs into
    candidate behaviors; `workflows/measure-clarity-failures.md` runs a **mandatory
    human triage gate**, generates **one atomic `eval_config.yaml` per selected
    failure**, runs them sequentially, and reports one behavior per column.
 4. **Governance (ACS, optional):** when a run surfaces a real failure the user wants
-   to *fix and prove*, `workflows/govern-and-remeasure.md` derives a deployable
-   **ACS** policy from the findings (`assert-ai acs generate`), wraps the agent's
-   high-risk tools (or its output), and re-runs the **same** eval against the
-   governed target to show the failure-rate delta (baseline → governed).
+   to *fix and prove*, `workflows/govern-and-remeasure.md` first **classifies the
+   failure against the baseline** (Step 1a — semantic `output` gate vs. structural
+   tool gate, and whether the harm actually routes through the tool being gated),
+   then derives a deployable **ACS** policy from the findings
+   (`assert-ai acs generate`), wraps the agent's high-risk tools (or its output),
+   and re-runs the **same** eval against the governed target to show the
+   failure-rate delta (baseline → governed). If that delta comes out wrong,
+   `workflows/diagnose-acs-delta.md` is the symptom-indexed fallback.
 
 ## The parser (`clarity_intake.py`)
 
@@ -68,24 +76,25 @@ Run the tests:
 python -m pytest .claude/skills/run-assert-eval/tests/test_clarity_intake.py
 ```
 
-## Worked example (one P1)
+## Worked example
 
-1. User: *"measure the risks Clarity found for my support bot."*
-2. `.clarity-protocol/failures/failures.md` exists → the parser produces candidates.
-   Top one is **`user_disengagement`** (P1) with an `elicitation_variant` dimension
-   of 7 variants.
-3. **Triage gate**: the skill lists candidates P1→P3 and asks which to measure. User
-   picks **"P1s only"** → just `user_disengagement`.
-4. The skill **asks the user for `sample_size`** (recommends `25`; `10` = quick
-   look, `50`+ = tightest), then generates `evals/user-disengagement/eval_config.yaml`:
-   `behavior.description` from the doc Summary, `test_set.stratify.dimensions`
-   includes `elicitation_variant`, `test_set.prompt.sample_size` set to the user's
-   choice (same for `scenario`), `inference.max_turns: 10`,
-   `judge.dimensions` = `policy_violation` + `overrefusal`.
-5. **Confirm** → `assert-ai run` → results table: one `user_disengagement` column,
-   `policy_violation` X% and `overrefusal` Y% (reported separately), 3–5 cited cases.
-6. The skill offers `record_suggestion` back to Clarity: *"user_disengagement now has
-   a measured baseline at evals/user-disengagement/."*
+A full end-to-end walkthrough (one P1 — `user_disengagement` — from parse through
+triage, config generation, run, headline metrics, and closing the loop) lives in
+`workflows/measure-clarity-failures.md` under **Worked example (one P1)**. The ACS
+governance counterpart is in `workflows/govern-and-remeasure.md`.
+
+## Related ASSERT docs
+
+Product behavior is documented under `docs/` (team-maintained, on `main`); the skill
+**links** rather than restates it — `guides/create-evaluation.md` + `config/schema.md`
+(config authoring), `targets/callable.md` (callable signature, return types, OTel
+auto-instrumentation) + `targets/model-and-tools.md` (target shapes),
+`guides/troubleshooting.md`, `guides/results.md`, `guides/use-local-viewer.md`, and
+`guides/securing-agents-with-acs.md` (the ACS loop). This skill owns the *methodology*;
+those own *product behavior*. The exceptions the skill documents itself are the two
+callable traps those docs omit: `history` is detected by parameter **name** (misnaming it
+silently degrades multi-turn to single-turn), and module resolution falls back
+`sys.path` → config dir → cwd → direct file load.
 
 ## Guarantees the skill enforces
 
