@@ -1,0 +1,24 @@
+{
+  "documentState": {
+    "goal/problem.md": {
+      "contentHash": "95da99c36b4bc89c7af340470c8bb72a31a46cc1947f54443fdeb26f67831dd1",
+      "dependencyHashes": {}
+    },
+    "failures/failures.md": {
+      "contentHash": "bd0b4757bed789b1d1e7def5f784135ddd24456406ae29dcbb604cbd8c29c966",
+      "dependencyHashes": {}
+    },
+    "goal/requirements.md": {
+      "contentHash": "c983e3a035d04ca07548efee6a5efcea7e3ec7e45bb011bfe61d94bfb9e4794c",
+      "dependencyHashes": {
+        "goal/problem.md": "95da99c36b4bc89c7af340470c8bb72a31a46cc1947f54443fdeb26f67831dd1"
+      }
+    },
+    "solution/architecture.md": {
+      "contentHash": "710ab991122067eff1a23d85985c1811026971ace0307616501bd35abd077569",
+      "dependencyHashes": {
+        "failures/failures.md": "bd0b4757bed789b1d1e7def5f784135ddd24456406ae29dcbb604cbd8c29c966"
+      }
+    }
+  }
+}
