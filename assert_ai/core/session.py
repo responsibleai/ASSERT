@@ -89,6 +89,9 @@ class AdapterEvent:
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     tool_call_id: str | None = None
+    # Structured per-event evidence. Appended to preserve the existing
+    # positional constructor order used by adapters.
+    raw: dict[str, Any] | None = None
 
 
 @dataclass
@@ -154,6 +157,18 @@ def _normalize_connector_response(raw: Any) -> ConnectorResponse:
             role = event.get("role")
             if role not in {"assistant", "tool_call", "tool_result"}:
                 continue
+            raw_event_payload = event.get("raw")
+            raw_action_mediation = (
+                raw_event_payload.get("action_mediation")
+                if isinstance(raw_event_payload, dict)
+                else None
+            )
+            sanitized_action_mediation = _sanitize_endpoint_value(raw_action_mediation)
+            persisted_event_raw = (
+                {"action_mediation": sanitized_action_mediation}
+                if isinstance(sanitized_action_mediation, dict)
+                else None
+            )
             events.append(
                 AdapterEvent(
                     role=role,
@@ -161,6 +176,10 @@ def _normalize_connector_response(raw: Any) -> ConnectorResponse:
                     tool_name=event.get("tool_name"),
                     tool_args=event.get("tool_args") if isinstance(event.get("tool_args"), dict) else None,
                     tool_call_id=event.get("tool_call_id"),
+                    # Preserve the one structured evidence channel the viewer
+                    # understands. Do not copy arbitrary endpoint diagnostics
+                    # into artifacts merely because they were attached to an event.
+                    raw=persisted_event_raw,
                 )
             )
 
@@ -970,8 +989,12 @@ def _serialize_connector_interaction_messages(
     if response.events:
         final_assistant_seen = False
         for event in response.events:
+            event_raw = dict(response.raw or {})
+            if event.raw:
+                event_raw.update(event.raw)
+            persisted_raw = event_raw or None
             if event.role == "assistant":
-                messages.append({"role": "assistant", "content": event.content, "raw": response.raw})
+                messages.append({"role": "assistant", "content": event.content, "raw": persisted_raw})
                 if event.content == response.text:
                     final_assistant_seen = True
             elif event.role == "tool_call":
@@ -986,7 +1009,7 @@ def _serialize_connector_interaction_messages(
                                 "arguments": event.tool_args or {},
                             }
                         ],
-                        "raw": response.raw,
+                        "raw": persisted_raw,
                     }
                 )
             elif event.role == "tool_result":
@@ -997,7 +1020,7 @@ def _serialize_connector_interaction_messages(
                         "function": event.tool_name or "tool",
                         "arguments": event.tool_args or {},
                         "tool_call_id": event.tool_call_id,
-                        "raw": response.raw,
+                        "raw": persisted_raw,
                     }
                 )
         # Tool-evidence endpoints commonly return only tool_call/tool_result
