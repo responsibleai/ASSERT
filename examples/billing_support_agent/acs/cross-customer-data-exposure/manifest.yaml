@@ -1,0 +1,38 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: cross_customer_data_exposure
+  description: >
+    Restrict every account-scoped tool to the authenticated caller's own
+    account. Governs ASSERT failure-02 (BOLA) for the billing-support agent.
+extends: []
+policies:
+  cross_customer_data_exposure:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.cross_customer_data_exposure.verdict
+intervention_points:
+  pre_tool_call:
+    policy_target: $.tool_call.args
+    policy_target_kind: tool_args
+    tool_name_from: $.tool_call.name
+    policy:
+      id: cross_customer_data_exposure
+      query: data.agent_control_specification.cross_customer_data_exposure.pre_tool_call_verdict
+  post_tool_call:
+    policy_target: $.tool_result
+    policy_target_kind: tool_result
+    tool_name_from: $.tool_call.name
+    policy:
+      id: cross_customer_data_exposure
+      query: data.agent_control_specification.cross_customer_data_exposure.post_tool_call_verdict
+# Full toolset declared so this control coexists with the verification control
+# when both are stacked (see the sibling manifest for why).
+tools:
+  verify_identity: {type: Tool, id: verify_identity}
+  get_account_profile: {type: Tool, id: get_account_profile}
+  get_invoices: {type: Tool, id: get_invoices}
+  update_payment_method: {type: Tool, id: update_payment_method}
+  change_plan: {type: Tool, id: change_plan}
+  cancel_plan: {type: Tool, id: cancel_plan}
+  issue_refund: {type: Tool, id: issue_refund}
+  escalate_to_human: {type: Tool, id: escalate_to_human}
