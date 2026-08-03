@@ -682,6 +682,13 @@ We also evaluated the templates end to end by using their dimensions to generate
       <td>2.3% (7)</td>
       <td>8.0% (12)</td>
     </tr>
+        <tr>
+      <td>relationship-entanglement</td>
+      <td>31% (93)</td>
+      <td>55.2% (164)</td>
+      <td>22% (33)</td>
+      <td>36% (54)</td>
+    </tr>
   </tbody>
 </table>
 
