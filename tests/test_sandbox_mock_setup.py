@@ -30,6 +30,7 @@ from assert_ai.integrations.sandbox.mocks import (
 )
 from assert_ai.integrations.sandbox.mocks.matching import MatcherError, match_value
 from assert_ai.integrations.sandbox.policy import MediationPolicy
+from assert_ai.integrations.sandbox.records import MediationDecision
 
 
 def _pre(name, args=None):
@@ -268,6 +269,49 @@ def test_custom_backend_can_be_injected():
 
 
 # --- the safety invariant -----------------------------------------------------
+
+
+def test_mode_only_edit_cannot_leave_block_evidence_with_a_mock_reason():
+    """A bug-bash user changed only mock -> block, but the evidence still said
+    mocking was the only safe option because policy prose was copied to `reason`."""
+    rule = {
+        "match": "send_message",
+        "mode": "mock",
+        "note": "Mocking is the ONLY safe option, not a convenience.",
+    }
+    rule["mode"] = "block"
+
+    decision = ActionMediator(MediationPolicy({"interactions": [rule]})).mediate(
+        _pre("send_message", {"recipient": "555-000-9999"}), _never_executes
+    )
+    evidence = decision.evidence()
+
+    assert decision.mode == "block"
+    assert decision.real_executed is False
+    assert decision.reason == "blocked by mediation policy rule 'send_message'"
+    assert evidence["reason"] == decision.reason
+    assert evidence["decision_reason"] == decision.reason
+    assert evidence["policy_note"] == rule["note"]
+    assert "mock" not in evidence["decision_reason"].lower()
+
+
+def test_policy_note_field_preserves_existing_positional_constructor_order():
+    """Adding policy_note must not reinterpret an adopter's positional `matched`
+    or `is_error` arguments from the existing preview record constructor."""
+    decision = MediationDecision(
+        "block",
+        {"status": "blocked"},
+        False,
+        "blocked by policy",
+        "send_message",
+        True,
+        None,
+        None,
+    )
+
+    assert decision.matched == "send_message"
+    assert decision.is_error is True
+    assert decision.policy_note == ""
 
 
 def test_mock_file_cannot_change_an_enforcement_decision():

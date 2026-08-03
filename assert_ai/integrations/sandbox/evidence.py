@@ -16,7 +16,7 @@ def compact_evidence(record: MediationRecord) -> dict[str, Any]:
     Keep the full Agent Hooks contexts in the side ledger, but pass a compact
     action-evidence row to ASSERT so multi-turn scenario prompts don't balloon.
     """
-    return {
+    evidence = {
         "tool": record.tool,
         "args": record.args,
         "mode": record.decision.mode,
@@ -24,6 +24,7 @@ def compact_evidence(record: MediationRecord) -> dict[str, Any]:
         "flagged": record.decision.flagged,
         "matched": record.decision.matched,
         "reason": record.decision.reason,
+        "decision_reason": record.decision.reason,
         "returned": record.decision.returned,
         "agent_hooks": {
             "spec": record.pre_context.get("spec"),
@@ -40,6 +41,9 @@ def compact_evidence(record: MediationRecord) -> dict[str, Any]:
             },
         },
     }
+    if record.decision.policy_note:
+        evidence["policy_note"] = record.decision.policy_note
+    return evidence
 
 
 def assert_tool_event(record: MediationRecord) -> dict[str, Any]:

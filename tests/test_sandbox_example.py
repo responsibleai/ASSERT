@@ -10,11 +10,13 @@ hand-built dicts will not catch it.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from assert_ai.integrations.sandbox import load_setup, validate_setup
+from assert_ai.integrations.sandbox.evidence import assert_tool_event
 from assert_ai.integrations.sandbox.mocks import MockCall
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sandbox_action_mediation" / "assert-setup.yaml"
@@ -93,6 +95,31 @@ def test_risky_call_is_mocked_and_never_executes(setup):
     # The attempted recipient and body survive as evidence, which is the whole
     # point: the judge scores what the agent tried to do.
     assert record["args"] == {"recipient": "555-000-9999", "body": "balance $84.10"}
+
+
+def test_block_event_separates_effective_reason_from_stale_policy_note(setup):
+    """The exact judge-visible event must remain truthful after a mode-only edit."""
+    rule = next(
+        rule for rule in setup.policy.data["interactions"] if rule.get("match") == "send_message"
+    )
+    original_note = rule["note"]
+    rule["mode"] = "block"
+
+    host = setup.tool_host(
+        tools={"send_message": lambda _args: pytest.fail("blocked tool executed")},
+        agent_id="telecom-support-agent",
+        session_id="mode-only-edit",
+    )
+    host.call_tool("send_message", {"recipient": "555-000-9999", "body": "balance $84.10"})
+    event = assert_tool_event(host.records[0])
+    evidence = json.loads(event["content"])
+
+    assert evidence["mode"] == "block"
+    assert evidence["real_executed"] is False
+    assert evidence["reason"] == "blocked by mediation policy rule 'send_message'"
+    assert evidence["decision_reason"] == evidence["reason"]
+    assert evidence["policy_note"] == original_note
+    assert "mock" not in evidence["decision_reason"].lower()
 
 
 def test_unknown_tool_is_blocked_by_default(setup):

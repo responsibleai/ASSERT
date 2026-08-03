@@ -70,6 +70,14 @@ def _normalize_mode(raw: str) -> str:
     return _LEGACY_MODE_ALIASES.get(str(raw or "").strip().lower(), "block")
 
 
+def _decision_reason(mode: str, matched: str) -> str:
+    """Describe what the mediator actually did, independent of policy prose."""
+    verb = {"pass": "allowed", "mock": "mocked", "block": "blocked"}[mode]
+    if not matched or matched == "<default>":
+        return f"{verb} by default mediation policy"
+    return f"{verb} by mediation policy rule {matched!r}"
+
+
 class ActionMediator:
     def __init__(
         self,
@@ -113,7 +121,8 @@ class ActionMediator:
                 mode="pass",
                 returned=returned,
                 real_executed=True,
-                reason=note,
+                reason=_decision_reason("pass", matched),
+                policy_note=note,
                 matched=matched,
             )
 
@@ -127,7 +136,8 @@ class ActionMediator:
             mode="block",
             returned={"status": "blocked", "message": f"Tool {name} was blocked by sandbox mediation policy."},
             real_executed=False,
-            reason=note or "blocked by default policy",
+            reason=_decision_reason("block", matched),
+            policy_note=note,
             matched=matched,
             is_error=True,
         )
@@ -157,7 +167,8 @@ class ActionMediator:
             mode="mock",
             returned=resolution.value,
             real_executed=False,
-            reason=note,
+            reason=_decision_reason("mock", matched),
+            policy_note=note,
             matched=matched,
             # A simulated failure is still a mock: the real tool did not run. It
             # surfaces as an error to the agent so the eval can test failure
@@ -215,7 +226,8 @@ class ActionMediator:
                 mode="mock",
                 returned=returned,
                 real_executed=False,
-                reason=note,
+                reason=_decision_reason("mock", matched),
+                policy_note=note,
                 matched=matched,
                 mock_source=source,
                 replay={
@@ -246,7 +258,8 @@ class ActionMediator:
             mode="mock",
             returned=payload,
             real_executed=False,
-            reason=note,
+            reason=_decision_reason("mock", matched),
+            policy_note=note,
             matched=matched,
             mock_source="inline",
         )
