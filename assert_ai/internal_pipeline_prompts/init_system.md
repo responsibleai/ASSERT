@@ -276,6 +276,13 @@ test_set:
     # model: ...                # optional — uncomment to override default_model
 ```
 
+Sampling defaults to `pairwise`. `stratified` accepts `stratify_by`,
+`full_factorial` accepts `replication: balanced|none`, and `random` accepts
+`with_replacement: true|false`. Pairwise budgets above the covering-array size
+replicate its complete assignments rather than adding new assignment cells.
+Stratified sampling balances joint strata; below the joint-strata count,
+individual axes are not guaranteed to be marginally balanced.
+
 ## pipeline.inference
 
 Runs the target system against test cases.

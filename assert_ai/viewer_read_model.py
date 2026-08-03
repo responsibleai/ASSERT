@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from assert_ai.core.io import write_json, row_behavior
+from assert_ai.core.judge import DIMENSION_APPLICABILITY_KEY
 
 log = logging.getLogger(__name__)
 
@@ -413,6 +414,23 @@ def _summary_verdict(raw_verdict: Any) -> dict[str, Any] | None:
         summary["dimensions"] = {
             key: value
             for key, value in dimensions.items()
+            if (
+                isinstance(key, str)
+                and (
+                    isinstance(value, bool)
+                    or (
+                        not isinstance(value, bool)
+                        and isinstance(value, (int, str))
+                    )
+                    or value is None
+                )
+            )
+        }
+    applicability = raw_verdict.get(DIMENSION_APPLICABILITY_KEY)
+    if isinstance(applicability, dict):
+        summary[DIMENSION_APPLICABILITY_KEY] = {
+            key: value
+            for key, value in applicability.items()
             if isinstance(key, str) and isinstance(value, bool)
         }
     raw_nj = raw_verdict.get("node_judgments")
@@ -444,6 +462,16 @@ def _summary_multi_judge(raw_multi_judge: Any) -> dict[str, Any] | None:
         "n": int(raw_multi_judge.get("n") or 0),
         "n_failed": int(raw_multi_judge.get("n_failed") or 0),
         "votes": raw_multi_judge.get("votes") if isinstance(raw_multi_judge.get("votes"), dict) else {},
+        "applicability_votes": (
+            raw_multi_judge.get("applicability_votes")
+            if isinstance(raw_multi_judge.get("applicability_votes"), dict)
+            else {}
+        ),
+        "applicability_agreement": (
+            raw_multi_judge.get("applicability_agreement")
+            if isinstance(raw_multi_judge.get("applicability_agreement"), dict)
+            else {}
+        ),
         "means": raw_multi_judge.get("means") if isinstance(raw_multi_judge.get("means"), dict) else {},
         "agreement": float(raw_multi_judge.get("agreement") or 0),
         "justifications": [],
@@ -460,6 +488,25 @@ def _score_keys(row: dict[str, Any]) -> list[str] | None:
         return None
     score_keys = [key for key in raw_score_keys if isinstance(key, str) and key]
     return score_keys if len(score_keys) == len(raw_score_keys) else None
+
+
+def _not_applicable_score_keys(row: dict[str, Any]) -> list[str] | None:
+    raw_score_keys = row.get("not_applicable_score_keys")
+    if not isinstance(raw_score_keys, list):
+        return None
+    score_keys = [key for key in raw_score_keys if isinstance(key, str) and key]
+    return score_keys if len(score_keys) == len(raw_score_keys) else None
+
+
+def _dimension_scales(row: dict[str, Any]) -> dict[str, Any] | None:
+    raw_scales = row.get("dimension_scales")
+    if not isinstance(raw_scales, dict):
+        return None
+    return {
+        str(name): scale
+        for name, scale in raw_scales.items()
+        if isinstance(name, str) and name and isinstance(scale, dict)
+    }
 
 
 def _write_transcript_index(
@@ -613,6 +660,12 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             score_keys = _score_keys(row)
             if score_keys is not None:
                 prompt_row["score_keys"] = score_keys
+            not_applicable_score_keys = _not_applicable_score_keys(row)
+            if not_applicable_score_keys is not None:
+                prompt_row["not_applicable_score_keys"] = not_applicable_score_keys
+            dimension_scales = _dimension_scales(row)
+            if dimension_scales:
+                prompt_row["dimension_scales"] = dimension_scales
             prompt_rows.append(prompt_row)
             continue
 
@@ -638,6 +691,12 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         score_keys = _score_keys(row)
         if score_keys is not None:
             audit_row["score_keys"] = score_keys
+        not_applicable_score_keys = _not_applicable_score_keys(row)
+        if not_applicable_score_keys is not None:
+            audit_row["not_applicable_score_keys"] = not_applicable_score_keys
+        dimension_scales = _dimension_scales(row)
+        if dimension_scales:
+            audit_row["dimension_scales"] = dimension_scales
         audit_rows.append(audit_row)
 
     prompt_rows_path = _viewer_cache_path(run_dir, VIEWER_PROMPT_ROWS_FILE)

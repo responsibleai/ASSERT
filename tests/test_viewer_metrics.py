@@ -43,6 +43,12 @@ class ViewerMetricsTest(unittest.TestCase):
                       const value = record?.verdict?.dimensions?.[name];
                       return typeof value === 'boolean' ? value : null;
                     }
+                    export function getRecordMetricValue(record, name) {
+                      return record?.verdict?.dimensions?.[name] ?? null;
+                    }
+                    export function isNotApplicableRecordDimension(record, name) {
+                      return record?.verdict?.dimensions?.[name] === null && record?.verdict?.dimension_applicability?.[name] === false;
+                    }
                     export function isSuccessfulJudgment(record) { return record?.judge_status !== 'error'; }
                     """
                 ),
@@ -75,6 +81,103 @@ class ViewerMetricsTest(unittest.TestCase):
             self.assertEqual(payload["target"], "azure/gpt-5.4-1")
             self.assertEqual(payload["tester_model"], "azure/gpt-5.4-1")
             self.assertEqual(payload["judge_model"], "azure/gpt-5.4-1")
+
+    def test_run_metrics_preserve_ordinal_distribution_and_not_applicable_count(self) -> None:
+        with TemporaryDirectory(dir=ROOT / "viewer") as tmp_dir:
+            harness_dir = Path(tmp_dir)
+            source = METRICS_SRC.read_text(encoding="utf-8")
+            source = source.replace("from '$lib/judgment.js';", "from './judgment.js';")
+            source = source.replace("from './dimensions.js';", "from './dimensions.js';")
+            (harness_dir / "metrics.ts").write_text(source, encoding="utf-8")
+            (harness_dir / "judgment.js").write_text(
+                textwrap.dedent(
+                    """\
+                    export function getRequiredBaseMetricNames() { return []; }
+                    export function isBooleanFlag(value) { return typeof value === 'boolean'; }
+                    export function getRecordFlag(record, name) {
+                      const value = record?.verdict?.dimensions?.[name];
+                      return typeof value === 'boolean' ? value : null;
+                    }
+                    export function getRecordMetricValue(record, name) {
+                      return record?.verdict?.dimensions?.[name] ?? null;
+                    }
+                    export function isNotApplicableRecordDimension(record, name) {
+                      return record?.verdict?.dimensions?.[name] === null && record?.verdict?.dimension_applicability?.[name] === false;
+                    }
+                    export function isSuccessfulJudgment(record) { return record?.judge_status === 'ok'; }
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (harness_dir / "dimensions.js").write_text(
+                "export function loadDimensions() { return {}; }\n",
+                encoding="utf-8",
+            )
+
+            script = textwrap.dedent(
+                """\
+                const { computeRunMetrics } = await import('./metrics.ts');
+                const scale = {
+                  response_quality: {
+                    type: 'ordinal',
+                    values: [1, 2, 3, 4, 5].map((value) => ({ value, label: `Grade ${value}` }))
+                  }
+                };
+                const row = (value, applicable = true) => ({
+                  judge_status: 'ok',
+                  score_keys: ['response_quality'],
+                  not_applicable_score_keys: ['response_quality'],
+                  dimension_scales: scale,
+                  verdict: {
+                    dimensions: { response_quality: value },
+                    dimension_applicability: { response_quality: applicable },
+                    node_judgments: []
+                  }
+                });
+                const metrics = computeRunMetrics([row(1), row(3), row(3), row(null, false)]);
+                const stringScale = {
+                  ungrounded_policy_claim: {
+                    type: 'ordinal',
+                    values: ['good', 'medium', 'bad'].map((value) => ({ value, label: `Grade ${value}` }))
+                  }
+                };
+                const stringRow = (value, applicable = true) => ({
+                  judge_status: 'ok',
+                  score_keys: ['ungrounded_policy_claim'],
+                  not_applicable_score_keys: ['ungrounded_policy_claim'],
+                  dimension_scales: stringScale,
+                  verdict: {
+                    dimensions: { ungrounded_policy_claim: value },
+                    dimension_applicability: { ungrounded_policy_claim: applicable },
+                    node_judgments: []
+                  }
+                });
+                const stringMetrics = computeRunMetrics([
+                  stringRow('good'),
+                  stringRow('good'),
+                  stringRow('medium'),
+                  stringRow(null, false)
+                ]);
+                console.log(JSON.stringify({ numeric: metrics, string: stringMetrics }));
+                """
+            )
+            result = self._run_node(harness_dir=harness_dir, script=script)
+
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            payload = json.loads(result.stdout)
+            summary = payload["numeric"]["dimensions"]["response_quality"]
+            self.assertEqual(summary["kind"], "ordinal")
+            self.assertIsNone(summary["rate"])
+            self.assertEqual(summary["counts"], {"1": 1, "2": 0, "3": 2, "4": 0, "5": 0})
+            self.assertEqual(summary["not_applicable_count"], 1)
+            self.assertEqual(summary["median"], 3)
+            self.assertAlmostEqual(summary["mean"], 7 / 3)
+
+            string_summary = payload["string"]["dimensions"]["ungrounded_policy_claim"]
+            self.assertEqual(string_summary["counts"], {"good": 2, "medium": 1, "bad": 0})
+            self.assertEqual(string_summary["not_applicable_count"], 1)
+            self.assertEqual(string_summary["median"], "good")
+            self.assertIsNone(string_summary["mean"])
 
 
 if __name__ == "__main__":

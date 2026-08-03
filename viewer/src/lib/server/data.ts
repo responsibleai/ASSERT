@@ -34,7 +34,7 @@ import {
 	computeRunMetrics,
 	emptyScoreCounts
 } from './metrics.js';
-import { getRecordFlag } from '$lib/judgment.js';
+import { getRecordFlag, isNotApplicableRecordDimension } from '$lib/judgment.js';
 import { normalizePromptResult, normalizeScenarioResult, scenarioStopReasonDisplay } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
@@ -42,6 +42,7 @@ import type {
 	AuditScore,
 	AuditTranscript,
 	BinaryCounts,
+	DimensionScales,
 	DimensionMetrics,
 	LlmCallTrace,
 	PromptSeed,
@@ -69,8 +70,8 @@ interface PromptMetricView {
 	judgeFailures: number;
 	judgeFailureRate: number;
 	counts: BinaryCounts;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -84,8 +85,8 @@ interface AuditMetricView {
 	judgeFailures: number;
 	judgeFailureRate: number;
 	counts: BinaryCounts;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -103,9 +104,11 @@ interface InferencePreviewRow {
 }
 
 interface CompareDimensionSummary {
-	rate: number;
-	counts: BinaryCounts;
+	kind?: 'binary' | 'ordinal';
+	rate: number | null;
+	counts: BinaryCounts | Record<string, number>;
 	n: number;
+	notApplicable?: number;
 }
 
 interface CompareRunSummary {
@@ -118,8 +121,8 @@ interface CompareRunSummary {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	policyViolationRate: number;
-	overrefusalRate: number;
+	policyViolationRate: number | null;
+	overrefusalRate: number | null;
 	counts: BinaryCounts;
 	dimensions: Record<string, CompareDimensionSummary>;
 	samples: JudgedSample[];
@@ -128,9 +131,10 @@ interface CompareRunSummary {
 }
 
 interface CompareMetricSummary {
-	rate: number;
+	rate: number | null;
 	counts: BinaryCounts;
 	n: number;
+	notApplicable?: number;
 }
 
 interface BehaviorComparison {
@@ -487,6 +491,18 @@ function buildJudgedSampleRow(
 		judge_status:
 			typeof scoreRow.judge_status === 'string' ? (scoreRow.judge_status as JudgeStatus) : null,
 		judge_error: typeof scoreRow.judge_error === 'string' ? scoreRow.judge_error : null,
+		score_keys: Array.isArray(scoreRow.score_keys)
+			? scoreRow.score_keys.filter((key): key is string => typeof key === 'string')
+			: null,
+		not_applicable_score_keys: Array.isArray(scoreRow.not_applicable_score_keys)
+			? scoreRow.not_applicable_score_keys.filter((key): key is string => typeof key === 'string')
+			: null,
+		dimension_scales:
+			scoreRow.dimension_scales &&
+			typeof scoreRow.dimension_scales === 'object' &&
+			!Array.isArray(scoreRow.dimension_scales)
+				? (scoreRow.dimension_scales as DimensionScales)
+				: null,
 		messages,
 		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
 		target_runtime_mode: runtimeMode,
@@ -747,8 +763,8 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		judgeFailures: 0,
 		judgeFailureRate: 0,
 		counts: emptyScoreCounts(),
-		policyViolationRate: 0,
-		overrefusalRate: 0,
+		policyViolationRate: null,
+		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -764,8 +780,8 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		judgeFailures: 0,
 		judgeFailureRate: 0,
 		counts: emptyScoreCounts(),
-		policyViolationRate: 0,
-		overrefusalRate: 0,
+		policyViolationRate: null,
+		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -891,9 +907,11 @@ function buildCompareRunSummary(runId: string, manifest: Manifest | null, sample
 		Object.entries(metrics.dimensions).map(([name, value]) => [
 			name,
 			{
+				kind: value.kind,
 				rate: value.rate,
 				counts: value.counts,
-				n: value.count
+				n: value.count,
+				notApplicable: value.not_applicable_count ?? 0
 			}
 		])
 	);
@@ -961,17 +979,22 @@ function buildBehaviorComparisons(
 				const scores = emptyScoreCounts();
 				let count = 0;
 
+				let notApplicable = 0;
 				for (const sample of samples) {
 					const value = getRecordFlag(sample, metric);
-					if (value === null) continue;
+					if (value === null) {
+						if (isNotApplicableRecordDimension(sample, metric)) notApplicable += 1;
+						continue;
+					}
 					scores[value ? 1 : 0] += 1;
 					count += 1;
 				}
 
 				comparison.metrics[metric][run.run_id] = {
-					rate: count > 0 ? scores[1] / count : 0,
+					rate: count > 0 ? scores[1] / count : null,
 					counts: scores,
-					n: count
+					n: count,
+					notApplicable
 				};
 			}
 		}
@@ -1516,7 +1539,9 @@ export function loadComparePageData(
 		if (samples.length === 0) return null;
 
 		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples);
-		for (const dimensionName of Object.keys(summary.dimensions)) metricNames.add(dimensionName);
+		for (const [dimensionName, dimension] of Object.entries(summary.dimensions)) {
+			if (dimension.kind !== 'ordinal') metricNames.add(dimensionName);
+		}
 		runSummaries.push(summary);
 	}
 

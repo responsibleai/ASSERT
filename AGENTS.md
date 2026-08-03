@@ -140,7 +140,7 @@ Do not reintroduce internal-only planning docs into this customer-preview distri
 End users can paste the following block into their AI assistant to get the same orientation this file gives you:
 
 ```text
-You are helping me with the Adaptive Eval repo (https://github.com/microsoft/adaptive-eval).
+You are helping me with the Adaptive Eval repo (https://github.com/responsibleai/ASSERT).
 
 Adaptive Eval is a local-first, spec-driven evaluation pipeline for AI agents. The mental model:
 
@@ -158,6 +158,14 @@ Key facts:
 
 When I ask for help, prefer concrete file paths, runnable commands, and the YAML keys defined in docs/config/schema.md.
 ```
+
+## User-facing skills
+
+These skills are for end users running evaluations, not for repository maintenance. Each skill orchestrates existing CLI commands.
+
+| Skill | Claude Code | GitHub Copilot | Cursor | What it does |
+|---|---|---|---|---|
+| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Generate config from requirements, run pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. |
 
 ## Output style for coding agents
 

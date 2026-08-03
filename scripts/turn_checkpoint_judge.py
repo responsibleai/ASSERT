@@ -9,11 +9,13 @@ import argparse
 import asyncio
 import html
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from assert_ai.config import parse_disabled_judge_dimensions, parse_judge_dimensions
 
 from assert_ai.core.config_model import (
     DEFAULT_JUDGE_MAX_TOKENS,
@@ -50,6 +52,7 @@ class CheckpointJudgeConfig:
     judge_n: int
     judge_dimensions: list[dict[str, Any]]
     concurrency: int
+    disabled_dimensions: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -159,13 +162,10 @@ def load_checkpoint_judge_config(
         raise ValueError("judge_n must be > 0")
 
     if judge_dimensions_override is None:
-        raw_dimensions = judge_stage_raw.get("dimensions") or {}
-        if not isinstance(raw_dimensions, dict):
-            raise ValueError(f"pipeline.judge.dimensions must be a mapping: {config_path}")
-        judge_dimensions = [
-            {"name": str(name), **dimension}
-            for name, dimension in raw_dimensions.items()
-        ]
+        judge_dimensions = parse_judge_dimensions(
+            judge_stage_raw.get("dimensions") or {},
+            field_name="pipeline.judge.dimensions",
+        )
     else:
         judge_dimensions = [
             value
@@ -195,6 +195,10 @@ def load_checkpoint_judge_config(
         judge_max_tokens=judge_max_tokens,
         judge_n=judge_n,
         judge_dimensions=judge_dimensions,
+        disabled_dimensions=parse_disabled_judge_dimensions(
+            judge_stage_raw.get("disabled_dimensions"),
+            field_name="pipeline.judge.disabled_dimensions",
+        ),
         concurrency=concurrency,
     )
 
@@ -496,11 +500,17 @@ async def run_checkpoint_judge(
         template=JUDGE_SYSTEM_PROMPT,
         policy_raw=policy_raw,
         judge_dimensions=config.judge_dimensions,
+        disabled_dimensions=config.disabled_dimensions,
         schema_name="transcript_judgment",
     )
     if dimension not in judge_contract["score_keys"]:
         raise ValueError(
             f"Unknown plot dimension '{dimension}'. Available: {sorted(judge_contract['score_keys'])}"
+        )
+    if dimension in judge_contract["dimension_scales"]:
+        raise ValueError(
+            "Checkpoint plotting currently supports boolean judge dimensions only; "
+            f"'{dimension}' uses an ordered custom scale. Use the run viewer for its grade distribution."
         )
 
     tasks: list[CheckpointTask] = []
@@ -550,6 +560,8 @@ async def run_checkpoint_judge(
                 judge_temperature=config.judge_temperature,
                 judge_max_tokens=config.judge_max_tokens,
                 response_schema=judge_contract["response_schema"],
+                not_applicable_score_keys=judge_contract["not_applicable_score_keys"],
+                dimension_scales=judge_contract["dimension_scales"],
             )
             behavior = str(
                 row_behavior(task.inference_row)
@@ -571,8 +583,12 @@ async def run_checkpoint_judge(
                 "judge_status": judge_result["judge_status"],
                 "judge_error": judge_result["judge_error"],
                 "verdict": judge_result["verdict"],
+                "score_keys": judge_contract["score_keys"],
+                "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
                 "dimensions": {"behavior": behavior},
             }
+            if judge_contract["dimension_scales"]:
+                row["dimension_scales"] = judge_contract["dimension_scales"]
             if judge_result.get("multi_judge") is not None:
                 row["multi_judge"] = judge_result["multi_judge"]
             return {

@@ -149,6 +149,52 @@ class TestSetStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("meta", rows[0])
         self.assertNotIn("meta", rows[1])
 
+    async def test_missing_behavior_warning_is_sampling_method_aware(self) -> None:
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del model, prompt, schema_name, json_schema, options
+            return ModelResponse(
+                parsed={"test_set": [{"description": "seed one"}]},
+                text="{}",
+                model="azure/gpt-5.4",
+            )
+
+        taxonomy_payload = {
+            "behavior": {"name": "Risk"},
+            "behavior_categories": [
+                {"name": "behavior-a", "definition": "definition-a"},
+                {"name": "behavior-b", "definition": "definition-b"},
+            ],
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            taxonomy_path = tmp_path / "taxonomy.json"
+            test_set_path = tmp_path / "test_set.jsonl"
+            taxonomy_path.write_text(json.dumps(taxonomy_payload), encoding="utf-8")
+
+            with (
+                patch("assert_ai.stages.test_set.generate_structured", new=fake_generate_structured),
+                self.assertLogs("assert_ai.stages.test_set", level="WARNING") as captured,
+            ):
+                await run_test_set(
+                    taxonomy_path=str(taxonomy_path),
+                    save_path=str(test_set_path),
+                    context=None,
+                    prompt={
+                        "model": "azure/gpt-5.4",
+                        "sample_size": 1,
+                        "temperature": None,
+                        "max_tokens": 1000,
+                        "sampling": {"method": "random", "with_replacement": True},
+                    },
+                    scenario=None,
+                    target=TargetConfig(model="azure/gpt-5.4"),
+                )
+
+        warning = "\n".join(captured.output)
+        self.assertIn("random does not guarantee category coverage", warning)
+        self.assertNotIn("To cover all categories, set sample_size", warning)
+
     async def test_run_test_set_omits_generated_system_prompts_when_target_prompt_is_fixed(self) -> None:
         async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
             del model, messages, schema_name, json_schema, options

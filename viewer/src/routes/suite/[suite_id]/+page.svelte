@@ -420,9 +420,13 @@
 		const auditTotal = run.audit?.metrics?.total ?? 0;
 		const total = promptTotal + auditTotal;
 		if (total === 0) return null;
-		const promptViolations = promptTotal * (run.prompt?.metrics?.policy_violation_rate ?? 0);
-		const auditViolations = auditTotal * (run.audit?.metrics?.policy_violation_rate ?? 0);
-		return (promptViolations + auditViolations) / total;
+		const promptRate = run.prompt?.metrics?.policy_violation_rate;
+		const auditRate = run.audit?.metrics?.policy_violation_rate;
+		const applicableTotal = (promptRate == null ? 0 : promptTotal) + (auditRate == null ? 0 : auditTotal);
+		if (applicableTotal === 0) return null;
+		const promptViolations = promptRate == null ? 0 : promptTotal * promptRate;
+		const auditViolations = auditRate == null ? 0 : auditTotal * auditRate;
+		return (promptViolations + auditViolations) / applicableTotal;
 	}
 
 	function aggregateRunOverrefusalRate(run: CombinedRunEntry): number | null {
@@ -430,9 +434,13 @@
 		const auditTotal = run.audit?.metrics?.total ?? 0;
 		const total = promptTotal + auditTotal;
 		if (total === 0) return null;
-		const promptVal = promptTotal * (run.prompt?.metrics?.overrefusal_rate ?? 0);
-		const auditVal = auditTotal * (run.audit?.metrics?.overrefusal_rate ?? 0);
-		return (promptVal + auditVal) / total;
+		const promptRate = run.prompt?.metrics?.overrefusal_rate;
+		const auditRate = run.audit?.metrics?.overrefusal_rate;
+		const applicableTotal = (promptRate == null ? 0 : promptTotal) + (auditRate == null ? 0 : auditTotal);
+		if (applicableTotal === 0) return null;
+		const promptVal = promptRate == null ? 0 : promptTotal * promptRate;
+		const auditVal = auditRate == null ? 0 : auditTotal * auditRate;
+		return (promptVal + auditVal) / applicableTotal;
 	}
 
 	function aggregateRunDimensionRate(run: CombinedRunEntry, dimension: string): number | null {
