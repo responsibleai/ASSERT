@@ -2,10 +2,28 @@
 
 Use [`changliu2/assert-ai-action`](https://github.com/changliu2/assert-ai-action) to run ASSERT in pull requests and fail on safety regressions.
 
-The fastest setup path is the action's agent bootstrap:
+## Setup
+
+Install the skills into your coding agent — works with Cursor, Claude Code, Copilot, Gemini CLI, Windsurf, Codex, and [40+ others](https://github.com/vercel-labs/skills#supported-agents):
+
+```bash
+npx skills add changliu2/assert-ai-action --skill "*" --yes
+```
+
+Then: *"Use the `wire-assert-ci` skill to add an ASSERT safety gate to this repo."*
+
+Without Node, paste the bootstrap URL instead and the agent fetches the skills itself:
 
 ```text
 read https://raw.githubusercontent.com/changliu2/assert-ai-action/main/ONBOARD.md
 ```
 
-Generated workflows should call `changliu2/assert-ai-action@v1`. Keep provider credentials in CI secrets and reference environment variable names only.
+## What the agent does
+
+Scans the repo, picks the highest-fidelity way to reach your agent (auto-traced → bring-your-own-trace → callable → HTTP endpoint → prompt-agent), drafts an eval spec from your own README and prompts, asks you to confirm or replace it, splits it **one behavior per YAML**, runs a baseline, and opens the gate PR.
+
+## Notes
+
+Generated workflows call `changliu2/assert-ai-action@v1`. Keep provider credentials in CI secrets and reference environment variable names only — there is no shared endpoint, so you supply your own model credentials.
+
+The gate blocks on **evidence of harm**: a statistically significant regression fails the build. A missing baseline, a changed test set, or an inconclusive result does not block — see the action's README for the full verdict table and its security model.

@@ -53,7 +53,19 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 
 ### Add a CI safety gate
 
-Use [`changliu2/assert-ai-action`](https://github.com/changliu2/assert-ai-action) to run ASSERT as a PR regression gate. To wire it from your coding agent:
+Use [`changliu2/assert-ai-action`](https://github.com/changliu2/assert-ai-action) to run ASSERT as a PR regression gate — it fails the build when a change makes agent behavior significantly worse.
+
+Install the skills into your coding agent (Cursor, Claude Code, Copilot, and [40+ others](https://github.com/vercel-labs/skills#supported-agents)):
+
+```bash
+npx skills add changliu2/assert-ai-action --skill "*" --yes
+```
+
+Then ask it to wire the gate:
+
+> Use the `wire-assert-ci` skill to add an ASSERT safety gate to this repo.
+
+No Node? Paste this instead — the agent fetches the skills itself:
 
 ```text
 read https://raw.githubusercontent.com/changliu2/assert-ai-action/main/ONBOARD.md
