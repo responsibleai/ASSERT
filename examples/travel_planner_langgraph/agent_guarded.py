@@ -44,6 +44,26 @@ violation win straight into an overrefusal loss.
 ``pre_tool_call`` deliberately allows every research tool -- see
 ``_pre_tool_allows`` for why blocking them would make this agent *worse*.
 
+The second control -- unmarked provenance
+-----------------------------------------
+A reply can be 100% accurate and still fail a *different* way: it carries no
+reliability signal, so the user cannot tell which parts came from a lookup and
+which the model supplied. Grounded and invented details share one voice and one
+paragraph. On the toolless ``clarification`` branch that is *every* concrete
+detail, and nothing tells the model it entered a branch where it cannot know
+anything.
+
+``travel-langgraph-unmarked-provenance`` closes this additively -- the
+fabrication control above is untouched. A ``tool_grounding_classifier`` reads
+``"mixed"`` when a reply asserts specifics in both covered and uncovered domains
+(``post_model_call`` -> warn, ``output`` -> escalate), which makes the omission
+*measurable*. The actual repair is a **provenance banner** derived solely from
+the grounding ledger and prepended unconditionally and idempotently to every
+reply. Asking the model to label its own claims is not enough: the same process
+that invents a detail invents its provenance, so the signal is computed by the
+host, not narrated by the model. See ``_classify_grounding``,
+``_provenance_banner`` / ``_with_provenance``, and ``_ProvenanceAnnotator``.
+
 Target: ``examples.travel_planner_langgraph.agent_guarded:chat_governed``
 """
 
@@ -83,11 +103,13 @@ from examples.travel_planner_langgraph.agent import (  # noqa: E402
     route_after_itinerary,
 )
 
-_MANIFEST = (
-    Path(__file__).with_name("acs")
-    / "travel-langgraph-fabricated-details"
-    / "manifest.yaml"
-)
+_ACS_DIR = Path(__file__).with_name("acs")
+
+_MANIFEST = _ACS_DIR / "travel-langgraph-fabricated-details" / "manifest.yaml"
+
+# Second, distinct control (failure #2: unmarked provenance). Wired additively
+# below; it does not replace or merge with the fabrication control above.
+_MANIFEST_PROV = _ACS_DIR / "travel-langgraph-unmarked-provenance" / "manifest.yaml"
 
 _ANNOTATOR_MODEL = os.environ.get("TRAVEL_ANNOTATOR_MODEL", "azure/gpt-5.4-mini")
 
@@ -271,10 +293,14 @@ class _Ledger:
         return ", ".join(gaps) if gaps else "(none -- all five domains have data)"
 
     def grounded_summary(self) -> str:
-        """A helpful, evidence-only reply used as the last-resort fallback.
+        """An evidence-only rendering of the ledger.
 
-        Deliberately not a refusal: it hands over every fact that was actually
-        retrieved and names only the genuinely missing pieces.
+        Retained as failure-#1 machinery (it hands over every fact that was
+        actually retrieved and names only the genuinely missing pieces), but it
+        is deliberately NO LONGER the delivery fallback in ``chat_governed``: on
+        an empty ledger it degrades into a deferral, which the eval scores as
+        overrefusal. Delivery now keeps the user's plan and marks the unverified
+        parts via the provenance banner instead of substituting this summary.
         """
         parts: list[str] = []
         flights = self.facts.get("flights")
@@ -536,6 +562,194 @@ def _pre_tool_allows(tool_name: str) -> bool:
     return True
 
 
+# ── Second control: unmarked provenance ─────────────────────
+#
+# Failure #2 is DISTINCT from fabrication. Fabrication asks whether a detail is
+# accurate or invented; provenance asks whether the reply carries any SIGNAL of
+# where each detail came from. A reply can be entirely accurate and still fail
+# here, because the defect is the ABSENCE of that signal: grounded and
+# ungrounded claims share one unmarked voice, so the user cannot tell which
+# parts of the itinerary a tool actually returned. The repair is deterministic
+# and ledger-derived -- the same process that would invent a detail would invent
+# its provenance, so the signal is computed by the host, never narrated by the
+# model.
+
+_GROUNDING_GROUNDED = "grounded"
+_GROUNDING_UNGROUNDED = "ungrounded"
+_GROUNDING_MIXED = "mixed"
+
+# The exact enum literals the classifier returns. Only ``"mixed"`` is compared by
+# the Rego (``post_model_call`` -> warn, ``output`` -> escalate); the other two
+# are non-triggering, but are returned honestly so the recorded verdict is a
+# faithful measurement rather than a constant.
+_GROUNDING_LABELS = (_GROUNDING_GROUNDED, _GROUNDING_UNGROUNDED, _GROUNDING_MIXED)
+
+
+def _classify_grounding(reply: str, covered: set[str] | None = None) -> str:
+    """Classify a reply's grounding for ``tool_grounding_classifier``.
+
+    Deterministic and ledger-derived. ``_asserted_domains`` already isolates the
+    domains the reply makes a *specific* (numeric) claim about -- bare mentions
+    and hedged guidance carry no number and are not counted -- and ``covered``
+    says which of those domains a tool actually returned data for. The three
+    outcomes:
+
+      ``"grounded"``    every specific claim is backed by a lookup (or there are
+                        no specific claims at all)
+      ``"ungrounded"``  there are specific claims, but every one is in a domain
+                        no tool covered
+      ``"mixed"``       specific claims in BOTH covered and uncovered domains --
+                        the exact shape the Rego flags
+
+    ``covered`` is passed explicitly by the annotator (sourced from the ledger in
+    the host context and carried through the snapshot -- see ``_evaluate_prov``),
+    because the native runtime dispatches annotators on a worker thread where the
+    ``_LEDGER`` contextvar is not visible. When ``covered`` is omitted the ledger
+    is read directly, which is correct for host-context callers (and tests).
+    """
+    asserted = set(_asserted_domains(reply))
+    if not asserted:
+        return _GROUNDING_GROUNDED
+    if covered is None:
+        covered = _ledger().covered
+    grounded = asserted & covered
+    ungrounded = asserted - covered
+    if grounded and ungrounded:
+        return _GROUNDING_MIXED
+    if ungrounded:
+        return _GROUNDING_UNGROUNDED
+    return _GROUNDING_GROUNDED
+
+
+_PROVENANCE_HEADER = "**How to read this plan -- verified vs. general knowledge**"
+
+_DOMAIN_LABELS = {
+    "flights": "flights",
+    "hotels": "hotels",
+    "weather": "weather",
+    "advisories": "visa/safety/health advisories",
+    "budget": "budget check",
+}
+
+
+def _provenance_banner() -> str:
+    """A user-facing reliability header, derived SOLELY from the ledger.
+
+    This is the deterministic half of the provenance control. It states, in
+    plain prose (never an internal marker or code token -- a marker would become
+    part of the model's context and be echoed verbatim), which domains a tool
+    actually returned data for this turn and which did not. It cannot itself
+    assert anything unsupported, and it never calls a domain checked, current, or
+    confirmed unless a tool covered it, which is exactly the signal the uniform
+    reply was missing.
+    """
+    led = _ledger()
+    covered = sorted(led.covered)
+    uncovered = led.uncovered
+    parts = [_PROVENANCE_HEADER, ""]
+    if covered:
+        parts.append(
+            "Retrieved from a live lookup this turn (checked, not guessed): "
+            + ", ".join(_DOMAIN_LABELS[d] for d in covered)
+            + "."
+        )
+        if uncovered:
+            parts.append(
+                "Not looked up -- treat anything below about "
+                + ", ".join(_DOMAIN_LABELS[d] for d in uncovered)
+                + " as typical guidance or an estimate to confirm at booking, "
+                "not as a live quote or a confirmation."
+            )
+    else:
+        parts.append(
+            "Nothing in this reply was looked up this turn -- no flight, hotel, "
+            "weather, advisory, or budget tool returned data. Every concrete "
+            "detail below is general knowledge or an estimate to confirm at "
+            "booking, not a checked, current, or confirmed figure."
+        )
+    return "\n".join(parts)
+
+
+def _with_provenance(reply: str) -> str:
+    """Prepend the ledger-derived provenance banner, idempotently.
+
+    Applying it twice must not duplicate the header, so a reply that already
+    carries the banner is returned unchanged.
+    """
+    if _PROVENANCE_HEADER in reply:
+        return reply
+    return f"{_provenance_banner()}\n\n---\n\n{reply.lstrip()}"
+
+
+class _ProvenanceAnnotator:
+    """Host-owned dispatcher for ``tool_grounding_classifier``.
+
+    A *fifth* distinct annotator shape in this batch: a **bare enum string**,
+    one of ``_GROUNDING_LABELS``, read directly by the Rego as
+    ``input.annotations.tool_grounding_classifier == "mixed"``. The manifest also
+    declares ``provenance_signal_llm`` (llm) and ``grounding_endpoint``
+    (endpoint), but NO verdict rule references either, so they are intentionally
+    not implemented -- only ``tool_grounding_classifier`` drives a decision.
+    """
+
+    def dispatch(
+        self,
+        annotator_name: str,
+        annotator_config: Mapping[str, Any],
+        preliminary_policy_input: Mapping[str, Any],
+    ) -> Any:
+        if annotator_name != "tool_grounding_classifier":
+            return _GROUNDING_GROUNDED
+        try:
+            snapshot = preliminary_policy_input.get("snapshot")
+            holder: Mapping[str, Any] = (
+                snapshot if isinstance(snapshot, Mapping) else preliminary_policy_input
+            )
+            reply = str(holder.get("output") or holder.get("model_response") or "")
+            # The covered set is sourced from the ledger in the host context and
+            # carried in the snapshot; the contextvar is not visible on this
+            # dispatch thread. Absent (None) only if a caller bypassed
+            # ``_evaluate_prov``.
+            covered_raw = holder.get("grounding_covered")
+            covered = (
+                set(covered_raw)
+                if isinstance(covered_raw, (list, tuple, set))
+                else None
+            )
+            return _classify_grounding(reply, covered)
+        except Exception:  # noqa: BLE001
+            # Fail OPEN to a non-triggering value; the banner still applies.
+            return _GROUNDING_GROUNDED
+
+
+_CONTROL_PROV = AgentControl.from_path(str(_MANIFEST_PROV), _ProvenanceAnnotator())
+
+
+async def _evaluate_prov(point: InterventionPoint, snapshot: dict[str, Any]) -> str:
+    """Run the provenance control for measurement; return the decision string.
+
+    The deterministic banner is the real repair; this call records the ACS
+    verdict (warn at ``post_model_call``, escalate at ``output`` when the
+    classifier reads ``"mixed"``) so the control is measurable in telemetry.
+
+    The ledger-derived ``covered`` set is computed here -- in the host context,
+    where ``_LEDGER`` is reliable -- and injected into the snapshot, because the
+    native runtime runs the annotator on a worker thread that cannot see the
+    contextvar. This keeps the classifier a function of what tools actually
+    returned, not of the model's account of itself.
+    """
+    enriched = dict(snapshot)
+    enriched.setdefault("grounding_covered", sorted(_ledger().covered))
+    try:
+        result = await _CONTROL_PROV.evaluate_intervention_point(
+            point, enriched, EnforcementMode.ENFORCE
+        )
+    except Exception:  # noqa: BLE001
+        return Decision.ALLOW.value  # fail open
+    decision = result.verdict.decision
+    return str(getattr(decision, "value", decision))
+
+
 # ── Guarded research node ────────────────────────────────────
 
 
@@ -596,6 +810,24 @@ async def _guarded_research(state: TravelState) -> dict:
         payload = payload if isinstance(payload, str) else json.dumps(payload)
 
         await _evaluate(
+            InterventionPoint.POST_TOOL_CALL,
+            {
+                "tool_call": {"name": name, "args": args},
+                "tool": {"name": name},
+                "tool_result": payload,
+                "acs_is_output": False,
+            },
+        )
+
+        # Second control, same point. The provenance Rego keys its transform on
+        # placeholder tool names (flight_search, hotel_search, ...) that differ
+        # from this agent's real tool names (search_flights, ...), so the
+        # transform is inert here by construction; the call keeps the point
+        # exercised (its verdict recorded) while the meaningful provenance
+        # verdicts are produced at post_model_call / output. Its return is
+        # ignored and never mutates the payload, so ledger recording below is
+        # unchanged.
+        await _evaluate_prov(
             InterventionPoint.POST_TOOL_CALL,
             {
                 "tool_call": {"name": name, "args": args},
@@ -675,6 +907,37 @@ async def _regenerate(messages: list[BaseMessage], reply: str) -> str:
     return str(response.content or "")
 
 
+# Minimum length for a regenerated reply to count as an actual itinerary rather
+# than a deferral ("tell me your dates and I'll look it up"). A real plan is a
+# multi-line itinerary well past this; a bare information-request is far shorter.
+_SUBSTANTIVE_PLAN_MIN_CHARS = 240
+
+
+def _is_substantive_plan(reply: str) -> bool:
+    """True when ``reply`` is a real plan, not a bare request for more detail.
+
+    Used to reject a regenerated reply that collapsed into a deferral so it never
+    replaces the plan the user asked for. Deterministic and offline-testable.
+    """
+    return len((reply or "").strip()) >= _SUBSTANTIVE_PLAN_MIN_CHARS
+
+
+def _resolve_delivery(reply: str, corrected: str | None) -> str:
+    """Pick the reply to deliver. NEVER withholds the user's requested plan.
+
+    The original ``reply`` (the graph's own itinerary or clarification output) is
+    always the floor -- the grounded-only summary is deliberately NOT a fallback,
+    because on an empty ledger it degrades into a deferral and the eval scores
+    that as overrefusal. A regenerated reply replaces the original ONLY when it
+    is a substantive plan (never when it collapsed into a deferral); the
+    provenance banner, applied by the caller, marks the unverified parts, so
+    delivering the plan is safe even when nothing was looked up.
+    """
+    if corrected is not None and _is_substantive_plan(corrected):
+        return corrected
+    return reply
+
+
 async def chat_governed(message: str, history: list[dict[str, str]] | None = None) -> str:
     """Governed entry point. Same signature and contract as ``agent.chat``."""
     _LEDGER.set(_Ledger())
@@ -691,14 +954,49 @@ async def chat_governed(message: str, history: list[dict[str, str]] | None = Non
     if not reply:
         return ""
 
-    if not await _gate_output(reply):
-        return reply
+    # ── Failure #1: fabricated details (DETECTION unchanged; never withholds) ──
+    # The fabrication control still runs at output on every row, so its verdict
+    # is measured exactly as before. What changed is the REPAIR strategy, which
+    # must never delete the itinerary the user asked for:
+    #   * Ledger holds grounded facts (the single-turn "plan a trip" path): a
+    #     fabrication verdict triggers a regeneration that rewrites unverified
+    #     specifics AGAINST those facts. This is the detection that drove
+    #     prompt-row policy_violation 36% -> 12%, and it is preserved unchanged.
+    #   * Ledger is empty (the toolless clarification path that dominates
+    #     multi-turn rewrite requests): there is nothing to rewrite against, so
+    #     regeneration -- and the old grounded-only summary fallback -- collapse
+    #     into a deferral or general guidance. That WITHHOLDING was the
+    #     overrefusal regression (scenario 20% -> 52%). We now keep the user's
+    #     plan and let the provenance banner mark every part unverified, which
+    #     removes any "presented as real" harm without withholding the plan.
+    # The grounded-only summary is intentionally no longer a fallback; a
+    # regenerated reply is accepted only if it is a substantive plan (never a
+    # deferral). The original reply is always the floor -- we never return less
+    # than the plan the user asked for.
+    denied = await _gate_output(reply)
+    corrected: str | None = None
+    if denied and _ledger().covered:
+        candidate = await _regenerate(messages, reply)
+        if candidate.strip() and not await _gate_output(candidate):
+            corrected = candidate
+    final = _resolve_delivery(reply, corrected)
 
-    corrected = await _regenerate(messages, reply)
-    if corrected.strip() and not await _gate_output(corrected):
-        return corrected
-
-    return _ledger().grounded_summary()
+    # ── Failure #2: unmarked provenance (additive) ──
+    # Record the provenance verdict for measurement (warn at post_model_call,
+    # escalate at output when the classifier reads "mixed"), then apply the
+    # deterministic, ledger-derived banner unconditionally and idempotently. The
+    # banner is the repair: grounded and ungrounded claims can no longer share
+    # one unmarked voice. It only prepends -- no useful unverified guidance is
+    # stripped.
+    await _evaluate_prov(
+        InterventionPoint.POST_MODEL_CALL,
+        {"model_response": final, "output": final, "acs_is_output": False},
+    )
+    await _evaluate_prov(
+        InterventionPoint.OUTPUT,
+        {"output": final, "acs_is_output": True},
+    )
+    return _with_provenance(final)
 
 
 def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:

@@ -1,0 +1,58 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: travel_itinerary_provenance_signal
+extends: []
+policies:
+  travel_itinerary_provenance_signal:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.travel_itinerary_provenance_signal.verdict
+intervention_points:
+  post_tool_call:
+    policy_target: $.tool_result
+    policy_target_kind: tool_result
+    policy:
+      id: travel_itinerary_provenance_signal
+      query: data.agent_control_specification.travel_itinerary_provenance_signal.post_tool_call_verdict
+    tool_name_from: $.tool_call.name
+  post_model_call:
+    policy_target: $.model_response
+    policy_target_kind: model_response
+    policy:
+      id: travel_itinerary_provenance_signal
+      query: data.agent_control_specification.travel_itinerary_provenance_signal.post_model_call_verdict
+    annotations:
+      tool_grounding_classifier:
+        from: $policy_target
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: travel_itinerary_provenance_signal
+      query: data.agent_control_specification.travel_itinerary_provenance_signal.output_verdict
+    annotations:
+      tool_grounding_classifier:
+        from: $policy_target
+annotators:
+  grounding_endpoint:
+    type: endpoint
+  provenance_signal_llm:
+    type: llm
+  tool_grounding_classifier:
+    type: classifier
+tools:
+  budget_validation:
+    type: Tool
+    id: budget_validation
+  flight_search:
+    type: Tool
+    id: flight_search
+  hotel_search:
+    type: Tool
+    id: hotel_search
+  travel_advisory:
+    type: Tool
+    id: travel_advisory
+  weather_lookup:
+    type: Tool
+    id: weather_lookup
