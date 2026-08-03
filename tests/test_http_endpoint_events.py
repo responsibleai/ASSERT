@@ -15,7 +15,7 @@ import asyncio
 import aiohttp
 
 from assert_ai.core.model_client import Message
-from assert_ai.core.session import HTTPEndpointSession
+from assert_ai.core.session import HTTPEndpointSession, _normalize_connector_response
 
 
 class _Response:
@@ -71,6 +71,14 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
                 "tool_args": {"line_id": "L1002"},
                 "tool_call_id": "tc-1",
                 "content": '{"mode":"pass","real_executed":true}',
+                "raw": {
+                    "action_mediation": {
+                        "mode": "pass",
+                        "real_executed": True,
+                        "returned": {"status": "resumed"},
+                    },
+                    "internal_diagnostics": {"token": "must-not-persist"},
+                },
             },
         ],
         # Deliberately sensitive-looking diagnostics: endpoint normalization must
@@ -89,6 +97,14 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
     }]
     assert tool_result["function"] == "resume_line"
     assert tool_result["tool_call_id"] == "tc-1"
+    assert tool_result["raw"] == {
+        "endpoint": "http://localhost:8080/chat",
+        "action_mediation": {
+            "mode": "pass",
+            "real_executed": True,
+            "returned": {"status": "resumed"},
+        },
+    }
     assert result.interaction_messages[-1]["content"] == "The line is restored."
     assert result.raw == {"endpoint": "http://localhost:8080/chat"}
     assert "secret-value" not in str(result.interaction_messages)
@@ -105,6 +121,25 @@ def test_endpoint_does_not_duplicate_final_assistant_event():
     }))
     assistants = [m for m in result.interaction_messages if m["role"] == "assistant"]
     assert [m["content"] for m in assistants] == ["Done."]
+
+
+def test_structured_event_raw_is_sanitized_before_it_can_be_persisted():
+    response = _normalize_connector_response({
+        "text": "Done.",
+        "events": [{
+            "role": "tool_result",
+            "content": "ok",
+            "raw": {
+                "action_mediation": {
+                    "returned": {"authorization": "secret_abcdefghijklmnopqrstuvwxyz"}
+                }
+            },
+        }],
+    })
+
+    assert response.events is not None
+    assert "secret_abcdefghijklmnopqrstuvwxyz" not in str(response.events[0].raw)
+    assert "[REDACTED]" in str(response.events[0].raw)
 
 
 def test_endpoint_without_events_keeps_black_box_behavior():

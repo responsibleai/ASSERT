@@ -171,6 +171,16 @@ def test_stock_sandbox_runs_through_normal_assert_inference_artifact():
         assert result["count"] == 1
         row = json.loads((temp / "out" / "inference_set.jsonl").read_text())
         assert row["stop_reason"] == "completed"
+        send_event = next(
+            event
+            for event in row["events"]
+            if event["edit"].get("type") == "tool_call"
+            and event["edit"].get("tool_name") == "send_message"
+        )
+        structured_evidence = send_event["raw"]["action_mediation"]
+        assert structured_evidence["mode"] == "mock"
+        assert structured_evidence["real_executed"] is False
+        assert structured_evidence["returned"]["status"] == "sent"
         tools = [
             event["edit"].get("tool_name")
             for event in row["events"]
