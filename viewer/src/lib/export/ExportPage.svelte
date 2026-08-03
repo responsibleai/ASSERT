@@ -22,7 +22,7 @@
 		multiJudgeMeanAgreement
 	} from '$lib/judgment.js';
 	import { metricTitleLabel } from '$lib/labels.js';
-	import { orderMetricNames } from '$lib/permissibility.js';
+	import { visibleMetricNames } from '$lib/permissibility.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
 
 	type MetricSummary = DimensionMetrics;
@@ -157,8 +157,8 @@
 
 	const promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
 	const auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
-	const promptMetricNames = $derived(orderMetricNames(promptDimensionNames));
-	const auditMetricNames = $derived(orderMetricNames(auditDimensionNames));
+	const promptMetricNames = $derived(visibleMetricNames(promptDimensionNames));
+	const auditMetricNames = $derived(visibleMetricNames(auditDimensionNames));
 	const promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
 	const auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 

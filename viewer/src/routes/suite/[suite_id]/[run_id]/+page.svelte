@@ -37,8 +37,8 @@
 	import {
 		POLICY_VIOLATION_NOT_PERMISSIBLE,
 		POLICY_VIOLATION_PERMISSIBLE,
-		orderMetricNames,
-		primaryMetricName
+		primaryMetricName,
+		visibleMetricNames
 	} from '$lib/permissibility.js';
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
@@ -263,7 +263,7 @@
 	}
 
 	let dimensionNames = $derived(Object.keys(data.metrics.dimensions ?? {}));
-	let metricNames = $derived(orderMetricNames(dimensionNames));
+	let metricNames = $derived(visibleMetricNames(dimensionNames));
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
 
 	// Lookup map: behavior name -> permissible boolean (from policy)
@@ -333,7 +333,7 @@
 	// --- Audit eval groups ---
 	let auditDimNames = $derived(Object.keys(data.auditMetrics.dimensions ?? {}));
 
-	let auditMetricNames = $derived(orderMetricNames(auditDimNames));
+	let auditMetricNames = $derived(visibleMetricNames(auditDimNames));
 	let primaryAuditMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
 	let activeAuditDimensions = $derived(data.auditMetrics.dimensions);
@@ -363,7 +363,7 @@
 		[
 			{
 				key: POLICY_VIOLATION_NOT_PERMISSIBLE,
-				bucketLabel: 'non-permissible',
+				bucketLabel: 'impermissible',
 				summary: activeMetricView?.policyViolationOnNotPermissible ?? null
 			},
 			{
@@ -1021,7 +1021,7 @@
 				<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/suite/{data.suite_id}/{data.run_id}/export" target="_blank" rel="noopener" title="Open standalone HTML export">Export HTML</a>
 			</div>
 		</div>
-		<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Headline {hasPermissibilitySplit ? 'policy violation outcomes' : 'outcome'} for {activeTab === 'audit' ? 'conversations' : 'prompts'} in this run{hasPermissibilitySplit ? ', split by behavior permissibility' : ''}. Detailed dimension breakdowns are shown below.</p>
+		<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Headline {hasPermissibilitySplit ? 'behavior violation outcomes' : 'outcome'} for {activeTab === 'audit' ? 'conversations' : 'prompts'} in this run{hasPermissibilitySplit ? ', split by behavior permissibility' : ''}. Detailed dimension breakdowns are shown below.</p>
 	</div>
 	{#if hasPermissibilitySplit}
 		<div class="mb-8 grid gap-4 sm:grid-cols-2">
@@ -1125,7 +1125,7 @@
 						</div>
 					{/if}
 				{/if}
-				<div class="mt-3 border-t border-border/50 pt-2 text-[11px] text-text-muted">This run has no behavior taxonomy, so policy violations cannot be split into permissible and non-permissible behaviors.</div>
+				<div class="mt-3 border-t border-border/50 pt-2 text-[11px] text-text-muted">This run has no behavior taxonomy, so behavior violations cannot be split into permissible and impermissible behaviors.</div>
 			</div>
 		{/if}
 	{/if}
@@ -1274,7 +1274,7 @@
 							<span class="flex">
 								{#if behaviorPermissibleMap[group.key] !== undefined}
 									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
-										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'impermissible'}
 									</span>
 								{:else}
 									<span class="text-[10px] text-text-muted">—</span>
@@ -1500,7 +1500,7 @@
 							<span class="flex">
 								{#if behaviorPermissibleMap[group.key] !== undefined}
 									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
-										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'impermissible'}
 									</span>
 								{:else}
 									<span class="text-[10px] text-text-muted">—</span>
@@ -1752,6 +1752,7 @@
 		metricNames={drawerMetricNames}
 		primaryMetric={drawerPrimaryMetric}
 		requiredBaseMetrics={requiredBaseMetrics}
+		behaviorPermissible={behaviorPermissibleMap}
 		navIdx={drawerNavIdx}
 		navTotal={drawerNavTotal}
 		onClose={closeActiveDrawer}

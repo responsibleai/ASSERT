@@ -18,6 +18,10 @@
 	import { citationWarningLabel } from '$lib/citation-warnings.js';
 	import { formatFactorLabel } from '$lib/grouping.js';
 	import {
+		POLICY_VIOLATION_NOT_PERMISSIBLE,
+		POLICY_VIOLATION_PERMISSIBLE
+	} from '$lib/permissibility.js';
+	import {
 		stopReasonChipClass,
 		stopReasonLabel,
 		stopReasonTitle
@@ -39,6 +43,7 @@
 		metricNames,
 		primaryMetric,
 		requiredBaseMetrics,
+		behaviorPermissible = {},
 		navIdx,
 		navTotal,
 		onClose,
@@ -49,6 +54,7 @@
 		metricNames: string[];
 		primaryMetric: string;
 		requiredBaseMetrics: string[];
+		behaviorPermissible?: Record<string, boolean>;
 		navIdx: number;
 		navTotal: number;
 		onClose: () => void;
@@ -720,6 +726,29 @@
 			? visibleNodeJudgments(activeVerdict.node_judgments as NodeJudgment[])
 			: []
 	);
+
+	/**
+	 * Node judgments to list under a metric's card. `policy_violation` owns the full
+	 * list, as it always has. When the permissibility split replaces it, each bucket
+	 * card shows only its own nodes so the list explains that card's number. If the
+	 * taxonomy lookup is unavailable the split cannot be attributed, so the first
+	 * bucket card carries the whole list rather than dropping it.
+	 */
+	function nodeJudgmentsForMetric(metric: string): NodeJudgment[] {
+		if (metric === 'policy_violation') return nodeJudgments;
+		if (metric !== POLICY_VIOLATION_NOT_PERMISSIBLE && metric !== POLICY_VIOLATION_PERMISSIBLE) {
+			return [];
+		}
+		if (Object.keys(behaviorPermissible).length === 0) {
+			return metric === POLICY_VIOLATION_NOT_PERMISSIBLE ? nodeJudgments : [];
+		}
+		const wantPermissible = metric === POLICY_VIOLATION_PERMISSIBLE;
+		return nodeJudgments.filter((node) => {
+			const name = policyNodeName(node);
+			if (!name || !(name in behaviorPermissible)) return false;
+			return behaviorPermissible[name] === wantPermissible;
+		});
+	}
 	const firstMessageIdByTurn = $derived.by(() => {
 		const map = new Map<number, string>();
 		for (const message of item.messages) {
@@ -1002,9 +1031,9 @@
 							{:else if m === primaryMetric && activeVerdict?.justification}
 								<div class="text-sm text-text-secondary leading-relaxed prose max-w-none citation-prose">{@html renderTextWithCitationButtons(activeVerdict.justification as string)}</div>
 							{/if}
-								{#if m === 'policy_violation' && nodeJudgments.length > 0}
+								{#if nodeJudgmentsForMetric(m).length > 0}
 									<div class="mt-3 space-y-1.5 border-t border-border/50 pt-3">
-										{#each nodeJudgments as node}
+										{#each nodeJudgmentsForMetric(m) as node}
 											{@const violated = node.violated}
 											{@const nodeName = policyNodeName(node)}
 											<div class="rounded-md px-3 py-2 {violated ? 'bg-score-fail/5' : violated === null ? 'bg-surface-2/50' : 'bg-score-pass/5'}">

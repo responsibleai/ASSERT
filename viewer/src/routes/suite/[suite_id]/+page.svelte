@@ -6,7 +6,7 @@
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
 	import { metricTitleLabel } from '$lib/labels.js';
-	import { orderMetricNames } from '$lib/permissibility.js';
+	import { orderMetricNames, visibleMetricNames } from '$lib/permissibility.js';
 	import { renderMarkdown } from '$lib/markdown.js';
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef } from '$lib/types.js';
@@ -227,15 +227,19 @@
 		}
 		return Array.from(names);
 	});
-	// Tracked headline pair leads the table so A/B runs are compared on harm vs.
-	// permissible-behavior violations first; every other dim stays selectable.
+	// Tracked headline pair leads the table so A/B runs are compared on impermissible
+	// vs. permissible behavior violations first; every other dim stays selectable.
 	let dimNames = $derived(orderMetricNames(allDimNames));
 	function dimColumnLabel(name: string): string {
 		return metricTitleLabel(name);
 	}
+	// Narrow to dims carrying data first, then drop the pair the split supersedes.
+	// Ordering matters: a suite whose runs have no split data keeps `policy_violation`.
 	let visibleDimNames = $derived(
-		dimNames.filter((name) =>
-			allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+		visibleMetricNames(
+			dimNames.filter((name) =>
+				allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+			)
 		)
 	);
 
@@ -424,20 +428,6 @@
 		const promptViolations = promptRate == null ? 0 : promptTotal * promptRate;
 		const auditViolations = auditRate == null ? 0 : auditTotal * auditRate;
 		return (promptViolations + auditViolations) / applicableTotal;
-	}
-
-	function aggregateRunOverrefusalRate(run: CombinedRunEntry): number | null {
-		const promptTotal = run.prompt?.metrics?.total ?? 0;
-		const auditTotal = run.audit?.metrics?.total ?? 0;
-		const total = promptTotal + auditTotal;
-		if (total === 0) return null;
-		const promptRate = run.prompt?.metrics?.overrefusal_rate;
-		const auditRate = run.audit?.metrics?.overrefusal_rate;
-		const applicableTotal = (promptRate == null ? 0 : promptTotal) + (auditRate == null ? 0 : auditTotal);
-		if (applicableTotal === 0) return null;
-		const promptVal = promptRate == null ? 0 : promptTotal * promptRate;
-		const auditVal = auditRate == null ? 0 : auditTotal * auditRate;
-		return (promptVal + auditVal) / applicableTotal;
 	}
 
 	function aggregateRunDimensionRate(run: CombinedRunEntry, dimension: string): number | null {
