@@ -120,12 +120,39 @@ Fill from the candidate behavior (real schema field names):
 | `behavior.name` | candidate `name` (short, specific) |
 | `behavior.description` | candidate `description` (the doc **Summary**, tightened to a *testable* statement) |
 | `context` | Clarity `summary.md` / `goal/requirements.md` / `solution/architecture.md` |
+| `default_model.name` | the cheap model — drives the target, test-set generation, and tester (e.g. `azure/gpt-5.4-mini`) |
+| `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`). `init` has no flag for these, so they inherit `default_model` unless you edit the config by hand — see the ground-truth note below |
 | `pipeline.test_set.stratify.dimensions` | `candidate_dimensions` — **include the `elicitation_variant` dimension** derived from the doc's Variants |
 | `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
 | `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
 | `pipeline.judge.preset` + `dimensions` | keep the violation metric **and** `overrefusal` as **separate** dimensions (see the coupling note below) |
+
+> **Run the eval cheap, but judge and systematize with the strong model.**
+> `assert-ai init` has no `--systematize-model` / `--judge-model` flag, so every
+> stage silently inherits `default_model`. Edit the generated config by hand:
+>
+> ```yaml
+> default_model:
+>   name: azure/gpt-5.4-mini      # target, test-set, tester
+> pipeline:
+>   systematize:
+>     model: azure/gpt-5.4        # authors the taxonomy
+>   judge:
+>     model: azure/gpt-5.4        # renders every verdict
+> ```
+>
+> This matches the repo's own `examples/` configs. These two stages define and
+> apply ground truth: `systematize` authors the behavior tree and the
+> permissible / non-permissible split that every metric is measured against,
+> and `judge` decides both applicability and violation for each row on a
+> single sample (`judge.n` defaults to `1`, and judge temperature is not
+> pinned). Leaving them on the cheap model does not just add noise around a
+> fixed target — it moves the target, and it inflates run-to-run drift in
+> which rows are even considered applicable. Verify with
+> `assert-ai results status <suite> <run> --json` — the model actually used is
+> echoed at `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated

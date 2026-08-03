@@ -144,7 +144,35 @@ assert-ai init --default-model <litellm-model> --describe "<failure mode + how i
 - `--default-model` seeds the generated config's `pipeline.default_model` — the
   model the **eval** runs against. Do **not** use `--model` for this: that is the
   model driving the init assistant's own conversation (default
-  `azure/gpt-5.4-mini`) and it has no effect on the eval.
+  `azure/gpt-5.4-mini`) and it has no effect on the eval. Note `--default-model`
+  is a prompt-level hint the design agent is asked to *confirm*, not a
+  deterministic write — verify the value actually landed in the generated YAML.
+- **Pin `systematize` and `judge` to the strong model by hand after init.**
+  `init` has no `--systematize-model` / `--judge-model` flag, so everything
+  inherits `default_model` unless you edit the config. Run the eval on the
+  cheap model and the two stages that define and apply ground truth on the
+  strong one:
+
+  ```yaml
+  default_model:
+    name: azure/gpt-5.4-mini      # target, test-set generation, tester
+  pipeline:
+    systematize:
+      model: azure/gpt-5.4        # authors the taxonomy
+    judge:
+      model: azure/gpt-5.4        # renders every verdict
+  ```
+
+  This is the convention in the repo's own examples (`benchmark`,
+  `change_control_agent`, `incident_triage_agent`, `phoenix_auto_trace`,
+  `science_research_agent`). These two stages are not ordinary stages:
+  `systematize` authors the behavior tree and the permissible /
+  non-permissible split that **every** metric is computed against, and
+  `judge` decides both applicability and violation for every row — with no
+  redundancy, since `judge.n` defaults to `1` and judge temperature is not
+  pinned. A weak model here does not add noise around a fixed target, it
+  moves the target, and it inflates run-to-run drift in applicability and
+  in small deltas. Skipping this silently downgrades both.
 - **Check the built-in presets first** — `assert-ai library list` shows bundled
   behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`,
   `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …);
@@ -153,7 +181,8 @@ assert-ai init --default-model <litellm-model> --describe "<failure mode + how i
 - **If the user has an existing config** to extend, use `--from <path>` instead of
   generating from scratch.
 - After generation, show the user the generated `behavior.description`, `context`,
-  and `pipeline.judge` dimensions. Confirm before running.
+  and `pipeline.judge` dimensions, plus the resolved `systematize` / `judge`
+  models. Confirm before running.
 
 ### 4. Identify the target shape
 
