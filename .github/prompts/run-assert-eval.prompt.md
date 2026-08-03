@@ -24,10 +24,11 @@ Copilot is for *answering questions* and *synthesis* — direct answers, failure
 
 ## Preconditions (check, don't assume)
 
-1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
+1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install from PyPI — not an editable install of the user's own repo:
    ```
-   python -m pip install -e ".[otel,langgraph]"
+   python -m pip install "assert-ai[otel]"
    ```
+   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph or `assert-ai[aiohttp]` for `target.endpoint`. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
 
 2. **Provider creds exist** in `.env`. NEVER read or print `.env`. If a run fails with an auth error, tell the user which variable NAMES are required (AZURE_API_KEY, AZURE_API_BASE, OPENAI_API_KEY, etc.) — never their values.
 
