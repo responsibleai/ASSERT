@@ -11,6 +11,7 @@ import logging
 import random
 import warnings
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ SUITE_OUTPUT = TEST_SET_FILE
 # 67 covering-array tuples (≈15 test_set per tuple): 65/67 batches truncated
 # without this cap, only 30 valid test_set survived.
 MAX_TEST_CASES_PER_BATCH = 5
+SAMPLING_METHODS = {"pairwise", "stratified", "full_factorial", "random"}
 
 TOOL_SOURCE_RUNTIME = "runtime"
 TOOL_SOURCE_PER_TEST_CASE = "per_test_case"
@@ -572,6 +574,200 @@ def sample_from_covering_array(
     return result
 
 
+def validate_sampling_config(
+    raw: Any,
+    *,
+    field_name: str = "sampling",
+) -> dict[str, Any]:
+    """Validate one test-set sampling configuration."""
+    if raw is None:
+        return {"method": "pairwise"}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    method = raw.get("method", "pairwise")
+    if not isinstance(method, str) or method not in SAMPLING_METHODS:
+        raise ValueError(
+            f"{field_name}.method must be one of {sorted(SAMPLING_METHODS)}"
+        )
+    allowed = {
+        "pairwise": {"method"},
+        "stratified": {"method", "stratify_by"},
+        "full_factorial": {"method", "replication"},
+        "random": {"method", "with_replacement"},
+    }[method]
+    unknown = sorted(set(raw).difference(allowed))
+    if unknown:
+        raise ValueError(f"{field_name} unknown key(s): {', '.join(unknown)}")
+
+    if method == "stratified":
+        stratify_by = raw.get("stratify_by", ["behavior"])
+        if (
+            not isinstance(stratify_by, list)
+            or not stratify_by
+            or not all(isinstance(axis, str) and axis for axis in stratify_by)
+        ):
+            raise ValueError(f"{field_name}.stratify_by must be a non-empty list of strings")
+        if len(set(stratify_by)) != len(stratify_by):
+            raise ValueError(f"{field_name}.stratify_by must not contain duplicates")
+        return {"method": method, "stratify_by": list(stratify_by)}
+
+    if method == "full_factorial":
+        replication = raw.get("replication", "balanced")
+        if not isinstance(replication, str) or replication not in {"balanced", "none"}:
+            raise ValueError(
+                f"{field_name}.replication must be 'balanced' or 'none'"
+            )
+        return {"method": method, "replication": replication}
+
+    if method == "random":
+        with_replacement = raw.get("with_replacement", True)
+        if not isinstance(with_replacement, bool):
+            raise ValueError(f"{field_name}.with_replacement must be a boolean")
+        return {"method": method, "with_replacement": with_replacement}
+
+    return {"method": method}
+
+
+def _sample_non_pairwise_assignments(
+    *,
+    stratification: dict[str, list[dict[str, Any]]],
+    sample_size: int,
+    sampling: dict[str, Any],
+    rng: random.Random,
+) -> list[dict[str, str]]:
+    """Select assignments for an explicitly configured non-pairwise method."""
+    cfg = sampling
+    axes = tuple(key for key in stratification if not key.startswith("_"))
+    levels = {
+        axis: [str(entry["name"]) for entry in stratification[axis]]
+        for axis in axes
+    }
+    method = cfg["method"]
+    if method == "pairwise":
+        raise ValueError("pairwise sampling uses the existing covering-array path")
+
+    if method == "stratified":
+        stratify_by = tuple(cfg["stratify_by"])
+        missing = sorted(set(stratify_by).difference(axes))
+        if missing:
+            raise ValueError(
+                f"sampling.stratify_by axis not found: {', '.join(missing)}"
+            )
+        stratum_count = 1
+        for axis in stratify_by:
+            stratum_count *= len(levels[axis])
+
+        def stratum_at(flat_index: int) -> dict[str, str]:
+            values: dict[str, str] = {}
+            index = flat_index
+            for axis in reversed(stratify_by):
+                axis_levels = levels[axis]
+                index, level_index = divmod(index, len(axis_levels))
+                values[axis] = axis_levels[level_index]
+            return {axis: values[axis] for axis in stratify_by}
+
+        if sample_size < stratum_count:
+            indexed_allocations = [
+                (index, 1)
+                for index in _sample_unique_indices(stratum_count, sample_size, rng)
+            ]
+        else:
+            base, remainder = divmod(sample_size, stratum_count)
+            extras = set(_sample_unique_indices(stratum_count, remainder, rng))
+            indexed_allocations = [
+                (index, base + (1 if index in extras else 0))
+                for index in range(stratum_count)
+            ]
+        inner_axes = tuple(axis for axis in axes if axis not in stratify_by)
+        rows: list[dict[str, str]] = []
+        for index, count in indexed_allocations:
+            stratum = stratum_at(index)
+            for _ in range(count):
+                row = dict(stratum)
+                row.update({
+                    axis: rng.choice(levels[axis])
+                    for axis in inner_axes
+                })
+                rows.append(row)
+        rng.shuffle(rows)
+        return rows
+
+    if method == "random" and cfg["with_replacement"]:
+        return [
+            {axis: rng.choice(levels[axis]) for axis in axes}
+            for _ in range(sample_size)
+        ]
+
+    full_size = 1
+    for axis in axes:
+        full_size *= len(levels[axis])
+
+    if method == "random":
+        if sample_size > full_size:
+            raise ValueError(
+                "random sampling without replacement requires sample_size "
+                f"<= the factorial size ({full_size})"
+            )
+        sampled_indices = _sample_unique_indices(full_size, sample_size, rng)
+        rows: list[dict[str, str]] = []
+        for sampled_index in sampled_indices:
+            index = sampled_index
+            row: dict[str, str] = {}
+            for axis in reversed(axes):
+                axis_levels = levels[axis]
+                index, level_index = divmod(index, len(axis_levels))
+                row[axis] = axis_levels[level_index]
+            rows.append({axis: row[axis] for axis in axes})
+        return rows
+
+    if method == "full_factorial":
+        if cfg["replication"] == "none":
+            if sample_size != full_size:
+                raise ValueError(
+                    "full_factorial with replication=none requires sample_size "
+                    f"to equal the factorial size ({full_size})"
+                )
+        elif sample_size < full_size:
+            raise ValueError(
+                "full_factorial with balanced replication requires sample_size "
+                f">= the factorial size ({full_size})"
+            )
+        full = [
+            dict(zip(axes, values, strict=True))
+            for values in product(*(levels[axis] for axis in axes))
+        ]
+        if cfg["replication"] == "none":
+            rng.shuffle(full)
+            return full
+        rows = [dict(row) for row in full for _ in range(sample_size // full_size)]
+        remainder = sample_size % full_size
+        rows.extend(
+            dict(full[index])
+            for index in _sample_unique_indices(len(full), remainder, rng)
+        )
+        rng.shuffle(rows)
+        return rows
+
+    raise AssertionError(f"unsupported sampling method: {method}")
+
+
+def _sample_unique_indices(
+    population_size: int,
+    sample_size: int,
+    rng: random.Random,
+) -> list[int]:
+    """Sample unique indices without requiring a sys.maxsize-bounded range."""
+    selected: set[int] = set()
+    start = population_size - sample_size
+    for offset in range(sample_size):
+        upper = start + offset
+        candidate = rng.randrange(upper + 1)
+        selected.add(upper if candidate in selected else candidate)
+    result = list(selected)
+    rng.shuffle(result)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Job building
 # ---------------------------------------------------------------------------
@@ -587,18 +783,93 @@ class TestCaseJob:
     tuple_spec: dict[str, dict[str, Any]] | None = None
 
 
+def _build_jobs_from_assignments(
+    *,
+    stratification: dict[str, list[dict[str, Any]]],
+    assignments: list[dict[str, str]],
+) -> tuple[list[TestCaseJob], list[dict[str, str]] | None]:
+    """Convert sampled assignments into batched generation jobs."""
+    behavior_entries = stratification["behavior"]
+    factor_names = stratification_dimensions(stratification)
+    level_lookup: dict[str, dict[str, dict[str, str]]] = {
+        factor_name: {
+            entry["name"]: entry for entry in stratification[factor_name]
+        }
+        for factor_name in factor_names
+    }
+    behavior_level_lookup = {
+        str(entry["name"]): entry for entry in behavior_entries
+    }
+    all_axes = ("behavior",) + factor_names if factor_names else ("behavior",)
+    counts: dict[tuple[str, ...], int] = {}
+    rows_by_key: dict[tuple[str, ...], dict[str, str]] = {}
+    for row in assignments:
+        key = tuple(row[axis] for axis in all_axes)
+        rows_by_key.setdefault(key, row)
+        counts[key] = counts.get(key, 0) + 1
+
+    jobs: list[TestCaseJob] = []
+    next_index = 0
+    for key, count in counts.items():
+        row = rows_by_key[key]
+        behavior_name = row["behavior"]
+        behavior_entry = behavior_level_lookup[behavior_name]
+        spec: dict[str, dict[str, Any]] = {
+            factor_name: level_lookup[factor_name][row[factor_name]]
+            for factor_name in factor_names
+        }
+        spec["behavior"] = behavior_entry
+
+        # Split the per-tuple budget into chunks ≤ MAX_TEST_CASES_PER_BATCH so
+        # each LLM call stays inside the default max_tokens budget. Each
+        # chunk becomes its own TestCaseJob with a contiguous start_index slot
+        # so generated test case IDs remain stable and unique within the tuple.
+        chunk_offset = 0
+        remaining = count
+        while remaining > 0:
+            chunk = min(MAX_TEST_CASES_PER_BATCH, remaining)
+            jobs.append(
+                TestCaseJob(
+                    order=len(jobs),
+                    behavior=behavior_entry,
+                    count=chunk,
+                    start_index=next_index + chunk_offset,
+                    tuple_spec=spec,
+                )
+            )
+            chunk_offset += chunk
+            remaining -= chunk
+        next_index += count
+
+    return jobs, assignments or None
+
+
 def build_generation_jobs(
     *,
     taxonomy: dict[str, Any],
     stratification: dict[str, list[dict[str, Any]]],
     sample_size: int,
     rng: random.Random,
+    sampling: dict[str, Any] | None = None,
 ) -> tuple[list[TestCaseJob], list[dict[str, str]] | None]:
     """Build generation jobs — one per covering-array tuple.
 
     Budget is spread evenly across tuples via divmod. Each job produces
     its allocated number of test_set for a single (behavior, dimension…) tuple.
     """
+    sampling_cfg = validate_sampling_config(sampling)
+    if sampling_cfg["method"] != "pairwise":
+        assignments = _sample_non_pairwise_assignments(
+            stratification=stratification,
+            sample_size=sample_size,
+            sampling=sampling_cfg,
+            rng=rng,
+        )
+        return _build_jobs_from_assignments(
+            stratification=stratification,
+            assignments=assignments,
+        )
+
     behavior_entries = stratification["behavior"]
     factor_names = stratification_dimensions(stratification)
     level_lookup: dict[str, dict[str, dict[str, str]]] = {
@@ -683,6 +954,7 @@ async def _generate_records(
     fixed_system_prompt: str | None = None,
     context: str | None = None,
     stratification: dict[str, Any] | None = None,
+    sampling: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
 ) -> dict[str, Any]:
@@ -713,6 +985,7 @@ async def _generate_records(
         stratification=stratification_data,
         sample_size=sample_size,
         rng=random.Random(seed),
+        sampling=sampling,
     )
     factor_names = stratification_dimensions(stratification_data)
 
@@ -892,6 +1165,7 @@ async def run_test_set(
             tool_source=tool_source, fixed_system_prompt=fixed_system_prompt,
             context=normalized_context,
             stratification=stratification,
+            sampling=cfg.get("sampling"),
             seed=seed,
             concurrency=concurrency,
         )
@@ -912,21 +1186,18 @@ async def run_test_set(
     covered_categories = {row_behavior(r) for r in all_records} - {""}
     missing_categories = all_categories - covered_categories
     if missing_categories:
-        # With stratification dimensions the covering array has more tuples
-        # than categories.  The minimum sample_size per kind that guarantees
-        # every category appears at least once equals the number of
-        # categories (no extra dimensions) or more (with extra dimensions).
-        min_per_kind = len(all_categories)
         log.warning(
             "Test cases cover only %d of %d behavior categories. "
             "Missing categories: %s. "
-            "To cover all categories, set sample_size >= %d per kind "
-            "(prompt / scenario). With additional stratification dimensions "
-            "the required minimum may be higher.",
+            "Coverage depends on the sampling method and successful generation: "
+            "pairwise requires a budget at least as large as the covering array; "
+            "stratified guarantees behavior coverage when stratify_by=[behavior] "
+            "and sample_size >= %d; full_factorial covers every assignment; "
+            "random does not guarantee category coverage.",
             len(covered_categories),
             len(all_categories),
             ", ".join(sorted(missing_categories)),
-            min_per_kind,
+            len(all_categories),
         )
     # -------------------------------------------------------------------------
 
@@ -960,7 +1231,7 @@ def _parse_kind_config(
     reject_unknown_keys(
         raw,
         field_name=f"test_set.{kind}",
-        allowed={"model", "sample_size", "timeout_s"},
+        allowed={"model", "sample_size", "timeout_s", "sampling"},
     )
     model = raw.get("model") or raw_cfg.get("model")
     if not isinstance(model, dict):
@@ -978,6 +1249,10 @@ def _parse_kind_config(
         "max_tokens": model_cfg.max_tokens,
         "reasoning_effort": model_cfg.reasoning_effort,
         "timeout_s": raw.get("timeout_s") or raw_cfg.get("timeout_s"),
+        "sampling": validate_sampling_config(
+            raw.get("sampling"),
+            field_name=f"test_set.{kind}.sampling",
+        ),
     }
 
 

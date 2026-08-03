@@ -187,6 +187,94 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(prompt_rows[0]["score_keys"], ["policy_violation"])
             self.assertEqual(audit_rows, [])
 
+    def test_build_viewer_read_model_preserves_string_grade_contract(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            suite_dir = tmp_root / "suite-a"
+            run_dir = suite_dir / "run-a"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            scale = {
+                "ungrounded_policy_claim": {
+                    "type": "ordinal",
+                    "values": [
+                        {"value": "good", "label": "Substantive ungrounded claim"},
+                        {"value": "medium", "label": "Limited ungrounded claim"},
+                        {"value": "bad", "label": "No ungrounded claim"},
+                    ],
+                }
+            }
+            (suite_dir / "test_set.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "prompt",
+                        "test_case_id": "test-case-1",
+                        "behavior": "behavior",
+                        "dimensions": {"behavior": "behavior"},
+                        "seed": {"description": "Prompt seed"},
+                    }
+                ) + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "manifest.json").write_text(
+                json.dumps({"status": "completed", "stages": {"inference": "completed", "judge": "completed"}}),
+                encoding="utf-8",
+            )
+            (run_dir / "config.yaml").write_text(
+                "pipeline:\n  inference:\n    target:\n      model:\n        name: target-model\n",
+                encoding="utf-8",
+            )
+            (run_dir / "inference_set.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "prompt",
+                        "test_case_id": "test-case-1",
+                        "behavior": "behavior",
+                        "target": "target-model",
+                        "events": [],
+                        "llm_calls": [],
+                    }
+                ) + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "scores.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "prompt",
+                        "test_case_id": "test-case-1",
+                        "behavior": "behavior",
+                        "judge_model": "judge-model",
+                        "target": "target-model",
+                        "judge_status": "ok",
+                        "score_keys": ["ungrounded_policy_claim"],
+                        "not_applicable_score_keys": ["ungrounded_policy_claim"],
+                        "dimension_scales": scale,
+                        "verdict": {
+                            "dimensions": {"ungrounded_policy_claim": "good"},
+                            "dimension_applicability": {"ungrounded_policy_claim": True},
+                            "dimension_justifications": {"ungrounded_policy_claim": "claim [1]"},
+                            "node_judgments": [],
+                        },
+                    }
+                ) + "\n",
+                encoding="utf-8",
+            )
+
+            build_run_viewer_artifacts(run_dir)
+            prompt_rows = json.loads(
+                (run_dir / ".viewer" / "viewer_prompt_rows.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(
+                prompt_rows[0]["verdict"]["dimensions"]["ungrounded_policy_claim"],
+                "good",
+            )
+            self.assertEqual(prompt_rows[0]["score_keys"], ["ungrounded_policy_claim"])
+            self.assertEqual(
+                prompt_rows[0]["not_applicable_score_keys"],
+                ["ungrounded_policy_claim"],
+            )
+            self.assertEqual(prompt_rows[0]["dimension_scales"], scale)
+
     def test_build_viewer_read_model_uses_versioned_seed_artifact_from_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -856,7 +944,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["previewTesterTurns"], 0)
-            self.assertEqual(payload["previewTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["previewTesterLabel"], "Refused before Inference")
             self.assertEqual(payload["previewTesterTone"], "refusal")
             self.assertIn("tester refused", payload["previewTesterDescription"])
             self.assertEqual(payload["previewTargetLabel"], "Target refused the input")
@@ -866,10 +954,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["previewFallbackLabel"], "Stopped early")
             self.assertEqual(payload["previewFallbackTone"], "info")
             self.assertEqual(payload["previewDrawerMessages"], 0)
-            self.assertEqual(payload["previewDrawerLabel"], "Refused before inference")
+            self.assertEqual(payload["previewDrawerLabel"], "Refused before Inference")
             self.assertEqual(payload["previewDrawerTone"], "refusal")
             self.assertEqual(payload["scoredTesterTurns"], 0)
-            self.assertEqual(payload["scoredTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["scoredTesterLabel"], "Refused before Inference")
             self.assertEqual(payload["scoredTesterTone"], "refusal")
             self.assertEqual(payload["scoredTargetLabel"], "Target refused the input")
             self.assertEqual(payload["scoredErrorLabel"], "Target error")
@@ -1972,6 +2060,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ computeRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
                 const behaviors = [
                   {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'perm_b', definition: '', examples: [], permissible: true }},
                   {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
                 ];
                 const samples = [
@@ -1988,7 +2077,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }},
@@ -2001,14 +2091,31 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     judge_model: 'judge-model',
                     judge_status: 'ok',
                     verdict: {{
-                      dimensions: {{ policy_violation: false, overrefusal: false }},
+                      dimensions: {{ policy_violation: true, overrefusal: false }},
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
                         null,
                         'malformed-node',
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 2, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 3, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }},
+                  {{
+                    test_case_id: 'seed-3',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'notperm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: true }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }}
@@ -2027,20 +2134,21 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
 
             with_behaviors = payload["withBehaviors"]
-            self.assertEqual(with_behaviors["scored_total"], 2)
+            self.assertEqual(with_behaviors["scored_total"], 3)
             permissible = with_behaviors["policy_violation_on_permissible"]
             self.assertIsNotNone(permissible)
-            self.assertEqual(permissible["count"], 2)
-            self.assertEqual(permissible["flagged_count"], 1)
+            self.assertEqual(permissible["count"], 3)
+            self.assertEqual(permissible["flagged_count"], 2)
             self.assertEqual(permissible["clear_count"], 1)
-            self.assertAlmostEqual(permissible["rate"], 0.5)
+            self.assertAlmostEqual(permissible["rate"], 2 / 3)
 
             not_permissible = with_behaviors["policy_violation_on_not_permissible"]
             self.assertIsNotNone(not_permissible)
-            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["count"], 2)
             self.assertEqual(not_permissible["flagged_count"], 1)
-            self.assertEqual(not_permissible["clear_count"], 0)
-            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+            self.assertEqual(not_permissible["clear_count"], 1)
+            self.assertEqual(not_permissible["not_applicable_count"], 1)
+            self.assertAlmostEqual(not_permissible["rate"], 0.5)
 
             without_behaviors = payload["withoutBehaviors"]
             self.assertIsNone(without_behaviors["policy_violation_on_permissible"])

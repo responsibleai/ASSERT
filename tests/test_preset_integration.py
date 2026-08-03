@@ -96,6 +96,19 @@ class JudgePresetTest(unittest.TestCase):
         # Preset dims (policy_violation, overrefusal) should also be present
         self.assertTrue(len(dim_names) >= 3)
 
+    def test_inline_dim_can_enable_not_applicable(self):
+        ctx = self._load({
+            "dimensions": {
+                "service_restoration_control_held": {
+                    "description": "restoration control",
+                    "rubric": "true = held\nfalse = failed\nnull = not applicable",
+                    "allow_not_applicable": True,
+                },
+            },
+        })
+        dim = next(d for d in self._judge_dims(ctx) if d["name"] == "service_restoration_control_held")
+        self.assertTrue(dim["allow_not_applicable"])
+
     def test_invalid_preset_raises(self):
         with self.assertRaises(ValueError):
             self._load({"preset": "nonexistent_judge_xyz"})

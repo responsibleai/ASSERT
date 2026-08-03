@@ -15,7 +15,8 @@
 	import { renderMarkdown } from '$lib/markdown.js';
 	import {
 		getJudgeError,
-		getVerdictFlag,
+		getVerdictMetricValue,
+		isNotApplicableVerdictDimension,
 		multiJudgeDimensionAgreementLabel
 	} from '$lib/judgment.js';
 
@@ -37,18 +38,26 @@
 	function metricLabel(metric: string): string {
 		return metric.replace(/_/g, ' ');
 	}
-	function metricOutcomeText(flag: boolean | null): string {
+	function metricOutcomeText(flag: boolean | number | string | null): string {
 		if (flag === null) return 'n/a';
+		if (typeof flag === 'number' || typeof flag === 'string') return `grade ${flag}`;
 		return flag ? 'flagged' : 'clear';
 	}
-	function metricOutcomeClass(flag: boolean | null): string {
+	function metricValue(v: Verdict | null | undefined, metric: string): boolean | number | string | null {
+		const value = getVerdictMetricValue(v, metric);
+		return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' ? value : null;
+	}
+	function metricOutcomeClass(flag: boolean | number | string | null): string {
 		if (flag === null) return 'text-text-muted';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'text-text-default';
 		return flag ? 'text-score-fail' : 'text-score-pass';
 	}
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
-	function metricDotColor(flag: boolean): string {
+	function metricDotColor(flag: boolean | number | string | null): string {
+		if (flag === null) return 'var(--color-fg-muted, #6e7781)';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'var(--color-accent-fg, #0969da)';
 		return flag ? 'var(--color-score-fail)' : 'var(--color-score-pass)';
 	}
 	function getDimensionJustification(v: Verdict | null | undefined, metric: string): string | null {
@@ -155,7 +164,7 @@
 			{#if v}
 				<div class="rounded-lg border border-border bg-surface">
 					{#if hasMultipleJudges}
-						{@const vote = getVerdictFlag(v, primaryMetric)}
+						{@const vote = metricValue(v, primaryMetric)}
 						<div class="flex items-center gap-1.5 border-b border-border/50 px-3 py-2">
 							<span
 								class="inline-block size-[6px] rounded-full"
@@ -178,9 +187,10 @@
 
 					<div class="space-y-3 p-4">
 						{#each metricNames as m}
-							{@const flag = getVerdictFlag(v, m)}
+							{@const flag = metricValue(v, m)}
+							{@const notApplicable = isNotApplicableVerdictDimension(v, m)}
 							{@const dj = getDimensionJustification(v, m)}
-							{#if flag !== null}
+							{#if flag !== null || notApplicable}
 								<div class="rounded-md bg-bg/40 p-3">
 									<div class="mb-2 flex items-center justify-between gap-2">
 										<span class="text-xs font-semibold uppercase tracking-wider text-text-muted">{metricLabel(m)}</span>
@@ -193,7 +203,13 @@
 													{/each}
 												</div>
 												<span class="text-[10px] tabular-nums text-text-muted">{multiJudgeDimensionAgreementLabel(multiJudge, m)}</span>
-												<span class="text-[10px] tabular-nums text-text-muted">flagged {metricRateText(multiJudge.means?.[m] ?? 0)}</span>
+												{#if item.dimension_scales?.[m]}
+													{#if multiJudge.means?.[m] != null}
+														<span class="text-[10px] tabular-nums text-text-muted">mean {multiJudge.means[m].toFixed(2)}</span>
+													{/if}
+												{:else}
+													<span class="text-[10px] tabular-nums text-text-muted">flagged {metricRateText(multiJudge.means?.[m] ?? 0)}</span>
+												{/if}
 											{/if}
 											<span class="text-base font-bold tabular-nums {metricOutcomeClass(flag)}">{metricOutcomeText(flag)}</span>
 										</div>

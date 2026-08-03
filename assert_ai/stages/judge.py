@@ -157,8 +157,11 @@ async def run_judge(
                 "judge_status": "scoring_skipped",
                 "judge_error": f"scoring_skipped: {stop_reason}",
                 "score_keys": judge_contract["score_keys"],
+                "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
                 "verdict": {},
             }
+            if judge_contract["dimension_scales"]:
+                skipped["dimension_scales"] = judge_contract["dimension_scales"]
             dimensions = row_factors(row)
             if dimensions:
                 skipped["dimensions"] = dimensions
@@ -197,6 +200,8 @@ async def run_judge(
             judge_max_tokens=judge_max_tokens,
             response_schema=judge_contract["response_schema"],
             reasoning_effort=judge_reasoning_effort,
+            not_applicable_score_keys=judge_contract["not_applicable_score_keys"],
+            dimension_scales=judge_contract["dimension_scales"],
         )
 
         score_row = {
@@ -207,14 +212,19 @@ async def run_judge(
             "target": row.get("target", ""),
             "tester_model": row.get("tester_model", ""),
             "score_keys": judge_contract["score_keys"],
+            "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
             "judge_status": infer_judge_status({
                 "judge_status": judge_result["judge_status"],
                 "verdict": judge_result["verdict"],
                 "score_keys": judge_contract["score_keys"],
+                "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
+                "dimension_scales": judge_contract["dimension_scales"],
             }),
             "judge_error": judge_result["judge_error"],
             "verdict": judge_result["verdict"],
         }
+        if judge_contract["dimension_scales"]:
+            score_row["dimension_scales"] = judge_contract["dimension_scales"]
         dimensions = row_factors(row)
         if dimensions:
             score_row["dimensions"] = dimensions
@@ -286,8 +296,11 @@ async def run_judge(
                 "judge_status": "filter_skipped",
                 "judge_error": f"judge_input_refused: {exc}",
                 "score_keys": judge_contract["score_keys"],
+                "not_applicable_score_keys": judge_contract["not_applicable_score_keys"],
                 "verdict": {},
             }
+            if judge_contract["dimension_scales"]:
+                score_row_filter_skipped["dimension_scales"] = judge_contract["dimension_scales"]
             if dimensions:
                 score_row_filter_skipped["dimensions"] = dimensions
             return {
