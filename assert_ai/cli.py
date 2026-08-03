@@ -137,6 +137,12 @@ def _fmt_percent(value: Optional[float]) -> str:
     return f"{value * 100:.1f}%"
 
 
+_PERMISSIBILITY_SPLIT_RATE_KEYS = (
+    "not_permissible_policy_violation_rate",
+    "permissible_policy_violation_rate",
+)
+
+
 def _has_permissibility_split(*metric_sets: Any) -> bool:
     """True when any of ``metric_sets`` reports the permissibility split.
 
@@ -145,10 +151,16 @@ def _has_permissibility_split(*metric_sets: Any) -> bool:
     of permissible violations) on display surfaces. Runs without a behavior
     taxonomy -- including quality suites that repurpose ``policy_violation`` for
     non-safety failures -- have no split and keep reporting the original pair.
+
+    Detection keys off presence rather than a non-null rate: a bucket whose rate
+    is ``None`` was still computed, it just had no applicable rows. An
+    all-permissible taxonomy yields a real permissible rate alongside a ``None``
+    impermissible rate, and reading that ``None`` as "no split" would drop the
+    run back to the superseded pair while the viewer showed the split.
     """
     return any(
         isinstance(metrics, dict)
-        and metrics.get("not_permissible_policy_violation_rate") is not None
+        and any(key in metrics for key in _PERMISSIBILITY_SPLIT_RATE_KEYS)
         for metrics in metric_sets
     )
 
