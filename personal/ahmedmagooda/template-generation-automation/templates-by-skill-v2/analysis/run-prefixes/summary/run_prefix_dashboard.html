@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run-prefix metric dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root { --background: #F7F5EF; --panel: #FFFDF8; --text: #1C252B; --muted: #657078; --grid: #D9D4C8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--text); font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    header { padding: 28px clamp(18px, 4vw, 54px) 18px; border-bottom: 1px solid var(--grid); }
+    h1 { margin: 0 0 14px; font-family: Georgia, serif; font-size: clamp(28px, 4vw, 48px); font-weight: 500; letter-spacing: 0; }
+    .controls { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+    select { min-width: 260px; padding: 9px 34px 9px 11px; border: 1px solid var(--grid); border-radius: 4px; background: var(--panel); color: var(--text); font: inherit; }
+    main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; padding: 22px clamp(10px, 3vw, 42px) 36px; }
+    .chart { min-width: 0; height: 390px; border-bottom: 1px solid var(--grid); }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } .chart { height: 350px; } .controls { align-items: flex-start; flex-direction: column; } select { width: 100%; min-width: 0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Run-prefix metric dashboard</h1>
+    <div class="controls">
+      <label for="harm-select">Harm</label>
+      <select id="harm-select"><option value="anthropomorphic_behaviors">Anthropomorphic Behaviors</option>
+<option value="child_safety">Child Safety</option>
+<option value="hate_speech_harassment">Hate Speech Harassment</option>
+<option value="imminent_crisis_management">Imminent Crisis Management</option>
+<option value="malicious_cyber_activity">Malicious Cyber Activity</option>
+<option value="relationship_entanglement">Relationship Entanglement</option>
+<option value="sexual_content">Sexual Content</option>
+<option value="violent_content">Violent Content</option></select>
+    </div>
+  </header>
+  <main><div class="chart" id="chart-0"></div>
+<div class="chart" id="chart-1"></div>
+<div class="chart" id="chart-2"></div>
+<div class="chart" id="chart-3"></div>
+<div class="chart" id="chart-4"></div>
+<div class="chart" id="chart-5"></div></main>
+  <script>
+    const rows = [{"harm":"anthropomorphic_behaviors","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.962722,"relevance_mean":3.68,"coverage_score":69,"global_dimensions":25,"global_unique_dimensions":22,"relevant_unique_dimensions":22},{"harm":"anthropomorphic_behaviors","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.968712,"relevance_mean":3.755556,"coverage_score":84,"global_dimensions":45,"global_unique_dimensions":36,"relevant_unique_dimensions":36},{"harm":"anthropomorphic_behaviors","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.976979,"relevance_mean":3.734375,"coverage_score":91,"global_dimensions":64,"global_unique_dimensions":51,"relevant_unique_dimensions":50},{"harm":"anthropomorphic_behaviors","run_combination":"runs-1-to-9","run_count":9,"llm_pair_diversity":0.971678,"relevance_mean":3.686747,"coverage_score":91,"global_dimensions":83,"global_unique_dimensions":59,"relevant_unique_dimensions":58},{"harm":"child_safety","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.944239,"relevance_mean":3.931034,"coverage_score":80,"global_dimensions":29,"global_unique_dimensions":17,"relevant_unique_dimensions":17},{"harm":"child_safety","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.949125,"relevance_mean":3.897959,"coverage_score":89,"global_dimensions":49,"global_unique_dimensions":29,"relevant_unique_dimensions":29},{"harm":"child_safety","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.952368,"relevance_mean":3.716418,"coverage_score":92,"global_dimensions":67,"global_unique_dimensions":32,"relevant_unique_dimensions":32},{"harm":"child_safety","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.955965,"relevance_mean":3.922078,"coverage_score":92,"global_dimensions":77,"global_unique_dimensions":39,"relevant_unique_dimensions":39},{"harm":"hate_speech_harassment","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.968706,"relevance_mean":3.961538,"coverage_score":88,"global_dimensions":26,"global_unique_dimensions":20,"relevant_unique_dimensions":20},{"harm":"hate_speech_harassment","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.945293,"relevance_mean":3.723404,"coverage_score":91,"global_dimensions":47,"global_unique_dimensions":31,"relevant_unique_dimensions":31},{"harm":"hate_speech_harassment","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.950269,"relevance_mean":3.73913,"coverage_score":93,"global_dimensions":69,"global_unique_dimensions":38,"relevant_unique_dimensions":38},{"harm":"hate_speech_harassment","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.956217,"relevance_mean":3.7125,"coverage_score":94,"global_dimensions":80,"global_unique_dimensions":44,"relevant_unique_dimensions":44},{"harm":"imminent_crisis_management","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.939352,"relevance_mean":3.869565,"coverage_score":81,"global_dimensions":23,"global_unique_dimensions":15,"relevant_unique_dimensions":15},{"harm":"imminent_crisis_management","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.93693,"relevance_mean":3.763158,"coverage_score":88,"global_dimensions":38,"global_unique_dimensions":20,"relevant_unique_dimensions":20},{"harm":"imminent_crisis_management","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.927583,"relevance_mean":3.773585,"coverage_score":88,"global_dimensions":53,"global_unique_dimensions":24,"relevant_unique_dimensions":24},{"harm":"imminent_crisis_management","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.932417,"relevance_mean":3.803279,"coverage_score":88,"global_dimensions":61,"global_unique_dimensions":31,"relevant_unique_dimensions":31},{"harm":"malicious_cyber_activity","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.963034,"relevance_mean":3.814815,"coverage_score":84,"global_dimensions":27,"global_unique_dimensions":18,"relevant_unique_dimensions":18},{"harm":"malicious_cyber_activity","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.984192,"relevance_mean":3.862069,"coverage_score":85,"global_dimensions":58,"global_unique_dimensions":46,"relevant_unique_dimensions":46},{"harm":"malicious_cyber_activity","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.976057,"relevance_mean":3.8,"coverage_score":86,"global_dimensions":85,"global_unique_dimensions":58,"relevant_unique_dimensions":58},{"harm":"malicious_cyber_activity","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.97497,"relevance_mean":3.777778,"coverage_score":88,"global_dimensions":99,"global_unique_dimensions":67,"relevant_unique_dimensions":66},{"harm":"relationship_entanglement","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.960277,"relevance_mean":3.703704,"coverage_score":80,"global_dimensions":27,"global_unique_dimensions":20,"relevant_unique_dimensions":20},{"harm":"relationship_entanglement","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.952163,"relevance_mean":3.755556,"coverage_score":88,"global_dimensions":45,"global_unique_dimensions":33,"relevant_unique_dimensions":32},{"harm":"relationship_entanglement","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.957568,"relevance_mean":3.683333,"coverage_score":88,"global_dimensions":60,"global_unique_dimensions":34,"relevant_unique_dimensions":33},{"harm":"relationship_entanglement","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.944867,"relevance_mean":3.811594,"coverage_score":90,"global_dimensions":69,"global_unique_dimensions":38,"relevant_unique_dimensions":37},{"harm":"sexual_content","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.952928,"relevance_mean":3.666667,"coverage_score":93,"global_dimensions":30,"global_unique_dimensions":16,"relevant_unique_dimensions":16},{"harm":"sexual_content","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.940972,"relevance_mean":3.777778,"coverage_score":94,"global_dimensions":45,"global_unique_dimensions":18,"relevant_unique_dimensions":18},{"harm":"sexual_content","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.917924,"relevance_mean":3.79661,"coverage_score":95,"global_dimensions":59,"global_unique_dimensions":18,"relevant_unique_dimensions":18},{"harm":"sexual_content","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.915541,"relevance_mean":3.820896,"coverage_score":95,"global_dimensions":67,"global_unique_dimensions":19,"relevant_unique_dimensions":19},{"harm":"violent_content","run_combination":"runs-1-to-3","run_count":3,"llm_pair_diversity":0.965238,"relevance_mean":3.740741,"coverage_score":90,"global_dimensions":27,"global_unique_dimensions":20,"relevant_unique_dimensions":20},{"harm":"violent_content","run_combination":"runs-1-to-5","run_count":5,"llm_pair_diversity":0.960308,"relevance_mean":3.56,"coverage_score":90,"global_dimensions":50,"global_unique_dimensions":36,"relevant_unique_dimensions":34},{"harm":"violent_content","run_combination":"runs-1-to-7","run_count":7,"llm_pair_diversity":0.961121,"relevance_mean":3.605634,"coverage_score":90,"global_dimensions":71,"global_unique_dimensions":44,"relevant_unique_dimensions":42},{"harm":"violent_content","run_combination":"runs-1-to-8","run_count":8,"llm_pair_diversity":0.956903,"relevance_mean":3.590361,"coverage_score":94,"global_dimensions":83,"global_unique_dimensions":51,"relevant_unique_dimensions":49}];
+    const metrics = [{"key":"llm_pair_diversity","label":"LLM Pair diversity","decimals":4},{"key":"relevance_mean","label":"Relevance Mean","decimals":4},{"key":"coverage_score","label":"Coverage score","decimals":0},{"key":"global_dimensions","label":"Total dimensions","decimals":0},{"key":"global_unique_dimensions","label":"Unique dimensions","decimals":0},{"key":"relevant_unique_dimensions","label":"Relevant unique dimensions","decimals":0}];
+    const colors = ["#1D6A78", "#B84A39", "#5B6F3A", "#B07824", "#63558A", "#2E6F9E", "#A34265"];
+    const config = {responsive: true, displaylogo: false};
+
+    function render(harm) {
+      const harmRows = rows.filter(row => row.harm === harm).sort((a, b) => a.run_count - b.run_count);
+      metrics.forEach((metric, index) => {
+        const values = harmRows.map(row => row[metric.key]);
+        Plotly.react(`chart-${index}`, [{
+          x: harmRows.map(row => row.run_count),
+          y: values,
+          customdata: harmRows.map(row => row.run_combination),
+          text: values.map(value => Number(value).toFixed(metric.decimals)),
+          textposition: "top center",
+          mode: "lines+markers+text",
+          line: {color: colors[index], width: 3},
+          marker: {color: colors[index], size: 9, line: {color: "#FFFDF8", width: 2}},
+          hovertemplate: "%{customdata}<br>Included runs: %{x}<br>Value: %{y}<extra></extra>"
+        }], {
+          title: {text: metric.label, x: 0.02, xanchor: "left", font: {size: 18, color: "#1C252B"}},
+          paper_bgcolor: "#F7F5EF",
+          plot_bgcolor: "#FFFDF8",
+          margin: {l: 58, r: 20, t: 58, b: 52},
+          showlegend: false,
+          xaxis: {title: "Included runs", tickmode: "array", tickvals: harmRows.map(row => row.run_count), gridcolor: "#D9D4C8", zeroline: false},
+          yaxis: {gridcolor: "#D9D4C8", zeroline: false, automargin: true},
+          font: {family: "Avenir Next, Segoe UI, sans-serif", color: "#657078"}
+        }, config);
+      });
+    }
+
+    const select = document.getElementById("harm-select");
+    select.addEventListener("change", event => render(event.target.value));
+    render(select.value);
+  </script>
+</body>
+</html>

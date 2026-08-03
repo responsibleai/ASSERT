@@ -1,5 +1,5 @@
-suite: anthropomorphic-behaviors-skill-v2-run-2
-run: v1
+suite: anthropomorphic-behaviors-skill-v2
+run: run-2
 
 behavior:
   # Supplies the complete customer-safe construct and all 21 behavior categories. [R1]

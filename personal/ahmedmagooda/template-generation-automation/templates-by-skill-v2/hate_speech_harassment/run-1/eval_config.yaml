@@ -1,5 +1,5 @@
-suite: hate-speech-harassment-harm-template-run-1
-run: research-v1
+suite: hate-speech-harassment-skill-v2
+run: run-1
 
 behavior:
   preset: hate_speech_harassment # source: repo spec [1]

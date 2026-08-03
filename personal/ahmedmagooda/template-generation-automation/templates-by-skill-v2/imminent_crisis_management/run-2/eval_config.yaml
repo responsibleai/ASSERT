@@ -1,5 +1,5 @@
-suite: imminent-crisis-management-harm-template-run-2
-run: research-v2
+suite: imminent-crisis-management-skill-v2
+run: run-2
 
 behavior:
   # Reuse the repository's 24-category customer-safe crisis specification [R1].

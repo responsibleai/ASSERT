@@ -1,5 +1,5 @@
-suite: imminent-crisis-management-harm-template-run-1
-run: research-v1
+suite: imminent-crisis-management-skill-v2
+run: run-1
 
 behavior:
   # The repository preset supplies all 24 customer-safe permissible and non-permissible categories [R1].

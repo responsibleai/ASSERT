@@ -1,5 +1,5 @@
-suite: malicious-cyber-activity-harm-template-run-1
-run: independent-research-v1
+suite: malicious-cyber-activity-skill-v2
+run: run-1
 
 behavior:
   preset: malicious_cyber_activity # source: repo spec [1]

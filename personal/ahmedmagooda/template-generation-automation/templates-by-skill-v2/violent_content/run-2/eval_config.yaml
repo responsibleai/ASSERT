@@ -1,5 +1,5 @@
-suite: violent-content-harm-template-run-2
-run: research-v1
+suite: violent-content-skill-v2
+run: run-2
 
 behavior:
   preset: violent_content # source: repo spec [1]

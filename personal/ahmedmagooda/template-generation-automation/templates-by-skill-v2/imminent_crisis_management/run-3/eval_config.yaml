@@ -1,5 +1,5 @@
-suite: imminent-crisis-management-harm-template-run-3
-run: research-v3
+suite: imminent-crisis-management-skill-v2
+run: run-3
 
 behavior:
   # The complete 24-category crisis behavior is loaded from the repository preset [R1].

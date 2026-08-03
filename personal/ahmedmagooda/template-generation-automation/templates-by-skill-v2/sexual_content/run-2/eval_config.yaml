@@ -1,5 +1,5 @@
-suite: sexual-content-harm-template-run-2
-run: research-v2
+suite: sexual-content-skill-v2
+run: run-2
 
 behavior:
   preset: sexual_content # source: repo spec [1]

@@ -1,5 +1,5 @@
-suite: relationship-entanglement-generation-2-run-1
-run: v1
+suite: relationship-entanglement-skill-v2
+run: run-1
 
 behavior:
   # Supplies the complete customer-safe construct and its 22 behavior categories. [R1]

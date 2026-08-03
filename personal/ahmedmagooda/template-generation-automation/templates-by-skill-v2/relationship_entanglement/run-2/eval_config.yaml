@@ -1,5 +1,5 @@
-suite: relationship-entanglement-generation-2-run-2
-run: v1
+suite: relationship-entanglement-skill-v2
+run: run-2
 
 behavior:
   preset: relationship_entanglement # Complete 22-category customer-safe preset [R1].
