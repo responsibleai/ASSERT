@@ -27,6 +27,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "assert_ai" / "library" / "behaviors"
+SCENARIOS = ROOT / "assert_ai" / "library" / "scenarios"
 SPECS = ROOT / "examples" / "behavior_specs"
 
 # Application scenarios, not atomic behaviors. Tracked separately so the rule
@@ -67,6 +68,7 @@ def main() -> int:
         return 1
 
     behaviors = {n: d for n, d in presets.items() if d.get("kind") != SCENARIO_KIND}
+    scenarios = {p.stem: load(p) for p in sorted(SCENARIOS.glob("*.yaml"))}
 
     # -- 1. atomicity ------------------------------------------------------
     for name, doc in sorted(behaviors.items()):
@@ -92,9 +94,44 @@ def main() -> int:
         if re.search(r"^##\s+(Role|Domain Basics|Operational Procedures)\s*$", desc, flags=re.M | re.I):
             fail(name, "reads as an application/domain spec, not a behavior -- belongs in context: or kind: scenario")
 
-    # -- 2. parity with the spec references --------------------------------
+    # -- 2. scenario shape -------------------------------------------------
+    for name, doc in sorted(scenarios.items()):
+        if doc.get("kind") != SCENARIO_KIND:
+            fail(name, f"scenario file has kind={doc.get('kind')!r}, expected {SCENARIO_KIND!r}")
+
+        if doc.get("description"):
+            fail(name, "scenario must not carry behavior-shaped description:; put app details in context:")
+
+        context = doc.get("context")
+        if not isinstance(context, str) or not context.strip():
+            fail(name, "scenario must have non-empty context:")
+        elif re.search(r"^##\s+.+?\s+failures?\s*$", context, flags=re.M | re.I):
+            fail(name, "scenario context must not contain behavior failure sections")
+
+        refs = doc.get("behaviors")
+        if not isinstance(refs, list) or not refs:
+            fail(name, "scenario must list applicable atomic behavior presets in behaviors:")
+            continue
+        for ref in refs:
+            if not isinstance(ref, str) or not ref:
+                fail(name, f"scenario behavior reference must be a non-empty string, got {ref!r}")
+            elif ref not in behaviors:
+                fail(name, f"scenario references unknown behavior preset {ref!r}")
+
+    # -- 3. parity with the spec references --------------------------------
     if SPECS.is_dir():
         md = {p.stem: p for p in SPECS.glob("*.md") if p.stem != "README"}
+        for name, doc in sorted(behaviors.items()):
+            path = md.get(name)
+            if path is None:
+                fail(name, f"library preset has no {SPECS.relative_to(ROOT).as_posix()} reference")
+                continue
+            a, b = words(path.read_text(encoding="utf-8")), words(doc.get("description") or "")
+            if a != b:
+                import difflib
+                r = difflib.SequenceMatcher(None, a, b).ratio()
+                if r < 0.98:
+                    fail(name, f"library yaml and spec md have drifted (similarity {r:.0%})")
         for name, path in sorted(md.items()):
             doc = presets.get(name)
             if doc is None:
@@ -107,7 +144,7 @@ def main() -> int:
                 if r < 0.98:
                     fail(name, f"spec md and library yaml have drifted (similarity {r:.0%})")
 
-    print(f"{len(presets)} presets ({len(behaviors)} behaviors, {len(presets) - len(behaviors)} scenarios)")
+    print(f"{len(behaviors) + len(scenarios)} presets ({len(behaviors)} behaviors, {len(scenarios)} scenarios)")
     if problems:
         print(f"\n{len(problems)} problem(s):")
         for p in problems:
