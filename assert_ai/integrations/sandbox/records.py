@@ -21,6 +21,10 @@ mock carries an adversarial injection is a property of the eval scenario
 ``case_id``), never a mediator concept.
 
 ``flagged`` is likewise *derived, not stored* — see ``MediationDecision.flagged``.
+
+``reason`` describes the mediator's effective pass/mock/block decision. Optional
+user-authored policy rationale is preserved separately as ``policy_note`` so a
+mode-only policy edit cannot leave the evidence explaining the wrong decision.
 """
 from __future__ import annotations
 
@@ -45,6 +49,9 @@ class MediationDecision:
     is_error: bool = False
     mock_source: str | None = None
     replay: dict[str, Any] | None = None
+    # Appended to preserve the positional constructor order used before this
+    # field was introduced. Internal callers use keywords, but adopters may not.
+    policy_note: str = ""
 
     @property
     def flagged(self) -> bool:
@@ -71,9 +78,14 @@ class MediationDecision:
             "real_executed": self.real_executed,
             "flagged": self.flagged,
             "reason": self.reason,
+            # Explicit name for new consumers; `reason` remains as the
+            # backwards-compatible alias used by existing artifacts/readers.
+            "decision_reason": self.reason,
             "matched": self.matched,
             "returned": self.returned,
         }
+        if self.policy_note:
+            out["policy_note"] = self.policy_note
         if self.mock_source:
             out["mock_source"] = self.mock_source
         if self.replay:
