@@ -23,7 +23,11 @@ from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_b
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
-from assert_ai.results import compute_dimension_summary, detect_dimensions
+from assert_ai.results import (
+    compute_dimension_summary,
+    compute_policy_violation_by_permissibility,
+    detect_dimensions,
+)
 from assert_ai.stages import STAGE_NAMES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -387,7 +391,10 @@ def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str
                 )
 
 
-def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _compute_prompt_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     if not rows:
         return None
 
@@ -414,9 +421,12 @@ def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None
         ),
     ) or "-"
     permissible_rows = [row for row in scored_rows if get_permissible_flag(row, default=False)]
-    not_permissible_rows = [row for row in scored_rows if not get_permissible_flag(row, default=False)]
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
 
-    return {
+    metrics: dict[str, Any] = {
         "total": len(rows),
         "scored_total": scored_total,
         "judge_failures": judge_failures,
@@ -424,17 +434,31 @@ def _compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None
         "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
         "permissible_overrefusal_rate": _compute_dimension_summary(permissible_rows, "overrefusal")["rate"],
-        "not_permissible_policy_violation_rate": _compute_dimension_summary(
-            not_permissible_rows,
-            "policy_violation",
-        )["rate"],
         "dimensions": dimensions,
         "target": target,
         "judge_model": judge_model,
     }
 
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
 
-def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return metrics
+
+
+def _compute_scenario_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     if not rows:
         return None
 
@@ -470,7 +494,12 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         ),
     ) or "-"
 
-    return {
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
+
+    metrics: dict[str, Any] = {
         "total": len(rows),
         "scored_total": scored_total,
         "judge_failures": judge_failures,
@@ -483,10 +512,29 @@ def _compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | No
         "judge_model": judge_model,
     }
 
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
+
+    return metrics
+
 
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
+    taxonomy = load_json(run_dir.parent / "taxonomy.json")
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        behavior_categories = []
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -507,8 +555,8 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "current_stage": current_stage,
         "started_at": (manifest or {}).get("started_at"),
         "ended_at": (manifest or {}).get("ended_at"),
-        "prompt_metrics": _compute_prompt_metrics(prompt_rows),
-        "scenario_metrics": _compute_scenario_metrics(scenario_rows),
+        "prompt_metrics": _compute_prompt_metrics(prompt_rows, behavior_categories),
+        "scenario_metrics": _compute_scenario_metrics(scenario_rows, behavior_categories),
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }

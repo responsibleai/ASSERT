@@ -67,7 +67,7 @@
 	} = $props();
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		seeds: 'Seed Generation',
+		seeds: 'Test Set Generation',
 		inference: 'Inference',
 		judge: 'Scoring'
 	};

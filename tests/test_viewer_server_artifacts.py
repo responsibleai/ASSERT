@@ -944,7 +944,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
             payload = json.loads(result.stdout)
             self.assertEqual(payload["previewTesterTurns"], 0)
-            self.assertEqual(payload["previewTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["previewTesterLabel"], "Refused before Inference")
             self.assertEqual(payload["previewTesterTone"], "refusal")
             self.assertIn("tester refused", payload["previewTesterDescription"])
             self.assertEqual(payload["previewTargetLabel"], "Target refused the input")
@@ -954,10 +954,10 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             self.assertEqual(payload["previewFallbackLabel"], "Stopped early")
             self.assertEqual(payload["previewFallbackTone"], "info")
             self.assertEqual(payload["previewDrawerMessages"], 0)
-            self.assertEqual(payload["previewDrawerLabel"], "Refused before inference")
+            self.assertEqual(payload["previewDrawerLabel"], "Refused before Inference")
             self.assertEqual(payload["previewDrawerTone"], "refusal")
             self.assertEqual(payload["scoredTesterTurns"], 0)
-            self.assertEqual(payload["scoredTesterLabel"], "Refused before inference")
+            self.assertEqual(payload["scoredTesterLabel"], "Refused before Inference")
             self.assertEqual(payload["scoredTesterTone"], "refusal")
             self.assertEqual(payload["scoredTargetLabel"], "Target refused the input")
             self.assertEqual(payload["scoredErrorLabel"], "Target error")
@@ -2060,6 +2060,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ computeRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
                 const behaviors = [
                   {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'perm_b', definition: '', examples: [], permissible: true }},
                   {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
                 ];
                 const samples = [
@@ -2076,7 +2077,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }},
@@ -2089,14 +2091,31 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     judge_model: 'judge-model',
                     judge_status: 'ok',
                     verdict: {{
-                      dimensions: {{ policy_violation: false, overrefusal: false }},
+                      dimensions: {{ policy_violation: true, overrefusal: false }},
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
                         null,
                         'malformed-node',
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 2, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 3, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }},
+                  {{
+                    test_case_id: 'seed-3',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'notperm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: true }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }}
@@ -2115,20 +2134,21 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
 
             with_behaviors = payload["withBehaviors"]
-            self.assertEqual(with_behaviors["scored_total"], 2)
+            self.assertEqual(with_behaviors["scored_total"], 3)
             permissible = with_behaviors["policy_violation_on_permissible"]
             self.assertIsNotNone(permissible)
-            self.assertEqual(permissible["count"], 2)
-            self.assertEqual(permissible["flagged_count"], 1)
+            self.assertEqual(permissible["count"], 3)
+            self.assertEqual(permissible["flagged_count"], 2)
             self.assertEqual(permissible["clear_count"], 1)
-            self.assertAlmostEqual(permissible["rate"], 0.5)
+            self.assertAlmostEqual(permissible["rate"], 2 / 3)
 
             not_permissible = with_behaviors["policy_violation_on_not_permissible"]
             self.assertIsNotNone(not_permissible)
-            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["count"], 2)
             self.assertEqual(not_permissible["flagged_count"], 1)
-            self.assertEqual(not_permissible["clear_count"], 0)
-            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+            self.assertEqual(not_permissible["clear_count"], 1)
+            self.assertEqual(not_permissible["not_applicable_count"], 1)
+            self.assertAlmostEqual(not_permissible["rate"], 0.5)
 
             without_behaviors = payload["withoutBehaviors"]
             self.assertIsNone(without_behaviors["policy_violation_on_permissible"])
