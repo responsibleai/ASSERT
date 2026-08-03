@@ -5,7 +5,7 @@
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
 	import { untrack } from 'svelte';
 	import { metricTitleLabel } from '$lib/labels.js';
-	import { orderMetricNames, primaryMetricName } from '$lib/permissibility.js';
+	import { primaryMetricName, visibleMetricNames } from '$lib/permissibility.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
@@ -303,7 +303,7 @@ function sampleGridMinWidth(runCount: number): string {
 					<PrimerDropdown
 						label=""
 						ariaLabel="Metric"
-						options={orderMetricNames(data.allMetrics).map((metric) => ({ value: metric, label: metricTitleLabel(metric) }))}
+						options={visibleMetricNames(data.allMetrics).map((metric) => ({ value: metric, label: metricTitleLabel(metric) }))}
 						selected={activeMetric}
 						onSelect={(value) => { activeMetric = value; }}
 					/>

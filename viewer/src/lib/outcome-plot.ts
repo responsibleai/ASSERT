@@ -3,7 +3,7 @@
 
 import { getRecordFlag } from './judgment.js';
 import { metricTitleLabel } from './labels.js';
-import { metricSortRank } from './permissibility.js';
+import { dropSupersededMetrics, metricSortRank } from './permissibility.js';
 import type { Behavior, NodeJudgment } from './types.js';
 
 export type OutcomeKind = 'dimension' | 'behavior';
@@ -45,10 +45,11 @@ function readDimensionNames(items: OutcomeRecord[]): string[] {
 			if (typeof value === 'boolean') names.add(name);
 		}
 	}
-	return [...names].sort((left, right) => {
+	const sorted = [...names].sort((left, right) => {
 		const priority = metricSortRank(left) - metricSortRank(right);
 		return priority !== 0 ? priority : left.localeCompare(right);
 	});
+	return dropSupersededMetrics(sorted);
 }
 
 function readObservedBehaviorNames(items: OutcomeRecord[]): Set<string> {

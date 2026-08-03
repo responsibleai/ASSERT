@@ -32,6 +32,17 @@ export const HEADLINE_METRIC_ORDER: string[] = [
 	'overrefusal'
 ];
 
+/**
+ * Judge dimensions the permissibility split supersedes on display surfaces.
+ *
+ * `policy_violation` unions permissible and impermissible behaviors, and
+ * `overrefusal` covers only the refusal-shaped subset of permissible violations,
+ * so neither answers "was an impermissible behavior violated?" on its own. Once
+ * the split is available it reports both halves directly and these are hidden.
+ * They are still judged, still aggregated, and still written to artifacts.
+ */
+export const SUPERSEDED_METRICS: string[] = ['policy_violation', 'overrefusal'];
+
 export function metricSortRank(metric: string): number {
 	const index = HEADLINE_METRIC_ORDER.indexOf(metric);
 	return index === -1 ? HEADLINE_METRIC_ORDER.length : index;
@@ -42,9 +53,27 @@ export function orderMetricNames(names: string[]): string[] {
 	return [...names].sort((left, right) => metricSortRank(left) - metricSortRank(right));
 }
 
+/**
+ * Drop the superseded pair from an already-ordered list, but only when the split
+ * is present in it. Callers must pass a list already narrowed to metrics carrying
+ * data, so runs without a behavior taxonomy — and quality suites that repurpose
+ * `policy_violation` for non-safety failures — keep it rather than rendering an
+ * empty surface. Preserves the incoming order.
+ */
+export function dropSupersededMetrics(names: string[]): string[] {
+	const hasSplit = names.some((name) => PERMISSIBILITY_SPLIT_METRICS.includes(name as never));
+	if (!hasSplit) return names;
+	return names.filter((name) => !SUPERSEDED_METRICS.includes(name));
+}
+
+/** Ordered metrics with the superseded pair removed when the split is available. */
+export function visibleMetricNames(names: string[]): string[] {
+	return dropSupersededMetrics(orderMetricNames(names));
+}
+
 /** The metric a surface should default to when the user hasn't chosen one. */
 export function primaryMetricName(names: string[], fallback = 'policy_violation'): string {
-	return orderMetricNames(names)[0] ?? fallback;
+	return visibleMetricNames(names)[0] ?? fallback;
 }
 
 type VerdictLike = Record<string, unknown> | null | undefined;

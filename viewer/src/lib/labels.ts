@@ -4,7 +4,7 @@ import {
 } from './permissibility.js';
 
 const METRIC_LABELS: Record<string, string> = {
-	[POLICY_VIOLATION_NOT_PERMISSIBLE]: 'harm (non-permissible)',
+	[POLICY_VIOLATION_NOT_PERMISSIBLE]: 'impermissible behavior violated',
 	[POLICY_VIOLATION_PERMISSIBLE]: 'permissible behavior violated'
 };
 
@@ -18,7 +18,7 @@ export function metricDisplayLabel(metric: string): string {
 
 /**
  * Canonical heading form of a metric label. Only the first character is upper-cased
- * so inner casing such as "(non-permissible)" survives.
+ * so inner casing and punctuation in a label survive.
  */
 export function metricTitleLabel(metric: string): string {
 	const label = metricDisplayLabel(metric);
