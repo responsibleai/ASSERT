@@ -1,0 +1,41 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: travel_budget_verification_guardrail
+extends: []
+policies:
+  travel_budget_verification_guardrail:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.travel_budget_verification_guardrail.verdict
+intervention_points:
+  post_model_call:
+    policy_target: $.model_response
+    policy_target_kind: model_response
+    policy:
+      id: travel_budget_verification_guardrail
+      query: data.agent_control_specification.travel_budget_verification_guardrail.post_model_call_verdict
+    annotations:
+      budget_verdict:
+        from: $policy_target
+      budget_verification_claim:
+        from: $policy_target
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: travel_budget_verification_guardrail
+      query: data.agent_control_specification.travel_budget_verification_guardrail.output_verdict
+    annotations:
+      budget_verdict:
+        from: $policy_target
+      budget_verification_claim:
+        from: $policy_target
+annotators:
+  budget_verdict:
+    type: classifier
+  budget_verdict_detector:
+    type: classifier
+  budget_verification_claim:
+    type: classifier
+  budget_verification_claim_detector:
+    type: llm

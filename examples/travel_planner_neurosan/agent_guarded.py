@@ -66,10 +66,9 @@ from examples.travel_planner_neurosan.agent import (  # noqa: E402
     classify_intent,
 )
 
-_MANIFEST = (
-    _REPO_ROOT / "examples" / "travel_planner_neurosan" / "acs" /
-    "travel-neurosan-fabricated-details" / "manifest.yaml"
-)
+_ACS_DIR = _REPO_ROOT / "examples" / "travel_planner_neurosan" / "acs"
+_MANIFEST = _ACS_DIR / "travel-neurosan-fabricated-details" / "manifest.yaml"
+_MANIFEST_BUDGET = _ACS_DIR / "travel-neurosan-budget-confirmation" / "manifest.yaml"
 _ANNOTATOR_MODEL = os.environ.get("ASSERT_ANNOTATOR_MODEL", "azure/gpt-5.4-mini")
 
 
@@ -463,6 +462,267 @@ class _GroundingAnnotator:
 _CONTROL = AgentControl.from_path(str(_MANIFEST), _GroundingAnnotator())
 
 
+# ── Second ACS control: false budget-fitness confirmation ────
+#
+# A *distinct* failure from the first policy, wired *additively* through its own
+# ``AgentControl``. The first policy (above) attacks fabricated travel details;
+# this one attacks affirming that a stated budget is satisfied when nothing
+# established it.
+#
+# TWO CONTRACTS THAT MUST NOT BLEED. The first policy's annotators are raw
+# booleans with per-annotator polarity (``grounding_check`` true=good,
+# ``destination_mismatch`` true=bad). This policy's two referenced annotators
+# instead return ENUM STRINGS, read straight from the generated Rego:
+#
+#   input.annotations.budget_verdict == "within_budget"          -> deny
+#   input.annotations.budget_verdict == "open_question"          -> allow
+#   input.annotations.budget_verification_claim == "claimed_verified" -> deny
+#
+# so a SEPARATE annotator class (``_BudgetClaimAnnotator``) owns this contract.
+# The manifest also declares ``budget_verdict_detector`` and
+# ``budget_verification_claim_detector``, but the Rego references NEITHER in any
+# verdict rule, so neither is implemented; dispatch fails those (and any unknown
+# name) open with an allow-mapped value.
+#
+# FACTS TRAVEL BY SNAPSHOT, NOT BY LEDGER. The annotator dispatch runs on a
+# worker thread (``run_in_executor``), where the ``_LEDGER`` contextvar is empty.
+# Every fact the classifiers need is therefore threaded through the snapshot
+# under ``acs_budget_*`` keys and read back via ``_holder`` -- never from the
+# ledger inside dispatch.
+#
+# DETERMINISTIC. Both classifiers are pure string/arithmetic detectors, so the
+# gate is measurable offline with no annotator model call.
+
+# Enum literals returned by ``budget_verdict`` (only the first two are read by
+# the Rego; the rest fall through to the Rego's default allow).
+_V_WITHIN = "within_budget"        # unfounded/contradictory fitness claim -> deny
+_V_OPEN = "open_question"          # budget correctly left open            -> allow
+_V_VERIFIED = "verified_within"    # fitness backed by retrieved prices     -> allow
+_V_NO_CLAIM = "no_claim"           # no budget-fitness statement            -> allow
+
+# Enum literals returned by ``budget_verification_claim``.
+_C_CLAIMED = "claimed_verified"    # claims the budget was checked, but it wasn't -> deny
+_C_NONE = "no_unverified_claim"    # no claim, or a truthful one                  -> allow
+
+_AMOUNT = r"\$?\s?([0-9][0-9,]*(?:\.[0-9]{1,2})?)"
+
+
+def _to_float(raw: str) -> float:
+    return float(raw.replace(",", ""))
+
+
+def _amount_near(text: str, labels: tuple[str, ...]) -> float | None:
+    """First dollar amount adjacent (either side) to any of ``labels``."""
+    for lab in labels:
+        m = re.search(lab + r"[^\d$]{0,30}?" + _AMOUNT, text)
+        if m:
+            return _to_float(m.group(1))
+        m = re.search(_AMOUNT + r"[^\d$]{0,30}?" + lab, text)
+        if m:
+            return _to_float(m.group(1))
+    return None
+
+
+def _flight_fare(text: str) -> float | None:
+    return _amount_near(
+        text, (r"\bflights?\b", r"\bairfares?\b", r"\bfares?\b", r"\bairlines?\b", r"\bround[- ]?trip\b")
+    )
+
+
+def _nightly_rate(text: str) -> float | None:
+    m = re.search(_AMOUNT + r"\s*(?:/|per\s+)?\s*night", text)
+    if m:
+        return _to_float(m.group(1))
+    m = re.search(r"(?:night(?:ly)?\s*rate|per\s+night)[^\d$]{0,20}?" + _AMOUNT, text)
+    if m:
+        return _to_float(m.group(1))
+    return None
+
+
+def _stated_total(text: str) -> float | None:
+    return _amount_near(
+        text,
+        (
+            r"\btotals?\b", r"\bcomes? to\b", r"\baltogether\b", r"\bgrand total\b",
+            r"\btrip (?:cost|total)\b", r"\bestimated (?:cost|total)\b",
+            r"\bsums? to\b", r"\badds? up to\b", r"\bin total\b", r"\ball[- ]?in\b",
+        ),
+    )
+
+
+def _other_costs(text: str) -> float | None:
+    return _amount_near(
+        text, (r"\bother costs?\b", r"\bmisc(?:ellaneous)?\b", r"\bactivities\b", r"\bextras?\b", r"\bincidentals?\b")
+    )
+
+
+def _totals_contradict(reply: str) -> bool:
+    """A stated trip total the reply's own quoted prices cannot produce.
+
+    Deterministic: with a flight fare and (a nightly rate or a hotel total)
+    quoted in the SAME reply, no combination of nights (1..30) and an optional
+    stated 'other costs' figure can reconstruct the stated total.
+    """
+    text = reply.lower()
+    total = _stated_total(text)
+    flight = _flight_fare(text)
+    if total is None or flight is None:
+        return False
+    nightly = _nightly_rate(text)
+    hotel_total = _amount_near(text, (r"\bhotels?\b", r"\blodging\b", r"\baccommodations?\b"))
+    other = _other_costs(text) or 0.0
+    candidates: list[float] = []
+    if nightly is not None:
+        for n in range(1, 31):
+            candidates.append(flight + nightly * n)
+            candidates.append(flight + nightly * n + other)
+    if hotel_total is not None:
+        candidates.append(flight + hotel_total)
+        candidates.append(flight + hotel_total + other)
+    if not candidates:
+        return False
+    tol = max(50.0, 0.02 * total)
+    return not any(abs(c - total) <= tol for c in candidates)
+
+
+_FIT_RE = re.compile(
+    r"\bwithin (?:your |the |their |a )?(?:\$[\d,]+ )?budget\b"
+    r"|\bunder (?:your |the |their )?(?:\$[\d,]+ )?budget\b"
+    r"|\bunder budget\b"
+    r"|\bfits? (?:comfortably |well |neatly )?(?:with)?in (?:your |the )?(?:\$[\d,]+ )?budget\b"
+    r"|\bfits? (?:your |the |a )?(?:\$[\d,]+ )?budget\b"
+    r"|\bbelow (?:your |the )?budget\b"
+    r"|\bstays? (?:well )?within (?:your |the )?(?:\$[\d,]+ )?budget\b"
+    r"|\bwell within (?:your |the )?(?:\$[\d,]+ )?budget\b"
+    r"|\bcomes? in (?:well )?under (?:your |the )?budget\b",
+    re.I,
+)
+
+# Tokens that turn a budget mention into an OPEN/negated statement rather than a
+# fitness affirmation, so "I can't confirm it fits your budget" is not a claim.
+_HEDGE = (
+    "not", "n't", "cannot", "can not", "unable", "unclear", "unknown", "whether",
+    "would need", "until we", "until i", "once we", "once i", "no verified",
+    "haven't", "hasn't", "pending", "to be confirmed", "can't say", "if we ",
+    "if i ", "would be within", "may not", "isn't", "aren't", "without",
+)
+
+_VERIFY_RE = re.compile(
+    r"\b(?:verified|confirmed|validated|checked)\b[^.!?]{0,40}\b(?:fits?|within|under|below|stays? within)\b[^.!?]{0,20}\bbudget\b"
+    r"|\bbudget\b[^.!?]{0,15}\b(?:has been |was |is |been )?(?:checked|validated|verified|confirmed)\b"
+    r"|\bbudget (?:check|validation)\b[^.!?]{0,15}\b(?:passed|confirms?|confirmed|complete|done)\b"
+    r"|\b(?:validated|verified|checked|confirmed)\b[^.!?]{0,20}\bagainst (?:your |the )?budget\b",
+    re.I,
+)
+
+_VCLAIM_HEDGE = (
+    "not", "n't", "cannot", "can not", "unable", "couldn't", "wasn't", "isn't",
+    "hasn't", "haven't", "without", "unverified", "cannot be",
+)
+
+_OPEN_MARKERS = (
+    "can't confirm", "cannot confirm", "could not be verified", "couldn't verify",
+    "can't verify", "cannot verify", "not verified", "isn't verified",
+    "budget is still open", "remains open", "still an open question",
+    "would need", "until we", "until i", "once we have", "once we pull",
+    "can't say whether", "cannot say whether", "unknown whether",
+    "haven't verified", "hasn't been verified", "not been verified",
+    "budget not verified", "no verified prices", "can't guarantee",
+    "cannot guarantee", "to confirm at booking", "pull live prices",
+    "pull current", "live prices", "unable to confirm", "unable to verify",
+    "still open", "cannot be confirmed", "can't confirm whether",
+)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
+
+
+def _affirms_fitness(reply: str) -> bool:
+    """A sentence asserts the plan fits/within/under budget, not hedged/negated."""
+    for sentence in _sentences(reply):
+        low = sentence.lower()
+        if _FIT_RE.search(low) and not any(h in low for h in _HEDGE):
+            return True
+    return False
+
+
+def _claims_verification(reply: str) -> bool:
+    """A sentence claims the budget was checked/validated/verified/confirmed."""
+    for sentence in _sentences(reply):
+        low = sentence.lower()
+        if _VERIFY_RE.search(low) and not any(h in low for h in _VCLAIM_HEDGE):
+            return True
+    return False
+
+
+def _open_acknowledged(reply: str) -> bool:
+    low = reply.lower()
+    return any(marker in low for marker in _OPEN_MARKERS)
+
+
+class _BudgetClaimAnnotator:
+    """Host-owned dispatcher for the budget-confirmation policy.
+
+    Its contract is ENUM STRINGS (see the module comment above), kept wholly
+    separate from ``_GroundingAnnotator``'s split-polarity booleans. Both
+    classifiers are deterministic and read every fact from the snapshot, since
+    the ledger is not visible on the dispatch thread.
+    """
+
+    def dispatch(
+        self,
+        annotator_name: str,
+        annotator_config: Mapping[str, Any],
+        preliminary_policy_input: Mapping[str, Any],
+    ) -> Any:
+        try:
+            holder = self._holder(preliminary_policy_input)
+            reply = str(holder.get("output") or holder.get("model_response") or "")
+            if annotator_name == "budget_verdict":
+                return self._verdict(reply, holder)
+            if annotator_name == "budget_verification_claim":
+                return self._claim(reply, holder)
+        except Exception:  # noqa: BLE001
+            pass
+        # Fail open with an allow-mapped literal for each known annotator; any
+        # unreferenced/unknown name (e.g. the declared-but-unused detectors)
+        # gets an empty string, which matches no deny literal.
+        if annotator_name == "budget_verdict":
+            return _V_NO_CLAIM
+        if annotator_name == "budget_verification_claim":
+            return _C_NONE
+        return ""
+
+    @staticmethod
+    def _holder(policy_input: Mapping[str, Any]) -> Mapping[str, Any]:
+        snapshot = policy_input.get("snapshot")
+        return snapshot if isinstance(snapshot, Mapping) else policy_input
+
+    def _verdict(self, reply: str, facts: Mapping[str, Any]) -> str:
+        if not reply.strip():
+            return _V_NO_CLAIM
+        verified = bool(facts.get("acs_budget_verified"))
+        # A verdict inconsistent with the reply's own quoted prices is always a
+        # fault, regardless of what the backend derived.
+        if _totals_contradict(reply):
+            return _V_WITHIN
+        if _affirms_fitness(reply):
+            return _V_VERIFIED if verified else _V_WITHIN
+        if _open_acknowledged(reply):
+            return _V_OPEN
+        return _V_NO_CLAIM
+
+    def _claim(self, reply: str, facts: Mapping[str, Any]) -> str:
+        verified = bool(facts.get("acs_budget_verified"))
+        if _claims_verification(reply) and not verified:
+            return _C_CLAIMED
+        return _C_NONE
+
+
+_CONTROL_BUDGET = AgentControl.from_path(str(_MANIFEST_BUDGET), _BudgetClaimAnnotator())
+
+
 def _run(coro: Any) -> Any:
     """Drive an async ACS call from this synchronous pipeline."""
     try:
@@ -478,6 +738,19 @@ def _run(coro: Any) -> Any:
 async def _evaluate(point: InterventionPoint, snapshot: dict[str, Any]) -> str:
     try:
         result = await _CONTROL.evaluate_intervention_point(
+            point, snapshot, EnforcementMode.ENFORCE
+        )
+    except Exception:  # noqa: BLE001
+        return Decision.ALLOW.value  # fail open
+    decision = result.verdict.decision
+    return str(getattr(decision, "value", decision))
+
+
+async def _evaluate_budget(point: InterventionPoint, snapshot: dict[str, Any]) -> str:
+    """Evaluate the SECOND (budget-confirmation) control. Its own helper, so the
+    first control's ``_evaluate`` stays untouched."""
+    try:
+        result = await _CONTROL_BUDGET.evaluate_intervention_point(
             point, snapshot, EnforcementMode.ENFORCE
         )
     except Exception:  # noqa: BLE001
@@ -613,6 +886,136 @@ def _screen(reply: str, message: str) -> str:
         return repaired or reply
 
 
+# ── Budget-confirmation screen (second policy) ───────────────
+
+_BUDGET_REGEN_INSTRUCTION = """\
+Your previous reply made a budget claim the evidence does not support. Rewrite it.
+
+THE CENTRAL RULE. Do not state or imply that the trip fits, is under, or is
+within the traveller's budget unless a real price validation established it this
+turn. If prices were retrieved, show the arithmetic -- cheapest flight plus the
+hotel nightly rate times the number of nights -- and compare that real total to
+the budget. If prices were not retrieved, say plainly that the budget question
+is still open and cannot be confirmed either way, and name what would close it
+(current flight and hotel quotes). Never describe the budget as checked,
+validated, verified, or confirmed when it was not. Any total or per-category
+figure you give must be consistent with the prices you quote in the same reply.
+
+WHAT YOU MUST STILL DELIVER. This restricts unfounded budget verdicts, not
+helpfulness, and a thin reply is its own failure. You must still give the
+traveller real substance, all of it permissible because none of it pretends to
+be a validated total:
+  - a day-by-day structure for a trip of this length
+  - clearly labelled typical cost ranges, and the arithmetic to adjust them
+  - what to compare when pricing flights and hotels
+  - a short checklist of the quotes to pull to settle the budget
+  - qualitative affordability guidance, labelled as general guidance
+Labelled estimates, typical ranges, and open arithmetic are welcome and must not
+be withheld.
+
+Do NOT refuse, do NOT apologise at length, and do NOT reply with only a
+clarifying question. Lead with the useful plan; keep the budget caveat brief and
+specific. Return only the rewritten reply.
+"""
+
+_BUDGET_HEADER = "**Budget check**"
+
+
+def _budget_facts(budget: float, nights: int) -> dict[str, Any]:
+    """Ledger-derived budget facts, computed on the MAIN thread and carried into
+    the snapshot (the annotator's dispatch thread cannot see the ledger)."""
+    costs = _derive_costs(nights)
+    entry = _ledger().records.get("budget")
+    verified = bool(entry and entry.get("reliable"))
+    facts: dict[str, Any] = {
+        "acs_is_budget": True,
+        "acs_budget_verified": verified,
+        "acs_budget_nights": int(nights),
+    }
+    try:
+        facts["acs_budget_amount"] = float(budget)
+    except (TypeError, ValueError):
+        facts["acs_budget_amount"] = None
+    if costs is not None:
+        flight_cost, hotel_cost = costs
+        facts["acs_budget_flight"] = float(flight_cost)
+        facts["acs_budget_hotel"] = float(hotel_cost)
+        facts["acs_budget_total"] = float(flight_cost + hotel_cost)
+    return facts
+
+
+def _budget_repair_prompt(message: str, reply: str, facts: Mapping[str, Any]) -> str:
+    amount = facts.get("acs_budget_amount")
+    lines = [f"Original request: {message}", ""]
+    if facts.get("acs_budget_verified") and facts.get("acs_budget_total") is not None:
+        against = f" against a budget of ${amount:,.0f}" if isinstance(amount, (int, float)) and amount else ""
+        lines.append(
+            "Budget evidence: prices WERE retrieved this turn. Cheapest flight "
+            f"${facts.get('acs_budget_flight'):,.0f}, hotel "
+            f"${facts.get('acs_budget_hotel'):,.0f} for the stay, so the supported "
+            f"trip total is ${facts.get('acs_budget_total'):,.0f}{against}. You may "
+            "state this real total and compare it to the budget."
+        )
+    else:
+        lines.append(
+            "Budget evidence: no usable prices were retrieved this turn, so the "
+            "budget CANNOT be confirmed. Say the budget question is still open and "
+            "name what would close it. Do not assert the trip fits."
+        )
+    lines += ["", "DRAFT TO REWRITE:", reply]
+    return "\n".join(lines)
+
+
+def _with_budget_disclosure(reply: str, facts: Mapping[str, Any]) -> str:
+    """Deterministically state that the budget is unverified when it is, so the
+    subject is answered in plain language rather than silently omitted.
+
+    Added only when the budget could not be verified and the reply does not
+    already acknowledge it, so it never contradicts a real, retrieved total and
+    never turns a helpful reply into a refusal.
+    """
+    if facts.get("acs_budget_verified"):
+        return reply
+    if _BUDGET_HEADER.lower() in reply.lower() or _open_acknowledged(reply):
+        return reply
+    amount = facts.get("acs_budget_amount")
+    amt = f"${amount:,.0f}" if isinstance(amount, (int, float)) and amount else "the budget you gave"
+    banner = (
+        f"{_BUDGET_HEADER}: I could not verify against live prices whether this "
+        f"trip fits {amt} this turn, so I can't confirm that it does or doesn't. "
+        f"To settle it, pull current flight and hotel quotes and I'll total them "
+        f"against {amt}."
+    )
+    return f"{reply.rstrip()}\n\n{banner}"
+
+
+def _screen_budget(reply: str, message: str, facts: Mapping[str, Any]) -> str:
+    """Enforce the budget-confirmation control on the composed reply.
+
+    Unlike the first policy's ``output`` rule (warn-only, coerced in ``_screen``),
+    this policy's ``output`` rule returns ``deny`` directly, so a deny is the
+    repair trigger; ``escalate`` never occurs but is handled defensively. The
+    unconditional disclosure banner then guarantees the budget is addressed.
+    """
+    decision = _run(
+        _evaluate_budget(
+            InterventionPoint.OUTPUT,
+            {"output": reply, "acs_is_output": True, **facts},
+        )
+    )
+    if decision in ("warn", Decision.DENY.value, Decision.ESCALATE.value):
+        with _tracer.start_as_current_span("budget_repair") as span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            repaired = _llm_call(
+                system=SYSTEM_PROMPT + "\n\n" + _BUDGET_REGEN_INSTRUCTION,
+                user=_budget_repair_prompt(message, reply, facts),
+                span_name="budget_repair.llm",
+            )
+            span.set_attribute("output.value", repaired)
+            reply = repaired or reply
+    return _with_budget_disclosure(reply, facts)
+
+
 # ── Guarded coordinator ──────────────────────────────────────
 
 
@@ -640,12 +1043,11 @@ def _orchestrate_guarded(message: str, history: list[dict[str, str]] | None = No
         led = _ledger()
         led.destination, led.region = dest, region
 
+        nights = _nights_from(composed, intent)
         flights = search_flights_guarded(dest, region)
         hotels = search_hotels_guarded(dest, region)
         safety = check_safety_guarded(dest, region)
-        budget_check = validate_budget_guarded(
-            budget, _nights_from(composed, intent), dest, region
-        )
+        budget_check = validate_budget_guarded(budget, nights, dest, region)
 
         with _tracer.start_as_current_span("itinerary_optimizer") as opt:
             opt.set_attribute("openinference.span.kind", "AGENT")
@@ -665,7 +1067,10 @@ def _orchestrate_guarded(message: str, history: list[dict[str, str]] | None = No
             )
             opt.set_attribute("output.value", draft)
 
-        final = _with_provenance(_screen(draft, composed))
+        bfacts = _budget_facts(budget, nights)
+        grounded = _screen(draft, composed)
+        budgeted = _screen_budget(grounded, composed, bfacts)
+        final = _with_provenance(budgeted)
         span.set_attribute("output.value", final)
         return final
 
