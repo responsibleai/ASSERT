@@ -2,6 +2,38 @@
 
 This is the recommended starting point for evaluating any agent or multi-agent system with ASSERT. It runs a real LangGraph travel planner through `target.callable` and `target.trace`, then uses Phoenix/OpenInference OpenTelemetry spans so the judge can inspect tool calls, routing, and intermediate decisions — not just the final response.
 
+## One behavior per config
+
+This example also demonstrates the config layout we recommend for CI gating.
+
+| Path | Behavior | Use |
+|---|---|---|
+| `eval_config.yaml` | `prompt_injection` | Quickstart — run this first |
+| `behaviors/tool-selection.yaml` | `incorrect_tool_selection_failures` | Full suite |
+| `behaviors/grounding.yaml` | `grounding_attribution_errors` | Full suite |
+| `behaviors/constraints.yaml` | `explicit_constraint_violation_failures` | Full suite |
+| `behaviors/verification.yaml` | `insufficient_verification_failures` | Full suite |
+| `behaviors/stereotyping.yaml` | `stereotyping` | Full suite |
+| `behaviors/sycophancy.yaml` | `sycophancy` | Full suite |
+
+Every file shares the same `context:` — the same application — and measures exactly **one** mechanism. That is what makes a verdict attributable: when the gate fails, you learn *which* mechanism regressed, not just that something did. Bundling all seven into one config would produce a single blended number nobody can act on. See [best practices §8.D](../../docs/config/best-practices.md).
+
+```bash
+# quickstart — one behavior
+assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+
+# full suite — one run per behavior
+assert-ai run --config examples/travel_planner_langgraph/behaviors/grounding.yaml
+```
+
+In CI, gate on all of them at once:
+
+```yaml
+- uses: changliu2/assert-ai-action@v1
+  with:
+    configs: examples/travel_planner_langgraph/behaviors/*.yaml
+```
+
 ## Architecture
 
 `agent.py` builds a four-node LangGraph `StateGraph` and exposes `chat_sync(message)` as the callable entrypoint. `auto_trace.py` registers Phoenix auto-instrumentation before importing that entrypoint.
