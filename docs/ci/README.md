@@ -7,8 +7,13 @@ Use [`changliu2/assert-ai-action`](https://github.com/changliu2/assert-ai-action
 Install the skills into your coding agent — works with Cursor, Claude Code, Copilot, Gemini CLI, Windsurf, Codex, and [40+ others](https://github.com/vercel-labs/skills#supported-agents):
 
 ```bash
-npx skills add changliu2/assert-ai-action --skill "*" --yes
+npx skills add responsibleai/ASSERT --skill run-assert-eval --yes
+npx skills add changliu2/assert-ai-action --skill wire-assert-ci --yes
 ```
+
+Two commands, because the bundle spans two repositories on purpose. `wire-assert-ci` wires CI and delegates every live evaluation to `run-assert-eval`, which is owned here in ASSERT. Installing it from here rather than copying it into the action repo means it cannot drift out of sync.
+
+Run them separately: `skills add` accepts one package per invocation and silently ignores extras while still exiting 0, so a combined command looks successful and installs half the bundle.
 
 Then: *"Use the `wire-assert-ci` skill to add an ASSERT safety gate to this repo."*
 

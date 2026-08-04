@@ -55,11 +55,14 @@ assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 
 Use [`changliu2/assert-ai-action`](https://github.com/changliu2/assert-ai-action) to run ASSERT as a PR regression gate — it fails the build when a change makes agent behavior significantly worse.
 
-Install the skills into your coding agent (Cursor, Claude Code, Copilot, and [40+ others](https://github.com/vercel-labs/skills#supported-agents)):
+Install the skills into your coding agent (Cursor, Claude Code, Copilot, and [40+ others](https://github.com/vercel-labs/skills#supported-agents)). Two commands, because the bundle spans two repos on purpose — the evaluation skill is owned here in ASSERT and installed from here, so it never goes stale:
 
 ```bash
-npx skills add changliu2/assert-ai-action --skill "*" --yes
+npx skills add responsibleai/ASSERT --skill run-assert-eval --yes
+npx skills add changliu2/assert-ai-action --skill wire-assert-ci --yes
 ```
+
+Run them separately. `skills add` takes one package per invocation and silently ignores extras while still exiting 0, so a combined command looks like it worked and leaves you with half the bundle.
 
 Then ask it to wire the gate:
 
