@@ -35,6 +35,7 @@ Reference docs for writing and tuning eval configuration files.
 - [Config Overview](config/overview.md): Learn the structure and components of an eval config YAML file required for running evaluations.
 - [Config Schema](config/schema.md): Reference every supported YAML field, type, and default behavior.
 - [Best Practices and Limitations](config/best-practices.md): Avoid common pitfalls and understand current pipeline limitations.
+- **[Behavior Library ↗](https://github.com/responsibleai/ASSERT/tree/main/assert_ai/library/behaviors)**: Start here before writing a behavior spec by hand. The curated, atomic-by-construction library of behavior presets — the single source of truth shipped with ASSERT — covering safety, bias/fairness, and agentic failure modes. Pair with the [scenario library](https://github.com/responsibleai/ASSERT/tree/main/assert_ai/library/scenarios) for ready-made application context. Browse with `assert-ai library list --kind behavior`.
 
 ## CLI
 

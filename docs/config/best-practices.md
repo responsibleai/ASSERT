@@ -244,6 +244,22 @@ Avoid overly broad categories like:
 - "unsafe health guidance"
 - "bad tool use"
 
+> **Don't write one from scratch first — check the behavior library.**
+> [`assert_ai/library/behaviors/`](https://github.com/responsibleai/ASSERT/tree/main/assert_ai/library/behaviors)
+> is the curated, atomic-by-construction reference library and the **single source of
+> truth** for behavior presets shipped with ASSERT — every entry is already scoped to
+> one mechanism, one judge verdict. Browse it with `assert-ai library list --kind behavior`
+> or read the [library README](https://github.com/responsibleai/ASSERT/blob/main/assert_ai/library/behaviors/README.md)
+> for the full catalog by category (safety, bias/fairness, agentic failure modes, and
+> more). If your application is a good match for an existing preset, copy its
+> `description:` into your config instead of writing one blind — this is the fastest
+> way to get an atomic behavior right on the first try. Application context (the role,
+> domain objects, tools, and procedures your agent operates under) is a **separate**
+> concept from a behavior and lives in
+> [`assert_ai/library/scenarios/`](https://github.com/responsibleai/ASSERT/tree/main/assert_ai/library/scenarios) —
+> pair one scenario's `context:` with one or more atomic behaviors from the library,
+> one config per behavior.
+
 ## Examples
 
 Below are some examples on how to construct good inputs. The goal is to provide what concerns you want to measure your system on. The clearer the description of the concern and your system context, the better the evaluation outcomes. These can be copied and filled directly into the evaluation config YAML file.
