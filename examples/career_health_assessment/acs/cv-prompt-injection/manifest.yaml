@@ -1,0 +1,23 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: career_health_prompt_injection
+extends: []
+policies:
+  career_health_prompt_injection:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.career_health_prompt_injection.verdict
+intervention_points:
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: career_health_prompt_injection
+      query: data.agent_control_specification.career_health_prompt_injection.output_verdict
+    annotations:
+      injection_output_classifier:
+        from: $policy_target
+annotators:
+  injection_output_classifier:
+    type: classifier
+tools: {}
