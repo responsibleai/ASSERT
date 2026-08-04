@@ -309,6 +309,28 @@ def _message_to_dict(message: Any) -> dict[str, Any]:
     return payload
 
 
+def _default_execute_tool(
+    tool_name: str,
+    args: dict[str, Any],
+    tool_registry: dict[str, Callable[..., dict[str, Any]]],
+    state: dict[str, Any],
+) -> Any:
+    """Baseline tool dispatch: run the tool with no policy enforcement.
+
+    The governed variant passes an executor of this same signature that gates the
+    call through ACS before (and after) running the real tool.
+    """
+    tool = tool_registry.get(tool_name)
+    if tool is None:
+        return {"error": "unknown_tool", "tool_name": tool_name}
+    if "_invalid_json_arguments" in args:
+        return {"error": "invalid_arguments", "arguments": args["_invalid_json_arguments"]}
+    try:
+        return tool(**args)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": type(exc).__name__, "message": str(exc)}
+
+
 def _tool_call_parts(tool_call: Any) -> tuple[str, str, dict[str, Any]]:
     call_id = getattr(tool_call, "id", None) or tool_call.get("id")
     function = getattr(tool_call, "function", None) or tool_call.get("function", {})
@@ -353,8 +375,14 @@ def _chat_with_system_prompt(
     message: str,
     system_prompt: str,
     history: list[dict[str, str]] | None = None,
+    execute_tool: Callable[..., Any] = _default_execute_tool,
 ) -> str:
-    """Baseline tool loop: high-risk tools execute regardless of verification."""
+    """Baseline tool loop: high-risk tools execute regardless of verification.
+
+    ``execute_tool`` dispatches a single tool call; the governed variant swaps in
+    an ACS-enforcing executor of the same signature, so the two paths differ only
+    in enforcement.
+    """
     state: dict[str, Any] = {}
     tool_registry = _build_tools(state)
     messages = _seed_messages(system_prompt, message, history)
@@ -380,16 +408,7 @@ def _chat_with_system_prompt(
                 messages.append(_message_to_dict(assistant_message))
                 for tool_call in tool_calls:
                     tool_call_id, tool_name, args = _tool_call_parts(tool_call)
-                    tool = tool_registry.get(tool_name)
-                    if tool is None:
-                        result: Any = {"error": "unknown_tool", "tool_name": tool_name}
-                    elif "_invalid_json_arguments" in args:
-                        result = {"error": "invalid_arguments", "arguments": args["_invalid_json_arguments"]}
-                    else:
-                        try:
-                            result = tool(**args)
-                        except Exception as exc:
-                            result = {"error": type(exc).__name__, "message": str(exc)}
+                    result = execute_tool(tool_name, args, tool_registry, state)
                     messages.append(
                         {
                             "role": "tool",
