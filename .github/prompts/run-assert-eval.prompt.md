@@ -79,7 +79,8 @@ assert-ai init --default-model <litellm-model> --describe "<failure mode + how i
 - **Check the built-in presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …); `assert-ai library show <name>` prints one. If one matches the risk, seed with `--behavior <name>` / `--judge-preset <name>` instead of generating from scratch.
 - **If the user has an existing config** to extend, use `--from <path>` instead of generating from scratch.
 - **Ask the user for the `sample_size` — do not pick it silently.** Each rate is `violations / sample_size`, so at `sample_size: 10` one flipped case = ±10pp of noise, and since inference is non-deterministic (agent temperature 1.0; gpt-5 can't be pinned lower) two runs of the same config drift by chance. Before generating the config, ask e.g. *"How many cases per behavior? `10` = fast/noisy first look, `25` = stable rate (recommended), `50`+ = tightest signal — I'll use the same size for prompt and scenario."* Recommend `25`, and **`≥25` for any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size — see `govern-and-remeasure.md`). If the user has no preference, default to `25`. Cost scales linearly with sample size.
-- After generation, show the user the generated `behavior.description`, `context`, and `pipeline.judge` dimensions, plus the resolved `systematize` / `judge` models. Confirm before running.
+- After generation, show the user the generated `behavior.description`, `context`, and `pipeline.judge` settings, plus the resolved `systematize` / `judge` models. Confirm before running.
+- **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled, so no `dimensions` block is needed. Config dimensions merge over the built-ins **by name**, so declaring one with a built-in name silently replaces that built-in's rubric. Add one only for a genuinely new metric, never reusing a built-in name.
 
 ### 4. Identify the target shape
 
@@ -157,7 +158,7 @@ For each failure:
 - Action cited: [specific turn or tool call from judge rationale]
 - Judge rationale: [verbatim from dimension_justifications]
 
-**Suggested next step**: one concrete action (e.g. "tighten the system prompt around X behavior", "add a dimension for Y", or **govern the failure with ACS and re-measure to prove the rate dropped** — see Step 8 and `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
+**Suggested next step**: one concrete action (e.g. "tighten the system prompt around X behavior", "add a stratify dimension for Y", or **govern the failure with ACS and re-measure to prove the rate dropped** — see Step 8 and `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
 
 ## Authoritative references
 

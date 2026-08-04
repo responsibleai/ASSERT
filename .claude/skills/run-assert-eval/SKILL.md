@@ -181,8 +181,14 @@ assert-ai init --default-model <litellm-model> --describe "<failure mode + how i
 - **If the user has an existing config** to extend, use `--from <path>` instead of
   generating from scratch.
 - After generation, show the user the generated `behavior.description`, `context`,
-  and `pipeline.judge` dimensions, plus the resolved `systematize` / `judge`
+  and `pipeline.judge` settings, plus the resolved `systematize` / `judge`
   models. Confirm before running.
+- **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
+  `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless
+  explicitly disabled, so no `dimensions` block is needed. Config dimensions are
+  merged over the built-ins **by name**, so declaring one with a built-in name
+  silently replaces that built-in's rubric. Add one only for a genuinely new
+  metric the built-ins don't cover, and never reuse a built-in name.
 
 ### 4. Identify the target shape
 
@@ -346,7 +352,7 @@ For each failure:
 - Judge rationale: [verbatim from dimension_justifications]
 
 **Suggested next step**: one concrete action (e.g. "tighten the system prompt
-around X behavior", "add a dimension for Y", or **govern the failure with ACS and
+around X behavior", "add a stratify dimension for Y", or **govern the failure with ACS and
 re-measure to prove the rate dropped** — see Step 8 and
 `workflows/govern-and-remeasure.md`).
 

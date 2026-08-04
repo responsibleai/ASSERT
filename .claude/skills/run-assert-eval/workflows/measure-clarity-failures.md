@@ -127,7 +127,7 @@ Fill from the candidate behavior (real schema field names):
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
 | `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
-| `pipeline.judge.preset` + `dimensions` | keep the violation metric **and** `overrefusal` as **separate** dimensions (see the coupling note below) |
+| `pipeline.judge.preset` | leave `dimensions` **unset** — `policy_violation` and `overrefusal` are built in and always judged (see the built-in note below) |
 
 > **Run the eval cheap, but judge and systematize with the strong model.**
 > `assert-ai init` has no `--systematize-model` / `--judge-model` flag, so every
@@ -154,6 +154,14 @@ Fill from the candidate behavior (real schema field names):
 > `assert-ai results status <suite> <run> --json` — the model actually used is
 > echoed at `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 
+> **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
+> `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are **always judged**
+> unless explicitly disabled — you get both for free with no `dimensions` block.
+> Config dimensions are merged over the built-ins **by name**, so declaring one
+> called `policy_violation` or `overrefusal` silently **replaces the built-in
+> rubric** with a hand-written one. Only add a dimension for a genuinely new
+> metric the built-ins don't cover, and never reuse a built-in name.
+
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated
 > taxonomy nodes — including *permissible* ones — so over-gating a permissible
@@ -166,7 +174,9 @@ Fill from the candidate behavior (real schema field names):
 > conversation. The split is derived from stored judgments, so it needs no config
 > change and works on existing runs. In the viewer the same pair appears as the
 > dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
-> labelled **Harm (non-permissible)** / **Permissible behavior violated**.
+> labelled **Harm (non-permissible)** / **Permissible behavior violated**. When the
+> split is present the viewer now **hides** `policy_violation` / `overrefusal` as
+> superseded — they are still judged, aggregated, and written to artifacts.
 
 > **Sizing for noise (why the first-run "10" is often too small).** Each rate is
 > `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the
@@ -259,7 +269,7 @@ One results table, **one behavior per column, one experiment per row**, with:
 - For each behavior, note the **source Clarity doc** and its intervention points
   ("a fix would target: …").
 
-Offer next steps: raise `sample_size`, add a dimension, apply an ACS guardrail at
+Offer next steps: raise `sample_size`, add a stratify dimension, apply an ACS guardrail at
 the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 
 ## Step 8 — Close the loop in Clarity
@@ -326,8 +336,8 @@ the next discovery run and is not recoverable from git.
 5. Generate `evals/user-disengagement/eval_config.yaml`: `behavior.description`
    from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
-   user chose, applied to `scenario` too), `inference.max_turns: 10`,
-   `judge.dimensions` = `policy_violation` + `overrefusal`.
+   user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
+   `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
 6. Confirm → `assert-ai run` → results table: one `user_disengagement` column.
    Headline the permissibility split from `results status --json` —
    `not_permissible_policy_violation_rate` (real harm got through) and
