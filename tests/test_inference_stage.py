@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from assert_ai.core.config_model import TesterConfig, EvaluationConfig, JudgeConfig, InferenceConfig, TargetConfig, ToolsConfig
 from assert_ai.core.io import load_test_cases
-from assert_ai.core.model_client import LLMInputError, LLMProviderError, Message, ModelResponse
+from assert_ai.core.model_client import LLMContentFilterError, LLMInputError, LLMProviderError, Message, ModelResponse
 from assert_ai.core.session import TurnResult
 from assert_ai.stages.inference import _prepare_test_cases, _inference_config_fingerprint, _run_prompt_test_case, run_inference
 from assert_ai.viewer_read_model import ViewerReadModelBuildError
@@ -1184,7 +1184,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
             test_case_id = str(kwargs["test_case"]["test_case_id"])
             # Fail exactly one of 20 (5% — under 10% threshold).
             if test_case_id == "test_case_000010":
-                raise RuntimeError("content_filter_blocked")
+                raise LLMContentFilterError("content_filter_blocked")
 
             class FakeTranscript:
                 def to_dict(self_inner) -> dict[str, str]:
@@ -1217,6 +1217,7 @@ class InferenceStageTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertEqual(result["count"], 20)
+            self.assertEqual(result["errored_count"], 1)
             inference_rows = [
                 json.loads(line)
                 for line in (out_dir / "inference_set.jsonl")

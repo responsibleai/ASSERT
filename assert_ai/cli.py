@@ -137,6 +137,66 @@ def _fmt_percent(value: Optional[float]) -> str:
     return f"{value * 100:.1f}%"
 
 
+_PERMISSIBILITY_SPLIT_RATE_KEYS = (
+    "not_permissible_policy_violation_rate",
+    "permissible_policy_violation_rate",
+)
+
+
+def _has_permissibility_split(*metric_sets: Any) -> bool:
+    """True when any of ``metric_sets`` reports the permissibility split.
+
+    The split supersedes ``policy_violation`` (which unions permissible and
+    impermissible behaviors) and ``overrefusal`` (only the refusal-shaped subset
+    of permissible violations) on display surfaces. Runs without a behavior
+    taxonomy -- including quality suites that repurpose ``policy_violation`` for
+    non-safety failures -- have no split and keep reporting the original pair.
+
+    Detection keys off presence rather than a non-null rate: a bucket whose rate
+    is ``None`` was still computed, it just had no applicable rows. An
+    all-permissible taxonomy yields a real permissible rate alongside a ``None``
+    impermissible rate, and reading that ``None`` as "no split" would drop the
+    run back to the superseded pair while the viewer showed the split.
+    """
+    return any(
+        isinstance(metrics, dict)
+        and any(key in metrics for key in _PERMISSIBILITY_SPLIT_RATE_KEYS)
+        for metrics in metric_sets
+    )
+
+
+def _violation_column_titles(split: bool) -> tuple[str, str, str]:
+    if split:
+        return (
+            "Prompt impermissible violations",
+            "Prompt permissible violations",
+            "Scenario impermissible violations",
+        )
+    return (
+        "Prompt policy violations",
+        "Prompt overrefusals",
+        "Scenario policy violations",
+    )
+
+
+def _violation_cells(
+    prompt_metrics: dict[str, Any],
+    scenario_metrics: dict[str, Any],
+    split: bool,
+) -> tuple[str, str, str]:
+    if split:
+        return (
+            _fmt_percent(prompt_metrics.get("not_permissible_policy_violation_rate")),
+            _fmt_percent(prompt_metrics.get("permissible_policy_violation_rate")),
+            _fmt_percent(scenario_metrics.get("not_permissible_policy_violation_rate")),
+        )
+    return (
+        _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
+        _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
+        _fmt_percent(_dimension_rate(scenario_metrics, "policy_violation")),
+    )
+
+
 def _fmt_binary_counts(counts: dict[int, int]) -> str:
     return f"0:{counts.get(0, 0)} 1:{counts.get(1, 0)}"
 
@@ -847,13 +907,21 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
             return
 
         console = _console(no_color=no_color)
+        split = any(
+            _has_permissibility_split(
+                run_summary.get("prompt_metrics") or {},
+                run_summary.get("scenario_metrics") or {},
+            )
+            for run_summary in suite_summary["runs"]
+        )
+        prompt_primary, prompt_secondary, scenario_primary = _violation_column_titles(split)
         table = Table(title=f"Runs in {suite}", box=None, show_header=True, show_edge=False, pad_edge=False)
         table.add_column("Run", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         table.add_column("Started", style="dim", no_wrap=True)
-        table.add_column("Prompt policy violations", style="white", no_wrap=True)
-        table.add_column("Prompt overrefusals", style="white", no_wrap=True)
-        table.add_column("Scenario policy violations", style="white", no_wrap=True)
+        table.add_column(prompt_primary, style="white", no_wrap=True)
+        table.add_column(prompt_secondary, style="white", no_wrap=True)
+        table.add_column(scenario_primary, style="white", no_wrap=True)
         table.add_column("Judge failures", style="white", no_wrap=True)
         table.add_column("Target", style="white")
         for run_summary in suite_summary["runs"]:
@@ -864,9 +932,7 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
                 run_summary["run_id"],
                 label_run_status(run_summary["status"]),
                 _format_timestamp(run_summary.get("started_at")),
-                _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
-                _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
-                _fmt_percent(_dimension_rate(scenario_metrics, "policy_violation")),
+                *_violation_cells(prompt_metrics, scenario_metrics, split),
                 _fmt_percent(
                     prompt_metrics.get("judge_failure_rate")
                     if prompt_metrics
@@ -946,13 +1012,21 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         console.print(summary)
 
         if suite_summary["runs"]:
+            split = any(
+                _has_permissibility_split(
+                    run_summary.get("prompt_metrics") or {},
+                    run_summary.get("scenario_metrics") or {},
+                )
+                for run_summary in suite_summary["runs"]
+            )
+            prompt_primary, prompt_secondary, scenario_primary = _violation_column_titles(split)
             table = Table(title="Runs", box=None, show_header=True, show_edge=False, pad_edge=False)
             table.add_column("Run", style="cyan", no_wrap=True)
             table.add_column("Status", style="white", no_wrap=True)
             table.add_column("Current Stage", style="white", no_wrap=True)
-            table.add_column("Prompt policy violations", style="white", no_wrap=True)
-            table.add_column("Prompt overrefusals", style="white", no_wrap=True)
-            table.add_column("Scenario policy violations", style="white", no_wrap=True)
+            table.add_column(prompt_primary, style="white", no_wrap=True)
+            table.add_column(prompt_secondary, style="white", no_wrap=True)
+            table.add_column(scenario_primary, style="white", no_wrap=True)
             for run_summary in suite_summary["runs"]:
                 prompt_metrics = run_summary.get("prompt_metrics") or {}
                 scenario_metrics = run_summary.get("scenario_metrics") or {}
@@ -960,9 +1034,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
                     run_summary["run_id"],
                     label_run_status(run_summary["status"]),
                     label_stage(run_summary["current_stage"]),
-                    _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
-                    _fmt_percent(_dimension_rate(prompt_metrics, "overrefusal")),
-                    _fmt_percent(_dimension_rate(scenario_metrics, "policy_violation")),
+                    *_violation_cells(prompt_metrics, scenario_metrics, split),
                 )
             console.print(table)
         return
