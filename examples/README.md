@@ -17,7 +17,7 @@ Copy-Item .env.example .env
 # Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
 # any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
 
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
 
@@ -29,7 +29,7 @@ Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/prov
 ```powershell
 assert-ai init --model azure/gpt-5.4-mini
 # or seed from an existing example:
-assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/eval_config.yaml
+assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
 ```
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
@@ -38,13 +38,13 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
 | Goal | Example | Notes |
 |---|---|---|
-| Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
+| Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/evals/budget-overrun/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: otel` so the judge sees tool calls and routing. One risk per config — `evals/` also holds `fabricated-itinerary-details/`. |
 | Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
 | Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
 | Call Azure OpenAI with Managed Identity / `az login` | `azure_managed_identity/eval_config.yaml` | Minimal AAD smoke test. Requires `pip install -e ".[azure-aad]"` and the *Cognitive Services OpenAI User* role on the target resource. See [`azure_managed_identity/README.md`](azure_managed_identity/README.md). |
 | Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
+| Evaluate a science research agent with real retrieval tools | `science_research_agent/evals/embedded-instruction-obeyed/eval_config.yaml` | Callable-agent example using real retrieval: `web_search`, `fetch_url`, and `file_search`. One risk per config — `evals/` also holds `restricted-class-disclosure/`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/evals/embedded-instruction-obeyed/eval_config.yaml`. |
 | Judge a multi-step workflow on its tool trace, not its final answer | `incident_triage_agent/behaviors/` + `incident_triage_agent/eval_config_baseline.yaml` | Self-contained SRE incident-triage agent that follows a written runbook ([`SOP.md`](incident_triage_agent/SOP.md)): a LiteLLM tool loop over synthetic fixtures — no external services, no Docker, just an LLM key. Wrapped as a callable target so the judge sees what it classified, where it posted, whether it redacted, and whether it escalated. [`behaviors/`](incident_triage_agent/behaviors/README.md) is the recommended one-behavior-per-YAML split (one rubric dimension per config); `eval_config_baseline.yaml` bundles the same failure modes into a single overview run. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
 | Generate ACS guardrails from ASSERT findings | `acs_guardrails/README.md` | Offline ASSERT→ACS adapter demo: synthetic findings generate `manifest.yaml` + Rego, validate known-bad outputs, then guard a callable target. |
 

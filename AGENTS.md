@@ -79,7 +79,7 @@ cp .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
 ```
 
 Use the PowerShell equivalent on Windows:
@@ -94,7 +94,7 @@ Copy-Item .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
 ```
 
 ## How to help with common tasks

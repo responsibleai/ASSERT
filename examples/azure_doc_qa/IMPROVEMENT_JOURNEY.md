@@ -5,6 +5,17 @@ improve a multi-agent RAG system from a **~20% pass rate to 82%** over 7 rounds
 of targeted fixes. It demonstrates the **eval → diagnose → fix → re-eval** loop
 that makes agent development systematic rather than guesswork.
 
+> **Historical note.** This journey was run against an earlier bundled
+> `eval_config.yaml` that scored 9 judge dimensions over 56 test cases in a
+> single run. That config has since been split into one config per risk under
+> [`evals/`](evals/) — see
+> [`evals/fabricated-ungrounded-answer/eval_config.yaml`](evals/fabricated-ungrounded-answer/eval_config.yaml)
+> and
+> [`evals/confidential-internal-leakage/eval_config.yaml`](evals/confidential-internal-leakage/eval_config.yaml).
+> The commands and rates below are preserved as they were run, so they will not
+> reproduce verbatim against the split configs; the loop they demonstrate is
+> unchanged.
+
 ## The Agent Under Test
 
 The `azure_doc_qa` agent is a LangGraph multi-agent system with three specialist
