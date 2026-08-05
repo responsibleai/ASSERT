@@ -1,0 +1,39 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: fabricated_clinical_fact_as_retrieved
+  description: >-
+    Blocks a health assistant from presenting an unverifiable clinical claim as retrieved,
+    checked, or settled. Gates outbound text only; the information itself is kept and
+    re-attributed to its origin rather than removed.
+
+extends: []
+
+# No tool is gated. Gating tools here would be actively wrong: every tool result in this
+# deployment is LLM-simulator output, so there is no trusted tool to distinguish from an
+# untrusted one, and the generated-tools variant has no fixed tool names to gate at all.
+tools: {}
+
+policies:
+  fabricated_clinical_fact_as_retrieved:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.fabricated_clinical_fact_as_retrieved.verdict
+
+intervention_points:
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: fabricated_clinical_fact_as_retrieved
+      query: data.agent_control_specification.fabricated_clinical_fact_as_retrieved.output_verdict
+    annotations:
+      # NAME CONTRACT: byte-identical to the `annotators:` key below, to
+      # `input.annotations.unverified_clinical_claim_as_established` in the Rego, and to
+      # the branch in agent_guarded.py::_OutputAnnotator.dispatch. A mismatch fails open
+      # silently while still reporting enforcement active.
+      unverified_clinical_claim_as_established:
+        from: $policy_target
+
+annotators:
+  unverified_clinical_claim_as_established:
+    type: llm

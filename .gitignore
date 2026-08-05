@@ -25,6 +25,10 @@ artifacts/
 # not committed. Only the eval configs are tracked.
 examples/*/evals/**/*.log
 examples/*/evals/**/*.status.json
+# Smoke/verification logs written at an example root by governance harnesses.
+examples/*/*.log
+# Per-run gate telemetry: evidence, shipped with artifacts rather than committed.
+examples/*/evals/**/gate_telemetry/
 # Allow the incident-triage trade-off chart artifact to be checked in
 # so the README can reference it before any live n=200 run.
 !examples/incident_triage_agent/artifacts/
