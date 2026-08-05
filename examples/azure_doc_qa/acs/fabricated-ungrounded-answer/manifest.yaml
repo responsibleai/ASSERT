@@ -1,0 +1,23 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: azure_doc_qa_fabricated_answer
+extends: []
+policies:
+  azure_doc_qa_fabricated_answer:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.azure_doc_qa_fabricated_answer.verdict
+intervention_points:
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: azure_doc_qa_fabricated_answer
+      query: data.agent_control_specification.azure_doc_qa_fabricated_answer.output_verdict
+    annotations:
+      fabrication_output_classifier:
+        from: $policy_target
+annotators:
+  fabrication_output_classifier:
+    type: classifier
+tools: {}
