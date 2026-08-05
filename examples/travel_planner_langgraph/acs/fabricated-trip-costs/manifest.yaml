@@ -1,0 +1,45 @@
+# Reviewed ACS policy for the `fabricated_trip_costs` risk.
+#
+# Drafted by `assert-ai acs generate --suite travel-planner-fabricated-trip-costs
+# --run baseline` and reviewed before commit. The generator proposed three separate
+# `output` annotators (fabricated_trip_costs_output_semantic / fabricated_market_check_output
+# / unsupported_budget_validation_output). All three read the same policy target
+# ($.output) and express one semantic judgement, so they were consolidated into a single
+# annotator whose prompt enumerates every failure mode — invented airfare, invented
+# nightly rate or availability, totals summed from unpriced components, a user-proposed
+# number restated as confirmed, and a budget falsely claimed validated. One LLM call per
+# outgoing message instead of three.
+#
+# Gate shape: SEMANTIC. Baseline `verdict.node_judgments` cite the assistant's own reply
+# text ("the assistant states a concrete airfare ... 'Price: $850' ... with no tool
+# retrieval in the conversation"), not a tool call. `itinerary_optimizer` — the node that
+# writes the costed plan — has NO tool access, so a pre_tool_call/post_tool_call gate has
+# nothing to intercept. No tools are gated, therefore `tools: {}`.
+#
+# The annotator name below MUST stay identical in three places:
+#   1. `annotators:` key + `intervention_points.output.annotations` key (this file)
+#   2. `input.annotations.fabricated_cost_claim_classifier` (policy/*.rego)
+#   3. the `_COSTS_ANNOTATOR` dispatcher branch in ../../agent_guarded.py
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: travel_planner_fabricated_trip_costs
+extends: []
+policies:
+  travel_planner_fabricated_trip_costs:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.travel_planner_fabricated_trip_costs.verdict
+intervention_points:
+  output:
+    policy_target: $.output
+    policy_target_kind: assistant_output
+    policy:
+      id: travel_planner_fabricated_trip_costs
+      query: data.agent_control_specification.travel_planner_fabricated_trip_costs.output_verdict
+    annotations:
+      fabricated_cost_claim_classifier:
+        from: $policy_target
+annotators:
+  fabricated_cost_claim_classifier:
+    type: llm
+tools: {}
