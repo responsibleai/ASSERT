@@ -40,10 +40,24 @@ annotator gate** over the reply — deny + regenerate toward a safe response.
 |---|---|---|---|
 | Leakage | prompt | 40.9 / 40.0 / 8.0 | 9.1 / 24.0 / 16.0 |
 | Leakage | scenario | 62.5 / 68.0 / 44.0 | 33.3 / 64.0 / 64.0 |
-| Fabrication | prompt | 21.4 / 45.8 / 40.0 | *(governed run in progress)* |
-| Fabrication | scenario | 39.1 / 24.0 / 20.0 | *(governed run in progress)* |
+| Fabrication | prompt | 21.4 / 45.8 / 40.0 | 6.2 / 44.0 / 44.0 |
+| Fabrication | scenario | 39.1 / 24.0 / 20.0 | 50.0 / 72.0 / 72.0 |
 
 The leakage output gate roughly halves harmful leakage on both axes (prompt harm
-−31.8 pts, scenario harm −29.2 pts), at the expected overrefusal cost. Configs,
-policies, and the governed agent live under `examples/azure_doc_qa/evals/`,
+−31.8 pts, scenario harm −29.2 pts), at the expected overrefusal cost.
+
+Fabrication was harder and revealed an ACS scoping boundary. A reply-only output
+annotator is ineffective (it cannot tell grounded specificity from fabricated
+specificity, so it only trades overrefusal). Feeding the annotator the retrieval
+context it captures from the baseline graph, plus a scoped grounded rewrite, cuts
+single-turn fabrication harm 21.4 -> 6.2 (−71%) at essentially no overrefusal cost
+(40 -> 44). Multi-turn is not solvable by an output gate: scenario harm stays at
+50 and 18/25 conversations are flagged both fabrication and overrefusal — the agent
+fabricates on some turns and stonewalls on others. The multi-turn fix must move
+upstream (a retrieval-state / tool-result gate or prompt-hardening), not another
+output-remediation lever. Full progression: text-only P 10.0/64.0/64.0
+S 50.0/52.0/48.0 -> grounded P 6.2/56.0/56.0 S 50.0/68.0/68.0 -> grounded+scoped
+P 6.2/44.0/44.0 S 50.0/72.0/72.0.
+
+Configs, policies, and the governed agent live under `examples/azure_doc_qa/evals/`,
 `examples/azure_doc_qa/acs/`, and `examples/azure_doc_qa/agent_guarded.py`.
