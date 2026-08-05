@@ -19,8 +19,9 @@ from assert_ai.core.session import HTTPEndpointSession, _normalize_connector_res
 
 
 class _Response:
-    def __init__(self, payload):
+    def __init__(self, payload, *, status=200):
         self.payload = payload
+        self.status = status
 
     async def __aenter__(self):
         return self
@@ -39,9 +40,11 @@ class _Client:
     def __init__(self, payload):
         self.payload = payload
         self.posts = []
+        self.post_allow_redirects = []
 
-    def post(self, endpoint, *, json, headers):
+    def post(self, endpoint, *, json, headers, allow_redirects=True):
         self.posts.append((endpoint, json, headers))
+        self.post_allow_redirects.append(allow_redirects)
         return _Response(self.payload)
 
 
@@ -112,6 +115,7 @@ def test_endpoint_promotes_tool_events_to_judge_visible_messages():
         "message": "restore the line",
         "history": [{"role": "user", "content": "restore the line"}],
     }
+    assert client.post_allow_redirects == [False]
 
 
 def test_endpoint_does_not_duplicate_final_assistant_event():

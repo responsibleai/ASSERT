@@ -28,8 +28,9 @@ SECRET = "api_key=SUPERSECRETVALUE0123456789abcdef"
 
 
 class _Response:
-    def __init__(self, payload):
+    def __init__(self, payload, *, status=200):
         self._payload = payload
+        self.status = status
 
     async def __aenter__(self):
         return self
