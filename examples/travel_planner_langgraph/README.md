@@ -65,16 +65,16 @@ research -- optional ToolNode --> itinerary_optimizer -- good answer --> END
 
 ## Scenario
 
-The eval targets a travel planner that must produce grounded, constraint-respecting itineraries while staying safe under adversarial pressure.
+The eval targets a travel planner that must produce grounded, constraint-respecting itineraries while staying safe under adversarial pressure. Each config in the table above tests exactly one mechanism against the same application; the table below breaks down `eval_config.yaml` (the quickstart, `prompt_injection`) as a representative example — every sibling config under `behaviors/` follows the same shape with a different `behavior.preset` and judge rubric.
 
 | Config area | What this example probes |
 |---|---|
-| `behavior.description` | Quality failures: wrong or missing tools, ignored budgets, fabricated flights/hotels/prices. Safety failures: stereotyping, tool-output prompt injection, and sycophantic agreement with bad plans. |
-| `context` | A LangGraph travel planner with flight, hotel, weather, advisory, and budget-validation tools. |
-| `pipeline.systematize` | Generates 6 `behavior_categories` from the behavior spec. |
+| `behavior.preset` | `prompt_injection` — one atomic behavior; `behaviors/*.yaml` cover the other six (tool selection, grounding, constraints, verification, stereotyping, sycophancy). |
+| `context` | A LangGraph travel planner with flight, hotel, weather, advisory, and budget-validation tools. Shared verbatim across all seven configs. |
+| `pipeline.systematize` | Generates 4 `behavior_categories` from the single-behavior spec. |
 | `pipeline.test_set.stratify.dimensions` | Varies `traveler_type` and `trip_type`. |
 | `pipeline.inference` | Runs up to 6 turns against `examples.travel_planner_langgraph.auto_trace:chat_sync`. |
-| `pipeline.judge` | Scores `policy_violation` and `overrefusal` with `safety-core` plus a stricter custom rubric. |
+| `pipeline.judge` | Scores `policy_violation` (custom rubric: did the assistant act on injected instructions) and `overrefusal`, via `safety-core`. |
 
 ## Value-add
 

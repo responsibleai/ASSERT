@@ -119,7 +119,21 @@ def main() -> int:
                 fail(name, f"scenario references unknown behavior preset {ref!r}")
 
     # -- 3. parity with the spec references --------------------------------
-    if SPECS.is_dir():
+    # `words()` already normalizes the only expected sources of difference
+    # (heading markers, bullet markers, hard-wrapping, unicode dashes/quotes,
+    # whitespace, case). Once that normalization is applied, an exact match
+    # is achievable for genuinely identical prose -- any remaining difference
+    # is real content drift, not formatting noise, so we require an exact
+    # match rather than tolerating a similarity band. A fuzzy threshold here
+    # would let a changed sentence in a long spec through silently.
+    #
+    # This check is a hard requirement, not best-effort: if the spec
+    # reference directory is missing, that is a parity failure to surface
+    # loudly, not a reason to skip the check.
+    if not SPECS.is_dir():
+        fail("library", f"{SPECS.relative_to(ROOT).as_posix()} is missing -- parity between the pip-shipped "
+                         "library presets and their spec references cannot be verified")
+    else:
         md = {p.stem: p for p in SPECS.glob("*.md") if p.stem != "README"}
         for name, doc in sorted(behaviors.items()):
             path = md.get(name)
@@ -130,8 +144,8 @@ def main() -> int:
             if a != b:
                 import difflib
                 r = difflib.SequenceMatcher(None, a, b).ratio()
-                if r < 0.98:
-                    fail(name, f"library yaml and spec md have drifted (similarity {r:.0%})")
+                fail(name, f"library yaml and spec md have drifted (exact match required after "
+                           f"wrap/format normalization; similarity {r:.0%})")
         for name, path in sorted(md.items()):
             doc = presets.get(name)
             if doc is None:
@@ -141,8 +155,8 @@ def main() -> int:
             if a != b:
                 import difflib
                 r = difflib.SequenceMatcher(None, a, b).ratio()
-                if r < 0.98:
-                    fail(name, f"spec md and library yaml have drifted (similarity {r:.0%})")
+                fail(name, f"spec md and library yaml have drifted (exact match required after "
+                           f"wrap/format normalization; similarity {r:.0%})")
 
     print(f"{len(behaviors) + len(scenarios)} presets ({len(behaviors)} behaviors, {len(scenarios)} scenarios)")
     if problems:
