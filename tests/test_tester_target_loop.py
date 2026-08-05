@@ -8,6 +8,7 @@ conversation accumulation, initial system-message propagation, transcript
 recording, and stop-reason behaviour.
 """
 
+import json
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -101,6 +102,7 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
             response.request_payload = {
                 "model": model,
                 "messages": [message.to_openai_dict() for message in messages],
+                **(response.request_payload or {}),
             }
             return response
 
@@ -347,6 +349,27 @@ class TesterTargetLoopTest(unittest.IsolatedAsyncioTestCase):
         tester_events = [e for e in transcript.events if e.actor == "tester"]
         # New code records raw call data on tester events
         self.assertIsNotNone(tester_events[0].raw)
+
+    async def test_transcript_redacts_tester_request_credentials(self) -> None:
+        response = _tester_response("Hello")
+        response.request_payload = {
+            "api_key": "sentinel-azure-foundry-token",
+            "model": "azure_ai/tester",
+        }
+
+        result = await self._run_loop(
+            tester_responses=[response],
+            target_replies=["World"],
+            max_turns=1,
+        )
+
+        transcript: Transcript = result["transcript"]
+        tester_event = next(event for event in transcript.events if event.actor == "tester")
+        self.assertEqual(tester_event.raw["request"]["api_key"], "[REDACTED]")
+        self.assertNotIn(
+            "sentinel-azure-foundry-token",
+            json.dumps(transcript.to_dict()),
+        )
 
     async def test_transcript_target_event_omits_raw(self) -> None:
         result = await self._run_loop(
