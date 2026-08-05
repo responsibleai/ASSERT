@@ -658,7 +658,7 @@ def _genai_extract_events(
             tool_calls.extend(_extract_tool_calls(message))
 
         elif name == _GENAI_TOOL_MESSAGE_EVENT:
-            call_id = (
+            call_id = _safe_tool_call_id(
                 attrs.get("id")
                 or attrs.get("tool_call_id")
                 or attrs.get(_GENAI_TOOL_CALL_ID_KEY)
@@ -712,8 +712,18 @@ def _normalize_tool_call(value: Any) -> dict[str, Any] | None:
     return {
         "name": name or "tool",
         "args": _genai_tool_args(raw_args),
-        "call_id": value.get("id") or value.get("call_id") or value.get("tool_call_id"),
+        "call_id": _safe_tool_call_id(
+            value.get("id") or value.get("call_id") or value.get("tool_call_id")
+        ),
     }
+
+
+def _safe_tool_call_id(value: Any) -> str | None:
+    """Return a hashable call id, degrading malformed telemetry to no id."""
+    if value is None or isinstance(value, (dict, list, set, tuple)):
+        return None
+    text = str(value)
+    return text or None
 
 
 def _coerce_json(value: Any) -> Any:
@@ -905,8 +915,9 @@ def _messages_text(value: Any, *, roles: set[str | None] | None = None) -> str:
         if not isinstance(msg, dict):
             continue
         role = msg.get("role")
-        if roles is not None and role not in roles:
-            continue
+        if roles is not None:
+            if not isinstance(role, (str, type(None))) or role not in roles:
+                continue
         text = _message_text(msg)
         if text:
             texts.append(text)
@@ -993,7 +1004,7 @@ def _span_tool_name(span: OTelSpan) -> str:
 
 def _span_tool_call_id(span: OTelSpan) -> str | None:
     if span.convention == "gen_ai":
-        return span.attributes.get(_GENAI_TOOL_CALL_ID_KEY)
+        return _safe_tool_call_id(span.attributes.get(_GENAI_TOOL_CALL_ID_KEY))
     return None
 
 
@@ -1020,6 +1031,46 @@ def _span_tool_result(span: OTelSpan) -> str:
     return span.attributes.get(_OUTPUT_VALUE_KEY, "") or ""
 
 
+def _merge_tool_call_carriers(
+    attr_tool_calls: list[dict[str, Any]],
+    event_tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deduplicate the same call across attribute and event carriers only.
+
+    Repeated call ids across separate spans/turns remain intact. Calls repeated
+    within one carrier also remain intact because only event calls that mirror
+    an attribute call are removed.
+    """
+    attr_ids = {
+        call_id
+        for call in attr_tool_calls
+        if (call_id := _safe_tool_call_id(call.get("call_id")))
+    }
+    attr_without_ids = {
+        (
+            str(call.get("name") or "tool"),
+            json.dumps(call.get("args", {}), sort_keys=True, default=str),
+        )
+        for call in attr_tool_calls
+        if _safe_tool_call_id(call.get("call_id")) is None
+    }
+
+    merged = list(attr_tool_calls)
+    for call in event_tool_calls:
+        call_id = _safe_tool_call_id(call.get("call_id"))
+        if call_id and call_id in attr_ids:
+            continue
+        if call_id is None:
+            signature = (
+                str(call.get("name") or "tool"),
+                json.dumps(call.get("args", {}), sort_keys=True, default=str),
+            )
+            if signature in attr_without_ids:
+                continue
+        merged.append(call)
+    return merged
+
+
 def _span_requested_tool_calls(span: OTelSpan) -> list[dict[str, Any]]:
     """Tool calls requested from GenAI model/agent messages/events."""
     if span.convention != "gen_ai" or span.kind == "TOOL":
@@ -1032,13 +1083,14 @@ def _span_requested_tool_calls(span: OTelSpan) -> list[dict[str, Any]]:
             span.attributes.get(_OPENCLAW_OUTPUT_MESSAGES_KEY)
         )
     _, event_tool_calls, _ = _genai_extract_events(span.events)
-    return [*attr_tool_calls, *event_tool_calls]
+    return _merge_tool_call_carriers(attr_tool_calls, event_tool_calls)
 
 
 def _span_requested_tool_calls_for_serialization(
     span: OTelSpan,
     *,
     max_content_chars: int,
+    results_by_id: dict[str, list[Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """GenAI model/agent-requested tool calls for tree/chunked serialization."""
     if span.convention != "gen_ai" or span.kind == "TOOL":
@@ -1052,18 +1104,25 @@ def _span_requested_tool_calls_for_serialization(
             span.attributes.get(_OPENCLAW_OUTPUT_MESSAGES_KEY)
         )
     _, event_tool_calls, event_results = _genai_extract_events(span.events)
+    tool_calls = _merge_tool_call_carriers(attr_tool_calls, event_tool_calls)
 
-    results_by_id: dict[str, list[Any]] = {}
-    for call_id, result in event_results:
-        results_by_id.setdefault(call_id, []).append(result)
+    if results_by_id is None:
+        results_by_id = {}
+        for call_id, result in event_results:
+            safe_id = _safe_tool_call_id(call_id)
+            if safe_id:
+                results_by_id.setdefault(safe_id, []).append(result)
 
     serialized: list[dict[str, Any]] = []
-    for call in [*attr_tool_calls, *event_tool_calls]:
+    for call in tool_calls:
         item: dict[str, Any] = {
             "name": call.get("name") or "tool",
-            "arguments": call.get("args", {}),
+            "arguments": _truncate_tool_args(
+                call.get("args", {}),
+                max_content_chars,
+            ),
         }
-        call_id = call.get("call_id")
+        call_id = _safe_tool_call_id(call.get("call_id"))
         if call_id:
             item["tool_call_id"] = call_id
             pending_results = results_by_id.get(call_id, [])
@@ -1166,7 +1225,36 @@ def _truncate_tool_args(value: Any, max_content_chars: int) -> Any:
         truncated = dict(value)
         truncated["raw"] = value["raw"][:max_content_chars]
         return truncated
-    return value
+    try:
+        serialized = json.dumps(value, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        serialized = str(value)
+    if len(serialized) <= max_content_chars:
+        return value
+    return {"raw": serialized[:max_content_chars]}
+
+
+def _collect_genai_tool_results(
+    spans: list[OTelSpan],
+) -> dict[str, list[Any]]:
+    """Collect result queues across spans for TREE/CHUNKED correlation."""
+    results_by_id: dict[str, list[Any]] = {}
+    for span in sorted(spans, key=lambda item: item.start_time_ns):
+        _, _, event_results = _genai_extract_events(span.events)
+        event_ids: set[str] = set()
+        for call_id, result in event_results:
+            safe_id = _safe_tool_call_id(call_id)
+            if not safe_id:
+                continue
+            results_by_id.setdefault(safe_id, []).append(result)
+            event_ids.add(safe_id)
+
+        if span.convention == "gen_ai" and span.kind == "TOOL":
+            call_id = _span_tool_call_id(span)
+            result = _span_tool_result(span)
+            if call_id and call_id not in event_ids and result:
+                results_by_id.setdefault(call_id, []).append(result)
+    return results_by_id
 
 
 # ── Span validation ───────────────────────────────────────────────
@@ -1663,7 +1751,7 @@ def extract_trajectory_inputs(
                     pending_requested_call_ids,
                     span,
                 )
-            else:
+            elif span.convention == "gen_ai":
                 node = _span_node_name(span)
                 if node and node not in node_path:
                     node_path.append(node)
@@ -1788,6 +1876,7 @@ class SpanNode:
         include_input: bool = False,
         include_output: bool = True,
         max_content_chars: int = 500,
+        _tool_results_by_id: dict[str, list[Any]] | None = None,
     ) -> dict[str, Any]:
         """Serialize to a judge-friendly dict with selective field inclusion."""
         d: dict[str, Any] = {
@@ -1814,6 +1903,7 @@ class SpanNode:
         requested_tool_calls = _span_requested_tool_calls_for_serialization(
             self.span,
             max_content_chars=max_content_chars,
+            results_by_id=_tool_results_by_id,
         )
         if requested_tool_calls:
             d["tool_calls"] = requested_tool_calls
@@ -1831,6 +1921,7 @@ class SpanNode:
                     include_input=include_input,
                     include_output=include_output,
                     max_content_chars=max_content_chars,
+                    _tool_results_by_id=_tool_results_by_id,
                 )
                 for c in self.children
             ]
@@ -1945,48 +2036,58 @@ def extract_for_judge(
         tree = build_span_tree(spans)
         metadata["max_depth"] = max((r.depth for r in tree), default=0)
         # Selective serialization — strip LLM input messages (redundant accumulated context)
-        tree_data = [
-            root.to_dict(
-                include_input=False,
-                include_output=True,
-                max_content_chars=max_content_chars,
-            )
-            for root in tree
-        ]
+        def _serialize_tree(content_chars: int) -> list[dict[str, Any]]:
+            results_by_id = _collect_genai_tool_results(spans)
+            return [
+                root.to_dict(
+                    include_input=False,
+                    include_output=True,
+                    max_content_chars=content_chars,
+                    _tool_results_by_id=results_by_id,
+                )
+                for root in tree
+            ]
+
+        tree_data = _serialize_tree(max_content_chars)
         # Estimate token size and truncate if needed
         serialized = json.dumps(tree_data)
         est_tokens = len(serialized) // 4  # rough estimate: 4 chars per token
         if est_tokens > max_tokens_budget:
             # Reduce content chars proportionally
             ratio = max_tokens_budget / est_tokens
-            reduced_chars = max(100, int(max_content_chars * ratio))
-            tree_data = [
-                root.to_dict(
-                    include_input=False,
-                    include_output=True,
-                    max_content_chars=reduced_chars,
-                )
-                for root in tree
-            ]
+            reduced_chars = max(16, int(max_content_chars * ratio))
+            tree_data = _serialize_tree(reduced_chars)
         return {"mode": mode, "representation": tree_data, "metadata": metadata}
 
     if mode == ExtractionMode.CHUNKED:
         # Evaluate per agent boundary
         tree = build_span_tree(spans)
         metadata["max_depth"] = max((r.depth for r in tree), default=0)
-        chunks: list[dict[str, Any]] = []
-        for root in tree:
-            chunk = {
-                "agent": _span_node_name(root.span),
-                "type": root.span.kind,
-                "span_count": root.size,
-                "tree": root.to_dict(
-                    include_input=False,
-                    include_output=True,
-                    max_content_chars=max_content_chars,
-                ),
-            }
-            chunks.append(chunk)
+
+        def _serialize_chunks(content_chars: int) -> list[dict[str, Any]]:
+            results_by_id = _collect_genai_tool_results(spans)
+            return [
+                {
+                    "agent": _span_node_name(root.span),
+                    "type": root.span.kind,
+                    "span_count": root.size,
+                    "tree": root.to_dict(
+                        include_input=False,
+                        include_output=True,
+                        max_content_chars=content_chars,
+                        _tool_results_by_id=results_by_id,
+                    ),
+                }
+                for root in tree
+            ]
+
+        chunks = _serialize_chunks(max_content_chars)
+        serialized = json.dumps(chunks)
+        est_tokens = len(serialized) // 4
+        if est_tokens > max_tokens_budget:
+            ratio = max_tokens_budget / est_tokens
+            reduced_chars = max(16, int(max_content_chars * ratio))
+            chunks = _serialize_chunks(reduced_chars)
         return {"mode": mode, "representation": chunks, "metadata": metadata}
 
     raise ValueError(f"Unknown extraction mode: {mode}")
