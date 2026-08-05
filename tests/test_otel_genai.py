@@ -1238,7 +1238,7 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
         self.assertEqual(json.loads(row["node_path"]), ["planner"])
 
     def test_dual_carrier_tool_request_is_emitted_once(self):
-        from assert_ai.core.otel import extract_trajectory_inputs, SpanNode
+        from assert_ai.core.otel import extract_trajectory_inputs, SpanNode, _spans_to_events
 
         tool_call = {
             "id": "call_dual",
@@ -1280,6 +1280,62 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
         )
         self.assertEqual(len(tree_calls), 1)
         self.assertEqual(tree_calls[0]["tool_call_id"], "call_dual")
+        flat_calls = [
+            item for item in _spans_to_events([span])[0]
+            if item.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual(len(flat_calls), 1)
+
+    def test_dual_carrier_same_id_with_different_payload_preserves_both(self):
+        from assert_ai.core.otel import extract_trajectory_inputs, SpanNode, _spans_to_events
+
+        attr_call = {
+            "id": "call_conflict",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": json.dumps({"q": "weather"}),
+            },
+        }
+        event_call = {
+            "id": "call_conflict",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": json.dumps({"q": "news"}),
+            },
+        }
+        span = self._span(
+            kind="LLM",
+            span_id="conflicting_carriers",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps([
+                    {"role": "assistant", "tool_calls": [attr_call]}
+                ]),
+            },
+            events=[{
+                "name": "gen_ai.choice",
+                "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                    "role": "assistant",
+                    "tool_calls": [event_call],
+                })}}],
+            }],
+        )
+
+        trajectory_calls = json.loads(
+            extract_trajectory_inputs([span])[0]["tool_calls"]
+        )
+        self.assertEqual(
+            [call["arguments"]["q"] for call in trajectory_calls],
+            ["weather", "news"],
+        )
+        self.assertEqual(len(SpanNode(span).to_dict()["tool_calls"]), 2)
+        flat_calls = [
+            item for item in _spans_to_events([span])[0]
+            if item.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual(len(flat_calls), 2)
 
     def test_tree_correlates_tool_result_across_spans(self):
         from assert_ai.core.otel import extract_for_judge, ExtractionMode
@@ -1345,14 +1401,76 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
         )
         self.assertEqual(chunk_request["tool_calls"][0]["tool_result"], "sunny")
 
-    def test_tree_preserves_repeated_call_ids_and_result_fifo_across_spans(self):
+    def test_result_before_request_does_not_seed_reused_call_id(self):
         from assert_ai.core.otel import extract_for_judge, ExtractionMode
 
-        def request(span_id, start, query):
+        def result_event(content):
+            return {
+                "name": "gen_ai.tool.message",
+                "attributes": [
+                    {"key": "id", "value": {"stringValue": "reused"}},
+                    {"key": "content", "value": {"stringValue": content}},
+                ],
+            }
+
+        root = self._span(
+            kind="AGENT",
+            span_id="root_reused",
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+        )
+        stale_result = self._span(
+            kind="AGENT",
+            span_id="stale_result",
+            parent="root_reused",
+            start=1,
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+            events=[result_event("stale")],
+        )
+        request = self._span(
+            kind="LLM",
+            span_id="reused_request",
+            parent="root_reused",
+            start=2,
+            attrs={"gen_ai.operation.name": "chat"},
+            events=[{
+                "name": "gen_ai.choice",
+                "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "reused",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }],
+                })}}],
+            }],
+        )
+        fresh_result = self._span(
+            kind="AGENT",
+            span_id="fresh_result",
+            parent="root_reused",
+            start=3,
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+            events=[result_event("fresh")],
+        )
+
+        tree = extract_for_judge(
+            [root, stale_result, request, fresh_result],
+            mode=ExtractionMode.TREE,
+        )["representation"][0]
+        request_node = next(
+            child for child in tree["children"]
+            if child["span_id"] == "reused_request"
+        )
+        self.assertEqual(request_node["tool_calls"][0]["tool_result"], "fresh")
+
+    def test_tree_result_assignment_uses_chronology_not_depth_first_order(self):
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode
+
+        def request(span_id, parent, start, query):
             return self._span(
                 kind="LLM",
                 span_id=span_id,
-                parent="root_fifo",
+                parent=parent,
                 start=start,
                 attrs={"gen_ai.operation.name": "chat"},
                 events=[{
@@ -1393,23 +1511,39 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
                 span_id="root_fifo",
                 attrs={"gen_ai.operation.name": "invoke_agent"},
             ),
-            request("request_1", 1_000, "first"),
-            request("request_2", 2_000, "second"),
-            result("result_1", 3_000, "first-result"),
-            result("result_2", 4_000, "second-result"),
+            self._span(
+                kind="AGENT",
+                span_id="container",
+                parent="root_fifo",
+                start=1,
+                attrs={"gen_ai.operation.name": "invoke_agent"},
+            ),
+            request("request_sibling", "root_fifo", 2, "sibling"),
+            request("request_nested", "container", 100, "nested"),
+            result("result_1", 200, "sibling-result"),
+            result("result_2", 300, "nested-result"),
         ]
 
         tree = extract_for_judge(
             spans,
             mode=ExtractionMode.TREE,
         )["representation"][0]
-        request_nodes = [
-            child for child in tree["children"]
-            if child["span_id"].startswith("request_")
-        ]
+        container = next(
+            child for child in tree["children"] if child["span_id"] == "container"
+        )
+        sibling = next(
+            child for child in tree["children"] if child["span_id"] == "request_sibling"
+        )
+        nested = next(
+            child for child in container["children"] if child["span_id"] == "request_nested"
+        )
         self.assertEqual(
-            [node["tool_calls"][0]["tool_result"] for node in request_nodes],
-            ["first-result", "second-result"],
+            sibling["tool_calls"][0]["tool_result"],
+            "sibling-result",
+        )
+        self.assertEqual(
+            nested["tool_calls"][0]["tool_result"],
+            "nested-result",
         )
 
     def test_malformed_roles_and_call_ids_do_not_abort_extraction(self):
@@ -1417,6 +1551,7 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
             extract_span_inputs,
             extract_trajectory_inputs,
             SpanNode,
+            _spans_to_events,
         )
 
         span = self._span(
@@ -1455,6 +1590,21 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
         self.assertEqual(calls[0]["name"], "lookup")
         self.assertEqual(len(SpanNode(span).to_dict()["tool_calls"]), 1)
 
+        malformed_tool = self._span(
+            kind="TOOL",
+            span_id="malformed_tool",
+            attrs={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "lookup",
+                "gen_ai.tool.call.id": ["bad-tool-id"],
+                "gen_ai.tool.call.arguments": json.dumps({"q": "weather"}),
+                "gen_ai.tool.call.result": "sunny",
+            },
+        )
+        flat_events, _ = _spans_to_events([malformed_tool])
+        self.assertEqual(len(flat_events), 1)
+        self.assertNotIn("tool_call_id", flat_events[0]["edit"])
+
     def test_tree_truncates_structured_tool_arguments(self):
         from assert_ai.core.otel import SpanNode, extract_for_judge, ExtractionMode
 
@@ -1487,7 +1637,7 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
             max_tokens_budget=100,
             max_content_chars=500,
         )
-        self.assertLess(len(json.dumps(result["representation"])), 2_000)
+        self.assertLessEqual(len(json.dumps(result["representation"])), 400)
 
         chunked = extract_for_judge(
             [span],
@@ -1495,7 +1645,38 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
             max_tokens_budget=100,
             max_content_chars=20_000,
         )
-        self.assertLess(len(json.dumps(chunked["representation"])), 2_000)
+        self.assertLessEqual(len(json.dumps(chunked["representation"])), 400)
+
+        many_spans = [
+            self._span(
+                kind="LLM",
+                span_id=f"large_args_{index}",
+                start=index,
+                attrs={
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.output.messages": json.dumps([{
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": f"call_large_{index}",
+                            "type": "function",
+                            "function": {
+                                "name": "submit",
+                                "arguments": json.dumps(huge_args),
+                            },
+                        }],
+                    }]),
+                },
+            )
+            for index in range(8)
+        ]
+        many = extract_for_judge(
+            many_spans,
+            mode=ExtractionMode.TREE,
+            max_tokens_budget=200,
+            max_content_chars=20_000,
+        )
+        self.assertLessEqual(len(json.dumps(many["representation"])), 800)
+        self.assertTrue(many["metadata"].get("representation_truncated"))
 
 
 if __name__ == "__main__":
