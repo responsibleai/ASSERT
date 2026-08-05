@@ -27,7 +27,7 @@ from assert_ai.core.io import (
 )
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_not_applicable_dimension, is_valid_event_flag
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
-from assert_ai.results import compute_dimension_summary, detect_dimensions
+from assert_ai.results import compute_dimension_summary, compute_policy_violation_by_permissibility, detect_dimensions
 
 EXPORT_DIR_NAME = "exports"
 CSV_FORMAT = "csv"
@@ -643,16 +643,17 @@ def load_suite_tables(
                 for key in dimensions_payload:
                     relevant_dimensions.add(str(key))
 
+        ok_score_rows = [
+            row for row in score_rows if infer_judge_status(row) == "ok"
+        ]
         permissible_scores = [
-            row for row in score_rows
-            if infer_judge_status(row) == "ok"
-            and _row_permissible(row, permissible_by_name)
+            row for row in ok_score_rows
+            if _row_permissible(row, permissible_by_name)
         ]
-        not_permissible_scores = [
-            row for row in score_rows
-            if infer_judge_status(row) == "ok"
-            and not _row_permissible(row, permissible_by_name)
-        ]
+        policy_violation_split = compute_policy_violation_by_permissibility(
+            ok_score_rows,
+            taxonomy.get("behavior_categories") or [],
+        )
         run_rows.append(
             {
                 "suite_id": suite_id,
@@ -671,10 +672,9 @@ def load_suite_tables(
                 "policy_violation_rate": _event_rate(score_rows, "policy_violation"),
                 "overrefusal_rate": _event_rate(score_rows, "overrefusal"),
                 "permissible_overrefusal_rate": _event_rate(permissible_scores, "overrefusal"),
-                "not_permissible_policy_violation_rate": _event_rate(
-                    not_permissible_scores,
-                    "policy_violation",
-                ),
+                "not_permissible_policy_violation_rate": (
+                    policy_violation_split["not_permissible"] or {}
+                ).get("rate"),
             }
         )
 

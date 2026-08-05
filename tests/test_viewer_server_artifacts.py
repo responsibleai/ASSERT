@@ -21,6 +21,7 @@ DIMENSIONS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "dimensions.ts"
 ARTIFACTS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "artifacts.ts"
 CONFIG_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "config.ts"
 JUDGMENT_SRC = ROOT / "viewer" / "src" / "lib" / "judgment.ts"
+PERMISSIBILITY_SRC = ROOT / "viewer" / "src" / "lib" / "permissibility.ts"
 RESULT_VIEW_SRC = ROOT / "viewer" / "src" / "lib" / "result-view.ts"
 TYPES_SRC = ROOT / "viewer" / "src" / "lib" / "types.ts"
 
@@ -34,6 +35,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         artifacts_path = harness_dir / "artifacts.ts"
         config_path = harness_dir / "config.ts"
         judgment_path = harness_dir / "judgment.ts"
+        permissibility_path = harness_dir / "permissibility.ts"
         result_view_path = harness_dir / "result-view.ts"
         types_path = harness_dir / "types.ts"
 
@@ -45,11 +47,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             .replace("./artifacts.js", "./artifacts.ts")
             .replace("./metrics.js", "./metrics.ts")
             .replace("$lib/judgment.js", "./judgment.ts")
+            .replace("$lib/permissibility.js", "./permissibility.ts")
             .replace("$lib/result-view.js", "./result-view.ts")
         )
         metrics_source = (
             METRICS_SRC.read_text(encoding="utf-8")
             .replace("$lib/judgment.js", "./judgment.ts")
+            .replace("$lib/permissibility.js", "./permissibility.ts")
             .replace("./dimensions.js", "./dimensions.ts")
             .replace("$lib/types.js", "./types.ts")
         )
@@ -66,6 +70,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         judgment_source = JUDGMENT_SRC.read_text(encoding="utf-8").replace(
             "./types.js", "./types.ts"
         )
+        permissibility_source = (
+            PERMISSIBILITY_SRC.read_text(encoding="utf-8")
+            .replace("./judgment.js", "./judgment.ts")
+            .replace("./types.js", "./types.ts")
+        )
         result_view_source = RESULT_VIEW_SRC.read_text(encoding="utf-8").replace(
             "$lib/types.js", "./types.ts"
         )
@@ -76,6 +85,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         artifacts_path.write_text(artifacts_source, encoding="utf-8")
         shutil.copyfile(CONFIG_SRC, config_path)
         judgment_path.write_text(judgment_source, encoding="utf-8")
+        permissibility_path.write_text(permissibility_source, encoding="utf-8")
         result_view_path.write_text(result_view_source, encoding="utf-8")
         shutil.copyfile(TYPES_SRC, types_path)
         return data_path
@@ -2060,6 +2070,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                 const {{ computeRunMetrics }} = await import({json.dumps(metrics_path.as_uri())});
                 const behaviors = [
                   {{ name: 'perm_a', definition: '', examples: [], permissible: true }},
+                  {{ name: 'perm_b', definition: '', examples: [], permissible: true }},
                   {{ name: 'notperm_a', definition: '', examples: [], permissible: false }}
                 ];
                 const samples = [
@@ -2076,7 +2087,8 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: false, violated: null, confidence: null, evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }},
@@ -2089,14 +2101,31 @@ class ViewerServerArtifactsTest(unittest.TestCase):
                     judge_model: 'judge-model',
                     judge_status: 'ok',
                     verdict: {{
-                      dimensions: {{ policy_violation: false, overrefusal: false }},
+                      dimensions: {{ policy_violation: true, overrefusal: false }},
                       justification: '',
                       node_judgments: [
                         {{ node_index: 0, node_name: 'perm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }},
                         null,
                         'malformed-node',
-                        {{ node_index: 1, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
-                        {{ node_index: 2, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 3, node_name: 'unknown_node', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }}
+                      ]
+                    }}
+                  }},
+                  {{
+                    test_case_id: 'seed-3',
+                    prompt: 'prompt',
+                    response: 'response',
+                    behavior: 'notperm_a',
+                    target: 'target-model',
+                    judge_model: 'judge-model',
+                    judge_status: 'ok',
+                    verdict: {{
+                      dimensions: {{ policy_violation: true, overrefusal: true }},
+                      justification: '',
+                      node_judgments: [
+                        {{ node_index: 1, node_name: 'perm_b', relevant: true, violated: true, confidence: 'high', evidence_turns: [], reasoning: '' }},
+                        {{ node_index: 2, node_name: 'notperm_a', relevant: true, violated: false, confidence: 'high', evidence_turns: [], reasoning: '' }}
                       ]
                     }}
                   }}
@@ -2115,20 +2144,21 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             payload = json.loads(result.stdout)
 
             with_behaviors = payload["withBehaviors"]
-            self.assertEqual(with_behaviors["scored_total"], 2)
+            self.assertEqual(with_behaviors["scored_total"], 3)
             permissible = with_behaviors["policy_violation_on_permissible"]
             self.assertIsNotNone(permissible)
-            self.assertEqual(permissible["count"], 2)
-            self.assertEqual(permissible["flagged_count"], 1)
+            self.assertEqual(permissible["count"], 3)
+            self.assertEqual(permissible["flagged_count"], 2)
             self.assertEqual(permissible["clear_count"], 1)
-            self.assertAlmostEqual(permissible["rate"], 0.5)
+            self.assertAlmostEqual(permissible["rate"], 2 / 3)
 
             not_permissible = with_behaviors["policy_violation_on_not_permissible"]
             self.assertIsNotNone(not_permissible)
-            self.assertEqual(not_permissible["count"], 1)
+            self.assertEqual(not_permissible["count"], 2)
             self.assertEqual(not_permissible["flagged_count"], 1)
-            self.assertEqual(not_permissible["clear_count"], 0)
-            self.assertAlmostEqual(not_permissible["rate"], 1.0)
+            self.assertEqual(not_permissible["clear_count"], 1)
+            self.assertEqual(not_permissible["not_applicable_count"], 1)
+            self.assertAlmostEqual(not_permissible["rate"], 0.5)
 
             without_behaviors = payload["withoutBehaviors"]
             self.assertIsNone(without_behaviors["policy_violation_on_permissible"])

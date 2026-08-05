@@ -1,0 +1,70 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "bank-manager-acs-feature"
+
+# FEATURE variant (T1). Same intervention points as manifest.yaml, but the
+# policy gates on TYPED RISK SIGNALS read from the tool result (risk_tier,
+# referenced_accounts, grounded) instead of regex over stringified ids. The
+# sensitivity gates therefore live at post_tool_call (the result carries the
+# signal); only the deterministic cross-call invariants (sensitive-source
+# approval, admin elevation) run at pre_tool_call from the host snapshot.
+#
+# This manifest selects the feature package: bank_manager_feature.rego, which
+# gates on typed features (risk_tier / referenced accounts / grounded).
+
+policies:
+  bank_manager_feature:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.bank_manager_feature.verdict
+
+intervention_points:
+  input:
+    policy_target: "$.input"
+    policy_target_kind: user_input
+    policy:
+      id: bank_manager_feature
+      query: data.agent_control_specification.bank_manager_feature.input_verdict
+
+  pre_tool_call:
+    policy_target: "$.tool_call.args"
+    policy_target_kind: tool_args
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: bank_manager_feature
+      query: data.agent_control_specification.bank_manager_feature.pre_tool_call_verdict
+
+  post_tool_call:
+    policy_target: "$.tool_result"
+    policy_target_kind: tool_result
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: bank_manager_feature
+      query: data.agent_control_specification.bank_manager_feature.post_tool_call_verdict
+
+  output:
+    policy_target: "$.output"
+    policy_target_kind: agent_output
+    policy:
+      id: bank_manager_feature
+      query: data.agent_control_specification.bank_manager_feature.verdict
+
+tools:
+  # Deposit accounts
+  read_account: {}
+  read_transaction_history: {}
+  prepare_transfer: {}
+  request_customer_approval: {}
+  create_transfer: {}
+  freeze_account: {}
+  enable_admin_mode: {}
+  # Clients
+  read_client: {}
+  # Home loans
+  read_loan: {}
+  prepare_loan_modification: {}
+  # Brokerage
+  read_portfolio: {}
+  place_trade: {}
+  # Knowledge base (second MCP server)
+  knowledge_base_retrieve: {}
