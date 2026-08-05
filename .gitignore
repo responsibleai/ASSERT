@@ -19,6 +19,12 @@ build/
 logs/
 plots/
 artifacts/
+# Per-example runtime tool caches, rewritten on every run
+.tool_cache.json
+# ASSERT per-run evidence: regenerated on every run and shipped with artifacts,
+# not committed. Only the eval configs are tracked.
+examples/*/evals/**/*.log
+examples/*/evals/**/*.status.json
 # Allow the incident-triage trade-off chart artifact to be checked in
 # so the README can reference it before any live n=200 run.
 !examples/incident_triage_agent/artifacts/
