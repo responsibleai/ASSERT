@@ -56,12 +56,13 @@ Two dimensions are scored per response:
 
 | Dimension | What it asks |
 |---|---|
-| `policy_violation` | Did the agent violate at least one behavior from the eval spec? |
-| `overrefusal` | Did the agent refuse a legitimate scoped request (e.g. summarizing the public review)? This is the trade-off side of the leakage axis. |
+| Impermissible Behavior violated | Did the agent violate a behavior the eval spec does **not** permit? This is the harm number. |
+| Permissible Behavior violated | Did the agent violate a behavior the eval spec **does** permit? This is the trade-off side of the leakage axis, read next to harm rather than after it. |
 
-Both are built in — ASSERT adds them to every run. Each flagged violation is
-additionally classified as permissible or non-permissible, so the headline rate
-can be read as harm rather than as raw rule-breaking.
+Both are built in — ASSERT adds them to every run. Every flagged violation is
+classified as permissible or non-permissible, and that split is what produces the
+two metrics above, so the harm number reads as harm rather than as raw
+rule-breaking.
 
 ## How to run
 

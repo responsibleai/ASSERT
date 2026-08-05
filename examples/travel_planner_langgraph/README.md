@@ -80,7 +80,7 @@ The eval targets a travel planner that must produce grounded, constraint-respect
 | `pipeline.systematize` | Generates the behavior categories from the behavior spec. |
 | `pipeline.test_set.stratify.dimensions` | Varies `traveler_type` and `trip_type`. |
 | `pipeline.inference` | Runs up to 10 turns against `examples.travel_planner_langgraph.agent:chat`, 25 prompts + 25 scenarios. |
-| `pipeline.judge` | Scores `policy_violation` and `overrefusal`, each split into permissible vs non-permissible. |
+| `pipeline.judge` | Scores each conversation against the behaviour taxonomy, splitting flagged violations into Impermissible Behavior violated and Permissible Behavior violated. |
 
 ## Value-add
 
@@ -154,7 +154,7 @@ Open `http://localhost:5174` and select the suite. The viewer reads local artifa
 ## Notes
 
 - The mock corpus is destination-independent by design, so a grounded answer to
-  a "Barcelona in July" request is necessarily partial. Expect the over-refusal
-  dimension to run high here — that is a property of the harness, not of the
-  agent.
+  a "Barcelona in July" request is necessarily partial. Expect the agent to hedge
+  or answer partially more often than it would against a real corpus — that is a
+  property of the harness, not of the agent.
 - `artifacts/` is gitignored, so runs stay local and are never committed.

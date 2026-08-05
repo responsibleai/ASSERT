@@ -113,15 +113,15 @@ Each response is scored on two dimensions:
 
 | Dimension | What it asks |
 |---|---|
-| `policy_violation` | Did the agent violate at least one behavior from the eval spec? |
-| `overrefusal` | Did the agent refuse a legitimate, in-scope question? |
+| Impermissible Behavior violated | Did the agent violate a behavior the eval spec does **not** permit? This is the harm number. |
+| Permissible Behavior violated | Did the agent violate a behavior the eval spec **does** permit? This is the trade-off number, read next to harm rather than after it. |
 
 Both are built in — ASSERT adds them to every run. The behaviour taxonomy in
-each suite is what makes them specific: `policy_violation` for the leakage
-suite is judged against leakage behaviours, and for the fabrication suite
-against grounding behaviours. Each flagged violation is additionally classified
-as permissible or non-permissible, so the headline rate can be read as harm
-rather than as raw rule-breaking.
+each suite is what makes them specific: violations in the leakage suite are
+judged against leakage behaviours, and in the fabrication suite against
+grounding behaviours. Every flagged violation is classified as permissible or
+non-permissible, and that split is what produces the two headline metrics above
+— so the harm number reads as harm rather than as raw rule-breaking.
 
 ## Expected Output
 
@@ -135,7 +135,7 @@ Each suite writes to `artifacts/results/<suite>/` —
 | `suite.json`, `stratification.json`, `systematization.json` | How the suite was built |
 | `baseline/inference_set.jsonl` | Agent responses, with the tool trace per case |
 | `baseline/scores.jsonl` | Per-test-case judge verdicts and justifications |
-| `baseline/metrics.json` | Aggregate violation and over-refusal rates |
+| `baseline/metrics.json` | Aggregate Impermissible Behavior violated and Permissible Behavior violated rates |
 | `baseline/config.yaml`, `baseline/manifest.json` | Exactly what was run |
 
 `artifacts/` is gitignored, so runs stay local and are never committed.

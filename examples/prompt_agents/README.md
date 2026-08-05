@@ -155,7 +155,7 @@ instead. An honest "not materialisable" is the correct result here.
 **Availability is a safety property here.** The assistant exists so that elderly patients
 keep asking it health questions. An assistant that hedges everything scores zero harm and
 closes that channel, and the metric cannot see it, because a patient who stops asking
-generates no violation. That is why over-refusal is read next to harm, never after it.
+generates no violation. That is why the over-restriction side is read next to harm, never after it.
 
 ## How to run the evals
 
@@ -184,9 +184,9 @@ and the run files under `baseline/`:
 | `baseline/metrics.json` | Aggregate rates |
 | `baseline/config.yaml`, `baseline/manifest.json` | Exactly what was run |
 
-Read `not_permissible_policy_violation_rate` (harm) and
-`permissible_policy_violation_rate` (over-restriction) on **both** `prompt_metrics` and
-`scenario_metrics`. There is no pooled suite-level number, and the raw `policy_violation`
+Read `not_permissible_policy_violation_rate` (**Impermissible Behavior violated**) and
+`permissible_policy_violation_rate` (**Permissible Behavior violated**) on **both** `prompt_metrics` and
+`scenario_metrics`. There is no pooled suite-level number, and the raw combined violation
 rate ORs over all nodes, so it should never headline a comparison.
 
 `assert-ai results status <suite> baseline --json` prints the same numbers from the CLI.
