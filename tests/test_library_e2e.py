@@ -43,6 +43,10 @@ ALL_JUDGE_NAMES = sorted(
     p.stem for p in (LIBRARY_ROOT / "judges").glob("*.yaml")
 )
 
+ALL_SCENARIO_NAMES = sorted(
+    p.stem for p in (LIBRARY_ROOT / "scenarios").glob("*.yaml")
+)
+
 BEHAVIOR_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description"}
 JUDGE_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description", "dimensions"}
 
@@ -198,7 +202,9 @@ class CliLibraryListTest(unittest.TestCase):
         # Table should contain no judge_preset kind rows
         self.assertNotIn("judge_preset", result.output)
         # Should contain at least some behavior names
-        self.assertIn("travel_planner", result.output)
+        self.assertIn("prompt_injection", result.output)
+        # travel_planner is a scenario now, not an atomic behavior
+        self.assertNotIn("travel_planner", result.output)
 
     def test_list_filter_judge_only(self):
         result = self.runner.invoke(cli, ["library", "list", "--kind", "judge_preset"])
@@ -217,7 +223,7 @@ class CliLibraryListTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         data = json.loads(result.output)
         self.assertIsInstance(data, list)
-        self.assertEqual(len(data), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES))
+        self.assertEqual(len(data), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES) + len(ALL_SCENARIO_NAMES))
 
     def test_list_json_entries_have_required_keys(self):
         result = self.runner.invoke(cli, ["library", "list", "--json"])
@@ -252,10 +258,16 @@ class CliLibraryShowTest(unittest.TestCase):
         self.runner = CliRunner()
 
     def test_show_behavior_by_name(self):
-        result = self.runner.invoke(cli, ["library", "show", "travel_planner"])
+        result = self.runner.invoke(cli, ["library", "show", "prompt_injection"])
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("prompt_injection", result.output)
+        self.assertIn("kind: behavior", result.output)
+
+    def test_show_scenario_by_name(self):
+        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--kind", "scenario"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("travel_planner", result.output)
-        self.assertIn("kind: behavior", result.output)
+        self.assertIn("kind: scenario", result.output)
 
     def test_show_judge_by_name(self):
         result = self.runner.invoke(cli, ["library", "show", "safety-core"])
@@ -287,11 +299,11 @@ class CliLibraryShowTest(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
 
     def test_show_json_output_behavior(self):
-        result = self.runner.invoke(cli, ["library", "show", "travel_planner", "--json"])
+        result = self.runner.invoke(cli, ["library", "show", "prompt_injection", "--json"])
         self.assertEqual(result.exit_code, 0)
         data = json.loads(result.output)
         self.assertEqual(data["kind"], "behavior")
-        self.assertEqual(data["name"], "travel_planner")
+        self.assertEqual(data["name"], "prompt_injection")
         self.assertIn("description", data)
 
     def test_show_json_output_judge(self):
@@ -611,7 +623,10 @@ class DiscoverCompletenessTest(unittest.TestCase):
 
     def test_discover_all_count(self):
         results = discover()
-        self.assertEqual(len(results), len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES))
+        self.assertEqual(
+            len(results),
+            len(ALL_BEHAVIOR_NAMES) + len(ALL_JUDGE_NAMES) + len(ALL_SCENARIO_NAMES),
+        )
 
 
 # ===================================================================

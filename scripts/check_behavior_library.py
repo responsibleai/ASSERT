@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Guard the behavior library: atomicity, and parity with the spec references.
+
+Two failure modes this prevents.
+
+**Bundling.** `docs/config/best-practices.md` section 8.D requires *atomic*
+behaviors -- narrow enough to be tested and judged on their own. A preset that
+bundles several mechanisms produces a dataset mixing those mechanisms, and the
+resulting metrics cannot be attributed to any single behavioral claim. The
+sharpest objective signal is a preset whose description covers behaviors that
+already exist as their own presets: that is provable bundling, not a judgement
+call.
+
+**Drift.** `examples/behavior_specs/*.md` and `assert_ai/library/behaviors/*.yaml`
+hold the same prose in two formats. Only the YAML ships in the wheel. Without a
+check they diverge silently, and pip users get whichever half was updated.
+
+Run: python scripts/check_behavior_library.py
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+LIB = ROOT / "assert_ai" / "library" / "behaviors"
+SPECS = ROOT / "examples" / "behavior_specs"
+
+# Application scenarios, not atomic behaviors. Tracked separately so the rule
+# stays honest rather than being silently weakened for them.
+SCENARIO_KIND = "scenario"
+
+problems: list[str] = []
+
+
+def fail(where: str, msg: str) -> None:
+    problems.append(f"{where}: {msg}")
+
+
+def words(text: str) -> list[str]:
+    """Wrapping-insensitive token stream.
+
+    The .md files are unwrapped; the YAML descriptions hard-wrap at ~65 chars.
+    Comparing lines reports identical prose as ~5% similar.
+    """
+    text = re.sub(r"^#+\s*", "", text, flags=re.M)
+    text = re.sub(r"^[-*]\s+", "", text, flags=re.M)
+    text = text.replace("\u2014", "-").replace("\u2019", "'")
+    return re.sub(r"\s+", " ", text).strip().lower().split()
+
+
+def load(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        fail(path.name, f"invalid YAML: {exc}")
+        return {}
+
+
+def main() -> int:
+    presets = {p.stem: load(p) for p in sorted(LIB.glob("*.yaml"))}
+    if not presets:
+        print("no presets found")
+        return 1
+
+    behaviors = {n: d for n, d in presets.items() if d.get("kind") != SCENARIO_KIND}
+
+    # -- 1. atomicity ------------------------------------------------------
+    for name, doc in sorted(behaviors.items()):
+        desc = doc.get("description") or ""
+        if not desc:
+            fail(name, "no description")
+            continue
+
+        # Provable bundling: names another preset's behavior.
+        others = [
+            o for o in behaviors
+            if o != name and re.search(rf"\b{re.escape(o.replace('_', ' '))}\b", desc, re.I)
+        ]
+        if others:
+            fail(name, f"bundles other presets ({', '.join(sorted(others))}) -- best-practices 8.D wants atomic behaviors")
+
+        # Multiple '<category> failures' sections is the other bundling shape.
+        cats = re.findall(r"^##\s+(.+?)\s+failures?\s*$", desc, flags=re.M | re.I)
+        if len(cats) > 1:
+            fail(name, f"{len(cats)} failure categories in one preset ({', '.join(cats)}) -- split them")
+
+        # A context/domain spec wearing kind: behavior.
+        if re.search(r"^##\s+(Role|Domain Basics|Operational Procedures)\s*$", desc, flags=re.M | re.I):
+            fail(name, "reads as an application/domain spec, not a behavior -- belongs in context: or kind: scenario")
+
+    # -- 2. parity with the spec references --------------------------------
+    if SPECS.is_dir():
+        md = {p.stem: p for p in SPECS.glob("*.md") if p.stem != "README"}
+        for name, path in sorted(md.items()):
+            doc = presets.get(name)
+            if doc is None:
+                fail(name, f"{path.relative_to(ROOT).as_posix()} has no library preset -- pip users cannot see it")
+                continue
+            a, b = words(path.read_text(encoding="utf-8")), words(doc.get("description") or "")
+            if a != b:
+                import difflib
+                r = difflib.SequenceMatcher(None, a, b).ratio()
+                if r < 0.98:
+                    fail(name, f"spec md and library yaml have drifted (similarity {r:.0%})")
+
+    print(f"{len(presets)} presets ({len(behaviors)} behaviors, {len(presets) - len(behaviors)} scenarios)")
+    if problems:
+        print(f"\n{len(problems)} problem(s):")
+        for p in problems:
+            print("  -", p)
+        return 1
+    print("behavior library OK: atomic, and in parity with examples/behavior_specs")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
