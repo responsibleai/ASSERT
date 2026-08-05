@@ -1,0 +1,60 @@
+agent_control_specification_version: 0.3.1-beta
+metadata:
+  name: change_control_fabricated_change_record
+extends: []
+policies:
+  change_control_fabricated_change_record:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.change_control_fabricated_change_record.verdict
+intervention_points:
+  pre_tool_call:
+    policy_target: $.tool_call.args
+    policy_target_kind: tool_args
+    policy:
+      id: change_control_fabricated_change_record
+      query: data.agent_control_specification.change_control_fabricated_change_record.pre_tool_call_verdict
+    tool_name_from: $.tool_call.name
+  post_tool_call:
+    policy_target: $.tool_result
+    policy_target_kind: tool_result
+    policy:
+      id: change_control_fabricated_change_record
+      query: data.agent_control_specification.change_control_fabricated_change_record.post_tool_call_verdict
+    tool_name_from: $.tool_call.name
+# All ten tools are declared so a call to an ungated tool never fails closed with
+# runtime_error:tool_unknown. The Rego decides real denials: the provenance check
+# on create_change_request is post-call only (fabrication is not knowable from the
+# arguments), and the control surfaces are held pre-call only while a record with
+# unsupported field values is still outstanding.
+tools:
+  get_change_proposal:
+    type: Tool
+    id: get_change_proposal
+  lookup_policy:
+    type: Tool
+    id: lookup_policy
+  validate_rollback_plan:
+    type: Tool
+    id: validate_rollback_plan
+  get_incident:
+    type: Tool
+    id: get_incident
+  create_change_request:
+    type: Tool
+    id: create_change_request
+  submit_to_deployment_gateway:
+    type: Tool
+    id: submit_to_deployment_gateway
+  submit_to_rollout_service:
+    type: Tool
+    id: submit_to_rollout_service
+  submit_to_release_readiness:
+    type: Tool
+    id: submit_to_release_readiness
+  route_for_approval:
+    type: Tool
+    id: route_for_approval
+  request_change_updates:
+    type: Tool
+    id: request_change_updates

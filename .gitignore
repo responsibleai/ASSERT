@@ -95,7 +95,10 @@ README_preannounce.md
 /governance-ledger.md
 
 # Per-run tool-state SQLite DBs written by example agents' real tools (regenerable scratch).
+# The -shm/-wal sidecars appear whenever SQLite is left in WAL mode mid-run.
 examples/**/.state.db
+examples/**/.state.db-shm
+examples/**/.state.db-wal
 
 # Clarity Agent
 /clarity
