@@ -38,6 +38,12 @@ Mode = Literal["key", "aad", "aad-fallback"]
 #: Standard scope for Azure OpenAI / Cognitive Services data-plane tokens.
 AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
 
+#: Scope for Azure AI Foundry data-plane tokens (Foundry projects, hosted
+#: agents, and other ``azure_ai/*`` LiteLLM routes). Distinct from the
+#: Cognitive Services scope above because the Foundry control plane sits
+#: behind a different audience.
+AZURE_FOUNDRY_SCOPE = "https://ai.azure.com/.default"
+
 #: Env var users set to force AAD even when ``AZURE_API_KEY`` is present.
 ENV_USE_AAD_FLAG = "ASSERT_AZURE_USE_AAD"
 
@@ -63,47 +69,97 @@ _FRIENDLY_CRED_LABELS: Mapping[str, str] = {
 
 # DefaultAzureCredential is expensive to construct repeatedly and
 # azure-identity already handles its own in-process token caching, so
-# the provider callable is built lazily once and reused for the
-# process lifetime.
-_CACHED_PROVIDER: Callable[[], str] | None = None
-_CACHE_POPULATED = False
+# provider callables are built lazily and reused for the process
+# lifetime. We key the cache on scope because Azure OpenAI and Azure AI
+# Foundry data planes accept tokens for different audiences; the
+# underlying ``DefaultAzureCredential`` is reused across scopes.
+_PROVIDER_CACHE: dict[str, Callable[[], str] | None] = {}
+_CACHED_CREDENTIAL: object | None = None
+#: True after the first import attempt for ``azure.identity`` has
+#: completed, regardless of whether it succeeded. Lets us short-circuit
+#: repeat imports without re-introducing per-scope ImportError costs.
+_IDENTITY_IMPORT_ATTEMPTED = False
+_IDENTITY_AVAILABLE = False
+
+
+#: API-key env var per Azure model family. The Cognitive Services /
+#: Azure OpenAI resource and the Azure AI Foundry project are separate
+#: resources with separate keys, so an ``AZURE_API_KEY`` in the env is
+#: useless for a ``azure_ai/*`` call (it would be sent to the wrong
+#: endpoint and rejected). Family-aware mode resolution looks at the
+#: matching env var only.
+_FAMILY_KEY_ENV: Mapping[str, str] = {
+    "azure": "AZURE_API_KEY",
+    "azure_ai": "AZURE_AI_API_KEY",
+}
 
 
 def _is_truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() in _TRUTHY
 
 
-def resolve_azure_auth_mode(env: Mapping[str, str] | None = None) -> Mode:
-    """Decide which auth mode applies to Azure OpenAI calls.
+def resolve_azure_auth_mode(
+    env: Mapping[str, str] | None = None,
+    family: str = "azure",
+) -> Mode:
+    """Decide which auth mode applies to a given Azure model family.
 
     Pure function over the environment; safe to call repeatedly. The
     caller is responsible for checking whether the in-flight request is
-    actually an ``azure/*`` model before acting on the returned mode.
+    actually an Azure model before acting on the returned mode.
+
+    ``family`` selects which API-key env var counts as a static-key
+    auth signal:
+
+    - ``azure``: ``AZURE_API_KEY`` (Azure OpenAI / Cognitive Services).
+    - ``azure_ai``: ``AZURE_AI_API_KEY`` (Azure AI Foundry data plane).
+
+    The ``ASSERT_AZURE_USE_AAD`` flag still forces AAD across both
+    families. Defaults to ``family='azure'`` so all existing call sites
+    behave identically.
 
     Defaults to ``os.environ`` when no override is provided.
     """
     env = env if env is not None else os.environ
     if _is_truthy(env.get(ENV_USE_AAD_FLAG)):
         return "aad"
-    if (env.get("AZURE_API_KEY") or "").strip():
+    key_var = _FAMILY_KEY_ENV.get(family, "AZURE_API_KEY")
+    if (env.get(key_var) or "").strip():
         return "key"
     return "aad-fallback"
 
 
-def get_azure_token_provider() -> Callable[[], str] | None:
-    """Return a cached bearer-token callable for Azure OpenAI, or ``None``.
+def get_azure_token_provider(
+    scope: str = AZURE_OPENAI_SCOPE,
+) -> Callable[[], str] | None:
+    """Return a cached bearer-token callable for ``scope``, or ``None``.
 
     Returns ``None`` (without raising) when ``azure-identity`` is not
     installed. Callers should treat ``None`` as "AAD requested but
     optional dependency missing" and surface an actionable install hint.
 
+    The default scope (:data:`AZURE_OPENAI_SCOPE`) covers ``azure/*``
+    LiteLLM models. Pass :data:`AZURE_FOUNDRY_SCOPE` for ``azure_ai/*``
+    routes (Foundry hosted agents, embeddings, chat). Each scope gets
+    its own cached provider; all providers share a single
+    ``DefaultAzureCredential`` instance so adding a second scope does
+    not pay for a second credential-chain probe.
+
     Honors ``AZURE_CLIENT_ID`` natively via ``DefaultAzureCredential``
     so users can select a specific user-assigned managed identity
     without passing anything to ASSERT.
     """
-    global _CACHED_PROVIDER, _CACHE_POPULATED
-    if _CACHE_POPULATED:
-        return _CACHED_PROVIDER
+    global _CACHED_CREDENTIAL, _IDENTITY_IMPORT_ATTEMPTED, _IDENTITY_AVAILABLE
+
+    if scope in _PROVIDER_CACHE:
+        return _PROVIDER_CACHE[scope]
+
+    if _IDENTITY_IMPORT_ATTEMPTED and not _IDENTITY_AVAILABLE:
+        # A prior call already discovered the dep is missing; don't
+        # re-pay the ImportError or re-log the install hint for every
+        # additional scope a caller asks about.
+        _PROVIDER_CACHE[scope] = None
+        return None
 
     try:
         from azure.identity import (  # type: ignore[import-not-found]
@@ -115,19 +171,25 @@ def get_azure_token_provider() -> Callable[[], str] | None:
             "azure-identity is not installed; AAD auth unavailable. "
             "Install with: pip install 'assert-ai[azure-aad]'"
         )
-        _CACHE_POPULATED = True
+        _IDENTITY_IMPORT_ATTEMPTED = True
+        _IDENTITY_AVAILABLE = False
+        _PROVIDER_CACHE[scope] = None
         return None
 
-    # Skip the interactive flows so CI / non-interactive shells fail
-    # fast instead of hanging on a browser prompt.
-    credential = DefaultAzureCredential(
-        exclude_interactive_browser_credential=True,
-        exclude_visual_studio_code_credential=True,
-    )
-    raw_provider = get_bearer_token_provider(credential, AZURE_OPENAI_SCOPE)
-    _CACHED_PROVIDER = _wrap_provider_with_provenance_log(credential, raw_provider)
-    _CACHE_POPULATED = True
-    return _CACHED_PROVIDER
+    _IDENTITY_IMPORT_ATTEMPTED = True
+    _IDENTITY_AVAILABLE = True
+
+    if _CACHED_CREDENTIAL is None:
+        # Skip the interactive flows so CI / non-interactive shells fail
+        # fast instead of hanging on a browser prompt.
+        _CACHED_CREDENTIAL = DefaultAzureCredential(
+            exclude_interactive_browser_credential=True,
+            exclude_visual_studio_code_credential=True,
+        )
+    raw_provider = get_bearer_token_provider(_CACHED_CREDENTIAL, scope)
+    provider = _wrap_provider_with_provenance_log(_CACHED_CREDENTIAL, raw_provider)
+    _PROVIDER_CACHE[scope] = provider
+    return provider
 
 
 def _wrap_provider_with_provenance_log(
@@ -140,7 +202,7 @@ def _wrap_provider_with_provenance_log(
     ``DefaultAzureCredential`` extends) sets ``_successful_credential``
     after a successful ``get_token``. We read it once after the first
     successful token to give users a single, friendly provenance line
-    (``"Azure OpenAI auth: AAD token acquired via AzureCliCredential
+    (``"Azure auth: AAD token acquired via AzureCliCredential
     (az login)."``) without flooding logs with the SDK's per-step
     chain trace.
 
@@ -159,7 +221,7 @@ def _wrap_provider_with_provenance_log(
             label = _FRIENDLY_CRED_LABELS.get(cls_name or "", "credential chain")
             if cls_name:
                 log.info(
-                    "Azure OpenAI auth: AAD token acquired via %s (%s).",
+                    "Azure auth: AAD token acquired via %s (%s).",
                     cls_name,
                     label,
                 )
@@ -167,7 +229,7 @@ def _wrap_provider_with_provenance_log(
                 # Token came back but we couldn't identify the inner
                 # credential — still tell the user AAD succeeded so
                 # they're not left guessing.
-                log.info("Azure OpenAI auth: AAD token acquired.")
+                log.info("Azure auth: AAD token acquired.")
             logged["done"] = True
         return token
 
@@ -186,11 +248,19 @@ def _wrap_provider_with_provenance_log(
 _AZURE_AUTH_MODE: Mode | None = None
 
 # True when the user's environment selects AAD (explicit or fallback)
-# but the ``azure-identity`` package is not importable. Used by
+# for the ``azure`` family (Azure OpenAI, AZURE_OPENAI_SCOPE) but the
+# ``azure-identity`` package is not importable. Used by
 # ``model_client._classify_llm_error`` to swap the RBAC hint for an
-# install hint. Updated alongside ``_AZURE_AUTH_MODE`` whenever the
-# cache is refreshed.
-_AZURE_AAD_DEP_MISSING: bool = False
+# install hint on ``azure/*`` calls. Updated alongside
+# ``_AZURE_AUTH_MODE`` whenever the cache is refreshed.
+#
+# The dep-availability check is family-agnostic in practice (the
+# import either works or it does not), so the install-hint branch in
+# the classifier reuses this flag for ``azure_ai/*`` calls too. The
+# name is scoped to ``OPENAI`` to make it explicit that the
+# ``_AZURE_AUTH_MODE`` half of the pair is azure-family only;
+# ``azure_ai/*`` re-resolves its own mode per request.
+_AZURE_OPENAI_AAD_DEP_MISSING: bool = False
 
 
 def refresh_azure_auth_mode(force: bool = False) -> Mode:
@@ -203,11 +273,11 @@ def refresh_azure_auth_mode(force: bool = False) -> Mode:
 
     Returns the resolved mode for the caller's convenience.
     """
-    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    global _AZURE_AUTH_MODE, _AZURE_OPENAI_AAD_DEP_MISSING
     if _AZURE_AUTH_MODE is not None and not force:
         return _AZURE_AUTH_MODE
     _AZURE_AUTH_MODE = resolve_azure_auth_mode()
-    _AZURE_AAD_DEP_MISSING = (
+    _AZURE_OPENAI_AAD_DEP_MISSING = (
         _AZURE_AUTH_MODE in ("aad", "aad-fallback")
         and get_azure_token_provider() is None
     )
@@ -235,48 +305,50 @@ def log_resolved_azure_auth_mode() -> None:
     mode = _get_azure_auth_mode()
     if mode == "aad":
         log.info(
-            "Azure OpenAI auth mode: AAD (forced via %s).",
+            "Azure auth mode: AAD (forced via %s).",
             ENV_USE_AAD_FLAG,
         )
-        if _AZURE_AAD_DEP_MISSING:
+        if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.warning(
                 "%s is set but azure-identity is not installed; the next "
-                "azure/* request will fail. Install with: "
+                "azure/* or azure_ai/* request will fail. Install with: "
                 "pip install 'assert-ai[azure-aad]'",
                 ENV_USE_AAD_FLAG,
             )
     elif mode == "aad-fallback":
-        if _AZURE_AAD_DEP_MISSING:
+        if _AZURE_OPENAI_AAD_DEP_MISSING:
             log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "Azure auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "azure-identity not installed — install with: "
                 "pip install 'assert-ai[azure-aad]').",
             )
         else:
             log.info(
-                "Azure OpenAI auth mode: AAD fallback (no AZURE_API_KEY set; "
+                "Azure auth mode: AAD fallback (no AZURE_API_KEY set; "
                 "using DefaultAzureCredential).",
             )
     else:
-        log.info("Azure OpenAI auth mode: API key (AZURE_API_KEY).")
+        log.info("Azure auth mode: API key (AZURE_API_KEY).")
 
 
 def _reset_cache_for_tests() -> None:
-    """Clear the cached provider — for tests only."""
-    global _CACHED_PROVIDER, _CACHE_POPULATED
-    _CACHED_PROVIDER = None
-    _CACHE_POPULATED = False
+    """Clear the cached providers and credential — for tests only."""
+    global _CACHED_CREDENTIAL, _IDENTITY_IMPORT_ATTEMPTED, _IDENTITY_AVAILABLE
+    _PROVIDER_CACHE.clear()
+    _CACHED_CREDENTIAL = None
+    _IDENTITY_IMPORT_ATTEMPTED = False
+    _IDENTITY_AVAILABLE = False
 
 
 def _reset_auth_mode_cache_for_tests() -> None:
     """Clear the cached auth-mode resolution — for tests only.
 
-    Resets both ``_AZURE_AUTH_MODE`` and ``_AZURE_AAD_DEP_MISSING`` to
-    their pre-resolution baseline so the next ``refresh_azure_auth_mode``
+    Resets both ``_AZURE_AUTH_MODE`` and ``_AZURE_OPENAI_AAD_DEP_MISSING``
+    to their pre-resolution baseline so the next ``refresh_azure_auth_mode``
     or ``_get_azure_auth_mode`` call resolves against the current env.
     Centralises the field list so future additions to the auth-mode
     cache do not require touching every test that needs a clean slate.
     """
-    global _AZURE_AUTH_MODE, _AZURE_AAD_DEP_MISSING
+    global _AZURE_AUTH_MODE, _AZURE_OPENAI_AAD_DEP_MISSING
     _AZURE_AUTH_MODE = None
-    _AZURE_AAD_DEP_MISSING = False
+    _AZURE_OPENAI_AAD_DEP_MISSING = False

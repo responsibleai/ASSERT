@@ -13,13 +13,16 @@
 		ViewerResultItem
 	} from '$lib/types.js';
 	import {
-		getRecordFlag,
+		getRecordMetricValue,
 		getRequiredBaseMetricNames,
 		inferJudgeStatus,
+		isNotApplicableRecordDimension,
 		multiJudgeDimensionAgreementLabel,
 		multiJudgeHasDisagreement,
 		multiJudgeMeanAgreement
 	} from '$lib/judgment.js';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { visibleMetricNames } from '$lib/permissibility.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
 
 	type MetricSummary = DimensionMetrics;
@@ -66,7 +69,7 @@
 	} = $props();
 
 	const RUN_STAGE_LABELS: Record<string, string> = {
-		seeds: 'Seed Generation',
+		seeds: 'Test Set Generation',
 		inference: 'Inference',
 		judge: 'Scoring'
 	};
@@ -87,31 +90,47 @@
 	}
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return metricTitleLabel(metric);
 	}
-	function metricOutcomeText(flag: boolean | null): string {
+	function metricOutcomeText(flag: boolean | number | string | null): string {
 		if (flag === null) return 'n/a';
+		if (typeof flag === 'number' || typeof flag === 'string') return `grade ${flag}`;
 		return flag ? 'flagged' : 'clear';
 	}
-	function metricOutcomeClass(flag: boolean | null): string {
+	function recordMetricValue(record: JudgedSample | AuditScore, metric: string): boolean | number | string | null {
+		const value = getRecordMetricValue(record, metric);
+		return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' ? value : null;
+	}
+	function metricOutcomeClass(flag: boolean | number | string | null): string {
 		if (flag === null) return 'text-text-muted';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'text-text-default';
 		return flag ? 'text-score-fail' : 'text-score-pass';
 	}
-	function metricRateClass(rate: number): string {
+	function metricRateClass(rate: number | null): string {
+		if (rate == null) return 'text-text-muted';
 		if (rate >= 0.5) return 'text-score-fail';
 		if (rate > 0) return 'text-score-border';
 		return 'text-score-pass';
 	}
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
-	function binaryBar(counts: BinaryCounts | undefined): { clear: number; flagged: number } {
+	function ordinalCount(summary: DimensionMetrics | undefined, value: number | string): number {
+		return (summary?.counts as Record<string, number> | undefined)?.[String(value)] ?? 0;
+	}
+	function ordinalRate(summary: DimensionMetrics | undefined, value: number | string): number {
+		return summary?.rates?.[String(value)] ?? 0;
+	}
+	function binaryBar(counts: BinaryCounts | Record<string, number> | undefined): { clear: number; flagged: number } {
 		if (!counts) return { clear: 0, flagged: 0 };
-		const total = (counts[0] ?? 0) + (counts[1] ?? 0);
+		const values = counts as Record<string, number>;
+		const total = (values['0'] ?? 0) + (values['1'] ?? 0);
 		if (total === 0) return { clear: 0, flagged: 0 };
-		return { clear: ((counts[0] ?? 0) / total) * 100, flagged: ((counts[1] ?? 0) / total) * 100 };
+		return { clear: ((values['0'] ?? 0) / total) * 100, flagged: ((values['1'] ?? 0) / total) * 100 };
 	}
-	function metricDotColor(flag: boolean): string {
+	function metricDotColor(flag: boolean | number | string | null): string {
+		if (flag === null) return 'var(--color-fg-muted, #6e7781)';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'var(--color-accent-fg, #0969da)';
 		return flag ? 'var(--color-score-fail)' : 'var(--color-score-pass)';
 	}
 
@@ -138,8 +157,8 @@
 
 	const promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
 	const auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
-	const promptMetricNames = $derived(promptDimensionNames);
-	const auditMetricNames = $derived(auditDimensionNames);
+	const promptMetricNames = $derived(visibleMetricNames(promptDimensionNames));
+	const auditMetricNames = $derived(visibleMetricNames(auditDimensionNames));
 	const promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
 	const auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
@@ -154,7 +173,7 @@
 	const promptMetricCards = $derived(
 		promptMetricNames.map((dim) => ({
 			key: dim,
-			name: metricLabel(dim),
+			name: metricTitleLabel(dim),
 			summary: data.metrics?.dimensions?.[dim],
 			description: data.dimensionDefs?.[dim]?.description ?? ''
 		}))
@@ -162,7 +181,7 @@
 	const auditMetricCards = $derived(
 		auditMetricNames.map((dim) => ({
 			key: dim,
-			name: metricLabel(dim),
+			name: metricTitleLabel(dim),
 			summary: data.auditMetrics?.dimensions?.[dim],
 			description: data.dimensionDefs?.[dim]?.description ?? ''
 		}))
@@ -253,24 +272,40 @@
 					{#if m.description}
 						<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}
-					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
-						<span class="text-sm text-text-muted">flagged</span>
-					</div>
-					{#if (m.summary?.count ?? 0) > 0}
-						<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
-							{#if pct.clear > 0}
-								<div class="bg-score-pass" style="width: {pct.clear}%"></div>
-							{/if}
-							{#if pct.flagged > 0}
-								<div class="bg-score-fail" style="width: {pct.flagged}%"></div>
-							{/if}
+					{#if m.summary?.kind === 'ordinal' && m.summary.scale}
+						<div class="mt-2 flex items-baseline gap-2">
+							<span class="text-3xl font-bold tabular-nums text-text">{m.summary.median ?? 'N/A'}</span>
+							<span class="text-sm text-text-muted">median grade</span>
 						</div>
-						<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-							<span>{m.summary?.clear_count ?? 0} clear</span>
-							<span>{m.summary?.flagged_count ?? 0} flagged</span>
-							<span>{m.summary?.count ?? 0} total</span>
+						<div class="mt-2 space-y-1">
+							{#each m.summary.scale.values as grade}
+								<div class="flex items-center justify-between gap-2 text-[9px] text-text-muted">
+									<span><strong class="text-text-secondary">{grade.value}</strong> · {grade.label}</span>
+									<span class="tabular-nums">{ordinalCount(m.summary, grade.value)} ({(ordinalRate(m.summary, grade.value) * 100).toFixed(0)}%)</span>
+								</div>
+							{/each}
 						</div>
+						<div class="mt-2 text-[9px] text-text-muted">mean {m.summary.mean?.toFixed(2) ?? 'N/A'} · {m.summary.count} graded · {m.summary.not_applicable_count ?? 0} N/A</div>
+					{:else}
+						<div class="mt-2 flex items-baseline gap-1.5">
+							<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? null)}">{metricRateText(m.summary?.rate ?? null)}</span>
+							<span class="text-sm text-text-muted">flagged</span>
+						</div>
+						{#if (m.summary?.count ?? 0) > 0}
+							<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+								{#if pct.clear > 0}
+									<div class="bg-score-pass" style="width: {pct.clear}%"></div>
+								{/if}
+								{#if pct.flagged > 0}
+									<div class="bg-score-fail" style="width: {pct.flagged}%"></div>
+								{/if}
+							</div>
+							<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
+								<span>{m.summary?.clear_count ?? 0} clear</span>
+								<span>{m.summary?.flagged_count ?? 0} flagged</span>
+								<span>{m.summary?.count ?? 0} total</span>
+							</div>
+						{/if}
 					{/if}
 					{#if promptMultiJudgeStats}
 						<div class="mt-2 text-[9px] text-text-muted">aggregate uses majority judge vote</div>
@@ -307,11 +342,16 @@
 						<span class="flex-1 truncate text-sm text-text-secondary">{(sample.test_case_id && data.promptSeedTitleMap?.[sample.test_case_id]) || sample.prompt}</span>
 						<div class="flex shrink-0 items-center gap-1.5">
 							{#each promptMetricNames as m}
-								{@const v = getRecordFlag(sample, m)}
+								{@const v = recordMetricValue(sample, m)}
 								{#if v !== null}
 									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
 										<span class="text-text-muted">{metricLabel(m)}</span>
 										<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
+									</span>
+								{:else if isNotApplicableRecordDimension(sample, m)}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
+										<span class="text-text-muted">{metricLabel(m)}</span>
+										<span class="font-semibold text-text-muted">N/A</span>
 									</span>
 								{/if}
 							{/each}
@@ -321,7 +361,7 @@
 							{#if sample.multi_judge}
 								<div class="ml-1 flex items-center gap-0.5">
 									{#each (sample.multi_judge as MultiJudge).votes?.[promptPrimaryMetric] ?? [] as vote}
-										{@const agreed = vote === getRecordFlag(sample, promptPrimaryMetric)}
+										{@const agreed = vote === recordMetricValue(sample, promptPrimaryMetric)}
 										<span
 											class="inline-block size-[6px] rounded-full"
 											style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}
@@ -367,20 +407,36 @@
 					{#if m.description}
 						<p class="mt-0.5 text-[10px] text-text-muted/60 leading-snug line-clamp-2">{m.description}</p>
 					{/if}
-					<div class="mt-2 flex items-baseline gap-1.5">
-						<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? 0)}">{metricRateText(m.summary?.rate ?? 0)}</span>
-						<span class="text-sm text-text-muted">flagged</span>
-					</div>
-					{#if (m.summary?.count ?? 0) > 0}
-						<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
-							{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
-							{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+					{#if m.summary?.kind === 'ordinal' && m.summary.scale}
+						<div class="mt-2 flex items-baseline gap-2">
+							<span class="text-3xl font-bold tabular-nums text-text">{m.summary.median ?? 'N/A'}</span>
+							<span class="text-sm text-text-muted">median grade</span>
 						</div>
-						<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
-							<span>{m.summary?.clear_count ?? 0} clear</span>
-							<span>{m.summary?.flagged_count ?? 0} flagged</span>
-							<span>{m.summary?.count ?? 0} total</span>
+						<div class="mt-2 space-y-1">
+							{#each m.summary.scale.values as grade}
+								<div class="flex items-center justify-between gap-2 text-[9px] text-text-muted">
+									<span><strong class="text-text-secondary">{grade.value}</strong> · {grade.label}</span>
+									<span class="tabular-nums">{ordinalCount(m.summary, grade.value)} ({(ordinalRate(m.summary, grade.value) * 100).toFixed(0)}%)</span>
+								</div>
+							{/each}
 						</div>
+						<div class="mt-2 text-[9px] text-text-muted">mean {m.summary.mean?.toFixed(2) ?? 'N/A'} · {m.summary.count} graded · {m.summary.not_applicable_count ?? 0} N/A</div>
+					{:else}
+						<div class="mt-2 flex items-baseline gap-1.5">
+							<span class="text-3xl font-bold tabular-nums {metricRateClass(m.summary?.rate ?? null)}">{metricRateText(m.summary?.rate ?? null)}</span>
+							<span class="text-sm text-text-muted">flagged</span>
+						</div>
+						{#if (m.summary?.count ?? 0) > 0}
+							<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+								{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+								{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+							</div>
+							<div class="mt-1 flex justify-between text-[9px] tabular-nums text-text-muted">
+								<span>{m.summary?.clear_count ?? 0} clear</span>
+								<span>{m.summary?.flagged_count ?? 0} flagged</span>
+								<span>{m.summary?.count ?? 0} total</span>
+							</div>
+						{/if}
 					{/if}
 				</div>
 			{/each}
@@ -414,11 +470,16 @@
 						<span class="flex-1 truncate text-sm text-text-secondary">{title}</span>
 						<div class="flex shrink-0 items-center gap-1.5">
 							{#each auditMetricNames as m}
-								{@const v = getRecordFlag(score, m)}
+								{@const v = recordMetricValue(score, m)}
 								{#if v !== null}
 									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
 										<span class="text-text-muted">{metricLabel(m)}</span>
 										<span class="font-semibold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
+									</span>
+								{:else if isNotApplicableRecordDimension(score, m)}
+									<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]">
+										<span class="text-text-muted">{metricLabel(m)}</span>
+										<span class="font-semibold text-text-muted">N/A</span>
 									</span>
 								{/if}
 							{/each}
@@ -428,7 +489,7 @@
 							{#if score.multi_judge}
 								<div class="ml-1 flex items-center gap-0.5">
 									{#each (score.multi_judge as MultiJudge).votes?.[auditPrimaryMetric] ?? [] as vote}
-										{@const agreed = vote === getRecordFlag(score, auditPrimaryMetric)}
+										{@const agreed = vote === recordMetricValue(score, auditPrimaryMetric)}
 										<span
 											class="inline-block size-[6px] rounded-full"
 											style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}

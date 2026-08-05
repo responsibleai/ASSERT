@@ -168,6 +168,12 @@ Auth resolution at process start follows a single precedence rule:
 `AZURE_API_BASE` is still required so LiteLLM knows which Azure OpenAI endpoint
 to call.
 
+The same auth mode also applies to `azure_ai/*` LiteLLM routes, including
+hosted Azure AI Foundry agents (`azure_ai/agents/<AGENT_ID>`). Those routes
+need `AZURE_AI_API_BASE` set to the Foundry project endpoint instead of
+`AZURE_API_BASE`. No extra setup beyond `pip install -e ".[azure-aad]"` and
+`az login` (or Service Principal env vars).
+
 ### Local development with `az login`
 
 ```bash

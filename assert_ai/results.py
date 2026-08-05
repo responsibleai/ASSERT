@@ -6,10 +6,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from statistics import mean, median
 from typing import Any, Iterable
 
 from assert_ai.core.io import load_json, load_jsonl, row_behavior
-from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.judge import (
+    get_verdict_dimension,
+    infer_judge_status,
+    is_not_applicable_dimension,
+    is_valid_event_flag,
+)
 
 
 def current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
@@ -26,8 +32,30 @@ def current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
     return "unknown", "—"
 
 
+def _dimension_scale(row: dict[str, Any], metric: str) -> dict[str, Any] | None:
+    scales = row.get("dimension_scales")
+    if not isinstance(scales, dict):
+        return None
+    scale = scales.get(metric)
+    return scale if isinstance(scale, dict) else None
+
+
+def _ordinal_scale_values(scale: dict[str, Any] | None) -> list[int | str]:
+    if not isinstance(scale, dict) or scale.get("type") != "ordinal":
+        return []
+    return [
+        entry["value"]
+        for entry in scale.get("values", [])
+        if (
+            isinstance(entry, dict)
+            and not isinstance(entry.get("value"), bool)
+            and isinstance(entry.get("value"), (int, str))
+        )
+    ]
+
+
 def detect_dimensions(rows: Iterable[dict[str, Any]]) -> list[str]:
-    """Collect all binary verdict dimensions present in the provided rows."""
+    """Collect all configured verdict dimensions present in the provided rows."""
     seen: set[str] = set()
     for row in rows:
         verdict = row.get("verdict")
@@ -37,27 +65,100 @@ def detect_dimensions(rows: Iterable[dict[str, Any]]) -> list[str]:
         if not isinstance(dimensions, dict):
             continue
         for key, value in dimensions.items():
-            if is_valid_event_flag(value):
+            scale_values = _ordinal_scale_values(_dimension_scale(row, key))
+            expected_type = str if scale_values and isinstance(scale_values[0], str) else int
+            is_ordinal = (
+                bool(scale_values)
+                and not isinstance(value, bool)
+                and isinstance(value, expected_type)
+                and value in scale_values
+            )
+            if is_valid_event_flag(value) or is_ordinal or is_not_applicable_dimension(verdict, key):
                 seen.add(key)
     return sorted(seen)
 
 
 def compute_dimension_summary(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, Any]:
-    """Summarize one binary metric over a set of judged rows."""
+    """Summarize one binary or ordinal metric over judged rows."""
+    row_list = list(rows)
+    scale = next(
+        (
+            candidate
+            for row in row_list
+            if (candidate := _dimension_scale(row, metric)) is not None
+        ),
+        None,
+    )
+    scale_values = _ordinal_scale_values(scale)
+    if scale_values:
+        grade_counts = {str(value): 0 for value in scale_values}
+        grades: list[int | str] = []
+        expected_type = str if isinstance(scale_values[0], str) else int
+        not_applicable_count = 0
+        for row in row_list:
+            if infer_judge_status(row) != "ok":
+                continue
+            verdict = row.get("verdict")
+            value = get_verdict_dimension(verdict, metric)
+            if (
+                not isinstance(value, bool)
+                and isinstance(value, expected_type)
+                and value in scale_values
+            ):
+                grade_counts[str(value)] += 1
+                grades.append(value)
+                continue
+            if is_not_applicable_dimension(verdict, metric):
+                not_applicable_count += 1
+        total = len(grades)
+        numeric_grades = [value for value in grades if isinstance(value, int)]
+        if len(numeric_grades) == total and numeric_grades:
+            median_grade: int | str | float | None = float(median(numeric_grades))
+            mean_grade: float | None = mean(numeric_grades)
+        elif grades:
+            order = {value: index for index, value in enumerate(scale_values)}
+            ordered = sorted(grades, key=order.__getitem__)
+            median_grade = ordered[(len(ordered) - 1) // 2]
+            mean_grade = None
+        else:
+            median_grade = None
+            mean_grade = None
+        return {
+            "kind": "ordinal",
+            "rate": None,
+            "counts": grade_counts,
+            "rates": {
+                key: count / total if total else 0.0
+                for key, count in grade_counts.items()
+            },
+            "count": total,
+            "applicable_count": total,
+            "not_applicable_count": not_applicable_count,
+            "median": median_grade,
+            "mean": mean_grade,
+            "scale": scale,
+        }
+
     counts = {0: 0, 1: 0}
     total = 0
-    for row in rows:
+    not_applicable_count = 0
+    for row in row_list:
         if infer_judge_status(row) != "ok":
             continue
-        value = get_verdict_dimension(row.get("verdict"), metric)
-        if not is_valid_event_flag(value):
+        verdict = row.get("verdict")
+        value = get_verdict_dimension(verdict, metric)
+        if is_valid_event_flag(value):
+            counts[int(value)] += 1
+            total += 1
             continue
-        counts[int(value)] += 1
-        total += 1
+        if is_not_applicable_dimension(verdict, metric):
+            not_applicable_count += 1
     return {
         "rate": counts[1] / total if total else None,
         "counts": counts,
         "count": total,
+        "applicable_count": total,
+        "not_applicable_count": not_applicable_count,
         "flagged_count": counts[1],
         "clear_count": counts[0],
     }
@@ -75,6 +176,94 @@ def dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     return float(rate) if isinstance(rate, (int, float)) else None
 
 
+def compute_policy_violation_by_permissibility(
+    rows: Iterable[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]],
+) -> dict[str, dict[str, Any] | None]:
+    """Split policy violations by node permissibility, one vote per row.
+
+    Each row contributes to a bucket only when at least one behavior in that
+    bucket was relevant. Its vote is true when any such behavior was violated.
+    The test case's originating behavior does not affect this calculation.
+    """
+    categories = [
+        (index, entry)
+        for index, entry in enumerate(behavior_categories)
+        if isinstance(entry, dict)
+    ]
+    if not categories:
+        return {"permissible": None, "not_permissible": None}
+
+    permissible_by_index = {
+        index: entry.get("permissible") is True
+        for index, entry in categories
+    }
+    permissible_by_name = {
+        str(entry.get("name") or "").strip(): entry.get("permissible") is True
+        for _, entry in categories
+        if str(entry.get("name") or "").strip()
+    }
+    flags: dict[bool, list[bool]] = {True: [], False: []}
+    not_applicable: dict[bool, int] = {True: 0, False: 0}
+
+    for row in rows:
+        verdict = row.get("verdict")
+        node_judgments = verdict.get("node_judgments") if isinstance(verdict, dict) else None
+        row_applicable = {True: False, False: False}
+        row_violated = {True: False, False: False}
+
+        if isinstance(node_judgments, list):
+            for node in node_judgments:
+                if not isinstance(node, dict):
+                    continue
+                if "relevant" in node and node.get("relevant") is not True:
+                    continue
+                violated = node.get("violated")
+                if not isinstance(violated, bool):
+                    continue
+
+                node_index = node.get("node_index")
+                if (
+                    isinstance(node_index, int)
+                    and not isinstance(node_index, bool)
+                    and node_index in permissible_by_index
+                ):
+                    permissible = permissible_by_index[node_index]
+                else:
+                    node_name = str(node.get("node_name") or "").strip()
+                    if node_name not in permissible_by_name:
+                        continue
+                    permissible = permissible_by_name[node_name]
+
+                row_applicable[permissible] = True
+                row_violated[permissible] = row_violated[permissible] or violated
+
+        for permissible in (True, False):
+            if row_applicable[permissible]:
+                flags[permissible].append(row_violated[permissible])
+            else:
+                not_applicable[permissible] += 1
+
+    def summarize(permissible: bool) -> dict[str, Any]:
+        values = flags[permissible]
+        flagged_count = sum(values)
+        clear_count = len(values) - flagged_count
+        return {
+            "rate": flagged_count / len(values) if values else None,
+            "counts": {0: clear_count, 1: flagged_count},
+            "count": len(values),
+            "applicable_count": len(values),
+            "not_applicable_count": not_applicable[permissible],
+            "flagged_count": flagged_count,
+            "clear_count": clear_count,
+        }
+
+    return {
+        "permissible": summarize(True),
+        "not_permissible": summarize(False),
+    }
+
+
 def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     for row in rows:
         value = row.get(key)
@@ -87,6 +276,7 @@ def _compute_test_set_metrics(
     rows: list[dict[str, Any]],
     *,
     include_tester_model: bool = False,
+    behavior_categories: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -110,26 +300,57 @@ def _compute_test_set_metrics(
         "judge_model": _first_str(rows, "judge_model"),
     }
 
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
+
     if include_tester_model:
         metrics["tester_model"] = _first_str(rows, "tester_model")
 
     return metrics
 
 
-def compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def compute_prompt_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     """Compute prompt-only summary metrics."""
-    return _compute_test_set_metrics(rows)
+    return _compute_test_set_metrics(rows, behavior_categories=behavior_categories)
 
 
-def compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def compute_scenario_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     """Compute scenario-only summary metrics."""
-    return _compute_test_set_metrics(rows, include_tester_model=True)
+    return _compute_test_set_metrics(
+        rows,
+        include_tester_model=True,
+        behavior_categories=behavior_categories,
+    )
 
 
 def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     """Load one run's manifest and score-derived summaries."""
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
+    taxonomy = load_json(run_dir.parent / "taxonomy.json")
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        behavior_categories = []
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -150,8 +371,8 @@ def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "current_stage": current_stage,
         "started_at": (manifest or {}).get("started_at"),
         "ended_at": (manifest or {}).get("ended_at"),
-        "prompt_metrics": compute_prompt_metrics(prompt_rows),
-        "scenario_metrics": compute_scenario_metrics(scenario_rows),
+        "prompt_metrics": compute_prompt_metrics(prompt_rows, behavior_categories),
+        "scenario_metrics": compute_scenario_metrics(scenario_rows, behavior_categories),
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }
@@ -278,7 +499,7 @@ def behavior_metric_map(
         if infer_judge_status(row) != "ok":
             continue
         value = get_verdict_dimension(row.get("verdict"), metric)
-        if not is_valid_event_flag(value):
+        if not is_valid_event_flag(value) and not is_not_applicable_dimension(row.get("verdict"), metric):
             continue
         behavior = row_behavior(row)
         bucket = grouped.setdefault(
@@ -286,10 +507,14 @@ def behavior_metric_map(
             {
                 "true_count": 0,
                 "count": 0,
+                "not_applicable_count": 0,
             },
         )
-        bucket["true_count"] += int(value)
-        bucket["count"] += 1
+        if is_valid_event_flag(value):
+            bucket["true_count"] += int(value)
+            bucket["count"] += 1
+        elif is_not_applicable_dimension(row.get("verdict"), metric):
+            bucket["not_applicable_count"] += 1
 
     result: dict[str, dict[str, Any]] = {}
     for behavior, bucket in grouped.items():
@@ -298,5 +523,6 @@ def behavior_metric_map(
         result[behavior] = {
             "rate": bucket["true_count"] / bucket["count"],
             "count": bucket["count"],
+            "not_applicable_count": bucket["not_applicable_count"],
         }
     return result

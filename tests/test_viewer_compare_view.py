@@ -119,6 +119,14 @@ class ViewerCompareViewTest(unittest.TestCase):
                   }}
                 }};
                 const malformedRecord = {{ verdict: {{ policy_compliance: 3 }} }};
+                const customOnlyRecord = {{
+                  score_keys: ['guardrail_policy_violation'],
+                  verdict: {{
+                    dimensions: {{ guardrail_policy_violation: false }},
+                    justification: 'Guardrail blocked the attempted send.',
+                    node_judgments: []
+                  }}
+                }};
 
                 console.log(JSON.stringify({{
                   requiredBaseMetrics,
@@ -126,6 +134,7 @@ class ViewerCompareViewTest(unittest.TestCase):
                   missingBaseStatus: inferJudgeStatus(missingBaseRecord, requiredBaseMetrics),
                   topLevelStatus: inferJudgeStatus(topLevelRecord, requiredBaseMetrics),
                   malformedStatus: inferJudgeStatus(malformedRecord, requiredBaseMetrics),
+                  customOnlyStatus: inferJudgeStatus(customOnlyRecord, requiredBaseMetrics),
                   topLevelFlag: getVerdictFlag(topLevelRecord.verdict, 'policy_violation')
                 }}));
                 """
@@ -139,6 +148,7 @@ class ViewerCompareViewTest(unittest.TestCase):
             self.assertEqual(payload["missingBaseStatus"], "judge_failed")
             self.assertEqual(payload["topLevelStatus"], "judge_failed")
             self.assertEqual(payload["malformedStatus"], "judge_failed")
+            self.assertEqual(payload["customOnlyStatus"], "ok")
             self.assertIsNone(payload["topLevelFlag"])
 
 

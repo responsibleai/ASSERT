@@ -38,6 +38,16 @@ artifacts/results/<suite>/
 
 > **Tip**: After a run, start with `metrics.json` first then see the `scores.jsonl` before inspecting the `inference_set.jsonl` more closely.
 
+## Interpreting dimension summaries
+
+Boolean judge dimensions report clear and flagged counts plus a flagged rate. Ordinal dimensions report counts and percentages for each declared integer or string grade plus the median. Numeric scales also report the mean; named grades do not. Ordinal dimensions do not report a violation rate.
+
+Both summary types use applicable scored rows as the denominator. For dimensions configured with `allow_not_applicable: true`, rows where the judge returns `null` and `dimension_applicability.<name>: false` are counted as not applicable, preserved in `scores.jsonl`, and excluded from the graded denominator. Judge and pipeline failures are reported separately from semantic N/A.
+
+The run viewer shows the full custom-grade distribution and groups semantic N/A plus execution failures under a **Not graded** row while preserving their separate counts:
+
+![Custom rubric scale run summary](../images/custom-rubric-scale-run.png)
+
 ## Useful CLI commands for viewing results
 
 ```bash

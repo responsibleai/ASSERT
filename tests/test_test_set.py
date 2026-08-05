@@ -18,6 +18,7 @@ from assert_ai.stages.stratification import (
     normalize_stratification,
 )
 from assert_ai.stages.test_set import (
+    _parse_kind_config,
     build_covering_array,
     build_generation_jobs,
     build_generation_prompt,
@@ -188,6 +189,159 @@ class CoveringArrayTest(unittest.TestCase):
         ca = build_covering_array(stratification, random.Random(42), axes=FACTOR_NAMES)
         drawn = sample_from_covering_array(ca, 4, random.Random(7))
         self.assertEqual(len(drawn), 4)
+
+
+class SamplingMethodsTest(unittest.TestCase):
+    def test_stratified_balances_requested_axes(self) -> None:
+        stratification = _make_stratification_with_behavior(2)
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=stratification,
+            sample_size=8,
+            sampling={"method": "stratified", "stratify_by": ["behavior", "domain"]},
+            rng=random.Random(7),
+        )
+        counts: dict[tuple[str, str], int] = {}
+        for row in assignments or []:
+            key = (row["behavior"], row["domain"])
+            counts[key] = counts.get(key, 0) + 1
+        self.assertEqual(set(counts.values()), {2})
+
+    def test_stratified_small_sample_does_not_expand_large_product(self) -> None:
+        stratification = {
+            "behavior": [{"name": f"behavior-{index}"} for index in range(100)],
+            **{
+                f"axis-{axis}": [{"name": f"level-{index}"} for index in range(100)]
+                for axis in range(10)
+            },
+        }
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=stratification,
+            sample_size=3,
+            sampling={
+                "method": "stratified",
+                "stratify_by": list(stratification),
+            },
+            rng=random.Random(7),
+        )
+        rows = assignments or []
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(
+            len({tuple(row[axis] for axis in stratification) for row in rows}),
+            3,
+        )
+
+    def test_full_factorial_covers_every_cell(self) -> None:
+        stratification = _make_stratification_with_behavior(2)
+        factorial_size = 2 ** 3
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=stratification,
+            sample_size=factorial_size,
+            sampling={"method": "full_factorial", "replication": "none"},
+            rng=random.Random(7),
+        )
+        rows = assignments or []
+        self.assertEqual(len(rows), factorial_size)
+        self.assertEqual(
+            len({tuple(sorted(row.items())) for row in rows}),
+            factorial_size,
+        )
+
+    def test_full_factorial_balances_replication(self) -> None:
+        stratification = _make_stratification_with_behavior(2)
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=stratification,
+            sample_size=10,
+            sampling={"method": "full_factorial"},
+            rng=random.Random(7),
+        )
+        counts: dict[tuple[tuple[str, str], ...], int] = {}
+        for row in assignments or []:
+            key = tuple(sorted(row.items()))
+            counts[key] = counts.get(key, 0) + 1
+        self.assertEqual(set(counts.values()), {1, 2})
+
+    def test_random_without_replacement_returns_unique_assignments(self) -> None:
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=_make_stratification_with_behavior(2),
+            sample_size=6,
+            sampling={"method": "random", "with_replacement": False},
+            rng=random.Random(7),
+        )
+        rows = assignments or []
+        self.assertEqual(len(rows), 6)
+        self.assertEqual(len({tuple(sorted(row.items())) for row in rows}), 6)
+
+    def test_random_with_replacement_allows_oversized_sample(self) -> None:
+        _, assignments = build_generation_jobs(
+            taxonomy=_make_policy(),
+            stratification=_make_stratification_with_behavior(2),
+            sample_size=9,
+            sampling={"method": "random", "with_replacement": True},
+            rng=random.Random(7),
+        )
+        self.assertEqual(len(assignments or []), 9)
+
+    def test_random_without_replacement_rejects_oversized_sample(self) -> None:
+        stratification = _make_stratification_with_behavior(2)
+        with self.assertRaisesRegex(ValueError, "factorial size"):
+            build_generation_jobs(
+                taxonomy=_make_policy(),
+                stratification=stratification,
+                sample_size=9,
+                sampling={"method": "random", "with_replacement": False},
+                rng=random.Random(7),
+            )
+
+    def test_stratified_rejects_unknown_axis(self) -> None:
+        with self.assertRaisesRegex(ValueError, "axis not found"):
+            build_generation_jobs(
+                taxonomy=_make_policy(),
+                stratification=_make_stratification_with_behavior(2),
+                sample_size=4,
+                sampling={"method": "stratified", "stratify_by": ["missing"]},
+                rng=random.Random(7),
+            )
+
+    def test_full_factorial_rejects_non_string_replication(self) -> None:
+        with self.assertRaisesRegex(ValueError, "replication"):
+            _parse_kind_config(
+                {"model": {"name": "azure/gpt-5.4-mini"}},
+                "prompt",
+                {
+                    "sampling": {
+                        "method": "full_factorial",
+                        "replication": ["balanced"],
+                    },
+                },
+                sample_size=100,
+                temperature=1.0,
+                max_tokens=3000,
+            )
+
+    def test_kind_config_parses_sampling(self) -> None:
+        parsed = _parse_kind_config(
+            {"model": {"name": "azure/gpt-5.4-mini"}},
+            "prompt",
+            {
+                "sample_size": 8,
+                "sampling": {
+                    "method": "stratified",
+                    "stratify_by": ["behavior", "domain"],
+                },
+            },
+            sample_size=100,
+            temperature=1.0,
+            max_tokens=3000,
+        )
+        self.assertEqual(
+            parsed["sampling"],
+            {"method": "stratified", "stratify_by": ["behavior", "domain"]},
+        )
 
 
 class FillTemplateTest(unittest.TestCase):
@@ -411,6 +565,27 @@ class BuildGenerationJobsTest(unittest.TestCase):
         counts = [job.count for job in jobs]
         self.assertEqual(counts.count(3), 3)
         self.assertEqual(counts.count(2), num_tuples - 3)
+
+    def test_pairwise_budget_above_array_size_replicates_fixed_assignments(self) -> None:
+        taxonomy = _make_policy()
+        stratification = _make_stratification_with_behavior(2)
+        ca = build_covering_array(
+            stratification,
+            random.Random(42),
+            axes=("behavior",) + FACTOR_NAMES,
+        )
+        _, assignments = build_generation_jobs(
+            taxonomy=taxonomy,
+            stratification=stratification,
+            sample_size=len(ca) * 2,
+            rng=random.Random(42),
+        )
+        assignment_counts: dict[tuple[tuple[str, str], ...], int] = {}
+        for row in assignments or []:
+            key = tuple(sorted(row.items()))
+            assignment_counts[key] = assignment_counts.get(key, 0) + 1
+        self.assertEqual(len(assignment_counts), len(ca))
+        self.assertEqual(set(assignment_counts.values()), {2})
 
     def test_generation_jobs_sample_size_smaller_than_array(self) -> None:
         """When sample_size < covering array, some tuples get 0 and are skipped."""

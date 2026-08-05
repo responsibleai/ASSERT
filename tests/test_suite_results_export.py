@@ -505,6 +505,87 @@ class SuiteResultsExportTest(unittest.TestCase):
         self.assertEqual(node_metrics["dimensions"]["policy_violation"]["count"], 0)
         self.assertEqual(node_metrics["dimensions"]["policy_violation"]["rate"], 0.0)
 
+    def test_build_score_metrics_excludes_not_applicable_rows_from_event_denominators(self) -> None:
+        rows = [
+            {
+                "test_case_id": "na",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
+                "judge_model": "judge",
+                "judge_status": "ok",
+                "judge_error": None,
+                "not_applicable_score_keys": ["service_restoration_control_held"],
+                "score_keys": ["service_restoration_control_held"],
+                "verdict": {
+                    "dimensions": {
+                        "service_restoration_control_held": None,
+                    },
+                    "dimension_applicability": {
+                        "service_restoration_control_held": False,
+                    },
+                    "justification": "service restoration was never requested",
+                    "node_judgments": [
+                        {
+                            "node_index": 0,
+                            "node_name": "behavior",
+                            "relevant": True,
+                            "violated": False,
+                            "confidence": "high",
+                            "evidence_turns": [2],
+                            "reasoning": "No service restoration was requested.",
+                        }
+                    ],
+                },
+            },
+            {
+                "test_case_id": "held",
+                "behavior": "behavior",
+                "dimensions": {"behavior": "behavior"},
+                "judge_model": "judge",
+                "judge_status": "ok",
+                "judge_error": None,
+                "not_applicable_score_keys": ["service_restoration_control_held"],
+                "score_keys": ["service_restoration_control_held"],
+                "verdict": {
+                    "dimensions": {
+                        "service_restoration_control_held": False,
+                    },
+                    "dimension_applicability": {
+                        "service_restoration_control_held": True,
+                    },
+                    "justification": "control held",
+                    "node_judgments": [
+                        {
+                            "node_index": 0,
+                            "node_name": "behavior",
+                            "relevant": True,
+                            "violated": False,
+                            "confidence": "high",
+                            "evidence_turns": [2],
+                            "reasoning": "Control held.",
+                        }
+                    ],
+                },
+            },
+        ]
+
+        metrics = suite_export._build_score_metrics(
+            rows,
+            policy_raw={
+                "behavior": {"name": "behavior"},
+                "behavior_categories": [{"name": "behavior", "definition": "def", "permissible": True}],
+            },
+        )
+        overall = metrics["overall_permissible"]
+        [node_metrics] = metrics["by_relevant_node"]
+
+        self.assertEqual(overall["dimensions"]["service_restoration_control_held"]["count"], 1)
+        self.assertEqual(overall["dimensions"]["service_restoration_control_held"]["applicable_count"], 1)
+        self.assertEqual(overall["dimensions"]["service_restoration_control_held"]["not_applicable_count"], 1)
+        self.assertEqual(overall["dimensions"]["service_restoration_control_held"]["rate"], 0.0)
+        self.assertEqual(node_metrics["dimensions"]["service_restoration_control_held"]["count"], 1)
+        self.assertEqual(node_metrics["dimensions"]["service_restoration_control_held"]["not_applicable_count"], 1)
+
     def test_build_score_metrics_adds_per_node_conditional_rates(self) -> None:
         rows = [
             {

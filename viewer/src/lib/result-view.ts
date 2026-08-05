@@ -17,7 +17,7 @@ export function scenarioStopReasonDisplay(stopReason: string | null | undefined)
 	if (stopReason === 'completed' || stopReason === 'max_turns') return null;
 	if (stopReason === 'tester_input_refused') {
 		return {
-			label: 'Refused before inference',
+			label: 'Refused before Inference',
 			description:
 				'The tester refused to generate input for this scenario, so no target conversation was produced.',
 			tone: 'refusal'
@@ -211,6 +211,9 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 		verdict: sample.verdict,
 		judge_status: sample.judge_status,
 		judge_error: sample.judge_error,
+		score_keys: sample.score_keys,
+		not_applicable_score_keys: sample.not_applicable_score_keys,
+		dimension_scales: sample.dimension_scales,
 		multi_judge: sample.multi_judge,
 		messages,
 		llm_calls: sample.llm_calls ?? [],
@@ -239,6 +242,9 @@ export function normalizeScenarioResult(
 		verdict: score.verdict,
 		judge_status: score.judge_status,
 		judge_error: score.judge_error,
+		score_keys: score.score_keys,
+		not_applicable_score_keys: score.not_applicable_score_keys,
+		dimension_scales: score.dimension_scales,
 		multi_judge: score.multi_judge,
 		messages: interactionMessages,
 		llm_calls: llmCalls,

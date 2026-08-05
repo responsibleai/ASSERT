@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from assert_ai.core.io import load_jsonl, row_behavior
+from assert_ai.core.judge import is_not_applicable_dimension
+from assert_ai.results import compute_dimension_summary
 
 from assert_ai.analysis.stability import (
     compute_tester_variation,
@@ -41,6 +43,17 @@ def _get_dimension(row: dict[str, Any], dim: str) -> bool | None:
     if isinstance(val, bool):
         return val
     return None
+
+
+def _dimension_not_applicable(row: dict[str, Any], dim: str) -> bool:
+    verdict = row.get("verdict")
+    return is_not_applicable_dimension(verdict, dim)
+
+
+def _dimension_has_ordinal_scale(row: dict[str, Any], dim: str) -> bool:
+    scales = row.get("dimension_scales")
+    scale = scales.get(dim) if isinstance(scales, dict) else None
+    return isinstance(scale, dict) and scale.get("type") == "ordinal"
 
 
 def _parse_run_label(run_id: str) -> dict[str, str]:
@@ -105,31 +118,58 @@ def compute_judge_metrics(
 
     dim_results: dict[str, Any] = {}
     for dim in dimensions:
+        if any(_dimension_has_ordinal_scale(row, dim) for row in ok_rows):
+            by_behavior_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for row in ok_rows:
+                by_behavior_rows[row_behavior(row) or "unknown"].append(row)
+            behavior_summaries: dict[str, dict[str, Any]] = {}
+            for behavior, rows in sorted(by_behavior_rows.items()):
+                summary = compute_dimension_summary(rows, dim)
+                behavior_summaries[behavior] = {
+                    **summary,
+                    "sufficient": summary.get("applicable_count", 0) >= MIN_BEHAVIOR_SUPPORT,
+                }
+            dim_results[dim] = {
+                "micro": compute_dimension_summary(ok_rows, dim),
+                "macro": None,
+                "by_behavior": behavior_summaries,
+            }
+            continue
         outcomes: list[bool] = []
         test_set: list[str] = []
+        not_applicable_count = 0
         for row in ok_rows:
             val = _get_dimension(row, dim)
             if val is not None:
                 outcomes.append(val)
                 test_set.append(str(row.get("test_case_id", "")))
+            elif _dimension_not_applicable(row, dim):
+                not_applicable_count += 1
 
         overall = binary_rate_ci(outcomes, groups=test_set, n_boot=n_boot)
+        overall["not_applicable_count"] = not_applicable_count
+        overall["applicable_n"] = overall.get("n", 0)
 
         # Per-behavior rates
         by_behavior: dict[str, list[bool]] = defaultdict(list)
+        by_behavior_not_applicable: dict[str, int] = defaultdict(int)
         for row in ok_rows:
             val = _get_dimension(row, dim)
+            b = (row_behavior(row) or "unknown")
             if val is not None:
-                b = (row_behavior(row) or "unknown")
                 by_behavior[b].append(val)
+            elif _dimension_not_applicable(row, dim):
+                by_behavior_not_applicable[b] += 1
 
         behavior_rates: dict[str, dict[str, Any]] = {}
-        for b, vals in sorted(by_behavior.items()):
+        for b in sorted(set(by_behavior) | set(by_behavior_not_applicable)):
+            vals = by_behavior.get(b, [])
             pos = sum(vals)
             behavior_rates[b] = {
                 "count": len(vals),
                 "positive": pos,
                 "rate": pos / len(vals) if vals else None,
+                "not_applicable_count": by_behavior_not_applicable.get(b, 0),
                 "sufficient": len(vals) >= MIN_BEHAVIOR_SUPPORT,
             }
 
@@ -333,6 +373,21 @@ def format_suite_summary(results: dict[str, Any]) -> str:
         # Judge dimensions
         for dim, data in sorted(judge.get("dimensions", {}).items()):
             micro = data["micro"]
+            if micro.get("kind") == "ordinal":
+                counts = micro.get("counts", {})
+                scale = micro.get("scale", {})
+                scale_values = scale.get("values", []) if isinstance(scale, dict) else []
+                distribution = ", ".join(
+                    f"{entry.get('value')}={counts.get(str(entry.get('value')), 0)}"
+                    for entry in scale_values
+                    if isinstance(entry, dict)
+                )
+                lines.append(
+                    f"  {dim}: median={micro.get('median', 'n/a')}  "
+                    f"graded={micro.get('applicable_count', 0)}  "
+                    f"N/A={micro.get('not_applicable_count', 0)}  {distribution}"
+                )
+                continue
             if micro["rate"] is None:
                 continue
 

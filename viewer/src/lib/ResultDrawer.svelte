@@ -5,9 +5,11 @@
 	import {
 		getJudgeError,
 		getRecordFlag,
-		getVerdictFlag,
-		inferJudgeStatus
+		getVerdictMetricValue,
+		inferJudgeStatus,
+		isNotApplicableVerdictDimension
 	} from '$lib/judgment.js';
+	import { metricTitleLabel } from '$lib/labels.js';
 	import {
 		getCitationDisplayRanges,
 		parseCitationReferences
@@ -15,6 +17,10 @@
 	import { renderMarkdown, renderMarkdownWithHighlights } from '$lib/markdown';
 	import { citationWarningLabel } from '$lib/citation-warnings.js';
 	import { formatFactorLabel } from '$lib/grouping.js';
+	import {
+		POLICY_VIOLATION_NOT_PERMISSIBLE,
+		POLICY_VIOLATION_PERMISSIBLE
+	} from '$lib/permissibility.js';
 	import {
 		stopReasonChipClass,
 		stopReasonLabel,
@@ -37,6 +43,7 @@
 		metricNames,
 		primaryMetric,
 		requiredBaseMetrics,
+		behaviorPermissible = {},
 		navIdx,
 		navTotal,
 		onClose,
@@ -47,6 +54,7 @@
 		metricNames: string[];
 		primaryMetric: string;
 		requiredBaseMetrics: string[];
+		behaviorPermissible?: Record<string, boolean>;
 		navIdx: number;
 		navTotal: number;
 		onClose: () => void;
@@ -148,26 +156,34 @@
 	}
 
 	function metricLabel(metric: string): string {
-		const spaced = metric.replace(/_/g, ' ');
-		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+		return metricTitleLabel(metric);
 	}
 
-	function metricOutcomeText(flag: boolean | null): string {
+	function metricOutcomeText(flag: boolean | number | string | null): string {
 		if (flag === null) return 'N/A';
+		if (typeof flag === 'number' || typeof flag === 'string') return `Grade ${flag}`;
 		return flag ? 'Flagged' : 'Pass';
 	}
 
-	function metricOutcomeClass(flag: boolean | null): string {
+	function metricValue(verdict: Verdict | null | undefined, metric: string): boolean | number | string | null {
+		const value = getVerdictMetricValue(verdict, metric);
+		return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' ? value : null;
+	}
+
+	function metricOutcomeClass(flag: boolean | number | string | null): string {
 		if (flag === null) return 'text-text-muted';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'text-text-default';
 		return flag ? 'text-score-fail' : 'text-score-pass';
 	}
 
-	function metricDotColor(flag: boolean): string {
+	function metricDotColor(flag: boolean | number | string | null): string {
+		if (flag === null) return 'var(--theme-text-muted, #6e7781)';
+		if (typeof flag === 'number' || typeof flag === 'string') return 'var(--theme-accent-fg, #0969da)';
 		return flag ? 'var(--theme-score-fail)' : 'var(--theme-score-pass)';
 	}
 
-	function metricRateText(rate: number): string {
-		return `${(rate * 100).toFixed(0)}%`;
+	function metricRateText(rate: number | null): string {
+		return rate == null ? 'N/A' : `${(rate * 100).toFixed(0)}%`;
 	}
 
 	function judgmentWarningLabel(warning: string): string {
@@ -710,6 +726,29 @@
 			? visibleNodeJudgments(activeVerdict.node_judgments as NodeJudgment[])
 			: []
 	);
+
+	/**
+	 * Node judgments to list under a metric's card. `policy_violation` owns the full
+	 * list, as it always has. When the permissibility split replaces it, each bucket
+	 * card shows only its own nodes so the list explains that card's number. If the
+	 * taxonomy lookup is unavailable the split cannot be attributed, so the first
+	 * bucket card carries the whole list rather than dropping it.
+	 */
+	function nodeJudgmentsForMetric(metric: string): NodeJudgment[] {
+		if (metric === 'policy_violation') return nodeJudgments;
+		if (metric !== POLICY_VIOLATION_NOT_PERMISSIBLE && metric !== POLICY_VIOLATION_PERMISSIBLE) {
+			return [];
+		}
+		if (Object.keys(behaviorPermissible).length === 0) {
+			return metric === POLICY_VIOLATION_NOT_PERMISSIBLE ? nodeJudgments : [];
+		}
+		const wantPermissible = metric === POLICY_VIOLATION_PERMISSIBLE;
+		return nodeJudgments.filter((node) => {
+			const name = policyNodeName(node);
+			if (!name || !(name in behaviorPermissible)) return false;
+			return behaviorPermissible[name] === wantPermissible;
+		});
+	}
 	const firstMessageIdByTurn = $derived.by(() => {
 		const map = new Map<number, string>();
 		for (const message of item.messages) {
@@ -929,7 +968,7 @@
 					<div class="rounded-lg border border-zinc-800 bg-zinc-900/50">
 						<div class="flex flex-wrap gap-1 border-b border-zinc-800 p-1.5">
 							{#each item.multi_judge?.verdicts ?? [] as judgeVerdict, i}
-								{@const vote = getVerdictFlag(judgeVerdict, primaryMetric)}
+								{@const vote = metricValue(judgeVerdict, primaryMetric)}
 								<button
 									class="flex items-center gap-1.5 rounded px-2.5 py-1 text-[10px] font-medium transition-colors {activeJudgeIndex === i ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
 									onclick={() => {
@@ -961,9 +1000,10 @@
 					</div>
 				{/if}
 				{#each metricNames as m}
-					{@const v = getVerdictFlag(activeVerdict, m)}
+					{@const v = metricValue(activeVerdict, m)}
+					{@const notApplicable = isNotApplicableVerdictDimension(activeVerdict, m)}
 					{@const dimensionJustification = getDimensionJustification(activeVerdict, m)}
-					{#if v !== null}
+					{#if v !== null || notApplicable}
 						<div class="rounded-lg border border-border bg-surface p-4">
 							<div class="mb-2 flex items-center justify-between">
 								<span class="text-[16px] font-semibold text-text">{metricLabel(m)}</span>
@@ -975,7 +1015,13 @@
 												<span class="inline-block size-[7px] rounded-full" style={agreed ? `background: ${metricDotColor(vote)}` : `background: transparent; box-shadow: inset 0 0 0 1.5px ${metricDotColor(vote)}`}></span>
 											{/each}
 										</div>
-										<span class="text-[10px] text-text-muted tabular-nums">Flagged {metricRateText(item.multi_judge.means?.[m] ?? 0)}</span>
+										{#if item.dimension_scales?.[m]}
+											{#if item.multi_judge.means?.[m] != null}
+												<span class="text-[10px] text-text-muted tabular-nums">Mean {item.multi_judge.means[m].toFixed(2)}</span>
+											{/if}
+										{:else}
+											<span class="text-[10px] text-text-muted tabular-nums">Flagged {metricRateText(item.multi_judge.means?.[m] ?? 0)}</span>
+										{/if}
 									{/if}
 									<span class="text-[16px] font-bold tabular-nums {metricOutcomeClass(v)}">{metricOutcomeText(v)}</span>
 								</div>
@@ -985,9 +1031,9 @@
 							{:else if m === primaryMetric && activeVerdict?.justification}
 								<div class="text-sm text-text-secondary leading-relaxed prose max-w-none citation-prose">{@html renderTextWithCitationButtons(activeVerdict.justification as string)}</div>
 							{/if}
-								{#if m === 'policy_violation' && nodeJudgments.length > 0}
+								{#if nodeJudgmentsForMetric(m).length > 0}
 									<div class="mt-3 space-y-1.5 border-t border-border/50 pt-3">
-										{#each nodeJudgments as node}
+										{#each nodeJudgmentsForMetric(m) as node}
 											{@const violated = node.violated}
 											{@const nodeName = policyNodeName(node)}
 											<div class="rounded-md px-3 py-2 {violated ? 'bg-score-fail/5' : violated === null ? 'bg-surface-2/50' : 'bg-score-pass/5'}">
