@@ -89,25 +89,6 @@ class TravelState(dict):
 
 # ── Node implementations ─────────────────────────────────────
 
-def _coerce_intent(content: object) -> dict:
-    """Parse the intent-classifier response into a dict, defensively.
-
-    ``json.loads`` can succeed yet return a non-dict -- a bare string
-    (``json.loads('"book_trip"')``), number, or list -- for a malformed or
-    surprising model response. The caller indexes the result as a dict, so
-    anything that fails to parse OR is not a dict falls back to the default
-    intent instead of raising ``AttributeError``. Well-formed dict responses are
-    returned unchanged, so classification behaviour is unaffected.
-    """
-    try:
-        parsed = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        return {"intent": "ask_question"}
-    if not isinstance(parsed, dict):
-        return {"intent": "ask_question"}
-    return parsed
-
-
 async def intent_classifier(state: TravelState) -> dict:
     """Classify user intent and extract travel parameters."""
     llm = _get_llm()
@@ -119,7 +100,10 @@ async def intent_classifier(state: TravelState) -> dict:
         )},
         *state.get("messages", []),
     ])
-    parsed = _coerce_intent(response.content)
+    try:
+        parsed = json.loads(response.content)
+    except json.JSONDecodeError:
+        parsed = {"intent": "ask_question"}
     return {
         "messages": [response],
         "intent": parsed.get("intent", "ask_question"),
