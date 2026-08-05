@@ -107,11 +107,68 @@ npm run dev
 
 Open `http://localhost:5174` and select `travel-planner-langgraph-v1`. The viewer reads local artifacts directly; it does not run evaluations or add authentication.
 
-## Behavior violation rate results
+## Clarity → ASSERT → ACS governed evaluation
 
-Not yet measured at `n=10`. Do not cite a behavior violation rate for this example until a pinned `n=10` run has been generated and reviewed.
+This example also ships a full governance loop: risks were discovered with the Clarity
+protocol (`Clarity Protocol/`), triaged, measured with ASSERT at a pinned `n=25` per turn
+type, then a governed variant (`agent_guarded.py`) was built and re-measured under the same
+cached test set (true A/B).
 
-| Measurement | Status | Use today |
+Two Critical risks were surfaced:
+
+| Risk | Behavior | Decision |
 |---|---|---|
-| `n=10` behavior violation rate | Not measured yet | Use local runs to inspect generated `behavior_categories`, trace evidence, and judge rationales. |
-| Quickstart run | Runnable example | Good for validating integration shape, not for benchmarking model quality. |
+| `fabricated_itinerary_details` | Presents unsupported flight / hotel / advisory specifics as fact | Governed with a grounded output-annotator gate |
+| `budget_overrun` | Recommends a plan exceeding the stated budget | **Baseline-only** — measured harm already below the governance threshold |
+
+### Fabrication: baseline → governed delta
+
+Grounded output-annotator gate (`chat_governed_fabrication`): an `azure/gpt-5.4` annotator
+inspects the reply against the tool results the graph actually returned; ungrounded specifics
+are denied, the answer is regenerated constrained to that context and re-gated, and a scoped
+decline is the last resort. Rates below are decoupled into non-permissible **harm**,
+permissible-node violations, and **overrefusal** (prompt / scenario, `n=25` each).
+
+| Metric | Baseline | Governed | Δ |
+|---|---|---|---|
+| Harm (non-permissible policy violation) | 32% / 71% | **12% / 30%** | **−20pp / −41pp** |
+| Permissible-node violation | 15% / 39% | 20% / 96% | +5pp / +57pp |
+| Overrefusal | 12% / 52% | 20% / 100% | +8pp / +48pp |
+
+**Read:** the gate cuts fabrication harm by roughly 60% on both single-turn prompts and
+multi-turn scenarios. The cost is a large overrefusal increase, most severe multi-turn
+(→100%). This is an **inherent tension of the mock tool corpus**, not a gate misfire: the
+mock tools always return destination-mismatched (Tokyo-priced, LAX/SFO-origin) data
+regardless of the requested destination, so the *honest, grounded* answer to a
+"Barcelona in July" request is necessarily a partial decline. Only 5/25 prompt and 6/25
+scenario replies land on the literal scoped-fallback string; the rest are the regenerated
+grounded answer itself reading as cautious. Against real retrieval tools the grounded regen
+would have destination-correct data to work with, so this overrefusal is a harness artifact,
+not a property of the gate.
+
+### Budget: baseline-only
+
+Budget was measured at the same `n=25` but **not governed**. Its non-permissible harm was
+0% / 4.5% (prompt / scenario) — already below the threshold where a control is warranted.
+The agent's real weakness on budget is over-refusal (it deflects instead of confirming an
+in-budget total it already holds), which a blocking gate would only worsen. Adding a gate
+here would add refusal cost for no harm reduction, so the baseline measurement stands as the
+finding.
+
+### Reproduce
+
+```bash
+# Fabrication A/B (n=25/type)
+assert-ai run --config examples/travel_planner_langgraph/evals/fabricated-itinerary-details/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/fabricated-itinerary-details/eval_config.governed.yaml
+assert-ai results status travel-langgraph-fabricated-details baseline --json
+assert-ai results status travel-langgraph-fabricated-details acs-governed --json
+
+# Budget baseline
+assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
+assert-ai results status travel-langgraph-budget-overrun baseline --json
+```
+
+The governed config is byte-identical to the baseline except for `run:` and
+`target.callable:`, so the `systematize` and `test_set` artifacts are reused and the two runs
+form a true A/B on an identical test set.
