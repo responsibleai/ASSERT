@@ -1402,7 +1402,7 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
         self.assertEqual(chunk_request["tool_calls"][0]["tool_result"], "sunny")
 
     def test_result_before_request_does_not_seed_reused_call_id(self):
-        from assert_ai.core.otel import extract_for_judge, ExtractionMode
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode, _spans_to_events
 
         def result_event(content):
             return {
@@ -1462,6 +1462,15 @@ class TestGenAIDirectExtractionFollowup(unittest.TestCase):
             if child["span_id"] == "reused_request"
         )
         self.assertEqual(request_node["tool_calls"][0]["tool_result"], "fresh")
+
+        flat_events, _ = _spans_to_events(
+            [root, stale_result, request, fresh_result]
+        )
+        flat_calls = [
+            event["edit"] for event in flat_events
+            if event.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual([call["tool_result"] for call in flat_calls], ["fresh"])
 
     def test_tree_result_assignment_uses_chronology_not_depth_first_order(self):
         from assert_ai.core.otel import extract_for_judge, ExtractionMode

@@ -571,7 +571,7 @@ def _genai_model_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     for tc in _merge_tool_call_carriers(attr_tool_calls, event_tool_calls):
         acc.emit_tool_call(tc["name"], tc["args"], "", tc.get("call_id"))
     for call_id, result in event_results:
-        acc.bind_tool_result(call_id, result)
+        acc.bind_tool_result(call_id, result, hold_if_unbound=False)
 
 
 def _genai_agent_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
@@ -588,7 +588,7 @@ def _genai_agent_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
     for tc in _merge_tool_call_carriers(attr_tool_calls, event_tool_calls):
         acc.emit_tool_call(tc["name"], tc["args"], "", tc.get("call_id"))
     for call_id, result in event_results:
-        acc.bind_tool_result(call_id, result)
+        acc.bind_tool_result(call_id, result, hold_if_unbound=False)
 
 
 def _genai_tool_span_to_events(span: OTelSpan, acc: _EventAccumulator) -> None:
