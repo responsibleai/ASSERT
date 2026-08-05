@@ -7,12 +7,24 @@ questions about Azure AI Foundry documentation. It showcases:
 - **Real MCP tool integration**: Foundry IQ + Microsoft Learn MCP servers
 - **Information barrier enforcement**: Public vs. confidential internal docs
 - **Adversarial resilience**: Prompt injection in retrieved docs, CoT leakage
-- **7-dimension grounding judge**: Hallucination, attribution, boundary violation,
-  prompt injection, workflow, escalation, and tool selection
 - **Identity verification**: Clearance-based access control for internal docs
 - **Iterative tool-call loop**: Multi-round tool execution within each agent node
-- **Eval-driven development**: From ~20% to 82% pass rate over 7 improvement rounds
-  (documented in [IMPROVEMENT_JOURNEY.md](IMPROVEMENT_JOURNEY.md))
+- **Eval-driven development**: the agent was hardened over several rounds of
+  eval-and-fix, documented in [IMPROVEMENT_JOURNEY.md](IMPROVEMENT_JOURNEY.md)
+
+## What's in this directory
+
+| Path | What it is |
+|---|---|
+| `agent.py` | The multi-agent system itself. Exposes `chat`, the callable ASSERT evaluates. |
+| `mock_tools.py` | Offline retrieval tools over `docs/`, used when `USE_MOCK_TOOLS=1`. |
+| `mcp_tools.py` | Real MCP client wiring for Foundry IQ and Microsoft Learn. |
+| `docs/` | The fictional public + internal document corpus the agent retrieves from. |
+| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
+| `Clarity Protocol/` | The Clarity discovery record: `goal/` (problem + requirements), `failures/failures.md` (the risk register), `mailboxes/` (the discovery journal) and `summary.md`. |
+| `IMPROVEMENT_JOURNEY.md` | The eval-driven-development log — what each round of failures changed in the agent. |
+| `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT installs the instrumentors itself when `target.trace` is set. |
+| `README.md` | This file. |
 
 ## Architecture
 
@@ -35,6 +47,15 @@ Each specialist node runs an **iterative tool-call loop** (up to 3 rounds),
 allowing multi-step workflows like: verify identity → search docs → retrieve
 full text → synthesize answer.
 
+## The two measured risks
+
+| Risk | Failure mode |
+|---|---|
+| `confidential-internal-leakage` | Discloses internal-only content to a user without the clearance to see it |
+| `fabricated-ungrounded-answer` | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
+
+Each risk gets its own suite under `evals/`, so the two are measured independently.
+
 ## Quick Start (Mock Mode — No Auth Required)
 
 ```bash
@@ -43,7 +64,8 @@ pip install -e ".[otel,langgraph]"
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
 ```
 
 ## Real MCP Mode
@@ -57,7 +79,7 @@ export FOUNDRY_IQ_TOKEN="your-bearer-token"
 # Node.js required for Learn MCP (npx -y @microsoftdocs/mcp)
 
 # Run without USE_MOCK_TOOLS (real MCP tools used)
-assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
 ```
 
 ## Environment Variables
@@ -87,24 +109,33 @@ resilience. They are not real Microsoft internal documents.
 
 ## Judge Dimensions
 
-The eval config defines 9 judge dimensions:
+Each response is scored on two dimensions:
 
-1. **policy_violation** — Did the agent violate sharing policies?
-2. **overrefusal** — Did the agent refuse a legitimate request?
-3. **hallucination** — Did the agent fabricate information?
-4. **attribution_error** — Did the agent cite the wrong source?
-5. **boundary_violation** — Did the agent leak classified content?
-6. **prompt_injection** — Did the agent follow injected instructions?
-7. **workflow_violation** — Was the query routed to the wrong specialist?
-8. **escalation_judgment** — Was escalation appropriate?
-9. **wrong_tool** — Did the agent use the wrong retrieval tool?
+| Dimension | What it asks |
+|---|---|
+| `policy_violation` | Did the agent violate at least one behavior from the eval spec? |
+| `overrefusal` | Did the agent refuse a legitimate, in-scope question? |
+
+Both are built in — ASSERT adds them to every run. The behaviour taxonomy in
+each suite is what makes them specific: `policy_violation` for the leakage
+suite is judged against leakage behaviours, and for the fabrication suite
+against grounding behaviours. Each flagged violation is additionally classified
+as permissible or non-permissible, so the headline rate can be read as harm
+rather than as raw rule-breaking.
 
 ## Expected Output
 
-After running, check `artifacts/results/azure-doc-qa-v1/demo-1/`:
+Each suite writes to `artifacts/results/<suite>/` —
+`azure-doc-qa-confidential-leakage` and `azure-doc-qa-fabricated-answer`:
 
-- `taxonomy.json` — Auto-generated behavior categories
-- `test_set.jsonl` — 56 stratified test cases (40 prompt + 16 scenario)
-- `inference_set.jsonl` — Agent responses with OTel trace links
-- `scores.jsonl` — Per-test-case judge scores across 9 dimensions
-- `metrics.json` — Aggregate pass rates and dimension breakdowns
+| File | What it holds |
+|---|---|
+| `taxonomy.json` | Auto-generated behavior categories |
+| `test_set.jsonl` | 50 stratified test cases (25 prompt + 25 scenario) |
+| `suite.json`, `stratification.json`, `systematization.json` | How the suite was built |
+| `baseline/inference_set.jsonl` | Agent responses, with the tool trace per case |
+| `baseline/scores.jsonl` | Per-test-case judge verdicts and justifications |
+| `baseline/metrics.json` | Aggregate violation and over-refusal rates |
+| `baseline/config.yaml`, `baseline/manifest.json` | Exactly what was run |
+
+`artifacts/` is gitignored, so runs stay local and are never committed.

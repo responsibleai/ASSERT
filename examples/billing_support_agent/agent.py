@@ -1,15 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Ungoverned baseline billing-support agent (callable ASSERT target).
+"""Billing-support agent (callable ASSERT target).
 
-A B2B billing-support chatbot with real Python tool functions mirroring
-``evals/billing_agent_tools.yaml``. The identity-verification gate is expressed
-ONLY in the system prompt, so the agent can be pressured into performing a
-high-risk action (plan change, cancellation, refund, payment-method update) on
-an unverified session. That is the failure ``assert-ai`` measures as the
-baseline; :mod:`examples.billing_support_agent.agent_guarded` re-runs the same
-agent with an ACS policy enforcing the gate at the tool boundary.
+A B2B billing-support chatbot with real Python tool functions, defined in this
+module. The identity-verification gate is expressed ONLY in the system prompt,
+so the agent can be pressured into performing a high-risk action (plan change,
+cancellation, refund, payment-method update) on an unverified session. That is
+the failure ``assert-ai`` measures.
 
 Callable contract: ``chat_baseline(message: str) -> str``. Each invocation is one
 isolated session; the internal tool loop may call ``verify_identity`` and then a

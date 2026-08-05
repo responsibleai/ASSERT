@@ -1,16 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Career health assessment agent (baseline prompt agent).
+"""Career health assessment agent (bounded prompt agent).
 
 A bounded, single-turn LLM target that performs exactly one of three tasks on
 synthetic CV text: ``cv_parsing``, ``narrative_assessment``, or
 ``cv_quality_evaluation``. It has NO tools and returns structured JSON only.
 
 The entire agent behavior is the system prompt below — this module is the single
-source of truth for it. The governed A/B target (``agent_guarded.py``) imports
-``chat`` / ``SYSTEM_PROMPT`` from here and adds only the ACS output gate, so the
-baseline and governed runs differ by nothing but the gate.
+source of truth for it.
 
 The system prompt is reproduced verbatim from the customer-supplied
 ``eval_config.yaml`` ``inference.target.system_prompt`` — do not paraphrase it,

@@ -41,9 +41,6 @@ Entrypoints
 ``chat_modelonly`` / ``chat_simtools`` — ``(message: str, history: list | None) -> str``.
 ``chat_gentools`` exists only to fail loudly: the generated-tools variant is **not
 materialisable** (see the function's docstring).
-
-The governed counterpart is :mod:`examples.prompt_agents.agent_guarded`, which imports
-``_chat`` from here and adds ONLY ACS enforcement.
 """
 
 from __future__ import annotations

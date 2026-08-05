@@ -369,10 +369,8 @@ def _default_execute_tool(
 ) -> dict[str, Any]:
     """Baseline tool executor: run the tool directly, unguarded.
 
-    The guarded agent (``agent_guarded.py``) supplies its own executor with the
-    identical signature that routes the guarded tool through ACS enforcement; the
-    surrounding loop (``_run_loop``) is shared so the two targets differ ONLY by the
-    tool-execution step.
+    Kept as an injectable step rather than inlined into ``_run_loop`` so tool
+    execution can be swapped without touching loop shape or turn accounting.
     """
     return _call_tool(registry, name, args)
 
