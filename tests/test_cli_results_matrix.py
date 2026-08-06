@@ -203,3 +203,168 @@ def test_results_matrix_behavior_name_falls_back_to_suite_id(tmp_path: Path) -> 
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["behaviors"] == ["fallback-suite"]
+
+
+# --- permissibility split -------------------------------------------------
+#
+# `policy_violation` unions permissible and impermissible behaviors, so ranking
+# behaviors by it can order them by the wrong thing entirely. The matrix
+# therefore leads with the impermissible half when every run reports it.
+#
+# The split is derived from node judgments plus the taxonomy and is stored as a
+# top-level rate, not under `dimensions`. Asking for it used to render an empty
+# cell under a correct-looking "Impermissible behavior violated" heading, which
+# reads as "no violations" rather than "not wired up".
+
+
+def _split_score_row(*, impermissible: bool, permissible: bool) -> dict[str, Any]:
+    """A row whose node judgments cover both buckets."""
+    return {
+        "judge_status": "ok",
+        "target": "test-target",
+        "judge_model": "test-judge",
+        "verdict": {
+            "dimensions": {
+                "policy_violation": impermissible or permissible,
+                "overrefusal": False,
+            },
+            "node_judgments": [
+                {"node_index": 0, "node_name": "must never", "relevant": True, "violated": impermissible},
+                {"node_index": 1, "node_name": "allowed", "relevant": True, "violated": permissible},
+            ],
+        },
+    }
+
+
+def _make_split_run(
+    results_root: Path,
+    suite_id: str,
+    run_id: str,
+    behavior_name: str,
+    rows: list[tuple[bool, bool]],
+    *, with_taxonomy: bool = True,
+) -> None:
+    run_dir = results_root / suite_id / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"status": "completed", "stages": {"judge": "completed"}}), encoding="utf-8"
+    )
+    (run_dir / "config.yaml").write_text(f"behavior:\n  name: {behavior_name}\n", encoding="utf-8")
+    if with_taxonomy:
+        (run_dir.parent / "taxonomy.json").write_text(
+            json.dumps({
+                "behavior_categories": [
+                    {"name": "must never", "permissible": False},
+                    {"name": "allowed", "permissible": True},
+                ]
+            }),
+            encoding="utf-8",
+        )
+    _write_jsonl(
+        run_dir / "scores.jsonl",
+        [_split_score_row(impermissible=i, permissible=p) for i, p in rows],
+    )
+
+
+def test_matrix_defaults_to_the_impermissible_half_when_every_run_has_the_split(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    # 1 of 4 impermissible, 3 of 4 permissible: the union would rank this high
+    # for the wrong reason.
+    _make_split_run(results_root, "beh", "beh-baseline", "beh",
+                    [(True, True), (False, True), (False, True), (False, False)])
+    _make_split_run(results_root, "beh", "beh-governed", "beh",
+                    [(False, False), (False, False), (False, True), (False, False)])
+
+    result = CliRunner().invoke(
+        cli, ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation_not_permissible"
+    assert payload["cells"]["beh"]["baseline"] == 0.25
+    assert payload["cells"]["beh"]["governed"] == 0.0
+
+
+def test_matrix_split_cells_are_populated_not_dashes(tmp_path: Path) -> None:
+    """The regression: the metric resolved and labelled, but every cell was None."""
+    results_root = tmp_path / "results"
+    _make_split_run(results_root, "beh", "beh-baseline", "beh", [(True, False), (False, True)])
+    _make_split_run(results_root, "beh", "beh-governed", "beh", [(False, False), (False, True)])
+
+    for metric in ("policy_violation_not_permissible", "policy_violation_permissible"):
+        result = CliRunner().invoke(
+            cli,
+            ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root),
+             "--metric", metric, "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        cells = json.loads(result.output)["cells"]["beh"]
+        assert all(value is not None for value in cells.values()), (metric, cells)
+
+
+def test_matrix_accepts_the_artifact_key_spelling_of_the_split(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_split_run(results_root, "beh", "beh-baseline", "beh", [(True, False), (False, False)])
+    _make_split_run(results_root, "beh", "beh-governed", "beh", [(False, False), (False, False)])
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root),
+         "--metric", "not_permissible_policy_violation_rate", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["cells"]["beh"]["baseline"] == 0.5
+
+
+def test_matrix_falls_back_to_policy_violation_without_a_taxonomy(tmp_path: Path) -> None:
+    """Quality suites repurpose policy_violation and have no taxonomy; they must
+    keep reporting the union rather than a table of blanks."""
+    results_root = tmp_path / "results"
+    _make_split_run(results_root, "beh", "beh-baseline", "beh",
+                    [(True, False), (False, False)], with_taxonomy=False)
+    _make_split_run(results_root, "beh", "beh-governed", "beh",
+                    [(False, False), (False, False)], with_taxonomy=False)
+
+    result = CliRunner().invoke(
+        cli, ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation"
+    assert payload["cells"]["beh"]["baseline"] == 0.5
+
+
+def test_matrix_does_not_mix_halves_when_only_some_runs_have_the_split(tmp_path: Path) -> None:
+    """One run contributing an impermissible-only rate while another contributes
+    the union would put non-comparable numbers in one table."""
+    results_root = tmp_path / "results"
+    _make_split_run(results_root, "with-tax", "with-tax-baseline", "beh_a", [(True, False)])
+    _make_split_run(results_root, "no-tax", "no-tax-baseline", "beh_b",
+                    [(True, False)], with_taxonomy=False)
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "with-tax/with-tax-baseline", "no-tax/no-tax-baseline",
+         "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["metric"] == "policy_violation"
+
+
+def test_matrix_warns_that_split_halves_have_different_denominators(tmp_path: Path) -> None:
+    """Each half is scored only over rows where its bucket was relevant, so the
+    halves do not sum to policy_violation."""
+    results_root = tmp_path / "results"
+    _make_split_run(results_root, "beh", "beh-baseline", "beh", [(True, False), (False, True)])
+    _make_split_run(results_root, "beh", "beh-governed", "beh", [(False, False), (False, True)])
+
+    result = CliRunner().invoke(
+        cli, ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "denominator" in result.output.lower()

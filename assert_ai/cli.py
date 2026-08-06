@@ -142,6 +142,24 @@ _PERMISSIBILITY_SPLIT_RATE_KEYS = (
     "permissible_policy_violation_rate",
 )
 
+# Canonical metric name -> the top-level rate key it is stored under. The split
+# is derived rather than judged, so it never appears in ``dimensions``; both
+# spellings are accepted so ``--metric`` works with either the viewer-facing
+# name or the artifact key.
+_PERMISSIBILITY_RATE_KEY_BY_METRIC = {
+    "policy_violation_not_permissible": "not_permissible_policy_violation_rate",
+    "policy_violation_permissible": "permissible_policy_violation_rate",
+    "not_permissible_policy_violation_rate": "not_permissible_policy_violation_rate",
+    "permissible_policy_violation_rate": "permissible_policy_violation_rate",
+}
+
+#: The half of the split the matrix leads with. ``policy_violation`` unions
+#: permissible and impermissible behaviors, so ranking behaviors by it can order
+#: them by the wrong thing entirely -- a behavior can carry a high union rate
+#: made up almost wholly of mishandled *permissible* work while another with a
+#: lower union rate is nearly all genuine impermissible failure.
+_MATRIX_SPLIT_METRIC = "policy_violation_not_permissible"
+
 
 def _has_permissibility_split(*metric_sets: Any) -> bool:
     """True when any of ``metric_sets`` reports the permissibility split.
@@ -439,10 +457,28 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
 
 
 def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | None:
-    prompt_rate = _dimension_rate(run_summary.get("prompt_metrics") or {}, metric)
+    prompt_metrics = run_summary.get("prompt_metrics") or {}
+    scenario_metrics = run_summary.get("scenario_metrics") or {}
+
+    # The permissibility split is not a judged dimension -- it is derived from
+    # node judgments plus the taxonomy and stored as a top-level rate on the
+    # metrics dict, not under ``dimensions``. Looking it up like an ordinary
+    # dimension therefore returns None, and the matrix renders an empty cell
+    # under a correct-looking "Impermissible behavior violated" heading, which
+    # reads as "no violations" rather than "not wired up".
+    split_key = _PERMISSIBILITY_RATE_KEY_BY_METRIC.get(metric)
+    if split_key is not None:
+        for metrics in (prompt_metrics, scenario_metrics):
+            if isinstance(metrics, dict) and split_key in metrics:
+                rate = metrics.get(split_key)
+                if isinstance(rate, (int, float)):
+                    return float(rate)
+        return None
+
+    prompt_rate = _dimension_rate(prompt_metrics, metric)
     if prompt_rate is not None:
         return prompt_rate
-    return _dimension_rate(run_summary.get("scenario_metrics") or {}, metric)
+    return _dimension_rate(scenario_metrics, metric)
 
 
 def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str) -> None:
@@ -1438,9 +1474,12 @@ def _run_within_suite_compare(
 )
 @click.option(
     "--metric",
-    default=DEFAULT_COMPARE_METRIC,
-    show_default=True,
-    help="Judge dimension to compare.",
+    default=None,
+    help=(
+        "Judge dimension to compare. Defaults to the impermissible half of the "
+        "permissibility split when every run reports it, otherwise "
+        f"'{DEFAULT_COMPARE_METRIC}'."
+    ),
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
@@ -1448,7 +1487,7 @@ def results_matrix(
     suite_runs: tuple[str, ...],
     suites: tuple[str, ...],
     results_dir: Path,
-    metric: str,
+    metric: str | None,
     as_json: bool,
     no_color: bool,
 ):
@@ -1476,6 +1515,7 @@ def results_matrix(
     seen_behaviors: set[str] = set()
     seen_arms: set[str] = set()
 
+    loaded: list[tuple[str, str, dict[str, Any]]] = []
     for suite_id, run_id in resolved_suite_runs:
         run_dir = results_root / suite_id / run_id
         if not run_dir.exists():
@@ -1493,7 +1533,28 @@ def results_matrix(
         if arm not in seen_arms:
             arms.append(arm)
             seen_arms.add(arm)
+        loaded.append((behavior, arm, run_summary))
 
+    # Resolve the default only once every run is loaded: it depends on whether
+    # they all carry the split. Requiring *all* of them keeps the matrix from
+    # mixing halves -- one run contributing an impermissible-only rate while
+    # another contributes the union would put non-comparable numbers in the same
+    # table, which is worse than falling back to the union everywhere.
+    if metric is None:
+        metric = (
+            _MATRIX_SPLIT_METRIC
+            if run_summaries
+            and all(
+                _has_permissibility_split(
+                    run_summary.get("prompt_metrics"),
+                    run_summary.get("scenario_metrics"),
+                )
+                for run_summary in run_summaries
+            )
+            else DEFAULT_COMPARE_METRIC
+        )
+
+    for behavior, arm, run_summary in loaded:
         cells.setdefault(behavior, {})[arm] = _run_dimension_rate(run_summary, metric)
 
     _reject_ordinal_compare(run_summaries, metric)
@@ -1531,6 +1592,17 @@ def results_matrix(
             row.append(_fmt_percent(cells.get(behavior, {}).get(arm)))
         table.add_row(*row)
     console.print(table)
+
+    if metric in _PERMISSIBILITY_RATE_KEY_BY_METRIC:
+        # Each half is scored only over the rows where a behavior in that bucket
+        # was relevant, so the two halves have different denominators from each
+        # other and from `policy_violation`. Say so, or a reader will try to add
+        # them and find they do not reconcile to the union.
+        console.print(
+            "[dim]Rate is over rows where a behavior in this bucket was relevant, "
+            "not all scored rows. The two halves of the split therefore have "
+            "different denominators and do not sum to policy_violation.[/dim]"
+        )
 
 
 @results.command("compare-suites", short_help="Compare runs across different suites (e.g., approach A vs B vs C)")
