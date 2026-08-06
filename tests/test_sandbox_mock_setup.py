@@ -22,6 +22,7 @@ from threading import Barrier
 import pytest
 
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
+from assert_ai.integrations.sandbox.cassettes import CassettePathError
 from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 from assert_ai.integrations.sandbox.mediator import ActionMediator
 from assert_ai.integrations.sandbox.mocks import (
@@ -327,6 +328,44 @@ def test_replay_with_overrides_reports_override_provenance(tmp_path):
     assert resolution is not None
     assert resolution.mock_source == "override"
     assert resolution.value["bills"][0]["charges"][0]["description"] == "INJECTED"
+
+
+def test_replay_backend_rejects_path_escape_without_setup_validation(tmp_path):
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text('{"sensitive": true}', encoding="utf-8")
+    library = MockLibrary.from_dict({
+        "mocks": [{
+            "tool": "lookup",
+            "backend": "replay",
+            "cassette_file": "../outside",
+        }],
+    })
+    library = MockLibrary(library.rules, cassette_dir=tmp_path)
+
+    with pytest.raises(MockBackendError, match="could not be read safely"):
+        library.resolve(MockCall("lookup", {}))
+
+
+def test_policy_replay_rejects_symlink_swapped_in_after_mediator_creation(tmp_path):
+    cassette = tmp_path / "lookup.json"
+    cassette.write_text('{"safe": true}', encoding="utf-8")
+    mediator = ActionMediator(
+        MediationPolicy({
+            "interactions": [{
+                "match": "lookup",
+                "mode": "mock",
+                "mock_source": "replay",
+            }],
+        }),
+        cassette_dir=tmp_path,
+    )
+    outside = tmp_path.parent / "outside-policy.json"
+    outside.write_text('{"sensitive": true}', encoding="utf-8")
+    cassette.unlink()
+    cassette.symlink_to(outside)
+
+    with pytest.raises(CassettePathError, match="symlink"):
+        mediator.mediate(_pre("lookup"), _never_executes)
 
 
 def test_contract_backend_fails_loudly_instead_of_degrading():

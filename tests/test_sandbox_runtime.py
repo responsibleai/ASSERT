@@ -23,6 +23,7 @@ from assert_ai.core.model_client import Message
 from assert_ai.integrations.sandbox import load_setup, tcp_relay
 from assert_ai.integrations.sandbox import runtime as sandbox_runtime
 from assert_ai.integrations.sandbox import session as sandbox_session
+from assert_ai.integrations.sandbox.mocks import MockBackendError
 from assert_ai.integrations.sandbox.runtime import (
     ContainerSpec,
     ModelProxySpec,
@@ -371,6 +372,38 @@ def test_setup_rejects_wildcard_cassette_symlink_escape(tmp_path):
 
     with pytest.raises(ValueError, match="escapes the cassette directory"):
         load_setup(setup)
+
+
+def test_loaded_setup_rechecks_cassette_when_replay_reads_it(tmp_path):
+    """Replacing a validated cassette cannot bypass containment at use time."""
+    policy, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    cassette = cassettes / "lookup.json"
+    cassette.write_text('{"safe": true}', encoding="utf-8")
+    policy.write_text(
+        "interactions: [{match: lookup, mode: mock}]\ndefault: {mode: block}\n",
+        encoding="utf-8",
+    )
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n"
+        "    cassette_file: lookup\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+    loaded = load_setup(setup)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"sensitive": true}', encoding="utf-8")
+    cassette.unlink()
+    cassette.symlink_to(outside)
+    host = loaded.tool_host(tools={}, agent_id="a", session_id="case")
+
+    with pytest.raises(MockBackendError, match="could not be read safely"):
+        host.call_tool("lookup", {})
 
 
 def test_setup_rejects_conflicting_setup_and_mock_cassette_directories(tmp_path):

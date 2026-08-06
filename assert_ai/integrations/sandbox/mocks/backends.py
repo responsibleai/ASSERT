@@ -27,12 +27,12 @@ touching the mediator.
 from __future__ import annotations
 
 import copy
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..cassettes import read_cassette_json
 from ..mediator import _apply_overrides
 
 
@@ -208,10 +208,16 @@ class ReplayBackend:
                 raise MockBackendError(
                     f"replay mock for '{call.tool}' needs a cassette dir or an inline `cassette:`"
                 )
-            path = self.cassette_dir / f"{name}.json"
-            if not path.exists():
-                raise MockBackendError(f"cassette not found for '{call.tool}': {path}")
-            base = json.loads(path.read_text())
+            try:
+                base = read_cassette_json(self.cassette_dir, name)
+            except FileNotFoundError as exc:
+                raise MockBackendError(
+                    f"cassette not found for '{call.tool}': {name!r}"
+                ) from exc
+            except (OSError, ValueError) as exc:
+                raise MockBackendError(
+                    f"cassette for '{call.tool}' could not be read safely: {exc}"
+                ) from exc
             origin = "cassette_file"
 
         overrides = list(rule.get("overrides") or [])

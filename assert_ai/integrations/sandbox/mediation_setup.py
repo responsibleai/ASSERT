@@ -37,6 +37,7 @@ from typing import Any
 
 import yaml
 
+from .cassettes import CassettePathError, cassette_path
 from .mediator import ActionMediator
 from .mocks import MockLibrary
 from .policy import MediationPolicy, _glob_match
@@ -216,24 +217,29 @@ def _validate_replay_cassettes(
             for candidate in root.glob("*.json"):
                 if not candidate.is_file() or not _glob_match(rule.tool, candidate.stem):
                     continue
-                if root not in candidate.resolve().parents:
+                try:
+                    cassette_path(root, candidate.stem)
+                except (CassettePathError, FileNotFoundError) as exc:
                     raise SetupError(
                         f"replay cassette for {rule.tool!r} escapes the cassette directory: "
-                        f"{candidate.name!r}"
-                    )
+                        f"{candidate.name!r} ({exc})"
+                    ) from exc
                 matching.append(candidate)
             if not matching:
                 raise SetupError(
                     f"no replay cassette files match tool pattern {rule.tool!r} in {root}"
                 )
             continue
-        path = (root / f"{name}.json").resolve()
-        if root not in path.parents:
+        try:
+            cassette_path(root, name)
+        except FileNotFoundError as exc:
             raise SetupError(
-                f"replay cassette for {rule.tool!r} escapes the cassette directory: {name!r}"
-            )
-        if not path.is_file():
-            raise SetupError(f"replay cassette file not found for {rule.tool!r}: {path}")
+                f"replay cassette file not found for {rule.tool!r}: {name!r}"
+            ) from exc
+        except CassettePathError as exc:
+            raise SetupError(
+                f"replay cassette for {rule.tool!r} escapes the cassette directory: {name!r} ({exc})"
+            ) from exc
 
 
 def load_setup(path: str | Path) -> MediationSetup:

@@ -31,12 +31,12 @@ and `audit:` policy keys are accepted but inert — they no longer set anything.
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .cassettes import cassette_exists, read_cassette_json
 from .policy import MediationPolicy
 from .records import MediationDecision
 
@@ -200,7 +200,7 @@ class ActionMediator:
         overrides = list(rule.get("overrides") or [])
         inline_cassette = rule.get("cassette")
         has_recording = inline_cassette is not None or (
-            self.cassette_dir is not None and (self.cassette_dir / f"{name}.json").exists()
+            self.cassette_dir is not None and cassette_exists(self.cassette_dir, name)
         )
 
         declared = str(rule.get("mock_source") or "").strip().lower()
@@ -267,10 +267,10 @@ class ActionMediator:
     def _load_cassette(self, tool_name: str) -> Any | None:
         if not self.cassette_dir:
             return None
-        path = self.cassette_dir / f"{tool_name}.json"
-        if not path.exists():
+        try:
+            return read_cassette_json(self.cassette_dir, tool_name)
+        except FileNotFoundError:
             return None
-        return json.loads(path.read_text())
 
 
 def _apply_overrides(obj: Any, overrides: list[Mapping[str, Any]]) -> Any:
