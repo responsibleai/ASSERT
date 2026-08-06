@@ -171,6 +171,16 @@ def _inference_config_fingerprint(
         for path in (setup.source_path, setup.policy_path, setup.mocks_path):
             if path is not None and path.exists():
                 sandbox_hash.update(path.read_bytes())
+        if setup.cassette_dir is not None:
+            cassette_root = setup.cassette_dir.resolve()
+            for cassette_path in sorted(cassette_root.rglob("*")):
+                if not cassette_path.is_file():
+                    continue
+                relative_path = cassette_path.relative_to(cassette_root).as_posix()
+                sandbox_hash.update(b"\0cassette\0")
+                sandbox_hash.update(relative_path.encode("utf-8"))
+                sandbox_hash.update(b"\0")
+                sandbox_hash.update(cassette_path.read_bytes())
         sandbox_sha = sandbox_hash.hexdigest()
     key = json_module.dumps(
         {
@@ -234,6 +244,23 @@ def _record_runtime_metadata(
         edit=AddMessageEdit(message=TranscriptMessage(role="system", content="[Runtime session metadata]")),
         raw=raw,
     ))
+
+
+async def _record_pending_runtime_interactions(
+    transcript: Transcript,
+    *,
+    runtime: Any,
+) -> None:
+    """Preserve runtime-owned evidence emitted by a failed target turn."""
+    drain: Any = getattr(runtime, "drain_pending_interaction_messages", None)
+    if not callable(drain):
+        return
+    interaction_messages = await drain()
+    if interaction_messages:
+        _record_interaction_messages(
+            transcript,
+            interaction_messages=interaction_messages,
+        )
 
 
 def _serialize_messages(messages: list[Message]) -> list[dict[str, Any]]:
@@ -680,6 +707,10 @@ async def _run_prompt_test_case(
         runtime_error = exc
     finally:
         try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve pending runtime interaction evidence")
+        try:
             await runtime.close()
         except Exception as exc:  # noqa: BLE001
             close_error = exc
@@ -711,6 +742,19 @@ async def _run_prompt_test_case(
                 ),
             ))
             transcript.stop_reason = "target_input_refused"
+            return transcript
+        if getattr(runtime, "preserve_error_transcript", False) is True:
+            transcript.add_event(TranscriptEvent(
+                view=["target", "combined"],
+                actor="system",
+                edit=AddMessageEdit(
+                    message=TranscriptMessage(
+                        role="system",
+                        content=f"[TARGET ERROR: {runtime_error}]",
+                    ),
+                ),
+            ))
+            transcript.stop_reason = "target_error"
             return transcript
         raise runtime_error
     if runtime_result is None:
@@ -1004,6 +1048,10 @@ async def _run_scenario_test_case(
     except Exception as exc:  # noqa: BLE001
         runtime_error = exc
     finally:
+        try:
+            await _record_pending_runtime_interactions(transcript, runtime=runtime)
+        except Exception:  # noqa: BLE001 - preserve the primary target failure
+            log.exception("failed to preserve pending runtime interaction evidence")
         try:
             await runtime.close()
         except Exception as exc:  # noqa: BLE001

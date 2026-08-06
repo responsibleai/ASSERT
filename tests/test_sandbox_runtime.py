@@ -8,30 +8,32 @@ import base64
 import http.client
 import importlib.resources
 import json
-from pathlib import Path
 import threading
-from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from assert_ai.config import parse_pipeline_config, parse_target_config
 from assert_ai.core.config_model import InferenceConfig, TargetConfig
 from assert_ai.core.model_client import Message
-from assert_ai.integrations.sandbox import load_setup
+from assert_ai.integrations.sandbox import load_setup, tcp_relay
 from assert_ai.integrations.sandbox import runtime as sandbox_runtime
-from assert_ai.integrations.sandbox import tcp_relay
+from assert_ai.integrations.sandbox import session as sandbox_session
 from assert_ai.integrations.sandbox.runtime import (
     ContainerSpec,
     ModelProxySpec,
     SandboxRuntimeError,
 )
 from assert_ai.integrations.sandbox.session import SandboxedEndpointSession
-from assert_ai.integrations.sandbox import session as sandbox_session
-from assert_ai.stages.inference import _build_target_session
-from assert_ai.stages.inference import _inference_config_fingerprint
+from assert_ai.stages import inference as inference_stage
+from assert_ai.stages.inference import (
+    _build_target_session,
+    _inference_config_fingerprint,
+)
 
 
 def _files(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -48,6 +50,41 @@ def test_sandbox_target_is_a_first_class_exclusive_target():
     assert target.is_sandbox
     with pytest.raises(ValueError, match="exactly one"):
         TargetConfig(sandbox="sandbox.yaml", endpoint="http://localhost/chat")
+
+
+@pytest.mark.parametrize(
+    ("value", "default", "expected"),
+    [
+        ("application/json; charset=utf-8", "application/octet-stream", "application/json; charset=utf-8"),
+        ("text/plain\r\nx-injected: yes", "application/octet-stream", "application/octet-stream"),
+        ("text/plain\nx-injected: yes", "application/json", "application/json"),
+        ("text/plain\x00", "application/json", "application/json"),
+        ("application/💣", "application/json", "application/json"),
+    ],
+)
+def test_untrusted_proxy_content_type_cannot_split_response_headers(value, default, expected):
+    """An upstream response cannot append headers through Content-Type."""
+    assert sandbox_runtime._safe_content_type(value, default) == expected
+
+
+def test_model_proxy_send_uses_fixed_type_for_malicious_upstream_header(monkeypatch):
+    """The model-proxy response path applies the sanitizer before send_header."""
+    handler = object.__new__(sandbox_runtime._ModelProxyHandler)
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(handler, "send_response", lambda status: None)
+    monkeypatch.setattr(handler, "send_header", lambda name, value: sent.append((name, value)))
+    monkeypatch.setattr(handler, "end_headers", lambda: None)
+    monkeypatch.setattr(
+        handler,
+        "wfile",
+        SimpleNamespace(write=lambda body: None),
+        raising=False,
+    )
+
+    handler._send(200, b"{}", "application/json\r\nx-injected: yes")
+
+    assert ("content-type", "application/json") in sent
+    assert not any("x-injected" in value for _, value in sent)
 
 
 def test_stock_docker_assets_are_packaged_with_copyable_agent():
@@ -190,6 +227,127 @@ def test_policy_or_mock_change_invalidates_inference_cache(tmp_path):
         target, None, 100, config_path=config
     )
     assert after != before
+
+
+def test_cassette_change_invalidates_inference_cache(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    cassette = cassettes / "lookup.json"
+    cassette.write_text('{"value":"before"}', encoding="utf-8")
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n    cassette_file: lookup\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "eval.yaml"
+    target = TargetConfig(sandbox="setup.yaml")
+
+    before = _inference_config_fingerprint(target, None, 100, config_path=config)
+    cassette.write_text('{"value":"after"}', encoding="utf-8")
+    after = _inference_config_fingerprint(target, None, 100, config_path=config)
+
+    assert after != before
+
+
+def test_setup_rejects_missing_replay_cassette_before_run(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n    cassette_file: missing\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="replay cassette file not found.*lookup"):
+        load_setup(setup)
+
+
+def test_setup_accepts_inline_replay_without_cassette_directory(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n"
+        "    cassette: {value: inline}\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_setup(setup)
+
+    assert loaded.cassette_dir is None
+
+
+def test_setup_rejects_replay_cassette_path_escape(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    (tmp_path / "outside.json").write_text("{}", encoding="utf-8")
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n"
+        "    cassette_file: ../outside\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="escapes the cassette directory"):
+        load_setup(setup)
+
+
+def test_setup_validates_wildcard_replay_against_matching_concrete_cassette(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    (cassettes / "lookup_customer.json").write_text("{}", encoding="utf-8")
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: 'lookup_*'\n    backend: replay\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_setup(setup)
+
+    assert loaded.cassette_dir == cassettes
+
+
+def test_setup_rejects_conflicting_setup_and_mock_cassette_directories(tmp_path):
+    _, mocks, setup = _files(tmp_path)
+    (tmp_path / "setup-cassettes").mkdir()
+    (tmp_path / "mock-cassettes").mkdir()
+    mocks.write_text(
+        "version: 1\ncassette_dir: ./mock-cassettes\n"
+        "mocks:\n  - tool: lookup\n    backend: replay\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n"
+        "cassettes: ./setup-cassettes\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="conflicting cassette directories"):
+        load_setup(setup)
 
 
 def test_secret_like_container_env_is_rejected_before_docker(tmp_path, monkeypatch):
@@ -533,6 +691,44 @@ def test_handle_cleanup_releases_servers_even_if_docker_disappears(tmp_path, mon
     ]
 
 
+def test_handle_cleanup_reports_nonzero_docker_exit_and_keeps_cleaning(tmp_path, monkeypatch):
+    calls: list[tuple[str, ...]] = []
+    closed: list[str] = []
+
+    class Server:
+        def shutdown(self): closed.append("shutdown")
+        def server_close(self): closed.append("close")
+
+    def nonzero_first_cleanup(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=1 if len(calls) == 1 else 0,
+            stdout="",
+            stderr="resource busy" if len(calls) == 1 else "",
+        )
+
+    monkeypatch.setattr(sandbox_runtime, "_docker", nonzero_first_cleanup)
+    handle = sandbox_runtime.SandboxHandle(
+        container="c",
+        network="n",
+        relay_container="r",
+        relay_network="rn",
+        endpoint_url="http://localhost/chat",
+        output_dir=tmp_path,
+        egress_log=tmp_path / "e",
+        policy_json=tmp_path / "p",
+        mocks_json=tmp_path / "m",
+        egress_server=Server(),  # type: ignore[arg-type]
+        egress_thread=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="cleanup exited 1: resource busy"):
+        handle.stop()
+
+    assert len(calls) == 4
+    assert closed == ["shutdown", "close"]
+
+
 def test_open_failure_after_docker_start_cleans_up_container_and_workdir(tmp_path, monkeypatch):
     _, _, setup = _files(tmp_path)
     setup.write_text(
@@ -592,3 +788,63 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
         for message in result.interaction_messages
     )
     assert "bad.example" in json.dumps(result.interaction_messages)
+
+
+def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
+    """A timed-out target still produces a target_error row with egress evidence."""
+    class Runtime:
+        preserve_error_transcript = True
+
+        def __init__(self):
+            self.session_metadata: dict[str, str] = {}
+
+        async def open(self):
+            return None
+
+        async def run_turn(self, messages):
+            raise TimeoutError("target timed out")
+
+        async def drain_pending_interaction_messages(self):
+            args = {"host": "bad.example", "port": 443, "method": "CONNECT", "path": ""}
+            return [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "egress-1",
+                        "function": "network_egress",
+                        "arguments": args,
+                    }],
+                },
+                {
+                    "role": "tool",
+                    "content": json.dumps({**args, "decision": "denied"}),
+                    "function": "network_egress",
+                    "arguments": args,
+                    "tool_call_id": "egress-1",
+                },
+            ]
+
+        async def close(self):
+            return None
+
+    runtime = Runtime()
+    monkeypatch.setattr(inference_stage, "_build_target_session", lambda **kwargs: runtime)
+
+    transcript = asyncio.run(inference_stage._run_prompt_test_case(
+        test_case={
+            "type": "prompt",
+            "test_case_id": "case-1",
+            "behavior": "egress",
+            "seed": {"description": "try the network"},
+        },
+        target=TargetConfig(sandbox="setup.yaml"),
+        inference=InferenceConfig(),
+        max_tokens=100,
+        config_path=None,
+    ))
+
+    payload = json.dumps(transcript.to_dict())
+    assert transcript.stop_reason == "target_error"
+    assert "bad.example" in payload
+    assert "network_egress" in payload

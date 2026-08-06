@@ -152,14 +152,15 @@ class SandboxedEndpointSession:
         if self._endpoint is None:
             raise RuntimeError("sandbox session is not open")
         result = await self._endpoint.run_turn(messages)
-        if self._handle is None:
-            return result
+        additions = await self.drain_pending_interaction_messages()
+        result.interaction_messages.extend(additions)
+        return result
 
-        # Proxy-aware network attempts are written host-side, outside the
-        # container. Add only rows produced since the previous turn.
+    async def drain_pending_interaction_messages(self) -> list[dict[str, Any]]:
+        """Drain host-side egress evidence even when the target turn failed."""
+        if self._handle is None:
+            return []
         rows = await asyncio.to_thread(self._handle.new_egress_rows)
-        if not rows:
-            return result
         additions: list[dict[str, Any]] = []
         for row in rows:
             event = egress_event(row)
@@ -183,8 +184,12 @@ class SandboxedEndpointSession:
                     "raw": {"sandbox": "network_egress"},
                 },
             ])
-        result.interaction_messages.extend(additions)
-        return result
+        return additions
+
+    @property
+    def preserve_error_transcript(self) -> bool:
+        """Container failures retain evidence; external endpoints keep legacy propagation."""
+        return self.setup.target.kind == "container"
 
     @property
     def session_metadata(self) -> dict[str, Any]:

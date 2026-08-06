@@ -194,6 +194,43 @@ def _load_target(data: Any) -> TargetSpec:
     )
 
 
+def _validate_replay_cassettes(
+    mocks: MockLibrary,
+    cassette_dir: Path | None,
+) -> None:
+    """Fail setup before a replay rule reaches its first tool call."""
+    for rule in mocks.rules:
+        if rule.backend != "replay" or rule.raw.get("cassette") is not None:
+            continue
+        declared_name = rule.raw.get("cassette_file")
+        name = str(declared_name or rule.tool).strip()
+        if not name:
+            raise SetupError(f"replay mock for {rule.tool!r} has an empty `cassette_file:`")
+        if cassette_dir is None:
+            raise SetupError(
+                f"replay mock for {rule.tool!r} requires `cassettes:` or an inline `cassette:`"
+            )
+        root = cassette_dir.resolve()
+        if declared_name is None and any(char in rule.tool for char in "*?["):
+            matching = [
+                candidate
+                for candidate in root.rglob("*.json")
+                if candidate.is_file() and _glob_match(rule.tool, candidate.stem)
+            ]
+            if not matching:
+                raise SetupError(
+                    f"no replay cassette files match tool pattern {rule.tool!r} in {root}"
+                )
+            continue
+        path = (root / f"{name}.json").resolve()
+        if root not in path.parents:
+            raise SetupError(
+                f"replay cassette for {rule.tool!r} escapes the cassette directory: {name!r}"
+            )
+        if not path.is_file():
+            raise SetupError(f"replay cassette file not found for {rule.tool!r}: {path}")
+
+
 def load_setup(path: str | Path) -> MediationSetup:
     """Load a setup file and everything it references.
 
@@ -226,7 +263,7 @@ def load_setup(path: str | Path) -> MediationSetup:
     cassette_dir: Path | None = None
     if data.get("cassettes"):
         cassette_dir = _resolve(base, str(data["cassettes"]))
-        if not cassette_dir.exists():
+        if not cassette_dir.is_dir():
             raise SetupError(f"cassette dir not found: {cassette_dir}")
 
     mocks_ref = data.get("mocks")
@@ -236,11 +273,21 @@ def load_setup(path: str | Path) -> MediationSetup:
         if not mocks_path.exists():
             raise SetupError(f"mock file not found: {mocks_path}")
         mocks = MockLibrary.from_yaml(mocks_path)
-        if cassette_dir and mocks.cassette_dir is None:
+        if cassette_dir and mocks.cassette_dir is not None:
+            if cassette_dir.resolve() != mocks.cassette_dir.resolve():
+                raise SetupError(
+                    "conflicting cassette directories: setup `cassettes:` resolves to "
+                    f"{cassette_dir.resolve()}, but mocks `cassette_dir:` resolves to "
+                    f"{mocks.cassette_dir.resolve()}"
+                )
+        if cassette_dir:
             mocks = MockLibrary(mocks.rules, cassette_dir=cassette_dir)
     else:
         # No mock file is legitimate: the policy's inline mocks still apply.
         mocks = MockLibrary.empty()
+
+    resolved_cassette_dir = mocks.cassette_dir or cassette_dir
+    _validate_replay_cassettes(mocks, resolved_cassette_dir)
 
     return MediationSetup(
         target=target,
@@ -249,7 +296,7 @@ def load_setup(path: str | Path) -> MediationSetup:
         source_path=setup_path,
         policy_path=policy_path,
         mocks_path=mocks_path,
-        cassette_dir=cassette_dir or mocks.cassette_dir,
+        cassette_dir=resolved_cassette_dir,
     )
 
 

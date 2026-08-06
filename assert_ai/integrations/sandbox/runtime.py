@@ -29,9 +29,9 @@ import json
 import logging
 import os
 import secrets
+import select
 import shutil
 import socket
-import select
 import subprocess
 import threading
 import time
@@ -61,6 +61,28 @@ class SandboxRuntimeError(RuntimeError):
     """Raised when the stock sandbox cannot be started or stopped safely."""
 
 
+def _safe_content_type(value: str | None, default: str) -> str:
+    """Return a header-safe media type without forwarding response delimiters.
+
+    Both proxy upstreams are outside ASSERT's trust boundary.  Python's
+    ``send_header`` does not reject embedded CR/LF, so forwarding an upstream
+    ``Content-Type`` verbatim would let a malicious service append response
+    headers.  Preserve ordinary media types, but fail closed to the caller's
+    fixed default for response splitting, other control bytes, or values that
+    cannot be emitted by ``BaseHTTPRequestHandler``.
+    """
+    candidate = str(value or default).strip()
+    if not candidate or "\r" in candidate or "\n" in candidate:
+        return default
+    if any(ord(char) < 32 or ord(char) == 127 for char in candidate):
+        return default
+    try:
+        candidate.encode("latin-1")
+    except UnicodeEncodeError:
+        return default
+    return candidate
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -84,6 +106,27 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         raise SandboxRuntimeError(f"docker {' '.join(args[:2])} failed: {detail}") from exc
+
+
+def _cleanup_docker(commands: tuple[tuple[str, ...], ...]) -> list[Exception]:
+    """Attempt every Docker cleanup and report exceptions plus nonzero exits."""
+    errors: list[Exception] = []
+    for command in commands:
+        try:
+            result = _docker(*command, check=False)
+        except Exception as exc:  # noqa: BLE001 - keep releasing later resources
+            errors.append(exc)
+            continue
+        if getattr(result, "returncode", 0) != 0:
+            detail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+            suffix = f": {detail}" if detail else ""
+            errors.append(
+                SandboxRuntimeError(
+                    f"docker {' '.join(command[:2])} cleanup exited "
+                    f"{result.returncode}{suffix}"
+                )
+            )
+    return errors
 
 
 def docker_available() -> bool:
@@ -252,7 +295,10 @@ class _EgressHandler(BaseHTTPRequestHandler):
         finally:
             connection.close()
         self.send_response(status)
-        self.send_header("content-type", content_type)
+        self.send_header(
+            "content-type",
+            _safe_content_type(content_type, "application/octet-stream"),
+        )
         self.send_header("content-length", str(len(raw)))
         self.send_header("connection", "close")
         self.end_headers()
@@ -379,7 +425,10 @@ class _ModelProxyHandler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, body: bytes, content_type: str | None = None) -> None:
         self.send_response(status)
-        self.send_header("content-type", content_type or "application/json")
+        self.send_header(
+            "content-type",
+            _safe_content_type(content_type, "application/json"),
+        )
         self.send_header("content-length", str(len(body)))
         self.send_header("connection", "close")
         self.end_headers()
@@ -462,18 +511,13 @@ class SandboxHandle:
         return rows
 
     def stop(self) -> None:
-        errors: list[Exception] = []
         commands = (
             ("rm", "-f", self.container),
             ("rm", "-f", self.relay_container),
             ("network", "rm", self.network),
             ("network", "rm", self.relay_network),
         )
-        for command in commands:
-            try:
-                _docker(*command, check=False)
-            except Exception as exc:  # noqa: BLE001 - continue releasing remaining resources
-                errors.append(exc)
+        errors = _cleanup_docker(commands)
         for server in (self.egress_server, self.model_server):
             if server is None:
                 continue
@@ -747,11 +791,9 @@ def start_container(
             ("network", "rm", network_name),
             ("network", "rm", relay_network),
         )
-        for command in commands:
-            try:
-                _docker(*command, check=False)
-            except Exception:  # noqa: BLE001
-                pass
+        cleanup_errors = _cleanup_docker(commands)
+        for cleanup_error in cleanup_errors:
+            log.warning("sandbox Docker cleanup also failed after startup error: %s", cleanup_error)
         for server in (egress_server, model_server):
             if server is not None:
                 try:

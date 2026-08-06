@@ -22,6 +22,7 @@ from threading import Barrier
 import pytest
 
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
+from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 from assert_ai.integrations.sandbox.mediator import ActionMediator
 from assert_ai.integrations.sandbox.mocks import (
     MockBackendError,
@@ -33,7 +34,6 @@ from assert_ai.integrations.sandbox.mocks import (
 from assert_ai.integrations.sandbox.mocks.matching import MatcherError, match_value
 from assert_ai.integrations.sandbox.policy import MediationPolicy
 from assert_ai.integrations.sandbox.records import MediationDecision
-from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 
 
 def _pre(name, args=None):
@@ -44,6 +44,27 @@ def _pre(name, args=None):
 
 def _never_executes(_args):
     raise AssertionError("the real tool must not run for a mocked call")
+
+
+def test_missing_passed_tool_does_not_claim_real_execution():
+    """A pass decision without an implementation is truthful failure evidence."""
+    setup = MediationSetup(
+        target=TargetSpec(kind="endpoint", url="http://127.0.0.1:8080/chat"),
+        policy=MediationPolicy({
+            "interactions": [{"match": "missing_tool", "mode": "pass"}],
+            "default": {"mode": "block"},
+        }),
+        mocks=MockLibrary.empty(),
+    )
+    host = setup.tool_host(tools={}, agent_id="a", session_id="case")
+
+    returned = host.call_tool("missing_tool", {"id": "x"})
+
+    assert returned == {"status": "not_found", "message": "No tool named missing_tool"}
+    assert host.records[-1].decision.mode == "pass"
+    assert host.records[-1].decision.real_executed is False
+    assert host.records[-1].decision.is_error is True
+    assert host.records[-1].post_context["extensions"]["action_mediation"]["real_executed"] is False
 
 
 # --- per-use-case mocks -------------------------------------------------------
