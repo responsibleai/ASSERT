@@ -214,7 +214,7 @@ def _validate_replay_cassettes(
         if declared_name is None and any(char in rule.tool for char in "*?["):
             matching = [
                 candidate
-                for candidate in root.rglob("*.json")
+                for candidate in root.glob("*.json")
                 if candidate.is_file() and _glob_match(rule.tool, candidate.stem)
             ]
             if not matching:

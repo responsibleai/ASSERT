@@ -330,6 +330,27 @@ def test_setup_validates_wildcard_replay_against_matching_concrete_cassette(tmp_
     assert loaded.cassette_dir == cassettes
 
 
+def test_setup_rejects_nested_wildcard_replay_cassette(tmp_path):
+    """Setup must not accept a cassette the runtime cannot load by tool name."""
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    nested = cassettes / "recordings"
+    nested.mkdir(parents=True)
+    (nested / "lookup_customer.json").write_text("{}", encoding="utf-8")
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: 'lookup_*'\n    backend: replay\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="no replay cassette files match tool pattern"):
+        load_setup(setup)
+
+
 def test_setup_rejects_conflicting_setup_and_mock_cassette_directories(tmp_path):
     _, mocks, setup = _files(tmp_path)
     (tmp_path / "setup-cassettes").mkdir()
@@ -848,3 +869,37 @@ def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
     assert transcript.stop_reason == "target_error"
     assert "bad.example" in payload
     assert "network_egress" in payload
+
+
+def test_sandbox_startup_failure_propagates_instead_of_becoming_target_error(monkeypatch):
+    """Docker/setup failures abort the eval; only an open runtime can yield evidence."""
+    class Runtime:
+        preserve_error_transcript = True
+
+        def __init__(self):
+            self.closed = False
+
+        async def open(self):
+            raise SandboxRuntimeError("Docker failed to start")
+
+        async def close(self):
+            self.closed = True
+
+    runtime = Runtime()
+    monkeypatch.setattr(inference_stage, "_build_target_session", lambda **kwargs: runtime)
+
+    with pytest.raises(SandboxRuntimeError, match="Docker failed to start"):
+        asyncio.run(inference_stage._run_prompt_test_case(
+            test_case={
+                "type": "prompt",
+                "test_case_id": "case-startup-failure",
+                "behavior": "sandbox startup",
+                "seed": {"description": "try the sandbox"},
+            },
+            target=TargetConfig(sandbox="setup.yaml"),
+            inference=InferenceConfig(),
+            max_tokens=100,
+            config_path=None,
+        ))
+
+    assert runtime.closed is True

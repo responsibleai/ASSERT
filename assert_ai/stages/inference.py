@@ -702,6 +702,18 @@ async def _run_prompt_test_case(
     close_error: Exception | None = None
     try:
         await runtime.open()
+    except Exception:
+        # Startup is a run-level prerequisite, not a target response. Do not
+        # turn a missing Docker daemon, bad image, or failed endpoint setup into
+        # a per-case target_error transcript. Still give partially-open runtimes
+        # one cleanup attempt before surfacing the original failure.
+        try:
+            await runtime.close()
+        except Exception:  # noqa: BLE001 - preserve the startup failure
+            log.exception("failed to clean up runtime after startup error")
+        raise
+
+    try:
         runtime_result = await runtime.run_turn(initial_messages)
     except Exception as exc:  # noqa: BLE001
         runtime_error = exc
