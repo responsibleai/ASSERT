@@ -351,6 +351,28 @@ def test_setup_rejects_nested_wildcard_replay_cassette(tmp_path):
         load_setup(setup)
 
 
+def test_setup_rejects_wildcard_cassette_symlink_escape(tmp_path):
+    """A wildcard must not bless a root-level symlink to a cassette outside it."""
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"sensitive": "outside the cassette root"}', encoding="utf-8")
+    (cassettes / "lookup_customer.json").symlink_to(outside)
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: 'lookup_*'\n    backend: replay\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="escapes the cassette directory"):
+        load_setup(setup)
+
+
 def test_setup_rejects_conflicting_setup_and_mock_cassette_directories(tmp_path):
     _, mocks, setup = _files(tmp_path)
     (tmp_path / "setup-cassettes").mkdir()

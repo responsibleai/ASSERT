@@ -212,11 +212,16 @@ def _validate_replay_cassettes(
             )
         root = cassette_dir.resolve()
         if declared_name is None and any(char in rule.tool for char in "*?["):
-            matching = [
-                candidate
-                for candidate in root.glob("*.json")
-                if candidate.is_file() and _glob_match(rule.tool, candidate.stem)
-            ]
+            matching: list[Path] = []
+            for candidate in root.glob("*.json"):
+                if not candidate.is_file() or not _glob_match(rule.tool, candidate.stem):
+                    continue
+                if root not in candidate.resolve().parents:
+                    raise SetupError(
+                        f"replay cassette for {rule.tool!r} escapes the cassette directory: "
+                        f"{candidate.name!r}"
+                    )
+                matching.append(candidate)
             if not matching:
                 raise SetupError(
                     f"no replay cassette files match tool pattern {rule.tool!r} in {root}"
