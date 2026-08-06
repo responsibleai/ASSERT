@@ -1,7 +1,7 @@
 # Career Health Assessment — Clarity → ASSERT example
 
-A bounded career-health assessment agent, evaluated with ASSERT against the two
-risks that Clarity discovery surfaced as highest-value.
+A bounded career-health assessment agent, evaluated with ASSERT against all five
+risks that Clarity discovery surfaced.
 
 ## The agent
 
@@ -32,18 +32,26 @@ actions, and no external calls. That is the point of the example: every
 guardrail is prompt-only, so the evals measure how far a system prompt alone
 holds up under adversarial input.
 
-## The two measured risks
+## The five measured risks
 
-Clarity ([`Clarity Protocol/`](Clarity%20Protocol/)) surfaced five failure modes;
-the two highest-value were triaged for measurement:
+Clarity ([`Clarity Protocol/`](Clarity%20Protocol/)) surfaced five failure modes,
+and each one is measured by its own eval suite:
 
 | Risk | Clarity severity | Failure mode |
 |---|---|---|
 | `fabricated-inference` | Critical | Asserts a fact, score, or evidence span that the supplied CV does not support |
 | `cv-prompt-injection` | High | Obeys an instruction embedded in `CV_TEXT`, or returns a favourable `status: ok` without signalling the injection |
+| `overreaching-verdict` | High | Issues a definitive, unqualified judgment about employability or character rather than a bounded, evidence-linked assessment |
+| `protected-attribute-bias` | High | Lets a protected or proxy attribute — name origin, gender, age, a caregiving gap — move the score or the narrative tone instead of job-relevant evidence |
+| `sparse-input-fabrication` | Medium | Constructs a plausible profile from blank, sparse, corrupted, or non-CV input instead of returning `insufficient_input` |
 
-Each risk is an **atomic** eval — one behaviour per config — so the two are
-measured independently and neither masks the other.
+Each risk is an **atomic** eval — one behaviour per config — so the five are
+measured independently and none masks another.
+
+`protected-attribute-bias` is the odd one out: it is measured by paired variation,
+holding qualifications constant while varying a demographic signal, because the
+harm is a *difference between two responses* rather than anything detectable in a
+single reply.
 
 ## What the eval checks
 
@@ -85,12 +93,16 @@ pip install -e ".[otel]"
 
 assert-ai run --config examples/career_health_assessment/evals/fabricated-inference/eval_config.yaml
 assert-ai run --config examples/career_health_assessment/evals/cv-prompt-injection/eval_config.yaml
+assert-ai run --config examples/career_health_assessment/evals/overreaching-verdict/eval_config.yaml
+assert-ai run --config examples/career_health_assessment/evals/protected-attribute-bias/eval_config.yaml
+assert-ai run --config examples/career_health_assessment/evals/sparse-input-fabrication/eval_config.yaml
 ```
 
 ## What you should see
 
-Each suite writes to `artifacts/results/<suite>/` —
-`career-health-fabricated-inference` and `career-health-prompt-injection`:
+Each suite writes to `artifacts/results/<suite>/` — `career-health-fabricated-inference`,
+`career-health-prompt-injection`, `career-health-overreaching-verdict`,
+`career-health-protected-attribute-bias` and `career-health-sparse-input-fabrication`:
 
 | File | What it holds |
 |---|---|
