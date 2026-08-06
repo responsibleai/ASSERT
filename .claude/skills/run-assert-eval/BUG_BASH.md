@@ -43,33 +43,6 @@ stage time, so once a run starts you are mostly waiting. Start it as early as yo
 can and use the wait — reading your domain's committed Clarity Protocol is step 6 of
 the procedure and does not need the run to have finished.
 
-Two hours is the middle of the range, not a promise. Measured across 47 archived
-runs on this branch, at the same `sample_size: 25` you will be running:
-
-| Domain | Baseline | Governed | One risk, full loop |
-| --- | --- | --- | --- |
-| `career_health_assessment` | 5 min | 6 min | **~11 min** |
-| `prompt_agents` | 7 min | 9 min | ~16 min |
-| `billing_support_agent` | 12 min | 19 min | ~31 min |
-| `science_research_agent` | 19 min | 15 min | ~33 min |
-| `change_control_agent` | 23 min | 28 min | ~51 min |
-| `azure_doc_qa` | 34 min | 44 min | ~78 min |
-| `travel_planner_langgraph` | 43 min | 49 min | ~92 min |
-| `travel_planner_neurosan` | 81 min | 108 min | **~189 min** |
-
-Everything down to `azure_doc_qa` fits inside two hours. The bottom two do not —
-`travel_planner_neurosan` is closer to three. If you drew one of those, plan to stop
-after the baseline and pick the governed run up afterwards. One caveat in the other
-direction: these archived runs reused a cached test set, so a freshly generated
-config also pays for the `systematize` and `test_set` stages before inference starts.
-
-Expect to iterate, too. The archived history shows several domains needed a second,
-third, or fourth governed run before the delta came out right — and that loop is
-itself one of the more interesting things to test.
-
-**Facilitators:** assign by weight. The bottom two lanes will not finish a governed
-run inside a single session — give those to people who can leave a run going.
-
 ## Safety boundaries
 
 - **Synthetic data only.** Every domain ships synthetic fixtures. Do not paste real
@@ -139,10 +112,6 @@ Then, in your IDE, confirm the **`run_clarity` tool is callable**. This is the o
 that most often fails, and it fails quietly — if you skipped the MCP reload, the
 tool simply will not be there, and the skill has nowhere to start.
 
-If any of the three fails, **file that issue before borrowing someone else's
-environment.** Setup friction is the most likely thing to hurt a real adopter, and
-a working teammate's laptop hides exactly the bug you were about to find.
-
 ---
 
 ## The procedure
@@ -156,49 +125,22 @@ config straight from your description, stop and file that. Answer its clarifying
 questions from the lane's description; if it asks something the description does
 not cover, say you don't know rather than inventing an answer.
 
-**2. Triage.** At the triage gate, **decline everything once.** Confirm zero files
-were written and zero runs started. Then re-enter and select **exactly one** risk.
+**2. Triage.** At the triage gate, **select top two risks.**
 
-**3. Generate.** Confirm you get **one** config for that one risk. A single config
+**3. Generate.** Confirm you get **one** config per risk. A single config
 scoring two behaviors is a bug. Then check `git status` — note every file written,
 and whether you expected each one.
 
 **4. Run.** Leave the sample size alone — the committed **25** is what the reference
 numbers were measured at, and matching it is what makes step 6 a real comparison:
 
-```bash
-assert-ai run --config <the generated config>
-```
-
-Start this as early as you can. Check the session plan for what your domain costs;
-on the heavier ones the run *is* most of the session.
-
 **5. Read the results.** Each behavior should be its own column, and the headline
 should report **Impermissible Behavior violated** and **Permissible Behavior
 violated** — not one collapsed number. Ask yourself whether you could defend that
 number to someone who owns this agent.
 
-**6. Compare to the reference.** Open your lane's committed
-`examples/<domain>/Clarity Protocol/failures/failures.md` and its `evals/*/`
-configs. Did discovery surface comparable risks? Did it rank them similarly? Did
-the generated config pick sensible stratify dimensions? **Different is not
-automatically wrong** — Clarity is a conversation and yours differed. What matters
-is whether the difference is *defensible*.
-
-**7. Break one thing.** Pick one and push:
-
-- Describe the agent vaguely, or contradict yourself between turns.
-- Claim a capability the agent does not have and see whether the skill notices.
-- Select **two** risks and confirm you get **two** configs and two sequential runs.
-- Ask it to bundle two risks into one config, to skip triage, or to print your API
-  key. It should refuse all three.
-- Rename the `history` parameter in the agent's callable — it is detected by
-  **name**, and misnaming it silently degrades multi-turn to single-turn.
-
-**8. Govern.** Ask the skill to turn the measured failure into an ACS policy and
-re-measure ([`workflows/govern-and-remeasure.md`](workflows/govern-and-remeasure.md)).
-Watch **Step 1a**: it must classify the failure as a semantic `output` gate or a
-structural tool gate *before* generating anything. If the impermissible rate drops,
+**6. Govern.** Ask the skill to turn the measured failure into an ACS policy and
+re-measure ([`workflows/govern-and-remeasure.md`](workflows/govern-and-remeasure.md)). If the impermissible rate drops,
 check whether the permissible rate rose — a gate that fixes harm by refusing
 everything is not a win.
 
@@ -364,14 +306,8 @@ knowing.
 
 Only after your lane:
 
-- Swap artifacts with another participant and see whether they can tell what was
-  measured, what failed, and why — without reading source.
 - Open the local viewer (`cd viewer && npm install && npm run dev`,
   http://localhost:5174) and compare its story to the skill's chat summary.
-- Re-run the **committed** config for your domain unchanged and see whether the
-  numbers land near the reference.
-- Run the same prompt on a second surface (Copilot vs. Cursor vs. Claude Code) and
-  compare methodology, not wording.
 
 ## Filing issues
 
