@@ -180,6 +180,9 @@ Optional:
 
 ## `acs generate`
 
+Requires the `acs` extra: `python -m pip install -e ".[acs]"` (editable install of the ASSERT
+repo itself — this is not yet published as an installable extra on PyPI's `assert-ai` package).
+
 Generate a deployable ACS policy from an ASSERT run.
 
 ```bash

@@ -28,7 +28,7 @@ Copilot is for *answering questions* and *synthesis* — direct answers, failure
    ```
    python -m pip install "assert-ai[otel]"
    ```
-   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph or `assert-ai[aiohttp]` for `target.endpoint`. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
+   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via `litellm`'s own dependency — no separate extra to install. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
 
 2. **Provider creds exist** in `.env`. NEVER read or print `.env`. If a run fails with an auth error, tell the user which variable NAMES are required (AZURE_API_KEY, AZURE_API_BASE, OPENAI_API_KEY, etc.) — never their values.
 
