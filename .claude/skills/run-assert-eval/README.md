@@ -18,6 +18,7 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
 | `tests/` | Pytest suite + real Clarity fixtures for the parser. |
 | `SETUP-CHECKLIST.md` | One-time in-IDE MCP setup + end-to-end verification. |
+| `BUG_BASH.md` | Facilitated bug-bash guide — one shared procedure, run against each of the eight example domains as a separate lane. |
 
 Keep the three skill surfaces (`SKILL.md`, the Copilot prompt, the Cursor rule)
 methodologically aligned when changing the flow.
