@@ -780,8 +780,10 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
 
 # -- init (design an eval config with an LLM assistant) ---------------------
 from assert_ai.init._command import init  # noqa: E402
+from assert_ai.mcp._command import mcp  # noqa: E402
 
 cli.add_command(init)
+cli.add_command(mcp)
 
 
 @cli.command(short_help="Run a pipeline from a YAML config")
