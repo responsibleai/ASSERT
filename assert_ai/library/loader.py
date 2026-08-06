@@ -43,7 +43,7 @@ def resolve_preset(kind: str, name: str) -> Path:
                     f"{name!r} is an application scenario, not an atomic behavior, and moved to "
                     f"the 'scenario' kind. Use kind='scenario', and pair it with atomic behaviors "
                     f"via context:. Resolving as a behavior is deprecated.",
-                    DeprecationWarning,
+                    FutureWarning,
                     stacklevel=2,
                 )
                 return moved

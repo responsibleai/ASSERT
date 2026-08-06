@@ -33,8 +33,11 @@ class ResolvePresetTest(unittest.TestCase):
 
     def test_resolve_moved_scenario_as_behavior_warns(self) -> None:
         # Existing configs say `behavior: {preset: travel_planner}`. Keep them
-        # working, but tell the author it has been reclassified.
-        with self.assertWarns(DeprecationWarning):
+        # working, but tell the author it has been reclassified. FutureWarning,
+        # not DeprecationWarning: the latter is suppressed by default outside
+        # pytest/-W, and config authors running `assert-ai run` directly need
+        # to actually see this.
+        with self.assertWarns(FutureWarning):
             path = resolve_preset("behavior", "travel_planner")
         self.assertEqual(path.parent.name, "scenarios")
 
