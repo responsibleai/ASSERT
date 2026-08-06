@@ -555,7 +555,6 @@ def _compute_prompt_metrics(
             if isinstance(row.get("judge_model"), str) and row.get("judge_model")
         ),
     ) or "-"
-    permissible_rows = [row for row in scored_rows if get_permissible_flag(row, default=False)]
     permissibility_split = compute_policy_violation_by_permissibility(
         scored_rows,
         behavior_categories,
@@ -568,7 +567,6 @@ def _compute_prompt_metrics(
         "judge_failure_rate": judge_failures / len(rows) if rows else 0.0,
         "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
-        "permissible_overrefusal_rate": _compute_dimension_summary(permissible_rows, "overrefusal")["rate"],
         "dimensions": dimensions,
         "target": target,
         "judge_model": judge_model,
