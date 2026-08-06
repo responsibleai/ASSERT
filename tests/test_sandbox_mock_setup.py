@@ -16,6 +16,8 @@ calls the policy already decided to mock, and can never change that decision.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -31,6 +33,7 @@ from assert_ai.integrations.sandbox.mocks import (
 from assert_ai.integrations.sandbox.mocks.matching import MatcherError, match_value
 from assert_ai.integrations.sandbox.policy import MediationPolicy
 from assert_ai.integrations.sandbox.records import MediationDecision
+from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 
 
 def _pre(name, args=None):
@@ -129,6 +132,71 @@ def test_malformed_matcher_fails_loudly():
 
 
 # --- state across mocked calls ------------------------------------------------
+
+
+def _stateful_setup() -> MediationSetup:
+    return MediationSetup(
+        target=TargetSpec(kind="endpoint", url="http://127.0.0.1:8080/chat"),
+        policy=MediationPolicy({
+            "interactions": [
+                {"match": "resume_line", "mode": "mock"},
+                {"match": "get_line_status", "mode": "mock"},
+            ],
+        }),
+        mocks=MockLibrary.from_dict({
+            "mocks": [
+                {
+                    "tool": "get_line_status",
+                    "scenario": "restore",
+                    "when_state": "resumed",
+                    "response": {"suspended": False},
+                },
+                {"tool": "get_line_status", "response": {"suspended": True}},
+                {
+                    "tool": "resume_line",
+                    "scenario": "restore",
+                    "responses": [
+                        {"response": {"status": "resumed"}, "sets_state": "resumed"},
+                        {"response": {"status": "already_active"}},
+                    ],
+                },
+            ],
+        }),
+    )
+
+
+def test_hosts_from_one_setup_do_not_share_scenario_state():
+    setup = _stateful_setup()
+    tools = {
+        "resume_line": _never_executes,
+        "get_line_status": _never_executes,
+    }
+    host_a = setup.tool_host(tools=tools, agent_id="a", session_id="case-a")
+    host_b = setup.tool_host(tools=tools, agent_id="a", session_id="case-b")
+
+    host_a.call_tool("resume_line", {})
+
+    assert host_a.call_tool("get_line_status", {})["suspended"] is False
+    assert host_b.call_tool("get_line_status", {})["suspended"] is True
+
+
+def test_concurrent_hosts_each_start_at_the_first_scenario_step():
+    setup = _stateful_setup()
+    tools = {"resume_line": _never_executes}
+    hosts = [
+        setup.tool_host(tools=tools, agent_id="a", session_id=f"case-{index}")
+        for index in range(2)
+    ]
+    barrier = Barrier(2)
+
+    def first_status(host):
+        barrier.wait()
+        return host.call_tool("resume_line", {})["status"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(executor.map(first_status, hosts))
+
+    assert statuses == ["resumed", "resumed"]
 
 
 def test_later_read_reflects_a_mocked_write():

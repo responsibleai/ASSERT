@@ -45,10 +45,11 @@ live in the same file without ordering games.
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -223,6 +224,37 @@ class MockLibrary:
             reset = getattr(backend, "reset", None)
             if callable(reset):
                 reset()
+
+    def fresh(self) -> "MockLibrary":
+        """Create an isolated library with pristine backend state for one case.
+
+        Standard backends are reconstructed rather than reset so concurrent
+        cases never share mutable scenario cursors. Custom backends may expose a
+        ``fresh()`` factory; otherwise they must be safely deepcopy-able.
+        """
+        defaults = default_backends(self.cassette_dir)
+        fresh_backends: dict[str, MockBackend] = {}
+        for name, backend in self.backends.items():
+            default = defaults.get(name)
+            if default is not None and type(default) is type(backend):
+                fresh_backends[name] = default
+                continue
+            factory = getattr(backend, "fresh", None)
+            if callable(factory):
+                fresh_backends[name] = cast(MockBackend, factory())
+                continue
+            try:
+                fresh_backends[name] = copy.deepcopy(backend)
+            except Exception as exc:  # noqa: BLE001 - explain the extension contract
+                raise MockConfigError(
+                    f"custom mock backend {name!r} cannot be isolated per case; "
+                    "implement fresh() or support deepcopy"
+                ) from exc
+        return MockLibrary(
+            copy.deepcopy(self.rules),
+            backends=fresh_backends,
+            cassette_dir=self.cassette_dir,
+        )
 
     def tools(self) -> set[str]:
         return {rule.tool for rule in self.rules}

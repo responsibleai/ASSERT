@@ -97,7 +97,11 @@ class MediationSetup:
     cassette_dir: Path | None = None
 
     def mediator(self) -> ActionMediator:
-        return ActionMediator(self.policy, cassette_dir=self.cassette_dir, mocks=self.mocks)
+        return ActionMediator(
+            self.policy,
+            cassette_dir=self.cassette_dir,
+            mocks=self.mocks.fresh(),
+        )
 
     def tool_host(
         self,
