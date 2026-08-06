@@ -17,7 +17,7 @@ export function scenarioStopReasonDisplay(stopReason: string | null | undefined)
 	if (stopReason === 'completed' || stopReason === 'max_turns') return null;
 	if (stopReason === 'tester_input_refused') {
 		return {
-			label: 'Refused before inference',
+			label: 'Refused before Inference',
 			description:
 				'The tester refused to generate input for this scenario, so no target conversation was produced.',
 			tone: 'refusal'

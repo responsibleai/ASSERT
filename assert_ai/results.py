@@ -176,6 +176,94 @@ def dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     return float(rate) if isinstance(rate, (int, float)) else None
 
 
+def compute_policy_violation_by_permissibility(
+    rows: Iterable[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]],
+) -> dict[str, dict[str, Any] | None]:
+    """Split policy violations by node permissibility, one vote per row.
+
+    Each row contributes to a bucket only when at least one behavior in that
+    bucket was relevant. Its vote is true when any such behavior was violated.
+    The test case's originating behavior does not affect this calculation.
+    """
+    categories = [
+        (index, entry)
+        for index, entry in enumerate(behavior_categories)
+        if isinstance(entry, dict)
+    ]
+    if not categories:
+        return {"permissible": None, "not_permissible": None}
+
+    permissible_by_index = {
+        index: entry.get("permissible") is True
+        for index, entry in categories
+    }
+    permissible_by_name = {
+        str(entry.get("name") or "").strip(): entry.get("permissible") is True
+        for _, entry in categories
+        if str(entry.get("name") or "").strip()
+    }
+    flags: dict[bool, list[bool]] = {True: [], False: []}
+    not_applicable: dict[bool, int] = {True: 0, False: 0}
+
+    for row in rows:
+        verdict = row.get("verdict")
+        node_judgments = verdict.get("node_judgments") if isinstance(verdict, dict) else None
+        row_applicable = {True: False, False: False}
+        row_violated = {True: False, False: False}
+
+        if isinstance(node_judgments, list):
+            for node in node_judgments:
+                if not isinstance(node, dict):
+                    continue
+                if "relevant" in node and node.get("relevant") is not True:
+                    continue
+                violated = node.get("violated")
+                if not isinstance(violated, bool):
+                    continue
+
+                node_index = node.get("node_index")
+                if (
+                    isinstance(node_index, int)
+                    and not isinstance(node_index, bool)
+                    and node_index in permissible_by_index
+                ):
+                    permissible = permissible_by_index[node_index]
+                else:
+                    node_name = str(node.get("node_name") or "").strip()
+                    if node_name not in permissible_by_name:
+                        continue
+                    permissible = permissible_by_name[node_name]
+
+                row_applicable[permissible] = True
+                row_violated[permissible] = row_violated[permissible] or violated
+
+        for permissible in (True, False):
+            if row_applicable[permissible]:
+                flags[permissible].append(row_violated[permissible])
+            else:
+                not_applicable[permissible] += 1
+
+    def summarize(permissible: bool) -> dict[str, Any]:
+        values = flags[permissible]
+        flagged_count = sum(values)
+        clear_count = len(values) - flagged_count
+        return {
+            "rate": flagged_count / len(values) if values else None,
+            "counts": {0: clear_count, 1: flagged_count},
+            "count": len(values),
+            "applicable_count": len(values),
+            "not_applicable_count": not_applicable[permissible],
+            "flagged_count": flagged_count,
+            "clear_count": clear_count,
+        }
+
+    return {
+        "permissible": summarize(True),
+        "not_permissible": summarize(False),
+    }
+
+
 def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     for row in rows:
         value = row.get(key)
@@ -188,6 +276,7 @@ def _compute_test_set_metrics(
     rows: list[dict[str, Any]],
     *,
     include_tester_model: bool = False,
+    behavior_categories: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -211,26 +300,57 @@ def _compute_test_set_metrics(
         "judge_model": _first_str(rows, "judge_model"),
     }
 
+    permissibility_split = compute_policy_violation_by_permissibility(
+        scored_rows,
+        behavior_categories,
+    )
+    if permissibility_split["permissible"] is not None:
+        permissible = permissibility_split["permissible"]
+        not_permissible = permissibility_split["not_permissible"]
+        assert not_permissible is not None
+        metrics.update(
+            {
+                "permissible_policy_violation_rate": permissible["rate"],
+                "not_permissible_policy_violation_rate": not_permissible["rate"],
+                "policy_violation_on_permissible": permissible,
+                "policy_violation_on_not_permissible": not_permissible,
+            }
+        )
+
     if include_tester_model:
         metrics["tester_model"] = _first_str(rows, "tester_model")
 
     return metrics
 
 
-def compute_prompt_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def compute_prompt_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     """Compute prompt-only summary metrics."""
-    return _compute_test_set_metrics(rows)
+    return _compute_test_set_metrics(rows, behavior_categories=behavior_categories)
 
 
-def compute_scenario_metrics(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def compute_scenario_metrics(
+    rows: list[dict[str, Any]],
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     """Compute scenario-only summary metrics."""
-    return _compute_test_set_metrics(rows, include_tester_model=True)
+    return _compute_test_set_metrics(
+        rows,
+        include_tester_model=True,
+        behavior_categories=behavior_categories,
+    )
 
 
 def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     """Load one run's manifest and score-derived summaries."""
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
+    taxonomy = load_json(run_dir.parent / "taxonomy.json")
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        behavior_categories = []
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -251,8 +371,8 @@ def load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "current_stage": current_stage,
         "started_at": (manifest or {}).get("started_at"),
         "ended_at": (manifest or {}).get("ended_at"),
-        "prompt_metrics": compute_prompt_metrics(prompt_rows),
-        "scenario_metrics": compute_scenario_metrics(scenario_rows),
+        "prompt_metrics": compute_prompt_metrics(prompt_rows, behavior_categories),
+        "scenario_metrics": compute_scenario_metrics(scenario_rows, behavior_categories),
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }

@@ -899,5 +899,794 @@ class TestGenAIToolCallReviewFollowups(unittest.TestCase):
         self.assertEqual([t["edit"]["tool_result"] for t in tools], ["first-result", ""])
 
 
+class TestGenAIDirectExtractionFollowup(unittest.TestCase):
+    """Issue #241: direct extraction helpers must not leave pure gen_ai spans blank."""
+
+    def _span(self, *, kind="LLM", span_id="s1", parent=None, name="span", attrs=None, start=0, events=None):
+        from assert_ai.core.otel import OTelSpan
+        return OTelSpan(
+            trace_id="genai_direct",
+            span_id=span_id,
+            parent_span_id=parent,
+            name=name,
+            kind=kind,
+            start_time_ns=start,
+            end_time_ns=start + 1_000_000,
+            attributes=attrs or {},
+            events=events or [],
+        )
+
+    def _genai_llm(self, *, span_id="llm1", parent=None, start=0, text="Answer."):
+        return self._span(
+            kind="LLM",
+            span_id=span_id,
+            parent=parent,
+            name="chat gpt-4o",
+            start=start,
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "gpt-4o-mini",
+                "gen_ai.response.model": "gpt-4o-2024-08-06",
+                "gen_ai.usage.input_tokens": 12,
+                "gen_ai.usage.output_tokens": 7,
+                "gen_ai.input.messages": json.dumps([
+                    {"role": "user", "content": "What is the weather?"}
+                ]),
+                "gen_ai.output.messages": json.dumps([
+                    {"role": "assistant", "content": text}
+                ]),
+                "langgraph.node": "planner",
+            },
+        )
+
+    def _genai_tool(self, *, span_id="tool1", parent=None, start=0, call_id="call_1"):
+        return self._span(
+            kind="TOOL",
+            span_id=span_id,
+            parent=parent,
+            name="execute_tool lookup",
+            start=start,
+            attrs={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "lookup",
+                "gen_ai.tool.call.id": call_id,
+                "gen_ai.tool.call.arguments": json.dumps({"q": "weather"}),
+                "gen_ai.tool.call.result": json.dumps({"result": "sunny"}),
+            },
+        )
+
+    def test_extract_span_inputs_reads_genai_fields(self):
+        from assert_ai.core.otel import extract_span_inputs
+
+        row = extract_span_inputs([self._genai_llm()])[0]
+        self.assertEqual(row["query"], "What is the weather?")
+        self.assertEqual(row["response"], "Answer.")
+        self.assertEqual(row["model"], "gpt-4o-2024-08-06")
+        self.assertEqual(row["input_tokens"], 12)
+        self.assertEqual(row["output_tokens"], 7)
+        self.assertEqual(row["node"], "planner")
+
+    def test_extract_trajectory_inputs_reads_genai_tools_and_tokens(self):
+        from assert_ai.core.otel import extract_trajectory_inputs
+
+        llm = self._span(
+            kind="LLM",
+            span_id="llm1",
+            start=0,
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "gpt-4o",
+                "gen_ai.usage.input_tokens": 20,
+                "gen_ai.usage.output_tokens": 5,
+                "gen_ai.input.messages": json.dumps([
+                    {"role": "user", "content": "Find docs"}
+                ]),
+                "gen_ai.output.messages": json.dumps([{
+                    "role": "assistant",
+                    "parts": [
+                        {"type": "text", "content": "I'll look."},
+                        {
+                            "type": "tool_call",
+                            "id": "call_doc",
+                            "name": "search_docs",
+                            "arguments": {"query": "GenAI spans"},
+                        },
+                    ],
+                }]),
+                "langgraph.node": "researcher",
+            },
+        )
+        tool = self._span(
+            kind="TOOL",
+            span_id="tool1",
+            start=1_000,
+            attrs={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "search_docs",
+                "gen_ai.tool.call.id": "call_doc",
+                "gen_ai.tool.call.arguments": json.dumps({"query": "GenAI spans"}),
+                "gen_ai.tool.call.result": "found",
+            },
+        )
+        row = extract_trajectory_inputs([tool, llm])[0]
+        self.assertEqual(row["user_input"], "Find docs")
+        self.assertEqual(row["total_tokens"], {"input": 20, "output": 5})
+        self.assertEqual(json.loads(row["node_path"]), ["researcher"])
+        self.assertEqual(
+            json.loads(row["tool_calls"]),
+            [{"name": "search_docs", "arguments": {"query": "GenAI spans"}}],
+        )
+
+    def test_extract_session_inputs_reads_genai_messages_and_tool_calls(self):
+        from assert_ai.core.otel import extract_session_inputs
+
+        row = extract_session_inputs([
+            self._genai_llm(span_id="llm1"),
+            self._genai_tool(span_id="tool1", start=1_000),
+        ])[0]
+        self.assertEqual(json.loads(row["user_inputs"]), ["What is the weather?"])
+        self.assertEqual(json.loads(row["output_messages"]), ["Answer."])
+        self.assertEqual(json.loads(row["tool_calls"]), ['lookup({"q": "weather"})'])
+
+    def test_span_node_to_dict_reads_genai_fields(self):
+        from assert_ai.core.otel import SpanNode
+
+        llm_dict = SpanNode(self._genai_llm()).to_dict(include_input=True)
+        self.assertEqual(llm_dict["model"], "gpt-4o-2024-08-06")
+        self.assertEqual(llm_dict["tokens"], {"input": 12, "output": 7})
+        self.assertEqual(llm_dict["input"], "What is the weather?")
+        self.assertEqual(llm_dict["output"], "Answer.")
+
+        tool_dict = SpanNode(self._genai_tool()).to_dict(include_input=True)
+        self.assertEqual(tool_dict["tool_name"], "lookup")
+        self.assertEqual(tool_dict["tool_args"], {"q": "weather"})
+        self.assertIn("sunny", tool_dict["tool_result"])
+
+    def test_tree_mode_auto_selection_preserves_pure_genai_content(self):
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode
+
+        event_carried_tool_call = {
+            "name": "gen_ai.choice",
+            "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                "role": "assistant",
+                "content": "Need a lookup.",
+                "tool_calls": [{
+                    "id": "event_call",
+                    "type": "function",
+                    "function": {
+                        "name": "search_docs",
+                        "arguments": json.dumps({"query": "GenAI spans"}),
+                    },
+                }],
+            })}}],
+        }
+        event_carried_tool_result = {
+            "name": "gen_ai.tool.message",
+            "attributes": [
+                {"key": "id", "value": {"stringValue": "event_call"}},
+                {"key": "content", "value": {"stringValue": "docs found"}},
+            ],
+        }
+        spans = [self._span(
+            kind="AGENT",
+            span_id="root",
+            name="invoke_agent",
+            attrs={"gen_ai.operation.name": "invoke_agent", "langgraph.node": "agent"},
+        )]
+        spans.append(self._genai_llm(
+            span_id="llm0",
+            parent="root",
+            start=1_000,
+            text="Answer 0.",
+        ))
+        spans.append(self._span(
+            kind="LLM",
+            span_id="llm_event_tool",
+            parent="root",
+            name="chat gpt-4o",
+            start=1_500,
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "gpt-4o",
+                "langgraph.node": "tool_requester",
+            },
+            events=[event_carried_tool_call, event_carried_tool_result],
+        ))
+        spans.append(self._genai_tool(span_id="tool0", parent="root", start=2_000))
+        for i in range(7):
+            spans.append(self._genai_llm(
+                span_id=f"llm_extra_{i}",
+                parent="root",
+                start=3_000 + i,
+                text=f"Extra answer {i}.",
+            ))
+
+        result = extract_for_judge(spans)
+        self.assertEqual(result["mode"], ExtractionMode.TREE)
+        root = result["representation"][0]
+        llm_child = next(c for c in root["children"] if c["span_id"] == "llm0")
+        tool_requester = next(c for c in root["children"] if c["span_id"] == "llm_event_tool")
+        tool_child = next(c for c in root["children"] if c["span_id"] == "tool0")
+        self.assertEqual(llm_child["model"], "gpt-4o-2024-08-06")
+        self.assertEqual(llm_child["output"], "Answer 0.")
+        self.assertEqual(tool_requester["tool_calls"], [{
+            "name": "search_docs",
+            "arguments": {"query": "GenAI spans"},
+            "tool_call_id": "event_call",
+            "tool_result": "docs found",
+        }])
+        self.assertEqual(tool_child["tool_name"], "lookup")
+        self.assertEqual(tool_child["tool_args"], {"q": "weather"})
+        self.assertIn("sunny", tool_child["tool_result"])
+
+    def test_repeated_call_ids_are_not_collapsed_in_direct_helpers(self):
+        from assert_ai.core.otel import extract_trajectory_inputs, extract_session_inputs
+
+        def choice_span(span_id, q, start):
+            return self._span(
+                kind="LLM",
+                span_id=span_id,
+                start=start,
+                attrs={
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.request.model": "gpt-4o",
+                    "gen_ai.input.messages": json.dumps([
+                        {"role": "user", "content": f"lookup {q}"}
+                    ]),
+                    "gen_ai.output.messages": json.dumps([{
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "dup",
+                            "type": "function",
+                            "function": {
+                                "name": "lookup",
+                                "arguments": json.dumps({"q": q}),
+                            },
+                        }],
+                    }]),
+                    "session.id": "sess_dup",
+                },
+            )
+
+        spans = [choice_span("llm1", "first", 0), choice_span("llm2", "second", 1_000)]
+        traj_calls = json.loads(extract_trajectory_inputs(spans)[0]["tool_calls"])
+        self.assertEqual(
+            traj_calls,
+            [
+                {"name": "lookup", "arguments": {"q": "first"}},
+                {"name": "lookup", "arguments": {"q": "second"}},
+            ],
+        )
+        session_calls = json.loads(extract_session_inputs(spans)[0]["tool_calls"])
+        self.assertEqual(session_calls, ['lookup({"q": "first"})', 'lookup({"q": "second"})'])
+
+    def test_tool_arg_raw_value_still_truncates_in_tree_serialization(self):
+        from assert_ai.core.otel import OTelSpan, SpanNode
+
+        span = OTelSpan(
+            trace_id="t1",
+            span_id="tool_raw",
+            parent_span_id=None,
+            name="tool",
+            kind="TOOL",
+            start_time_ns=0,
+            end_time_ns=1_000_000,
+            attributes={
+                "openinference.span.kind": "TOOL",
+                "tool.name": "bad_args_tool",
+                "input.value": "x" * 2000,
+                "output.value": "ok",
+            },
+        )
+        d = SpanNode(span).to_dict(max_content_chars=50)
+        self.assertEqual(d["tool_args"], {"raw": "x" * 50})
+
+    def test_dual_emitting_spans_keep_openinference_precedence(self):
+        from assert_ai.core.otel import extract_span_inputs, SpanNode
+
+        span = self._span(
+            kind="LLM",
+            attrs={
+                "openinference.span.kind": "LLM",
+                "input.value": "openinference input",
+                "output.value": "openinference output",
+                "llm.model_name": "oi-model",
+                "llm.token_count.prompt": 3,
+                "llm.token_count.completion": 4,
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "genai-model",
+                "gen_ai.input.messages": json.dumps([
+                    {"role": "user", "content": "genai input"}
+                ]),
+                "gen_ai.output.messages": json.dumps([
+                    {"role": "assistant", "content": "genai output"}
+                ]),
+            },
+        )
+
+        row = extract_span_inputs([span])[0]
+        self.assertEqual(row["query"], "openinference input")
+        self.assertEqual(row["response"], "openinference output")
+        self.assertEqual(row["model"], "oi-model")
+        self.assertEqual(SpanNode(span).to_dict()["output"], "openinference output")
+
+    def test_openinference_non_llm_spans_do_not_change_trajectory_node_path(self):
+        from assert_ai.core.otel import extract_trajectory_inputs
+
+        llm = self._span(
+            kind="LLM",
+            span_id="oi_llm",
+            start=0,
+            attrs={
+                "openinference.span.kind": "LLM",
+                "input.value": "hello",
+                "output.value": "world",
+                "langgraph.node": "planner",
+            },
+        )
+        wrapper = self._span(
+            kind="CHAIN",
+            span_id="oi_wrapper",
+            start=1_000,
+            attrs={
+                "openinference.span.kind": "CHAIN",
+                "langgraph.node": "wrapper",
+            },
+        )
+
+        row = extract_trajectory_inputs([llm, wrapper])[0]
+        self.assertEqual(json.loads(row["node_path"]), ["planner"])
+
+    def test_dual_carrier_tool_request_is_emitted_once(self):
+        from assert_ai.core.otel import extract_trajectory_inputs, SpanNode, _spans_to_events
+
+        tool_call = {
+            "id": "call_dual",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": json.dumps({"q": "weather"}),
+            },
+        }
+        event = {
+            "name": "gen_ai.choice",
+            "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                "role": "assistant",
+                "tool_calls": [tool_call],
+            })}}],
+        }
+        span = self._span(
+            kind="LLM",
+            span_id="dual_carrier",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.input.messages": json.dumps([
+                    {"role": "user", "content": "look it up"}
+                ]),
+                "gen_ai.output.messages": json.dumps([
+                    {"role": "assistant", "tool_calls": [tool_call]}
+                ]),
+            },
+            events=[event],
+        )
+
+        trajectory_calls = json.loads(
+            extract_trajectory_inputs([span])[0]["tool_calls"]
+        )
+        tree_calls = SpanNode(span).to_dict()["tool_calls"]
+        self.assertEqual(
+            trajectory_calls,
+            [{"name": "lookup", "arguments": {"q": "weather"}}],
+        )
+        self.assertEqual(len(tree_calls), 1)
+        self.assertEqual(tree_calls[0]["tool_call_id"], "call_dual")
+        flat_calls = [
+            item for item in _spans_to_events([span])[0]
+            if item.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual(len(flat_calls), 1)
+
+    def test_dual_carrier_same_id_with_different_payload_preserves_both(self):
+        from assert_ai.core.otel import extract_trajectory_inputs, SpanNode, _spans_to_events
+
+        attr_call = {
+            "id": "call_conflict",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": json.dumps({"q": "weather"}),
+            },
+        }
+        event_call = {
+            "id": "call_conflict",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": json.dumps({"q": "news"}),
+            },
+        }
+        span = self._span(
+            kind="LLM",
+            span_id="conflicting_carriers",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps([
+                    {"role": "assistant", "tool_calls": [attr_call]}
+                ]),
+            },
+            events=[{
+                "name": "gen_ai.choice",
+                "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                    "role": "assistant",
+                    "tool_calls": [event_call],
+                })}}],
+            }],
+        )
+
+        trajectory_calls = json.loads(
+            extract_trajectory_inputs([span])[0]["tool_calls"]
+        )
+        self.assertEqual(
+            [call["arguments"]["q"] for call in trajectory_calls],
+            ["weather", "news"],
+        )
+        self.assertEqual(len(SpanNode(span).to_dict()["tool_calls"]), 2)
+        flat_calls = [
+            item for item in _spans_to_events([span])[0]
+            if item.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual(len(flat_calls), 2)
+
+    def test_tree_correlates_tool_result_across_spans(self):
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode
+
+        request_event = {
+            "name": "gen_ai.choice",
+            "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_cross",
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "arguments": json.dumps({"q": "weather"}),
+                    },
+                }],
+            })}}],
+        }
+        result_event = {
+            "name": "gen_ai.tool.message",
+            "attributes": [
+                {"key": "id", "value": {"stringValue": "call_cross"}},
+                {"key": "content", "value": {"stringValue": "sunny"}},
+            ],
+        }
+        root = self._span(
+            kind="AGENT",
+            span_id="root",
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+        )
+        request = self._span(
+            kind="LLM",
+            span_id="request",
+            parent="root",
+            start=1_000,
+            attrs={"gen_ai.operation.name": "chat"},
+            events=[request_event],
+        )
+        result = self._span(
+            kind="AGENT",
+            span_id="result",
+            parent="root",
+            start=2_000,
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+            events=[result_event],
+        )
+
+        tree = extract_for_judge(
+            [root, request, result],
+            mode=ExtractionMode.TREE,
+        )["representation"][0]
+        request_node = next(
+            child for child in tree["children"] if child["span_id"] == "request"
+        )
+        self.assertEqual(request_node["tool_calls"][0]["tool_result"], "sunny")
+
+        chunk = extract_for_judge(
+            [root, request, result],
+            mode=ExtractionMode.CHUNKED,
+        )["representation"][0]["tree"]
+        chunk_request = next(
+            child for child in chunk["children"] if child["span_id"] == "request"
+        )
+        self.assertEqual(chunk_request["tool_calls"][0]["tool_result"], "sunny")
+
+    def test_result_before_request_does_not_seed_reused_call_id(self):
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode, _spans_to_events
+
+        def result_event(content):
+            return {
+                "name": "gen_ai.tool.message",
+                "attributes": [
+                    {"key": "id", "value": {"stringValue": "reused"}},
+                    {"key": "content", "value": {"stringValue": content}},
+                ],
+            }
+
+        root = self._span(
+            kind="AGENT",
+            span_id="root_reused",
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+        )
+        stale_result = self._span(
+            kind="AGENT",
+            span_id="stale_result",
+            parent="root_reused",
+            start=1,
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+            events=[result_event("stale")],
+        )
+        request = self._span(
+            kind="LLM",
+            span_id="reused_request",
+            parent="root_reused",
+            start=2,
+            attrs={"gen_ai.operation.name": "chat"},
+            events=[{
+                "name": "gen_ai.choice",
+                "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "reused",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }],
+                })}}],
+            }],
+        )
+        fresh_result = self._span(
+            kind="AGENT",
+            span_id="fresh_result",
+            parent="root_reused",
+            start=3,
+            attrs={"gen_ai.operation.name": "invoke_agent"},
+            events=[result_event("fresh")],
+        )
+
+        tree = extract_for_judge(
+            [root, stale_result, request, fresh_result],
+            mode=ExtractionMode.TREE,
+        )["representation"][0]
+        request_node = next(
+            child for child in tree["children"]
+            if child["span_id"] == "reused_request"
+        )
+        self.assertEqual(request_node["tool_calls"][0]["tool_result"], "fresh")
+
+        flat_events, _ = _spans_to_events(
+            [root, stale_result, request, fresh_result]
+        )
+        flat_calls = [
+            event["edit"] for event in flat_events
+            if event.get("edit", {}).get("type") == "tool_call"
+        ]
+        self.assertEqual([call["tool_result"] for call in flat_calls], ["fresh"])
+
+    def test_tree_result_assignment_uses_chronology_not_depth_first_order(self):
+        from assert_ai.core.otel import extract_for_judge, ExtractionMode
+
+        def request(span_id, parent, start, query):
+            return self._span(
+                kind="LLM",
+                span_id=span_id,
+                parent=parent,
+                start=start,
+                attrs={"gen_ai.operation.name": "chat"},
+                events=[{
+                    "name": "gen_ai.choice",
+                    "attributes": [{"key": "message", "value": {"stringValue": json.dumps({
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "dup",
+                            "type": "function",
+                            "function": {
+                                "name": "lookup",
+                                "arguments": json.dumps({"q": query}),
+                            },
+                        }],
+                    })}}],
+                }],
+            )
+
+        def result(span_id, start, content):
+            return self._span(
+                kind="AGENT",
+                span_id=span_id,
+                parent="root_fifo",
+                start=start,
+                attrs={"gen_ai.operation.name": "invoke_agent"},
+                events=[{
+                    "name": "gen_ai.tool.message",
+                    "attributes": [
+                        {"key": "id", "value": {"stringValue": "dup"}},
+                        {"key": "content", "value": {"stringValue": content}},
+                    ],
+                }],
+            )
+
+        spans = [
+            self._span(
+                kind="AGENT",
+                span_id="root_fifo",
+                attrs={"gen_ai.operation.name": "invoke_agent"},
+            ),
+            self._span(
+                kind="AGENT",
+                span_id="container",
+                parent="root_fifo",
+                start=1,
+                attrs={"gen_ai.operation.name": "invoke_agent"},
+            ),
+            request("request_sibling", "root_fifo", 2, "sibling"),
+            request("request_nested", "container", 100, "nested"),
+            result("result_1", 200, "sibling-result"),
+            result("result_2", 300, "nested-result"),
+        ]
+
+        tree = extract_for_judge(
+            spans,
+            mode=ExtractionMode.TREE,
+        )["representation"][0]
+        container = next(
+            child for child in tree["children"] if child["span_id"] == "container"
+        )
+        sibling = next(
+            child for child in tree["children"] if child["span_id"] == "request_sibling"
+        )
+        nested = next(
+            child for child in container["children"] if child["span_id"] == "request_nested"
+        )
+        self.assertEqual(
+            sibling["tool_calls"][0]["tool_result"],
+            "sibling-result",
+        )
+        self.assertEqual(
+            nested["tool_calls"][0]["tool_result"],
+            "nested-result",
+        )
+
+    def test_malformed_roles_and_call_ids_do_not_abort_extraction(self):
+        from assert_ai.core.otel import (
+            extract_span_inputs,
+            extract_trajectory_inputs,
+            SpanNode,
+            _spans_to_events,
+        )
+
+        span = self._span(
+            kind="LLM",
+            span_id="malformed",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.input.messages": json.dumps([
+                    {"role": [], "content": "hello"}
+                ]),
+                "gen_ai.output.messages": json.dumps([{
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": ["bad-id"],
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "arguments": json.dumps({"q": "weather"}),
+                        },
+                    }],
+                }]),
+            },
+            events=[{
+                "name": "gen_ai.tool.message",
+                "attributes": [
+                    {"key": "id", "value": {"arrayValue": {
+                        "values": [{"stringValue": "bad-id"}]
+                    }}},
+                    {"key": "content", "value": {"stringValue": "sunny"}},
+                ],
+            }],
+        )
+
+        self.assertEqual(extract_span_inputs([span])[0]["query"], "hello")
+        calls = json.loads(extract_trajectory_inputs([span])[0]["tool_calls"])
+        self.assertEqual(calls[0]["name"], "lookup")
+        self.assertEqual(len(SpanNode(span).to_dict()["tool_calls"]), 1)
+
+        malformed_tool = self._span(
+            kind="TOOL",
+            span_id="malformed_tool",
+            attrs={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": "lookup",
+                "gen_ai.tool.call.id": ["bad-tool-id"],
+                "gen_ai.tool.call.arguments": json.dumps({"q": "weather"}),
+                "gen_ai.tool.call.result": "sunny",
+            },
+        )
+        flat_events, _ = _spans_to_events([malformed_tool])
+        self.assertEqual(len(flat_events), 1)
+        self.assertNotIn("tool_call_id", flat_events[0]["edit"])
+
+    def test_tree_truncates_structured_tool_arguments(self):
+        from assert_ai.core.otel import SpanNode, extract_for_judge, ExtractionMode
+
+        huge_args = {"payload": "x" * 20_000}
+        span = self._span(
+            kind="LLM",
+            span_id="large_args",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps([{
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_large",
+                        "type": "function",
+                        "function": {
+                            "name": "submit",
+                            "arguments": json.dumps(huge_args),
+                        },
+                    }],
+                }]),
+            },
+        )
+
+        serialized_call = SpanNode(span).to_dict(max_content_chars=50)["tool_calls"][0]
+        self.assertLessEqual(len(json.dumps(serialized_call["arguments"])), 70)
+
+        result = extract_for_judge(
+            [span],
+            mode=ExtractionMode.TREE,
+            max_tokens_budget=100,
+            max_content_chars=500,
+        )
+        self.assertLessEqual(len(json.dumps(result["representation"])), 400)
+
+        chunked = extract_for_judge(
+            [span],
+            mode=ExtractionMode.CHUNKED,
+            max_tokens_budget=100,
+            max_content_chars=20_000,
+        )
+        self.assertLessEqual(len(json.dumps(chunked["representation"])), 400)
+
+        many_spans = [
+            self._span(
+                kind="LLM",
+                span_id=f"large_args_{index}",
+                start=index,
+                attrs={
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.output.messages": json.dumps([{
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": f"call_large_{index}",
+                            "type": "function",
+                            "function": {
+                                "name": "submit",
+                                "arguments": json.dumps(huge_args),
+                            },
+                        }],
+                    }]),
+                },
+            )
+            for index in range(8)
+        ]
+        many = extract_for_judge(
+            many_spans,
+            mode=ExtractionMode.TREE,
+            max_tokens_budget=200,
+            max_content_chars=20_000,
+        )
+        self.assertLessEqual(len(json.dumps(many["representation"])), 800)
+        self.assertTrue(many["metadata"].get("representation_truncated"))
+
+
 if __name__ == "__main__":
     unittest.main()

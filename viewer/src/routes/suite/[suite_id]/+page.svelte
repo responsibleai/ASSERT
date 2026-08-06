@@ -5,7 +5,8 @@
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import ExpandableText from '$lib/ExpandableText.svelte';
-	import { judgeDimensionLabel } from '$lib/labels.js';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { orderMetricNames, visibleMetricNames } from '$lib/permissibility.js';
 	import { renderMarkdown } from '$lib/markdown.js';
 	import { mergeRunLists, normalizePromptSeeds, normalizeScenarioSeeds, type CombinedRunEntry } from '$lib/suite-view.js';
 	import type { DimensionDef } from '$lib/types.js';
@@ -226,14 +227,19 @@
 		}
 		return Array.from(names);
 	});
-	let dimNames = $derived(allDimNames);
+	// Tracked headline pair leads the table so A/B runs are compared on impermissible
+	// vs. permissible behavior violations first; every other dim stays selectable.
+	let dimNames = $derived(orderMetricNames(allDimNames));
 	function dimColumnLabel(name: string): string {
-		const spaced = name.replace(/_/g, ' ');
-		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+		return metricTitleLabel(name);
 	}
+	// Narrow to dims carrying data first, then drop the pair the split supersedes.
+	// Ordering matters: a suite whose runs have no split data keeps `policy_violation`.
 	let visibleDimNames = $derived(
-		dimNames.filter((name) =>
-			allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+		visibleMetricNames(
+			dimNames.filter((name) =>
+				allRuns.some((r) => aggregateRunDimensionRate(r, name) !== null)
+			)
 		)
 	);
 
@@ -243,7 +249,7 @@
 	// from the URL search param ``metrics`` so links are shareable and reloads
 	// preserve the user's column choice. Default = first MAX_METRIC_COLS entries
 	// of visibleDimNames, preserving the existing ordering.
-	const MAX_METRIC_COLS = 3;
+	const MAX_METRIC_COLS = 2;
 	let selectedMetricCols = $derived.by<(string | null)[]>(() => {
 		const populated = visibleDimNames;
 		const numCols = Math.min(MAX_METRIC_COLS, populated.length);
@@ -373,11 +379,6 @@
 		else expandedRunIds = new Set();
 	});
 
-	function metricLabel(metric: string): string {
-		const label = judgeDimensionLabel(metric);
-		return label.charAt(0).toUpperCase() + label.slice(1);
-	}
-
 	function metricRateClass(rate: number | null): string {
 		if (rate == null) return 'text-text-muted';
 		if (rate >= 0.5) return 'text-score-fail';
@@ -427,20 +428,6 @@
 		const promptViolations = promptRate == null ? 0 : promptTotal * promptRate;
 		const auditViolations = auditRate == null ? 0 : auditTotal * auditRate;
 		return (promptViolations + auditViolations) / applicableTotal;
-	}
-
-	function aggregateRunOverrefusalRate(run: CombinedRunEntry): number | null {
-		const promptTotal = run.prompt?.metrics?.total ?? 0;
-		const auditTotal = run.audit?.metrics?.total ?? 0;
-		const total = promptTotal + auditTotal;
-		if (total === 0) return null;
-		const promptRate = run.prompt?.metrics?.overrefusal_rate;
-		const auditRate = run.audit?.metrics?.overrefusal_rate;
-		const applicableTotal = (promptRate == null ? 0 : promptTotal) + (auditRate == null ? 0 : auditTotal);
-		if (applicableTotal === 0) return null;
-		const promptVal = promptRate == null ? 0 : promptTotal * promptRate;
-		const auditVal = auditRate == null ? 0 : auditTotal * auditRate;
-		return (promptVal + auditVal) / applicableTotal;
 	}
 
 	function aggregateRunDimensionRate(run: CombinedRunEntry, dimension: string): number | null {
