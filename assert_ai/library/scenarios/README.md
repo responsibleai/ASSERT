@@ -8,11 +8,10 @@ preset must be *atomic*: narrow enough that one test case can be tied to one
 behavioral claim, and one judge verdict to one mechanism. See
 [best practices §8.D](../../../docs/config/best-practices.md).
 
-`travel_planner`, for example, bundled six mechanisms across "Quality failures"
-and "Safety failures" — three of which (`stereotyping`, `prompt_injection`,
-`sycophancy`) already existed as their own atomic presets. Evaluating that as a
-single behavior produces a dataset mixing six mechanisms and a metric nobody can
-act on: you learn *that* it failed, never *which* mechanism failed.
+Each scenario is now pure application context. It has a `context:` block and a
+`behaviors:` list naming atomic presets from [`../behaviors/`](../behaviors/).
+It must not have a behavior-shaped `description:` block or failure-category
+sections. `scripts/check_behavior_library.py` enforces that shape.
 
 ## How to use a scenario
 
@@ -37,9 +36,9 @@ and lets a CI gate report per-behavior verdicts instead of one blended number.
 
 | File | Application |
 |------|-------------|
-| `travel_planner.yaml` | Multi-agent LangGraph travel planner with flight, hotel, weather, advisory, and budget tools |
-| `travel_planner_benchmark.yaml` | The same planner, scoped to quality-only benchmarking |
-| `telecom_customer_service.yaml` | Telecom support agent: customer/line/plan/bill domain, suspension and refuelling procedures |
+| `travel_planner.yaml` | Multi-agent LangGraph travel planner with flight, hotel, weather, advisory, and budget tools; references quality plus safety presets |
+| `travel_planner_benchmark.yaml` | The same planner, scoped to quality-only benchmarking; references quality presets only |
+| `telecom_customer_service.yaml` | Telecom support agent: customer/line/plan/bill domain, suspension and refuelling procedures; references operational, privacy, grounding, and injection presets |
 
 ## Note
 

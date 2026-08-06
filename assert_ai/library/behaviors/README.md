@@ -61,6 +61,8 @@ policy violations.
 | [stereotyping](stereotyping.yaml) | safety, bias, fairness | Avoidance of demographic stereotypes |
 | [suicide_self_harm](suicide_self_harm.yaml) | safety, crisis | Appropriate handling of self-harm disclosures |
 | [sycophancy](sycophancy.yaml) | safety, alignment | Resistance to pressure-driven agreement |
+| [identity_verification_failures](identity_verification_failures.yaml) | safety, privacy, operational | Account-specific disclosures before identity checks |
+| [unauthorized_action_failures](unauthorized_action_failures.yaml) | safety, policy, tool-use | State-changing actions without required authorization |
 
 ### Multi-Agent & Tool Use
 
@@ -98,30 +100,38 @@ CI keeps the two in parity.
 | [intent_misinterpretation_failures](intent_misinterpretation_failures.yaml) | agentic, intent | Acting on a confidently wrong reading of the request |
 | [conflicting_instruction_resolution_failures](conflicting_instruction_resolution_failures.yaml) | agentic, intent | Mishandling instructions that contradict each other |
 | [success_criteria_ambiguity_failures](success_criteria_ambiguity_failures.yaml) | agentic, intent | Proceeding without a clear definition of done |
+| [explicit_constraint_violation_failures](explicit_constraint_violation_failures.yaml) | agentic, quality, constraints | Outputs that violate explicit user constraints |
 | [flawed_action_plan_failures](flawed_action_plan_failures.yaml) | agentic, planning | Plans that cannot achieve the goal as sequenced |
 | [premature_termination_failures](premature_termination_failures.yaml) | agentic, planning | Stopping before the task is actually complete |
 | [repeated_action_loop_failures](repeated_action_loop_failures.yaml) | agentic, planning | Repeating an action without progress between attempts |
 | [incorrect_tool_selection_failures](incorrect_tool_selection_failures.yaml) | agentic, tool-use | Choosing the wrong tool, or none, for the request |
 | [tool_parameter_formatting_failures](tool_parameter_formatting_failures.yaml) | agentic, tool-use | Malformed or wrongly typed tool arguments |
 | [tool_call_error_recovery_failures](tool_call_error_recovery_failures.yaml) | agentic, tool-use | Poor recovery from tool errors, timeouts, empty results |
+| [tool_call_turn_protocol_failures](tool_call_turn_protocol_failures.yaml) | agentic, tool-use, protocol | Violating turn-level protocol for tool calls |
 | [stale_state_failures](stale_state_failures.yaml) | agentic, state | Acting on internal state that no longer reflects reality |
 | [observation_neglect_failures](observation_neglect_failures.yaml) | agentic, state | Ignoring what a tool or the environment actually returned |
 | [tool_output_misinterpretation_failures](tool_output_misinterpretation_failures.yaml) | agentic, state | Misreading a correct tool result |
+| [output_internal_consistency_failures](output_internal_consistency_failures.yaml) | agentic, quality, consistency | Dates, numbers, sequence, or claims contradict each other |
 | [poor_retrieval_failures](poor_retrieval_failures.yaml) | agentic, retrieval | Retrieving wrong, insufficient, or irrelevant context |
 | [underused_context_failures](underused_context_failures.yaml) | agentic, retrieval | Having the right context and not using it |
 | [response_completeness_failures](response_completeness_failures.yaml) | agentic, retrieval | Answers that omit required parts of the request |
 | [insufficient_verification_failures](insufficient_verification_failures.yaml) | agentic, verification | Not checking work before presenting it as done |
 | [unsupported_conclusion_failures](unsupported_conclusion_failures.yaml) | agentic, verification | Conclusions the gathered evidence does not support |
 | [incomplete_answer_synthesis_failures](incomplete_answer_synthesis_failures.yaml) | agentic, verification | Failing to combine findings into a coherent answer |
+| [unit_conversion_failures](unit_conversion_failures.yaml) | agentic, quality, calculation | Incorrect handling of units, currencies, measures, or time zones |
 | [ineffective_team_communication_failures](ineffective_team_communication_failures.yaml) | agentic, multi-agent | Sub-agents failing to convey what peers need |
+| [actionability_failures](actionability_failures.yaml) | agentic, quality, communication | Vague answers when concrete options or next steps were requested |
+| [procedure_adherence_failures](procedure_adherence_failures.yaml) | agentic, quality, operational | Required procedure steps skipped, reordered, or contradicted |
+| [out_of_scope_request_failures](out_of_scope_request_failures.yaml) | agentic, policy, scope | Complying with requests outside the defined role or authority |
+| [escalation_judgment_failures](escalation_judgment_failures.yaml) | agentic, operational, handoff | Escalating too early or failing to escalate when required |
 
 ### Application scenarios
 
 `travel_planner`, `travel_planner_benchmark`, and `telecom_customer_service`
-moved to [`../scenarios/`](../scenarios/). They describe an *application* — role,
-domain objects, tools, procedures — not an atomic behavior, and each bundled
-several mechanisms that already exist here as their own presets. Use them as
-`context:` and pair them with the atomic behaviors above.
+live in [`../scenarios/`](../scenarios/). They describe an *application* — role,
+domain objects, tools, procedures — not an atomic behavior. Each scenario now
+contains only `context:` plus a `behaviors:` list pointing to the atomic presets
+above. Use the scenario as shared context and run one behavior at a time.
 
 ## Anatomy of a behavior preset
 
@@ -131,10 +141,10 @@ name: doxxing
 version: "1.0"
 tags: [safety, privacy]
 applicable_to: [general, search, social-media]
-description: >-
+summary: >-
   One-line summary of what this behavior evaluates.
 
-spec: |
+description: |
   # Full behavior specification
   Multi-line markdown describing what the agent should and should not do.
 
@@ -148,8 +158,8 @@ suggested_judge_presets:
 
 Key fields:
 
-- **spec** — The full behavior description (maps to `behavior.description` in eval config)
-- **context** — Target-specific description (maps to `context` in eval config)
+- **description** — The full behavior description (maps to `behavior.description` in eval config)
+- **context** — Target-specific description (maps to `context` in eval config; scenarios carry this separately)
 - **suggested_judge_presets** — Which judge presets pair well with this behavior
 - **tags** — For discovery and filtering
 - **applicable_to** — Agent/domain types this behavior is relevant for

@@ -34,6 +34,25 @@ assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgra
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
+## Reuse a behavior from the library — check here first
+
+Before writing a `behavior.description` from scratch, check the **[Behavior Library](../assert_ai/library/behaviors/README.md)**
+(`assert_ai/library/behaviors/`) — the single source of truth for atomic,
+ready-to-use behavior presets shipped with ASSERT. Each preset is scoped to
+one mechanism (one judge verdict, one behavioral claim), covering safety,
+bias/fairness, and agentic failure modes. Browse the full catalog with:
+
+```powershell
+assert-ai library list --kind behavior
+assert-ai library show <preset-name>
+```
+
+Pair a preset with application context from the **[Scenario Library](../assert_ai/library/scenarios/README.md)**
+(`assert_ai/library/scenarios/`) — scenarios describe your *application*
+(role, domain objects, tools, procedures), not a behavior. One config per
+behavior, sharing a common scenario's `context:`, is the pattern every
+example in this directory follows.
+
 ## Which example to start with
 
 | Goal | Example | Notes |
@@ -47,6 +66,7 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 | Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
 | See runtime + eval close the loop on a real workflow | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
 | Generate ACS guardrails from ASSERT findings | `acs_guardrails/README.md` | Offline ASSERT→ACS adapter demo: synthetic findings generate `manifest.yaml` + Rego, validate known-bad outputs, then guard a callable target. |
+| Benchmark inference/judge throughput at scale | `benchmark/README.md` | Same flagship travel-planner target, realistic non-adversarial traffic only, run at higher concurrency/sample size. Not a new agent or behavior — a throughput variant. |
 
 ## Layout
 
@@ -55,6 +75,7 @@ examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
 ├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
+├── benchmark/                  throughput-scale variant of the flagship example, non-adversarial only
 ├── prompt_agents/              simple hosted-model and Prompt Agent configs
 ├── azure_managed_identity/     minimal Azure OpenAI eval that uses Entra ID auth
 ├── behavior_specs/             reusable behavior examples and references in markdown files

@@ -49,6 +49,7 @@ ALL_SCENARIO_NAMES = sorted(
 
 BEHAVIOR_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description"}
 JUDGE_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description", "dimensions"}
+SCENARIO_REQUIRED_KEYS = {"kind", "name", "version", "tags", "context", "behaviors"}
 
 
 def _base_config(**overrides):
@@ -174,6 +175,37 @@ class JudgeYamlSchemaTest(unittest.TestCase):
                 self.assertIsInstance(data["tags"], list)
                 for tag in data["tags"]:
                     self.assertIsInstance(tag, str)
+
+
+class ScenarioYamlSchemaTest(unittest.TestCase):
+    """Validate scenario YAML files stay context-only and behavior-linked."""
+
+    def test_all_scenario_files_have_required_keys(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                for key in SCENARIO_REQUIRED_KEYS:
+                    self.assertIn(key, data, f"scenario {name!r} missing key {key!r}")
+
+    def test_scenarios_are_context_not_behavior_specs(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                self.assertEqual(data["kind"], "scenario")
+                self.assertNotIn("description", data)
+                self.assertIsInstance(data["context"], str)
+                self.assertGreater(len(data["context"].strip()), 0)
+
+    def test_scenario_behavior_references_exist(self):
+        behavior_names = set(ALL_BEHAVIOR_NAMES)
+        for name in ALL_SCENARIO_NAMES:
+            data = load_preset("scenario", name)
+            self.assertIsInstance(data["behaviors"], list)
+            self.assertGreater(len(data["behaviors"]), 0)
+            for behavior in data["behaviors"]:
+                with self.subTest(scenario=name, behavior=behavior):
+                    self.assertIsInstance(behavior, str)
+                    self.assertIn(behavior, behavior_names)
 
 
 # ===================================================================
@@ -658,8 +690,8 @@ class ExampleConfigTest(unittest.TestCase):
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
         dims = ctx["evaluation"].judge.dimensions
         pv = next(d for d in dims if d["name"] == "policy_violation")
-        # The inline override has custom text, not the preset default
-        self.assertIn("quality or safety failure", pv["description"])
+        # The inline override has custom text for the atomic travel behavior.
+        self.assertIn("injected instructions", pv["description"])
 
 
 if __name__ == "__main__":
