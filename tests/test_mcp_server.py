@@ -62,12 +62,24 @@ def test_server_options_resolve_workspace_and_capabilities(tmp_path: Path) -> No
 
     assert options.workspace_root == workspace.resolve()
     assert options.mode is ServerMode.AUTHOR
+    assert options.path_policy.workspace_root == workspace.resolve()
+    assert options.path_policy.force_managed_outputs is True
     assert options.capability_groups == (
         CapabilityGroup.INSPECT,
         CapabilityGroup.AUTHOR,
         CapabilityGroup.DESIGN,
         CapabilityGroup.TRACE,
     )
+
+
+def test_server_options_direct_constructor_preserves_workspace_root_api(
+    tmp_path: Path,
+) -> None:
+    options = ServerOptions(workspace_root=tmp_path)
+
+    assert options.workspace_root == tmp_path.resolve()
+    assert options.workspace.root == tmp_path.resolve()
+    assert options.path_policy.workspace_root == tmp_path.resolve()
 
 
 def test_design_group_requires_author_or_full_mode(tmp_path: Path) -> None:
@@ -99,6 +111,7 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     assert result.structured_content["assert_mcp_api_version"] == "1"
     assert result.structured_content["mode"] == "full"
     assert result.structured_content["workspace"]["root"] == "."
+    assert "env_file" not in result.structured_content
     assert result.structured_content["enabled_capability_groups"] == [
         "inspect",
         "author",

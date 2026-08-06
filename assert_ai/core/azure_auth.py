@@ -241,7 +241,7 @@ def _wrap_provider_with_provenance_log(
 # no extra function calls in the hot path) once warmed.
 #
 # Resolution is deliberately *lazy*: process entrypoints that load
-# ``.env`` (the runner, ``assert-ai init``) call
+# ``.env`` (``assert-ai run``, ``assert-ai init``, or MCP launch) call
 # ``refresh_azure_auth_mode(force=True)`` after ``load_dotenv`` so the
 # resolved mode reflects the dotenv-populated environment, not just
 # the shell vars present at module import.

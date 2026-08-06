@@ -396,6 +396,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=suite_root,
     )
 
     result = await run_stratification(

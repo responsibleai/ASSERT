@@ -13,7 +13,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.model_client import (
@@ -30,6 +30,9 @@ from assert_ai.core.model_client import (
 )
 from assert_ai.core.tool_backend import load_tool_module
 from assert_ai.core.tools import build_target_tools
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
 
@@ -480,11 +483,13 @@ class CallableSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         self._callable_ref = callable_ref
         self._system_prompt = system_prompt
         self._message_timeout_s = message_timeout_s
         self._config_path = config_path
+        self._path_policy = path_policy
         self._callable = None
         self._supports_history = False
 
@@ -498,7 +503,11 @@ class CallableSession:
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
-        mod = import_callable_module(module_path, config_path=self._config_path)
+        mod = import_callable_module(
+            module_path,
+            config_path=self._config_path,
+            path_policy=self._path_policy,
+        )
         try:
             self._callable = getattr(mod, func_name)
         except AttributeError as exc:
@@ -789,11 +798,18 @@ class ExternalSession:
         startup_timeout_s: float | None = None,
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         from assert_ai.core.security import validate_module_ref
 
         validate_module_ref(connector_ref, config_path=config_path)
-        connector_cls = _discover_connector_class(load_tool_module(connector_ref, config_path=config_path))
+        connector_cls = _discover_connector_class(
+            load_tool_module(
+                connector_ref,
+                config_path=config_path,
+                path_policy=path_policy,
+            )
+        )
         self._startup_timeout_s = startup_timeout_s
         self._message_timeout_s = message_timeout_s
         self._connector = connector_cls(scenario)

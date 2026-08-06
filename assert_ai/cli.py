@@ -857,12 +857,12 @@ def run(
             log_file=log_file,
             json_output=(output_format == "json"),
         )
+    from assert_ai.core.environment import bootstrap_environment
+
+    bootstrap_environment(discover_from_cwd=True)
     runner = _load_runner_module()
-    # Emit the resolved Azure auth mode AFTER runner.py has loaded ``.env``
-    # and called ``refresh_azure_auth_mode(force=True)`` — so the log reflects
-    # the value that azure/* requests will actually use — and AFTER subcommand
-    # logging flags have been applied (above), so ``--quiet`` silences it and
-    # ``--output json`` formats it as JSON.
+    # Emit the resolved Azure auth mode after explicit environment bootstrap
+    # and subcommand logging configuration.
     from assert_ai.core.azure_auth import log_resolved_azure_auth_mode
     log_resolved_azure_auth_mode()
     rc = runner.run_pipeline(

@@ -344,7 +344,16 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertIsNone(_resolve_ref_path(suite_root, "artifacts/../../escape"))
             inside = _resolve_ref_path(suite_root, "artifacts/systematize/v0001/taxonomy.json")
             assert inside is not None
-            self.assertEqual(inside, suite_root / "artifacts" / "systematize" / "v0001" / "taxonomy.json")
+            self.assertEqual(
+                inside,
+                (
+                    suite_root
+                    / "artifacts"
+                    / "systematize"
+                    / "v0001"
+                    / "taxonomy.json"
+                ).resolve(),
+            )
 
     def test_override_cacheable_output_paths_redirects_user_save_dir(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -964,4 +973,3 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -15,10 +15,9 @@ import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
-from dotenv import find_dotenv, load_dotenv
 
 from assert_ai.config import (
     ConfigError,
@@ -38,7 +37,6 @@ from assert_ai.core.artifact_cache import (
     supports_artifact_cache,
     update_latest,
 )
-from assert_ai.core.azure_auth import refresh_azure_auth_mode
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
 from assert_ai.core.io import write_json
 from assert_ai.core.model_client import (
@@ -57,18 +55,8 @@ from assert_ai.core.runtime_safety import (
 from assert_ai.display import label_metric
 from assert_ai.stages import STAGES
 
-# Walk up from cwd so the user's project `.env` is found when assert-ai is
-# installed as a wheel. Bare `load_dotenv()` walks up from this file's
-# directory, which lives inside the venv's site-packages and misses the
-# project `.env`.
-load_dotenv(find_dotenv(usecwd=True))
-
-# Force-resolve the Azure auth mode now that ``.env`` has populated the
-# environment. Without this, ``model_client``'s lazy resolution would
-# fire on the first request (which is fine) — but doing it here lets
-# entrypoints log the resolved mode up-front and surfaces missing
-# ``azure-identity`` early.
-refresh_azure_auth_mode(force=True)
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
 
@@ -113,11 +101,21 @@ def _load_context(
     *,
     config: str,
     overrides: list[str] | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> dict[str, Any]:
     """Load one config file into runtime context."""
-    cfg_path = Path(config).resolve()
+    cfg_path = (
+        path_policy.resolve_config_path(config, must_exist=True)
+        if path_policy is not None
+        else Path(config).resolve()
+    )
     raw = _apply_config_overrides(load_config(cfg_path), overrides)
-    return load_runtime_context(raw, cfg_path, stage_modules=STAGES)
+    return load_runtime_context(
+        raw,
+        cfg_path,
+        stage_modules=STAGES,
+        path_policy=path_policy,
+    )
 
 
 def _write_suite_metadata(ctx: dict[str, Any]) -> None:
@@ -589,8 +587,12 @@ def run_pipeline(
     strict: bool = False,
     overrides: list[str] | None = None,
     concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
 ) -> int:
-    """Execute the configured stages sequentially and persist suite/run metadata."""
+    """Execute configured stages.
+
+    Programmatic callers are responsible for any desired dotenv bootstrap.
+    """
     # Suppress litellm's internal async logging warnings — they fire because
     # litellm creates async coroutines for logging callbacks that never get
     # awaited in our synchronous runner context. Harmless but alarming.
@@ -615,7 +617,11 @@ def run_pipeline(
     _install_async_cleanup_filters()
 
     try:
-        ctx = _load_context(config=config, overrides=overrides)
+        ctx = _load_context(
+            config=config,
+            overrides=overrides,
+            path_policy=path_policy,
+        )
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
@@ -667,6 +673,15 @@ def run_pipeline(
             requested_force_stages = requested_force_stages.union(cascade)
 
     suite_root = Path(ctx["suite_root"])
+    path_policy = ctx.get("path_policy")
+    if path_policy is not None:
+        suite_root = path_policy.resolve_managed_output(
+            suite_root,
+            field_name="suite root",
+            expected_root=path_policy.results_root,
+            reject_links=True,
+        )
+        ctx["suite_root"] = suite_root
     suite_root.mkdir(parents=True, exist_ok=True)
     _write_suite_metadata(ctx)
     ctx.setdefault("artifact_versions", {})
@@ -722,6 +737,14 @@ def run_pipeline(
         stages_to_run.append((stage_name, module, raw_cfg))
 
     run_root = Path(ctx["run_root"]) if ctx.get("run_root") else None
+    if run_root is not None and path_policy is not None:
+        run_root = path_policy.resolve_managed_output(
+            run_root,
+            field_name="run root",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        ctx["run_root"] = run_root
     selected_run_stage = any(module.SCOPE == "run" for _, module, _ in stages_to_run)
     manifest = None
     if selected_run_stage and run_root is not None:
@@ -729,7 +752,22 @@ def run_pipeline(
         manifest = _build_manifest(ctx)
         config_path = ctx.get("config_path")
         if config_path is not None and Path(config_path).is_file():
-            shutil.copy2(config_path, run_root / "config.yaml")
+            config_path = (
+                path_policy.resolve_config_path(config_path, must_exist=True)
+                if path_policy is not None
+                else Path(config_path)
+            )
+            config_snapshot = (
+                path_policy.resolve_managed_output(
+                    run_root / "config.yaml",
+                    field_name="run config snapshot",
+                    expected_root=run_root,
+                    reject_links=True,
+                )
+                if path_policy is not None
+                else run_root / "config.yaml"
+            )
+            shutil.copy2(config_path, config_snapshot)
     failed_stage: str | None = None
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}

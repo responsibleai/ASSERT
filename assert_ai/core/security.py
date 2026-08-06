@@ -16,8 +16,11 @@ import re
 import socket
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
 
@@ -67,12 +70,21 @@ def validate_module_ref(module_ref: str, *, config_path: Path | None = None) -> 
         )
 
 
-def validate_sys_path_addition(path: Path, *, config_path: Path | None = None) -> None:
+def validate_sys_path_addition(
+    path: Path,
+    *,
+    config_path: Path | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+) -> None:
     """Validate that a sys.path addition is scoped to the workspace.
 
     Only allows paths that are within the config directory or current working directory.
     Raises ValueError for paths outside the expected workspace.
     """
+    if path_policy is not None:
+        path_policy.require_workspace_path(path, field_name="module search path")
+        return
+
     resolved = path.resolve()
     cwd = Path.cwd().resolve()
 

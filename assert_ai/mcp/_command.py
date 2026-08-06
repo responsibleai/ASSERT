@@ -11,6 +11,8 @@ from types import ModuleType
 
 import click
 
+from assert_ai.core.environment import bootstrap_environment
+from assert_ai.core.workspace import WorkspaceService
 from assert_ai.mcp.models import CapabilityGroup, ServerMode
 
 _INSTALL_HINT = 'Install the MCP dependencies with: python -m pip install "assert-ai[mcp]"'
@@ -66,12 +68,34 @@ def mcp() -> None:
     multiple=True,
     help="Enable an additional capability group. Repeat as needed.",
 )
-def serve(workspace: Path, mode: str, enabled_groups: tuple[str, ...]) -> None:
+@click.option(
+    "--env-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional dotenv file contained within --workspace. No file is discovered by default.",
+)
+def serve(
+    workspace: Path,
+    mode: str,
+    enabled_groups: tuple[str, ...],
+    env_file: Path | None,
+) -> None:
     """Serve ASSERT over stdio; stdout is reserved for MCP protocol traffic."""
+    try:
+        workspace_service = WorkspaceService.create(workspace)
+        if env_file is not None:
+            resolved_env_file = workspace_service.resolve_file(
+                env_file,
+                field_name="--env-file",
+            )
+            bootstrap_environment(env_file=resolved_env_file)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
     server_module = _load_server_module()
     try:
         options = server_module.ServerOptions.create(
-            workspace_root=workspace,
+            workspace_root=workspace_service.root,
             mode=mode,
             enabled_groups=enabled_groups,
         )

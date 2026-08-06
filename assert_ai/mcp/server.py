@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Iterable
@@ -13,6 +13,8 @@ from typing import Iterable
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
+from assert_ai.core.runtime_path_policy import RuntimePathPolicy
+from assert_ai.core.workspace import WorkspaceService
 from assert_ai.mcp.models import (
     CapabilityGroup,
     ServerInfo,
@@ -51,6 +53,12 @@ class ServerOptions:
     workspace_root: Path
     mode: ServerMode = ServerMode.INSPECT
     enabled_groups: tuple[CapabilityGroup, ...] = ()
+    workspace: WorkspaceService = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        workspace = WorkspaceService.create(self.workspace_root)
+        object.__setattr__(self, "workspace_root", workspace.root)
+        object.__setattr__(self, "workspace", workspace)
 
     @classmethod
     def create(
@@ -60,9 +68,6 @@ class ServerOptions:
         mode: str | ServerMode = ServerMode.INSPECT,
         enabled_groups: Iterable[str | CapabilityGroup] = (),
     ) -> "ServerOptions":
-        root = Path(workspace_root).expanduser().resolve(strict=True)
-        if not root.is_dir():
-            raise ValueError(f"Workspace is not a directory: {root}")
         parsed_mode = ServerMode(mode)
         parsed_groups = tuple(CapabilityGroup(group) for group in enabled_groups)
         invalid_groups = _AUTHOR_EXTENSION_GROUPS.intersection(parsed_groups)
@@ -72,10 +77,14 @@ class ServerOptions:
                 f"Capability group(s) {names} require --mode author or --mode full."
             )
         return cls(
-            workspace_root=root,
+            workspace_root=Path(workspace_root),
             mode=parsed_mode,
             enabled_groups=parsed_groups,
         )
+
+    @property
+    def path_policy(self) -> RuntimePathPolicy:
+        return self.workspace.path_policy
 
     @property
     def capability_groups(self) -> tuple[CapabilityGroup, ...]:
@@ -112,7 +121,12 @@ def build_server(options: ServerOptions) -> MCPServer:
             server_version=_server_version(),
             mode=options.mode,
             enabled_capability_groups=list(options.capability_groups),
-            workspace=WorkspaceInfo(),
+            workspace=WorkspaceInfo(
+                root=options.workspace.reference(options.workspace.root),
+                configs_root=options.workspace.reference(options.workspace.configs_root),
+                artifacts_root=options.workspace.reference(options.workspace.artifacts_root),
+                results_root=options.workspace.reference(options.workspace.results_root),
+            ),
         )
 
     return server
