@@ -186,5 +186,6 @@ pipeline:
 The setup declares the configured image, endpoint contract, policy, mocks,
 resource limits, egress allow-list, and optional host-side model proxy. ASSERT
 starts a fresh disposable container per test case, waits for readiness, and
-removes the container and its network after the case. See the
+removes the target, its trusted network relay, and their networks after the
+case. See the
 [sandboxed action-mediation example](../../examples/sandbox_action_mediation/README.md).

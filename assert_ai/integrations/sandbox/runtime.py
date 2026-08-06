@@ -8,15 +8,17 @@ complementary process and network boundary for everything else:
 
 * one disposable container per ASSERT test case;
 * read-only root filesystem, dropped Linux capabilities, and no-new-privileges;
-* a no-masquerade Docker network, so direct public-internet access has no route;
+* a private Docker network with no gateway, so neither the host nor public
+  internet is directly reachable;
 * a deny-by-default HTTP(S) proxy that records every proxy-aware egress attempt;
 * policy and mock files mounted read-only, with a separate writable output mount;
 * optional host-side model proxy, so a real provider credential never enters the
   container.
 
-Raw sockets or clients that ignore HTTP_PROXY are still blocked by the Docker
-network but cannot be attributed in the HTTP audit ledger. That boundary is
-reported explicitly in runtime metadata.
+The untrusted target sees only a narrow trusted relay for endpoint ingress,
+audited egress, and optional model traffic. Raw sockets or clients that ignore
+HTTP_PROXY are still blocked by the Docker network but cannot be attributed in
+the HTTP audit ledger. That boundary is reported explicitly in runtime metadata.
 """
 from __future__ import annotations
 
@@ -46,6 +48,13 @@ import yaml
 from assert_ai.core.security import validate_endpoint_url
 
 log = logging.getLogger(__name__)
+
+_RELAY_IMAGE = "python:3.11-slim"
+_RELAY_ALIAS = "assert-sandbox-relay"
+_TARGET_ALIAS = "assert-sandbox-target"
+_RELAY_TARGET_PORT = 18080
+_RELAY_EGRESS_PORT = 18081
+_RELAY_MODEL_PORT = 18082
 
 
 class SandboxRuntimeError(RuntimeError):
@@ -435,6 +444,8 @@ class ContainerSpec:
 class SandboxHandle:
     container: str
     network: str
+    relay_container: str
+    relay_network: str
     endpoint_url: str
     output_dir: Path
     egress_log: Path
@@ -452,7 +463,13 @@ class SandboxHandle:
 
     def stop(self) -> None:
         errors: list[Exception] = []
-        for command in (("rm", "-f", self.container), ("network", "rm", self.network)):
+        commands = (
+            ("rm", "-f", self.container),
+            ("rm", "-f", self.relay_container),
+            ("network", "rm", self.network),
+            ("network", "rm", self.relay_network),
+        )
+        for command in commands:
             try:
                 _docker(*command, check=False)
             except Exception as exc:  # noqa: BLE001 - continue releasing remaining resources
@@ -527,6 +544,8 @@ def start_container(
     token = secrets.token_hex(6)
     container_name = f"assert-sandbox-{token}"
     network_name = f"assert-sandbox-net-{token}"
+    relay_container = f"assert-sandbox-relay-{token}"
+    relay_network = f"assert-sandbox-relay-net-{token}"
     egress_token = secrets.token_hex(16)
     egress_server, egress_thread, egress_port = _start_egress_proxy(
         audit_log=egress_log,
@@ -540,10 +559,85 @@ def start_container(
         _docker(
             "network",
             "create",
+            "--internal",
+            "-o",
+            "com.docker.network.bridge.inhibit_ipv4=true",
             "-o",
             "com.docker.network.bridge.enable_ip_masquerade=false",
             network_name,
         )
+        _docker("network", "create", relay_network)
+
+        relay_specs = [
+            {
+                "listen_port": _RELAY_TARGET_PORT,
+                "upstream": "target",
+                "upstream_port": spec.container_port,
+            },
+            {
+                "listen_port": _RELAY_EGRESS_PORT,
+                "upstream": "host",
+                "upstream_port": egress_port,
+            },
+        ]
+
+        synthetic_key: str | None = None
+        if spec.model_proxy is not None:
+            synthetic_key = f"assert-sandbox-{secrets.token_hex(12)}"
+            model_server, model_thread, model_port = _start_model_proxy(
+                spec.model_proxy,
+                access_token=synthetic_key,
+            )
+            relay_specs.append({
+                "listen_port": _RELAY_MODEL_PORT,
+                "upstream": "host",
+                "upstream_port": model_port,
+            })
+
+        relay_script = Path(__file__).with_name("tcp_relay.py").resolve()
+        _docker(
+            "run",
+            "-d",
+            "--name",
+            relay_container,
+            "--network",
+            relay_network,
+            "--add-host",
+            "host.docker.internal:host-gateway",
+            "--read-only",
+            "--user",
+            "65534:65534",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "64",
+            "--memory",
+            "128m",
+            "--cpus",
+            "0.25",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=16m",
+            "-p",
+            f"127.0.0.1::{_RELAY_TARGET_PORT}",
+            "-v",
+            f"{relay_script}:/relay.py:ro",
+            "-e",
+            f"ASSERT_SANDBOX_RELAY_SPECS={json.dumps(relay_specs, separators=(',', ':'))}",
+            _RELAY_IMAGE,
+            "python",
+            "/relay.py",
+        )
+        _docker(
+            "network",
+            "connect",
+            "--alias",
+            _RELAY_ALIAS,
+            network_name,
+            relay_container,
+        )
+
         args = [
             "run",
             "-d",
@@ -551,8 +645,8 @@ def start_container(
             container_name,
             "--network",
             network_name,
-            "--add-host",
-            "host.docker.internal:host-gateway",
+            "--network-alias",
+            _TARGET_ALIAS,
             "--read-only",
             "--user",
             spec.user,
@@ -570,8 +664,6 @@ def start_container(
             "/tmp:rw,noexec,nosuid,size=64m",
             "--tmpfs",
             "/run:rw,noexec,nosuid,size=16m",
-            "-p",
-            f"127.0.0.1::{spec.container_port}",
             "-v",
             f"{policy_json}:/sandbox/policy.json:ro",
             "-v",
@@ -587,13 +679,13 @@ def start_container(
             "-e",
             "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl",
             "-e",
-            f"HTTP_PROXY=http://assert:{egress_token}@host.docker.internal:{egress_port}",
+            f"HTTP_PROXY=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
             "-e",
-            f"HTTPS_PROXY=http://assert:{egress_token}@host.docker.internal:{egress_port}",
+            f"HTTPS_PROXY=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
             "-e",
-            f"http_proxy=http://assert:{egress_token}@host.docker.internal:{egress_port}",
+            f"http_proxy=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
             "-e",
-            f"https_proxy=http://assert:{egress_token}@host.docker.internal:{egress_port}",
+            f"https_proxy=http://assert:{egress_token}@{_RELAY_ALIAS}:{_RELAY_EGRESS_PORT}",
         ]
         if cassette_dir is not None:
             args += [
@@ -603,19 +695,14 @@ def start_container(
 
         no_proxy = ["localhost", "127.0.0.1"]
         if spec.model_proxy is not None:
-            synthetic_key = f"assert-sandbox-{secrets.token_hex(12)}"
-            model_server, model_thread, model_port = _start_model_proxy(
-                spec.model_proxy,
-                access_token=synthetic_key,
-            )
-            base_url = f"http://host.docker.internal:{model_port}/v1"
+            base_url = f"http://{_RELAY_ALIAS}:{_RELAY_MODEL_PORT}/v1"
             args += [
                 "-e",
                 f"{spec.model_proxy.container_base_url_env}={base_url}",
                 "-e",
                 f"{spec.model_proxy.container_key_env}={synthetic_key}",
             ]
-            no_proxy.append("host.docker.internal")
+            no_proxy.append(_RELAY_ALIAS)
 
         joined_no_proxy = ",".join(no_proxy)
         args += ["-e", f"NO_PROXY={joined_no_proxy}", "-e", f"no_proxy={joined_no_proxy}"]
@@ -627,7 +714,7 @@ def start_container(
         args.extend(spec.command)
         _docker(*args)
 
-        port_result = _docker("port", container_name, f"{spec.container_port}/tcp")
+        port_result = _docker("port", relay_container, f"{_RELAY_TARGET_PORT}/tcp")
         address = port_result.stdout.strip().splitlines()[0]
         host_port = int(address.rsplit(":", 1)[1])
         endpoint_url = f"http://127.0.0.1:{host_port}{spec.endpoint_path}"
@@ -638,6 +725,8 @@ def start_container(
         return SandboxHandle(
             container=container_name,
             network=network_name,
+            relay_container=relay_container,
+            relay_network=relay_network,
             endpoint_url=endpoint_url,
             output_dir=output_dir,
             egress_log=egress_log,
@@ -652,7 +741,13 @@ def start_container(
         # Preserve the startup error while releasing every resource that was
         # created. Cleanup failures are secondary here and must not stop later
         # cleanup steps from running.
-        for command in (("rm", "-f", container_name), ("network", "rm", network_name)):
+        commands = (
+            ("rm", "-f", container_name),
+            ("rm", "-f", relay_container),
+            ("network", "rm", network_name),
+            ("network", "rm", relay_network),
+        )
+        for command in commands:
             try:
                 _docker(*command, check=False)
             except Exception:  # noqa: BLE001

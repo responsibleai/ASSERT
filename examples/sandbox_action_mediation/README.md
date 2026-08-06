@@ -25,17 +25,20 @@ The stock container path applies:
 
 - a read-only root filesystem, a non-root default user, dropped Linux capabilities,
   `no-new-privileges`, process/memory/CPU limits, and writable tmpfs mounts;
-- a dedicated no-masquerade network, which gives direct public traffic no route;
+- a dedicated no-gateway network, which gives the target no direct route to the
+  Docker host or public internet;
 - an authenticated, deny-by-default HTTP(S) proxy that records allowed and denied
   proxy-aware requests as `network_egress` evidence;
+- an automatically managed trusted relay that exposes only target ingress,
+  audited egress, and optional model-proxy traffic to that private network;
 - read-only policy and mock mounts plus a separate writable output mount;
 - optional host-side model credential routing. The container receives a random
   short-lived proxy token, never the provider credential.
 
 Raw sockets and clients that ignore proxy variables are still blocked by the
-Docker network, but those blocks are silent. The container needs the Docker host
-gateway to reach the two authenticated proxies, so host-port filtering remains a
-hardening opportunity.
+Docker network, but those blocks are silent. Only the trusted relay can reach the
+host-side proxies; the untrusted target receives no host-gateway mapping or
+default route. ASSERT starts and removes the relay alongside each target case.
 
 ## Files in this example
 

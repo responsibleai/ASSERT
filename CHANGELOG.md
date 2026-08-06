@@ -17,4 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Isolate stateful mock backends per sandbox case and prevent the untrusted
+  target container from reaching unrelated Docker-host services.
+
 [Unreleased]: https://github.com/responsibleai/ASSERT/commits/main

@@ -7,14 +7,23 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import socketserver
 import subprocess
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from assert_ai.core.model_client import Message
 from assert_ai.core.config_model import EvaluationConfig, InferenceConfig, TargetConfig
-from assert_ai.integrations.sandbox.runtime import docker_available
+from assert_ai.integrations.sandbox import load_setup
+from assert_ai.integrations.sandbox.runtime import (
+    ContainerSpec,
+    ModelProxySpec,
+    docker_available,
+    start_container,
+)
 from assert_ai.integrations.sandbox.session import SandboxedEndpointSession
 from assert_ai.stages.inference import run_inference
 
@@ -51,6 +60,7 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
         assert session._handle is not None
         handle = session._handle
         container, network = handle.container, handle.network
+        relay_container, relay_network = handle.relay_container, handle.relay_network
         try:
             response = await session.run_turn([
                 Message(role="user", content="Please try egress from the configured agent")
@@ -110,9 +120,9 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
             assert '"host": "example.com"' in egress
 
             # Ignore the proxy variables and try a raw TCP connection. The
-            # no-masquerade network should make this time out rather than reach
-            # the public address. This block is intentionally silent; the HTTP
-            # proxy is what provides attributable evidence.
+            # no-gateway network should reject the route before it reaches the
+            # public address. This block is intentionally silent; the HTTP proxy
+            # is what provides attributable evidence.
             raw = subprocess.run(
                 [
                     "docker", "exec",
@@ -129,7 +139,7 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
                 timeout=10,
             )
             assert raw.returncode != 0
-            assert "TimeoutError" in raw.stderr or "timed out" in raw.stderr
+            assert "Network is unreachable" in raw.stderr
         finally:
             await session.close()
 
@@ -139,8 +149,171 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
         assert subprocess.run(
             ["docker", "network", "inspect", network], capture_output=True
         ).returncode != 0
+        assert subprocess.run(
+            ["docker", "inspect", relay_container], capture_output=True
+        ).returncode != 0
+        assert subprocess.run(
+            ["docker", "network", "inspect", relay_network], capture_output=True
+        ).returncode != 0
 
     asyncio.run(exercise())
+
+
+def test_target_has_no_route_to_unrelated_host_services():
+    class Sentinel(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.recv(1)
+
+    sentinel = socketserver.ThreadingTCPServer(("0.0.0.0", 0), Sentinel)
+    sentinel_thread = threading.Thread(target=sentinel.serve_forever, daemon=True)
+    sentinel_thread.start()
+
+    async def exercise():
+        session = SandboxedEndpointSession(
+            setup_path=ROOT / "examples/sandbox_action_mediation/assert-setup-container.yaml"
+        )
+        await session.open()
+        assert session._handle is not None
+        handle = session._handle
+        try:
+            inspect = json.loads(
+                subprocess.check_output(["docker", "inspect", handle.container], text=True)
+            )[0]
+            extra_hosts = inspect["HostConfig"].get("ExtraHosts") or []
+            assert not any(value.startswith("host.docker.internal:") for value in extra_hosts)
+
+            network = json.loads(
+                subprocess.check_output(
+                    ["docker", "network", "inspect", handle.network], text=True
+                )
+            )[0]
+            assert not any(
+                config.get("Gateway")
+                for config in network.get("IPAM", {}).get("Config", [])
+            )
+
+            direct_host = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-e", "HTTP_PROXY=", "-e", "HTTPS_PROXY=",
+                    "-e", "http_proxy=", "-e", "https_proxy=",
+                    "-e", "NO_PROXY=*",
+                    handle.container,
+                    "python", "-c",
+                    (
+                        "import socket; "
+                        "socket.create_connection(('host.docker.internal',"
+                        f"{sentinel.server_address[1]}),3)"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert direct_host.returncode != 0, (
+                "the untrusted target reached an unrelated host port outside the proxies"
+            )
+        finally:
+            await session.close()
+
+        for command in (
+            ["docker", "inspect", handle.container],
+            ["docker", "inspect", handle.relay_container],
+            ["docker", "network", "inspect", handle.network],
+            ["docker", "network", "inspect", handle.relay_network],
+        ):
+            assert subprocess.run(command, capture_output=True).returncode != 0
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        sentinel.shutdown()
+        sentinel.server_close()
+
+
+def test_model_proxy_remains_reachable_without_exposing_host_or_real_credential(
+    tmp_path, monkeypatch
+):
+    seen: dict[str, str] = {}
+
+    class Upstream(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return None
+
+        def do_POST(self):
+            seen["authorization"] = self.headers.get("authorization", "")
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    monkeypatch.setenv("ASSERT_TEST_PROVIDER_KEY", "real-host-only-key")
+
+    setup = load_setup(
+        ROOT / "examples/sandbox_action_mediation/assert-setup-container.yaml"
+    )
+    assert setup.policy_path is not None
+    target = setup.target
+    handle = start_container(
+        ContainerSpec(
+            image=target.image or "",
+            container_port=target.port or 8080,
+            command=tuple(target.command),
+            env=dict(target.env),
+            health_path=target.health_path,
+            endpoint_path=target.endpoint_path,
+            startup_timeout_s=target.startup_timeout_s,
+            egress_allow_hosts=target.egress_allow_hosts,
+            model_proxy=ModelProxySpec(
+                upstream_url=f"http://127.0.0.1:{upstream.server_port}/chat",
+                credential_env="ASSERT_TEST_PROVIDER_KEY",
+            ),
+            memory=target.memory,
+            cpus=target.cpus,
+            pids_limit=target.pids_limit,
+            user=target.user,
+        ),
+        policy_path=setup.policy_path,
+        mocks_path=setup.mocks_path,
+        cassette_dir=setup.cassette_dir,
+        output_dir=tmp_path / "out",
+    )
+    try:
+        inspect = json.loads(
+            subprocess.check_output(["docker", "inspect", handle.container], text=True)
+        )[0]
+        assert not any(
+            "real-host-only-key" in value for value in inspect["Config"]["Env"]
+        )
+        script = (
+            "import os,urllib.request;"
+            "url=os.environ['OPENAI_BASE_URL'].rstrip('/')+'/chat/completions';"
+            "req=urllib.request.Request(url,data=b'{}',method='POST',headers={"
+            "'authorization':'Bearer '+os.environ['OPENAI_API_KEY'],"
+            "'content-type':'application/json'});"
+            "print(urllib.request.urlopen(req,timeout=10).read().decode())"
+        )
+        result = subprocess.run(
+            ["docker", "exec", handle.container, "python", "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"ok": True}
+        assert seen["authorization"] == "Bearer real-host-only-key"
+    finally:
+        handle.stop()
+        upstream.shutdown()
+        upstream.server_close()
 
 
 def test_stock_sandbox_runs_through_normal_assert_inference_artifact():

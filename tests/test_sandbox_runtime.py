@@ -22,6 +22,7 @@ from assert_ai.core.config_model import InferenceConfig, TargetConfig
 from assert_ai.core.model_client import Message
 from assert_ai.integrations.sandbox import load_setup
 from assert_ai.integrations.sandbox import runtime as sandbox_runtime
+from assert_ai.integrations.sandbox import tcp_relay
 from assert_ai.integrations.sandbox.runtime import (
     ContainerSpec,
     ModelProxySpec,
@@ -58,6 +59,37 @@ def test_stock_docker_assets_are_packaged_with_copyable_agent():
     assert assets.joinpath("server.py").read_text() == (
         root / "examples/sandbox_action_mediation/stock_agent/server.py"
     ).read_text()
+
+
+def test_relay_specs_are_limited_to_the_owned_sandbox_topology(monkeypatch):
+    monkeypatch.setenv(
+        "ASSERT_SANDBOX_RELAY_SPECS",
+        json.dumps([
+            {
+                "listen_port": 18080,
+                "upstream": "target",
+                "upstream_port": 8080,
+            },
+            {
+                "listen_port": 18081,
+                "upstream": "host",
+                "upstream_port": 9000,
+            },
+        ]),
+    )
+    specs = tcp_relay._load_specs()
+    assert [spec.listen_port for spec in specs] == [18080, 18081]
+
+    monkeypatch.setenv(
+        "ASSERT_SANDBOX_RELAY_SPECS",
+        json.dumps([{
+            "listen_port": 18080,
+            "upstream": "unrelated-service",
+            "upstream_port": 8080,
+        }]),
+    )
+    with pytest.raises(SystemExit, match="outside the stock sandbox topology"):
+        tcp_relay._load_specs()
 
 
 def test_parser_accepts_sandbox_target():
@@ -246,20 +278,85 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         cassette_dir=cassettes,
         output_dir=tmp_path / "out",
     )
-    run = next(call for call in calls if call and call[0] == "run")
-    command = " ".join(run)
-    assert "--read-only" in run
-    assert "--user" in run and "65534:65534" in run
-    assert "--cap-drop" in run and "ALL" in run
-    assert "no-new-privileges" in run
-    assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" in run
-    assert "ACTION_MEDIATION_CASSETTES=/sandbox/cassettes" in run
-    assert f"{cassettes.resolve()}:/sandbox/cassettes:ro" in run
-    assert "enable_ip_masquerade=false" in " ".join(" ".join(c) for c in calls)
-    assert "PRIVATE_PROVIDER_KEY" not in command
-    assert "super-secret-real-value" not in command
-    assert "assert-sandbox-deadbeef" in command
+    target_run = next(
+        call
+        for call in calls
+        if call[:4] == ("run", "-d", "--name", "assert-sandbox-deadbeef")
+    )
+    relay_run = next(
+        call
+        for call in calls
+        if call[:4] == ("run", "-d", "--name", "assert-sandbox-relay-deadbeef")
+    )
+    target_command = " ".join(target_run)
+    relay_command = " ".join(relay_run)
+    assert "--read-only" in target_run
+    assert "--user" in target_run and "65534:65534" in target_run
+    assert "--cap-drop" in target_run and "ALL" in target_run
+    assert "no-new-privileges" in target_run
+    assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" in target_run
+    assert "ACTION_MEDIATION_CASSETTES=/sandbox/cassettes" in target_run
+    assert f"{cassettes.resolve()}:/sandbox/cassettes:ro" in target_run
+    network_commands = " ".join(" ".join(call) for call in calls if call[:2] == ("network", "create"))
+    assert "--internal" in network_commands
+    assert "bridge.inhibit_ipv4=true" in network_commands
+    assert "enable_ip_masquerade=false" in network_commands
+    assert "host.docker.internal" not in target_command
+    assert "host.docker.internal:host-gateway" in relay_run
+    assert "assert-sandbox-relay:18081" in target_command
+    assert "assert-sandbox-relay:18082/v1" in target_command
+    for command in (target_command, relay_command):
+        assert "PRIVATE_PROVIDER_KEY" not in command
+        assert "super-secret-real-value" not in command
+    assert "assert-sandbox-deadbeef" in target_command
     assert handle.endpoint_url == "http://127.0.0.1:49152/chat"
+
+
+def test_start_failure_cleans_target_relay_networks_and_host_proxy(tmp_path, monkeypatch):
+    policy, mocks, _ = _files(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    closed: list[str] = []
+
+    class Server:
+        def shutdown(self):
+            closed.append("shutdown")
+
+        def server_close(self):
+            closed.append("close")
+
+    monkeypatch.setattr(sandbox_runtime, "docker_available", lambda: True)
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "_start_egress_proxy",
+        lambda **kwargs: (Server(), SimpleNamespace(), 9100),
+    )
+    def fail_wait(*args, **kwargs):
+        raise SandboxRuntimeError("sandbox did not become ready")
+
+    monkeypatch.setattr(sandbox_runtime, "_wait_http", fail_wait)
+
+    def fake_docker(*args: str, check: bool = True):
+        calls.append(args)
+        if args and args[0] == "port":
+            return SimpleNamespace(stdout="127.0.0.1:49152\n")
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(sandbox_runtime.secrets, "token_hex", lambda n: "deadbeef")
+    monkeypatch.setattr(sandbox_runtime, "_docker", fake_docker)
+
+    with pytest.raises(SandboxRuntimeError, match="did not become ready"):
+        sandbox_runtime.start_container(
+            ContainerSpec(image="example", container_port=8080),
+            policy_path=policy,
+            mocks_path=mocks,
+            output_dir=tmp_path / "out",
+        )
+
+    assert ("rm", "-f", "assert-sandbox-deadbeef") in calls
+    assert ("rm", "-f", "assert-sandbox-relay-deadbeef") in calls
+    assert ("network", "rm", "assert-sandbox-net-deadbeef") in calls
+    assert ("network", "rm", "assert-sandbox-relay-net-deadbeef") in calls
+    assert closed == ["shutdown", "close"]
 
 
 def test_model_proxy_requires_synthetic_token_and_injects_real_key_host_side(monkeypatch):
@@ -418,6 +515,8 @@ def test_handle_cleanup_releases_servers_even_if_docker_disappears(tmp_path, mon
     handle = sandbox_runtime.SandboxHandle(
         container="c",
         network="n",
+        relay_container="r",
+        relay_network="rn",
         endpoint_url="http://localhost/chat",
         output_dir=tmp_path,
         egress_log=tmp_path / "e",
