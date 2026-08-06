@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -660,6 +661,7 @@ class HTTPEndpointSession:
         self._system_prompt = system_prompt
         self._timeout_s = message_timeout_s
         self._session = None  # aiohttp.ClientSession
+        self._resolver = None
 
     @property
     def runtime_mode(self) -> str:
@@ -675,12 +677,29 @@ class HTTPEndpointSession:
             )
         self._aiohttp = aiohttp
         timeout = aiohttp.ClientTimeout(total=self._timeout_s or 60)
-        self._session = aiohttp.ClientSession(timeout=timeout)
+        resolver = _ValidatingResolver(aiohttp.DefaultResolver())
+        connector = None
+        try:
+            connector = aiohttp.TCPConnector(resolver=resolver)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+        except Exception:
+            if connector is not None:
+                with contextlib.suppress(Exception):
+                    await connector.close()
+            with contextlib.suppress(Exception):
+                await resolver.close()
+            raise
+        self._resolver = resolver
 
     async def close(self) -> None:
-        if self._session:
-            await self._session.close()
-            self._session = None
+        try:
+            if self._session:
+                await self._session.close()
+                self._session = None
+        finally:
+            if self._resolver:
+                await self._resolver.close()
+                self._resolver = None
 
     async def run_turn(self, messages: list[Message]) -> TurnResult:
         aiohttp = self._aiohttp
@@ -704,7 +723,12 @@ class HTTPEndpointSession:
                 self._endpoint,
                 json=payload,
                 headers=self._headers,
+                allow_redirects=False,
             ) as resp:
+                if 300 <= resp.status < 400:
+                    raise RuntimeError(
+                        f"HTTP endpoint {self._endpoint} returned a redirect, which is not allowed"
+                    )
                 resp.raise_for_status()
                 data = await resp.json()
                 response_text = data.get("response", "")
@@ -731,6 +755,29 @@ class HTTPEndpointSession:
             interaction_messages=interaction_messages,
             raw={"endpoint": self._endpoint},
         )
+
+
+class _ValidatingResolver:
+    """Validate the exact DNS answers aiohttp will use for a connection."""
+
+    def __init__(self, resolver: Any) -> None:
+        self._resolver = resolver
+
+    async def resolve(self, host: str, port: int = 0, family: int = 0) -> list[Any]:
+        from assert_ai.core.security import validate_resolved_endpoint_ip
+
+        results = await self._resolver.resolve(host, port, family)
+        try:
+            for result in results:
+                validate_resolved_endpoint_ip(host, str(result["host"]))
+        except ValueError as exc:
+            # aiohttp converts resolver OSErrors into ClientConnectorError,
+            # which the session already exposes as a scoped RuntimeError.
+            raise OSError(str(exc)) from exc
+        return results
+
+    async def close(self) -> None:
+        await self._resolver.close()
 
 
 class ExternalSession:

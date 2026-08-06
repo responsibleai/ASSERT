@@ -3,6 +3,9 @@
 
 <script lang="ts">
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
+	import { untrack } from 'svelte';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { primaryMetricName, visibleMetricNames } from '$lib/permissibility.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
@@ -52,11 +55,9 @@ let expandedRows = $state<Set<string>>(new Set());
 let disagreementsOnly = $state(false);
 
 // Active metric for comparison
-let activeMetric = $state('policy_violation');
-
-function metricLabel(m: string): string {
-	return m.replace(/_/g, ' ');
-}
+// Tracked headline metric for A/B comparison: the permissibility split leads when
+// the run has a behavior taxonomy, otherwise fall back to overall policy_violation.
+let activeMetric = $state(untrack(() => primaryMetricName(data.allMetrics ?? [])));
 
 // Short label for a run's target. Callable targets ("module.path:function_name")
 // reduce to "function_name"; provider/model strings ("provider/model-name")
@@ -215,10 +216,6 @@ function sampleGridTemplate(runCount: number): string {
 function sampleGridMinWidth(runCount: number): string {
 	return `${runCount * 16}rem`;
 }
-
-function capitalize(s: string): string {
-	return s.charAt(0).toUpperCase() + s.slice(1);
-}
 </script>
 
 <div class="mb-6">
@@ -306,13 +303,13 @@ function capitalize(s: string): string {
 					<PrimerDropdown
 						label=""
 						ariaLabel="Metric"
-						options={data.allMetrics.map((metric) => ({ value: metric, label: capitalize(metricLabel(metric)) }))}
+						options={visibleMetricNames(data.allMetrics).map((metric) => ({ value: metric, label: metricTitleLabel(metric) }))}
 						selected={activeMetric}
 						onSelect={(value) => { activeMetric = value; }}
 					/>
 				</div>
 			{:else}
-				<span class="shrink-0 text-xs text-text-muted">{capitalize(metricLabel(activeMetric))}</span>
+				<span class="shrink-0 text-xs text-text-muted">{metricTitleLabel(activeMetric)}</span>
 			{/if}
 		</div>
 

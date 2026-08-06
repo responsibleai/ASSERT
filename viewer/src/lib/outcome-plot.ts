@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 import { getRecordFlag } from './judgment.js';
+import { metricTitleLabel } from './labels.js';
+import { dropSupersededMetrics, metricSortRank } from './permissibility.js';
 import type { Behavior, NodeJudgment } from './types.js';
 
 export type OutcomeKind = 'dimension' | 'behavior';
@@ -43,11 +45,11 @@ function readDimensionNames(items: OutcomeRecord[]): string[] {
 			if (typeof value === 'boolean') names.add(name);
 		}
 	}
-	return [...names].sort((left, right) => {
-		if (left === 'policy_violation') return -1;
-		if (right === 'policy_violation') return 1;
-		return left.localeCompare(right);
+	const sorted = [...names].sort((left, right) => {
+		const priority = metricSortRank(left) - metricSortRank(right);
+		return priority !== 0 ? priority : left.localeCompare(right);
 	});
+	return dropSupersededMetrics(sorted);
 }
 
 function readObservedBehaviorNames(items: OutcomeRecord[]): Set<string> {
@@ -71,7 +73,7 @@ export function buildOutcomeOptions(
 		id: outcomeId('dimension', name),
 		kind: 'dimension' as const,
 		key: name,
-		label: name.replace(/_/g, ' '),
+		label: metricTitleLabel(name),
 		groupLabel: 'Judge dimensions',
 		denominatorLabel: 'scored'
 	}));
