@@ -136,6 +136,28 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertEqual(seen, ["systematize", "test_set"])
             self.assertTrue((root / "results" / "suite-a" / "artifacts" / "systematize" / "v0001" / "taxonomy.json").exists())
             self.assertFalse((root / "results" / "suite-a" / "artifacts" / "systematize" / "v0002").exists())
+            test_set_index = (
+                root
+                / "results"
+                / "suite-a"
+                / "artifacts"
+                / "test_set"
+                / "v0001"
+                / "test_set.index.json"
+            )
+            self.assertTrue(test_set_index.exists())
+            suite_summary = json.loads(
+                (
+                    root
+                    / "results"
+                    / "suite-a"
+                    / "suite_summary.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                suite_summary["sources"]["test_set"]["path"],
+                "artifacts/test_set/v0001/test_set.jsonl",
+            )
 
     def test_behavior_change_regenerates_all_upstream_artifacts(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -498,6 +520,12 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             if latest_path.exists():
                 latest = json.loads(latest_path.read_text(encoding="utf-8"))
                 self.assertNotIn("test_set", latest.get("artifacts", {}))
+            suite_summary = json.loads(
+                (root / "results" / "suite-a" / "suite_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertNotIn("test_set", suite_summary.get("sources", {}))
 
             # Re-run with identical inputs but a fully-successful test_set
             # stage. The runner must NOT reuse the partial v0001 -- it

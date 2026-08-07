@@ -54,6 +54,11 @@ from assert_ai.core.runtime_safety import (
 )
 from assert_ai.core.run_result import RunResult, RunState
 from assert_ai.display import label_metric
+from assert_ai.services.result_metadata import (
+    refresh_stage_indexes,
+    write_run_summary,
+    write_suite_summary,
+)
 from assert_ai.stages import STAGES
 
 if TYPE_CHECKING:
@@ -173,6 +178,59 @@ def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: 
             "artifacts": artifacts,
         },
     )
+
+
+def _refresh_stage_indexes(
+    ctx: dict[str, Any],
+    stage_name: str,
+    stage_result: dict[str, Any] | None = None,
+) -> None:
+    try:
+        refresh_stage_indexes(ctx, stage_name, stage_result)
+    except Exception:  # noqa: BLE001
+        log.warning(
+            "[%s] Failed to refresh the derived JSONL index",
+            stage_name,
+            exc_info=True,
+        )
+
+
+def _refresh_run_summary(
+    ctx: dict[str, Any],
+    manifest: RunManifest,
+    *,
+    stage_usage: dict[str, dict[str, Any]] | None = None,
+    elapsed_s: float | None = None,
+    rebuild_indexes: bool,
+) -> None:
+    try:
+        metrics = (
+            _build_run_metrics(stage_usage or {}, elapsed_s)
+            if elapsed_s is not None
+            else None
+        )
+        write_run_summary(
+            ctx,
+            manifest,
+            stage_summaries=ctx.get("_stage_summaries"),
+            metrics=metrics,
+            rebuild_indexes=rebuild_indexes,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to refresh run_summary.json", exc_info=True)
+
+
+def _refresh_suite_summary(
+    ctx: dict[str, Any],
+    *,
+    rebuild_indexes: bool,
+) -> None:
+    if ctx.get("_suite_summary_blocked"):
+        return
+    try:
+        write_suite_summary(ctx, rebuild_indexes=rebuild_indexes)
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to refresh suite_summary.json", exc_info=True)
 
 
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
@@ -747,10 +805,12 @@ def _run_pipeline_result(
     suite_root.mkdir(parents=True, exist_ok=True)
     _write_suite_metadata(ctx)
     ctx.setdefault("artifact_versions", {})
+    ctx.setdefault("_stage_summaries", {})
     artifact_plans: dict[str, Any] = {}
     cache_supported = supports_artifact_cache(ctx)
     if cache_supported:
         activate_latest_artifacts(ctx)
+    _refresh_suite_summary(ctx, rebuild_indexes=False)
 
     stages_to_run: list[tuple[str, Any, dict[str, Any]]] = []
     for stage_name, raw_cfg in ctx["stages"]:
@@ -773,6 +833,8 @@ def _run_pipeline_result(
                 if plan.reused:
                     refresh_compatibility_files(ctx, stage_name, plan.output_paths)
                     update_latest(ctx, stage_name, ref)
+                    _refresh_stage_indexes(ctx, stage_name)
+                    _refresh_suite_summary(ctx, rebuild_indexes=True)
                     log.info(
                         f"[{stage_name}] Reused artifact {plan.version} "
                         f"(input hashes match, use --force-stage {stage_name} to regenerate)"
@@ -830,6 +892,13 @@ def _run_pipeline_result(
                 else run_root / "config.yaml"
             )
             shutil.copy2(config_path, config_snapshot)
+        _record_run_artifacts(manifest, ctx, run_root)
+        _write_manifest(manifest, run_root)
+        _refresh_run_summary(
+            ctx,
+            manifest,
+            rebuild_indexes=False,
+        )
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}
 
@@ -909,6 +978,13 @@ def _run_stages_inner(
             }
             _record_run_artifacts(manifest, ctx, run_root)
             _write_manifest(manifest, run_root)
+            _refresh_run_summary(
+                ctx,
+                manifest,
+                stage_usage=stage_usage,
+                elapsed_s=time.monotonic() - pipeline_start,
+                rebuild_indexes=False,
+            )
         _print_stage_start(stage_name, ctx, raw_cfg)
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
@@ -943,8 +1019,12 @@ def _run_stages_inner(
                     module.run(ctx, raw_cfg),
                     cleanup_timeout_s=300.0,
                 ) or {}
+            stage_summary = (stage_result or {}).get("_summary")
+            if isinstance(stage_summary, dict):
+                ctx["_stage_summaries"][stage_name] = stage_summary
+            _refresh_stage_indexes(ctx, stage_name, stage_result)
             stage_errored_count = int(
-                ((stage_result or {}).get("_summary") or {}).get("errored_count", 0) or 0
+                (stage_summary or {}).get("errored_count", 0) or 0
             )
             if (
                 cache_supported
@@ -970,6 +1050,7 @@ def _run_stages_inner(
                         "Re-run to fill the gap.",
                         stage_name, stage_errored_count,
                     )
+                    ctx["_suite_summary_blocked"] = True
                 else:
                     finalize_artifact_plan(ctx, artifact_plans[stage_name])
             ok = True
@@ -1034,9 +1115,17 @@ def _run_stages_inner(
             manifest.stage_timings[stage_name] = existing_timing
             _record_run_artifacts(manifest, ctx, run_root)
             _write_manifest(manifest, run_root)
+            _refresh_run_summary(
+                ctx,
+                manifest,
+                stage_usage=stage_usage,
+                elapsed_s=time.monotonic() - pipeline_start,
+                rebuild_indexes=ok,
+            )
 
         if ok and module.SCOPE == "suite":
             _write_suite_metadata(ctx)
+            _refresh_suite_summary(ctx, rebuild_indexes=True)
 
         if not ok:
             failed_stage = stage_name
@@ -1092,6 +1181,14 @@ def _run_stages_inner(
         manifest.status = "completed" if failed_stage is None else "failed"
         _record_run_artifacts(manifest, ctx, run_root)
         _write_manifest(manifest, run_root)
+        _refresh_run_summary(
+            ctx,
+            manifest,
+            stage_usage=stage_usage,
+            elapsed_s=total_elapsed,
+            rebuild_indexes=failed_stage is None,
+        )
+    _refresh_suite_summary(ctx, rebuild_indexes=failed_stage is None)
 
     if failed_stage is None:
         return _run_result_from_context(

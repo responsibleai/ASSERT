@@ -15,6 +15,7 @@ import yaml
 
 from assert_ai.core.io import write_json, row_behavior
 from assert_ai.core.judge import DIMENSION_APPLICABILITY_KEY
+from assert_ai.core.jsonl_index import JsonlIndexError, scan_jsonl
 
 log = logging.getLogger(__name__)
 
@@ -145,29 +146,14 @@ def _file_metadata(path: Path, *, relative_to: Path) -> dict[str, Any]:
 
 
 def _iter_jsonl_with_offsets(path: Path) -> list[tuple[int, int, dict[str, Any]]]:
-    if not path.exists():
-        raise ViewerReadModelBuildError(f"Missing JSONL artifact: {path}")
-
-    rows: list[tuple[int, int, dict[str, Any]]] = []
-    offset = 0
-    with path.open("rb") as handle:
-        for line_number, raw_line in enumerate(handle, 1):
-            length = len(raw_line)
-            stripped = raw_line.strip()
-            if not stripped:
-                offset += length
-                continue
-            try:
-                row = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                raise ViewerReadModelBuildError(
-                    f"Invalid JSONL in {path} on line {line_number}: {exc}"
-                ) from exc
-            if not isinstance(row, dict):
-                raise ViewerReadModelBuildError(f"Expected JSON object in {path} on line {line_number}")
-            rows.append((offset, length, row))
-            offset += length
-    return rows
+    try:
+        scan = scan_jsonl(path)
+    except JsonlIndexError as exc:
+        raise ViewerReadModelBuildError(str(exc)) from exc
+    return [
+        (record.offset, record.length, record.row)
+        for record in scan.records
+    ]
 
 
 def _kind_and_test_case_id(row: dict[str, Any], *, path: Path) -> tuple[str, str]:
