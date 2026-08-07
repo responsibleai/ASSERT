@@ -33,6 +33,7 @@ def chat_completion(
         _classify_llm_error,
         _force_chat_completions,
         _maybe_inject_azure_aad_token,
+        _maybe_inject_openai_api_key_header,
     )
 
     kwargs: dict[str, Any] = {
@@ -50,6 +51,7 @@ def chat_completion(
     # to whatever key/cred LiteLLM finds in the environment, defeating
     # the documented ``ASSERT_AZURE_USE_AAD=1`` opt-in.
     _maybe_inject_azure_aad_token(model, kwargs)
+    _maybe_inject_openai_api_key_header(model, kwargs)
 
     try:
         response = litellm.completion(**kwargs)

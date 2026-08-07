@@ -58,6 +58,53 @@ class ModelClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.request_payload["model"], "openai/gpt-5-mini")
         self.assertEqual(response.request_payload["messages"], [{"role": "user", "content": "say hi"}])
 
+    async def test_generate_injects_configured_openai_api_key_header(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            }
+
+        fake_litellm = SimpleNamespace(acompletion=fake_acompletion)
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ASSERT_OPENAI_API_KEY_HEADER": "api-key",
+                    "OPENAI_API_KEY": "gateway-secret",
+                },
+            ),
+            patch.object(model_client, "_get_litellm_module", return_value=fake_litellm),
+        ):
+            await model_client.generate("openai/gpt-5-mini", "say hi")
+
+        self.assertEqual(captured["extra_headers"], {"api-key": "gateway-secret"})
+
+    def test_explicit_openai_api_key_header_takes_precedence(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ASSERT_OPENAI_API_KEY_HEADER": "api-key",
+                "OPENAI_API_KEY": "environment-secret",
+            },
+        ):
+            payload = model_client._build_chat_payload(
+                "openai/gpt-5-mini",
+                "say hi",
+                model_client.GenerateOptions(
+                    extra_kwargs={"extra_headers": {"Api-Key": "explicit-secret"}}
+                ),
+            )
+
+        self.assertEqual(payload["extra_headers"], {"Api-Key": "explicit-secret"})
+
     async def test_generate_structured_adds_json_schema_response_format(self) -> None:
         captured: dict[str, object] = {}
 

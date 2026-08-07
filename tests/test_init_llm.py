@@ -147,5 +147,34 @@ class InitChatCompletionAzureKeyModeTest(unittest.TestCase):
         self.assertNotIn("azure_ad_token_provider", captured)
 
 
+class InitChatCompletionOpenAICompatibilityHeaderTest(unittest.TestCase):
+    def test_openai_model_gets_configured_api_key_header(self) -> None:
+        from assert_ai.init import _llm
+
+        captured: dict[str, Any] = {}
+
+        def fake_completion(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return _fake_response("ok")
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ASSERT_OPENAI_API_KEY_HEADER": "api-key",
+                    "OPENAI_API_KEY": "gateway-secret",
+                },
+            ),
+            patch("litellm.completion", side_effect=fake_completion),
+        ):
+            result = _llm.chat_completion(
+                model="openai/gpt-5.4",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(captured["extra_headers"], {"api-key": "gateway-secret"})
+
+
 if __name__ == "__main__":
     unittest.main()

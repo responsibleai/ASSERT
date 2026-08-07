@@ -104,6 +104,24 @@ def test_assert_language_model_complete_retries_without_response_format(monkeypa
     assert "response_format" not in calls[1]
 
 
+def test_assert_language_model_injects_openai_compatibility_header(monkeypatch) -> None:
+    import litellm
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return _ok_response()
+
+    monkeypatch.setenv("ASSERT_OPENAI_API_KEY_HEADER", "api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "gateway-secret")
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    AssertLanguageModel("openai/gpt-5.4").complete("sys", "usr")
+
+    assert captured["extra_headers"] == {"api-key": "gateway-secret"}
+
+
 # ── Azure AD token provider injection (PR #237 follow-up) ──────────────
 #
 # The ACS LiteLLM call site is the third place in the codebase that

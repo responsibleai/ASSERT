@@ -34,7 +34,10 @@ class AssertLanguageModel:
 
     def complete(self, system: str, user: str) -> str:
         """Return the raw assistant text for the ACS generator's JSON plan prompt."""
-        from assert_ai.core.model_client import _maybe_inject_azure_aad_token
+        from assert_ai.core.model_client import (
+            _maybe_inject_azure_aad_token,
+            _maybe_inject_openai_api_key_header,
+        )
 
         litellm = _assert_litellm_module()
         payload: dict[str, Any] = {
@@ -54,6 +57,7 @@ class AssertLanguageModel:
         # models and for the ``key`` auth mode, so existing API-key
         # users are unaffected.
         _maybe_inject_azure_aad_token(self.model, payload)
+        _maybe_inject_openai_api_key_header(self.model, payload)
 
         try:
             response = litellm.completion(**payload)

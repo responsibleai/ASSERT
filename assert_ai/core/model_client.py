@@ -442,6 +442,34 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
         payload["azure_ad_token_provider"] = provider
 
 
+def _maybe_inject_openai_api_key_header(model: str, payload: dict[str, Any]) -> None:
+    """Send ``OPENAI_API_KEY`` under an opt-in compatibility header.
+
+    OpenAI-compatible gateways sometimes require an API-management header in
+    addition to the standard Bearer token. ``ASSERT_OPENAI_API_KEY_HEADER``
+    names that header without duplicating the secret into another environment
+    variable. Explicit per-call headers take precedence.
+    """
+    if _model_family(model) != "openai":
+        return
+    header_name = os.environ.get("ASSERT_OPENAI_API_KEY_HEADER", "").strip()
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not header_name or not api_key:
+        return
+
+    configured_headers = payload.get("extra_headers")
+    if configured_headers is None:
+        headers: dict[str, Any] = {}
+    elif isinstance(configured_headers, Mapping):
+        headers = dict(configured_headers)
+    else:
+        raise ValueError("extra_headers must be a mapping")
+
+    if not any(str(name).lower() == header_name.lower() for name in headers):
+        headers[header_name] = api_key
+    payload["extra_headers"] = headers
+
+
 def _supports_web_search_preview(model: str) -> bool:
     """Whether this model can use the Responses API web_search_preview tool.
 
@@ -647,6 +675,7 @@ def _build_chat_payload(
         payload["reasoning_effort"] = resolved_options.reasoning_effort
     _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
+    _maybe_inject_openai_api_key_header(model, payload)
     return payload
 
 
@@ -674,6 +703,7 @@ def _build_responses_payload(
         payload["reasoning_effort"] = resolved_options.reasoning_effort
     _maybe_inject_azure_aad_token(model, payload)
     payload.update(resolved_options.extra_kwargs)
+    _maybe_inject_openai_api_key_header(model, payload)
     return payload
 
 
