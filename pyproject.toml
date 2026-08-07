@@ -44,7 +44,10 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = [
-  "arize-phoenix>=15.0.0",
+  # Phoenix 19.18.0-19.19.0 cannot import on supported Python 3.11: its
+  # dataclass uses MappingProxyType values as mutable defaults. Keep the last
+  # working release until upstream switches those fields to default_factory.
+  "arize-phoenix>=15.0.0,<19.18.0",
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
 ]
@@ -147,6 +150,7 @@ include-package-data = true
 "assert_ai.internal_pipeline_prompts" = ["*.md"]
 "assert_ai.library.judges" = ["*.yaml", "*.md"]
 "assert_ai.library.behaviors" = ["*.yaml", "*.md"]
+"assert_ai.integrations.sandbox" = ["stock/Dockerfile"]
 
 [dependency-groups]
 dev = [

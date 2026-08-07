@@ -1,0 +1,31 @@
+# ASSERT-first mediation setup for the telecom-support agent.
+#
+# This is the whole of "point ASSERT at a container or endpoint and declare your
+# mocks." Standing this layer up used to touch three jobs:
+#
+#   A. bring the agent                  -> `target:` below
+#   B. wire tools through the mediator  -> provided; nothing to write
+#   C. design the eval                  -> policy.yaml + mocks.yaml
+#
+# Only C is per-eval work. Nothing here requires editing application code or the
+# Dockerfile.
+#
+# Validate before spending an eval:
+#   python -m sandbox_action_mediation.cli validate examples/openclaw-telecom-agent/assert-setup.yaml
+
+version: 1
+
+target:
+  kind: endpoint
+  url: "http://127.0.0.1:8080/v1/chat/completions"
+  model: telecom-support-agent
+
+# Enforcement: WHETHER each call is passed, mocked, or blocked. One base policy
+# per agent, reused across every behavior being tested.
+policy: ./policy.yaml
+
+# Fidelity: WHAT a mocked call returns. Varies per scenario; can never change an
+# enforcement decision.
+mocks: ./mocks.yaml
+
+cassettes: ./cassettes
