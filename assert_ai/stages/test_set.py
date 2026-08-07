@@ -1275,6 +1275,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "scenario",
             "validators",
             "validator_model",
+            "enabled",
+            "file_path",
         },
     )
     if "validators" in raw_cfg or "validator_model" in raw_cfg:

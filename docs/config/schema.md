@@ -2,6 +2,11 @@
 
 This page documents the `eval_config.yaml` schema for the standard `behavior -> systematize -> test_set -> inference -> judge` pipeline.
 
+ASSERT generates its machine-readable JSON Schema from
+`assert_ai.core.config_document.EvalConfigDocument`. Runtime loading and
+`assert-ai init` use that same structural model before applying stage semantics,
+path policy, preset loading, and default-model injection.
+
 ## Top-level keys
 
 ### `suite`
@@ -270,6 +275,7 @@ Accepted keys:
 - `model` — model config. Required unless `default_model` is set.
 - `n` — positive integer. Default: `1`.
 - `preset` — optional string or list of strings. Loads judge dimension presets; inline `dimensions` override preset dimensions with the same name.
+- `disabled_dimensions` — optional list of built-in dimension names to omit.
 
 Compatibility note:
 

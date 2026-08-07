@@ -141,16 +141,30 @@ class RuntimePathPolicy:
         path: str | Path,
         *,
         must_exist: bool = False,
+        reject_links: bool = False,
     ) -> Path:
         """Resolve a config path strictly under ``config_root``."""
         candidate = Path(path).expanduser()
         if candidate.is_absolute():
-            resolved = candidate.resolve()
+            unresolved = candidate
         else:
             parts = candidate.parts
             if parts and parts[0] == self.config_root.name:
                 candidate = Path(*parts[1:]) if len(parts) > 1 else Path()
-            resolved = (self.config_root / candidate).resolve()
+            unresolved = self.config_root / candidate
+        self._require_within(
+            Path(os.path.abspath(unresolved)),
+            self.config_root,
+            field_name="config",
+            code=RuntimePathErrorCode.OUTSIDE_CONFIG_ROOT,
+        )
+        if reject_links:
+            self._require_no_links(
+                unresolved,
+                self.config_root,
+                field_name="config",
+            )
+        resolved = unresolved.resolve()
         self._require_within(
             resolved,
             self.config_root,

@@ -33,20 +33,19 @@ from assert_ai.core.config_model import (
     ToolsConfig,
     TraceConfig,
 )
+from assert_ai.core.config_document import (
+    EvalConfigDocumentError,
+    PIPELINE_STAGE_ORDER,
+    require_valid_eval_config_document,
+)
 from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_PATH_KEYS = {"save_dir", "save_path"}
-PIPELINE_STAGE_ORDER = (
-    "systematize",
-    "test_set",
-    "inference",
-    "judge",
-)
 BEHAVIOR_REQUIRED_PIPELINE_STAGES = {"systematize"}
 
 
-class ConfigError(Exception):
+class ConfigError(ValueError):
     pass
 
 
@@ -89,7 +88,7 @@ def require(condition: bool, message: str) -> None:
 
 
 def load_config(cfg_path: Path) -> dict[str, Any]:
-    """Load one YAML config file and require a mapping at the top level."""
+    """Load and structurally validate one YAML config file."""
     try:
         data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -99,6 +98,27 @@ def load_config(cfg_path: Path) -> dict[str, Any]:
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in config file {cfg_path}: {exc}") from exc
     require(isinstance(data, dict), "Top-level YAML must be a mapping")
+    try:
+        reject_unknown_keys(
+            data,
+            field_name="config",
+            allowed={
+                "suite",
+                "run",
+                "behavior",
+                "context",
+                "default_model",
+                "artifacts_root",
+                "results_dir",
+                "pipeline",
+            },
+        )
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    try:
+        require_valid_eval_config_document(data)
+    except EvalConfigDocumentError as exc:
+        raise ConfigError(f"Invalid config file {cfg_path}: {exc}") from exc
     return data
 
 
@@ -209,6 +229,10 @@ def load_runtime_context(
             "pipeline",
         },
     )
+    try:
+        require_valid_eval_config_document(raw)
+    except EvalConfigDocumentError as exc:
+        raise ConfigError(f"Invalid config: {exc}") from exc
     default_model_raw = _get_default_model_mapping(raw)
     pipeline_raw = raw.get("pipeline")
     require(isinstance(pipeline_raw, dict), "'pipeline' must be a mapping")
