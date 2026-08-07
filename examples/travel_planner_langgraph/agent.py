@@ -201,19 +201,41 @@ def get_graph():
     return _graph
 
 
-async def chat(message: str) -> str:
-    """Single-turn entry point."""
+def _seed_messages(message: str, history: list[dict[str, str]] | None) -> list[BaseMessage]:
+    """Build the graph's initial message list, replaying multi-turn history.
+
+    ASSERT invokes the callable once per turn. For a multi-turn scenario it passes
+    ``history`` (prior user/assistant turns, current turn last); for a single-turn
+    prompt case ``history`` is empty and only ``message`` matters. Seeding from the
+    full history lets context stated in an earlier turn (e.g. the budget) persist
+    within this call instead of being dropped.
+    """
+    turns: list[BaseMessage] = []
+    for turn in history or []:
+        role = turn.get("role")
+        content = str(turn.get("content") or "")
+        if role == "user":
+            turns.append(HumanMessage(content=content))
+        elif role == "assistant":
+            turns.append(AIMessage(content=content))
+    if not turns:
+        turns.append(HumanMessage(content=message))
+    return turns
+
+
+async def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
+    """Entry point. Accepts optional multi-turn ``history`` for scenario cases."""
     graph = get_graph()
-    result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
+    result = await graph.ainvoke({"messages": _seed_messages(message, history)})
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage) and msg.content:
             return msg.content
     return ""
 
 
-def chat_sync(message: str) -> str:
+def chat_sync(message: str, history: list[dict[str, str]] | None = None) -> str:
     """Synchronous wrapper for ASSERT callable integration."""
-    return asyncio.run(chat(message))
+    return asyncio.run(chat(message, history))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,63 @@
+{
+  "documentState": {
+    "goal/problem.md": {
+      "contentHash": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362",
+      "dependencyHashes": {}
+    },
+    "goal/stakeholders.md": {
+      "contentHash": "443a5184f805b810eb47f7ee9f2790c3e337aefe11d6e7386e774208b639b331",
+      "dependencyHashes": {
+        "goal/problem.md": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362"
+      }
+    },
+    "goal/requirements.md": {
+      "contentHash": "8be10e5370cf6f6f027322da14867a7273e7296cc9fb79c00b8af90cd5934b3b",
+      "dependencyHashes": {
+        "goal/problem.md": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362",
+        "goal/stakeholders.md": "443a5184f805b810eb47f7ee9f2790c3e337aefe11d6e7386e774208b639b331"
+      }
+    },
+    "goal/open-questions.md": {
+      "contentHash": "aeb178a2e6535723b22de15c6c8ed3e1b536c7c101f6b01512aeaa856622e467",
+      "dependencyHashes": {
+        "goal/problem.md": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362"
+      }
+    },
+    "solution/solution.md": {
+      "contentHash": "a1b1d134343406b8e45122328100d3cfb92ca40310f7069505eff25dc15f4f64",
+      "dependencyHashes": {
+        "goal/problem.md": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362",
+        "goal/requirements.md": "8be10e5370cf6f6f027322da14867a7273e7296cc9fb79c00b8af90cd5934b3b",
+        "goal/open-questions.md": "aeb178a2e6535723b22de15c6c8ed3e1b536c7c101f6b01512aeaa856622e467"
+      }
+    },
+    "solution/architecture.md": {
+      "contentHash": "8a915439bb6144996353f37084264c49914763491ba11816e5c970ee11cc2b84",
+      "dependencyHashes": {
+        "solution/solution.md": "a1b1d134343406b8e45122328100d3cfb92ca40310f7069505eff25dc15f4f64"
+      }
+    },
+    "solution/solution-summary.md": {
+      "contentHash": "a5662be1debf1415d2fd06992803aada36e23d21cc618f23e52511c6f9c3a858",
+      "dependencyHashes": {
+        "solution/solution.md": "a1b1d134343406b8e45122328100d3cfb92ca40310f7069505eff25dc15f4f64",
+        "solution/architecture.md": "8a915439bb6144996353f37084264c49914763491ba11816e5c970ee11cc2b84"
+      }
+    },
+    "summary.md": {
+      "contentHash": "8755f211bb64e7801fbd01bf2245b420e74094d9d7dc4eee1a2670b1b4b47e80",
+      "dependencyHashes": {
+        "goal/problem.md": "926cddb6c7fd71d91e597524089064cae9bba18a9c02521edce2c32287518362",
+        "goal/stakeholders.md": "443a5184f805b810eb47f7ee9f2790c3e337aefe11d6e7386e774208b639b331",
+        "solution/solution.md": "a1b1d134343406b8e45122328100d3cfb92ca40310f7069505eff25dc15f4f64"
+      }
+    },
+    "failures/failures.md": {
+      "contentHash": "04f3c66e786532fa323f7d903c81c90ad1c1ad8abdcdad0c4e9bf8406816e3f1",
+      "dependencyHashes": {
+        "solution/solution.md": "a1b1d134343406b8e45122328100d3cfb92ca40310f7069505eff25dc15f4f64",
+        "solution/architecture.md": "8a915439bb6144996353f37084264c49914763491ba11816e5c970ee11cc2b84"
+      }
+    }
+  }
+}

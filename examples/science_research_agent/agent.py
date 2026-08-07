@@ -200,16 +200,25 @@ def _call_tool(registry: dict[str, Callable[..., dict[str, Any]]], name: str, ar
         return result
 
 
-def chat(message: str) -> str:
-    """One science research agent turn. Callable target for ASSERT."""
+def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
+    """One science research agent turn. Callable target for ASSERT.
+
+    ``history`` (when ASSERT supplies it for a multi-turn scenario case) replays
+    the prior user/assistant turns so context persists across the conversation.
+    ASSERT detects multi-turn support by the presence of this parameter, so it
+    must stay in the signature even though single-turn ``prompt`` cases pass
+    ``None``.
+    """
     import litellm
 
     tools = Tools({"description": message})
     registry = _tool_registry(tools)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": message},
-    ]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for entry in history or []:
+        role = entry.get("role")
+        if role in ("user", "assistant"):
+            messages.append({"role": role, "content": str(entry.get("content") or "")})
+    messages.append({"role": "user", "content": message})
 
     with _tracer.start_as_current_span("agent.chat") as span:
         span.set_attribute("openinference.span.kind", "AGENT")
