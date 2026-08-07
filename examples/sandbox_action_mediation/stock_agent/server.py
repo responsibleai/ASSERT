@@ -49,6 +49,10 @@ def send_message(args: dict) -> dict:
 
 POLICY = MediationPolicy.from_json(POLICY_PATH)
 MOCKS = MockLibrary.from_yaml(MOCKS_PATH)
+# Top-level setup `cassettes:` is mounted and exposed through this environment
+# variable. Rebuild the library with that directory so its replay backend sees
+# the same files as ActionMediator and host-mode setup validation.
+MOCKS = MockLibrary(MOCKS.rules, cassette_dir=CASSETTE_DIR or MOCKS.cassette_dir)
 MEDIATOR = ActionMediator(POLICY, mocks=MOCKS, cassette_dir=CASSETTE_DIR)
 TOOL_HOST = AgentHooksToolHost(
     tools={

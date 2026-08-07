@@ -346,7 +346,9 @@ def test_replay_backend_rejects_path_escape_without_setup_validation(tmp_path):
         library.resolve(MockCall("lookup", {}))
 
 
-def test_policy_replay_rejects_symlink_swapped_in_after_mediator_creation(tmp_path):
+def test_policy_replay_rejects_symlink_swapped_in_after_mediator_creation(
+    tmp_path, symlink_or_skip
+):
     cassette = tmp_path / "lookup.json"
     cassette.write_text('{"safe": true}', encoding="utf-8")
     mediator = ActionMediator(
@@ -362,7 +364,7 @@ def test_policy_replay_rejects_symlink_swapped_in_after_mediator_creation(tmp_pa
     outside = tmp_path.parent / "outside-policy.json"
     outside.write_text('{"sensitive": true}', encoding="utf-8")
     cassette.unlink()
-    cassette.symlink_to(outside)
+    symlink_or_skip(cassette, outside)
 
     with pytest.raises(CassettePathError, match="symlink"):
         mediator.mediate(_pre("lookup"), _never_executes)

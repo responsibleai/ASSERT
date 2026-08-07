@@ -6,8 +6,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import http.client
+import http.server
 import importlib.resources
 import json
+import runpy
 import threading
 import urllib.error
 import urllib.request
@@ -23,7 +25,7 @@ from assert_ai.core.model_client import Message
 from assert_ai.integrations.sandbox import load_setup, tcp_relay
 from assert_ai.integrations.sandbox import runtime as sandbox_runtime
 from assert_ai.integrations.sandbox import session as sandbox_session
-from assert_ai.integrations.sandbox.mocks import MockBackendError
+from assert_ai.integrations.sandbox.mocks import MockBackendError, MockCall
 from assert_ai.integrations.sandbox.runtime import (
     ContainerSpec,
     ModelProxySpec,
@@ -97,6 +99,52 @@ def test_stock_docker_assets_are_packaged_with_copyable_agent():
     assert assets.joinpath("server.py").read_text() == (
         root / "examples/sandbox_action_mediation/stock_agent/server.py"
     ).read_text()
+
+
+def test_stock_server_passes_top_level_cassette_dir_to_mock_library(tmp_path, monkeypatch):
+    """Container replay rules use the same top-level cassette mount as host mode."""
+    policy = tmp_path / "policy.json"
+    mocks = tmp_path / "mocks.json"
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    policy.write_text(
+        json.dumps({"interactions": [], "default": {"mode": "block"}}),
+        encoding="utf-8",
+    )
+    mocks.write_text(
+        json.dumps({
+            "version": 1,
+            "mocks": [{
+                "tool": "lookup",
+                "backend": "replay",
+                "cassette_file": "lookup",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    (cassettes / "lookup.json").write_text('{"source": "cassette"}', encoding="utf-8")
+    monkeypatch.setenv("ACTION_MEDIATION_POLICY", str(policy))
+    monkeypatch.setenv("ACTION_MEDIATION_MOCKS", str(mocks))
+    monkeypatch.setenv("ACTION_MEDIATION_CASSETTES", str(cassettes))
+
+    class FakeHTTPServer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def serve_forever(self):
+            return None
+
+    monkeypatch.setattr(http.server, "ThreadingHTTPServer", FakeHTTPServer)
+    server_path = Path(__file__).resolve().parents[1] / (
+        "assert_ai/integrations/sandbox/stock/server.py"
+    )
+    namespace = runpy.run_path(str(server_path), run_name="assert_stock_server_test")
+
+    library = namespace["MOCKS"]
+    assert library.cassette_dir == cassettes
+    resolution = library.resolve(MockCall("lookup", {}))
+    assert resolution is not None
+    assert resolution.value == {"source": "cassette"}
 
 
 def test_relay_specs_are_limited_to_the_owned_sandbox_topology(monkeypatch):
@@ -352,14 +400,14 @@ def test_setup_rejects_nested_wildcard_replay_cassette(tmp_path):
         load_setup(setup)
 
 
-def test_setup_rejects_wildcard_cassette_symlink_escape(tmp_path):
+def test_setup_rejects_wildcard_cassette_symlink_escape(tmp_path, symlink_or_skip):
     """A wildcard must not bless a root-level symlink to a cassette outside it."""
     _, mocks, setup = _files(tmp_path)
     cassettes = tmp_path / "cassettes"
     cassettes.mkdir()
     outside = tmp_path / "outside.json"
     outside.write_text('{"sensitive": "outside the cassette root"}', encoding="utf-8")
-    (cassettes / "lookup_customer.json").symlink_to(outside)
+    symlink_or_skip(cassettes / "lookup_customer.json", outside)
     mocks.write_text(
         "version: 1\nmocks:\n  - tool: 'lookup_*'\n    backend: replay\n",
         encoding="utf-8",
@@ -374,7 +422,7 @@ def test_setup_rejects_wildcard_cassette_symlink_escape(tmp_path):
         load_setup(setup)
 
 
-def test_loaded_setup_rechecks_cassette_when_replay_reads_it(tmp_path):
+def test_loaded_setup_rechecks_cassette_when_replay_reads_it(tmp_path, symlink_or_skip):
     """Replacing a validated cassette cannot bypass containment at use time."""
     policy, mocks, setup = _files(tmp_path)
     cassettes = tmp_path / "cassettes"
@@ -399,7 +447,7 @@ def test_loaded_setup_rechecks_cassette_when_replay_reads_it(tmp_path):
     outside = tmp_path / "outside.json"
     outside.write_text('{"sensitive": true}', encoding="utf-8")
     cassette.unlink()
-    cassette.symlink_to(outside)
+    symlink_or_skip(cassette, outside)
     host = loaded.tool_host(tools={}, agent_id="a", session_id="case")
 
     with pytest.raises(MockBackendError, match="could not be read safely"):
