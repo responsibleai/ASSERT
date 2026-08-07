@@ -85,6 +85,39 @@ Overrides the suite/run output root.
 
 `pipeline` maps stage names to stage configs. Supported stages are `systematize`, `test_set`, `inference`, and `judge`. The runner executes them in that order, not in YAML insertion order.
 
+### `limits`
+
+- Type: mapping
+- Required: no
+- Default: no limits
+
+Whole-run consumption ceilings. Every other limit in ASSERT is per-call or per-task
+(`max_tool_calls`, `max_turns`, model timeouts), so without this nothing bounds a run as a whole
+— a mistyped `sample_size` against an expensive judge runs to completion.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `max_total_calls` | positive integer | unlimited | Model calls across the whole run |
+| `max_total_tokens` | positive integer | unlimited | Input + output tokens across the whole run |
+| `max_wall_time_s` | positive number | unlimited | Seconds from pipeline start |
+| `on_exceed` | `stop` or `warn` | `stop` | Whether to abort or continue after a breach |
+
+```yaml
+limits:
+  max_total_calls: 10000
+  max_total_tokens: 5000000
+  max_wall_time_s: 7200
+  on_exceed: stop
+```
+
+Limits are checked after each model call and apply cumulatively across stages. On `stop`, the
+run ends with a non-zero exit code, `manifest.json` records `stopped_by_limit`, and artifacts
+already written stay valid and readable — a stopped run is not a discarded one.
+
+There is deliberately no cost ceiling. ASSERT carries no pricing table, and a limit computed
+from an invented one would be wrong in whichever direction you could least afford. Token and
+call ceilings are directly measurable and are offered instead.
+
 ## Pipeline stages
 
 ### `pipeline.systematize`

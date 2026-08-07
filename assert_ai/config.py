@@ -29,6 +29,7 @@ from assert_ai.core.config_model import (
     ModelConfig,
     PipelineConfig,
     InferenceConfig,
+    RunLimits,
     TargetConfig,
     ToolsConfig,
     TraceConfig,
@@ -184,6 +185,14 @@ def load_runtime_context(
             "artifacts_root",
             "results_dir",
             "pipeline",
+            # DO NOT REMOVE "limits" from this set, even if the enforcement in
+            # UsageAccumulator is reverted. Unknown top-level keys are rejected
+            # outright, so once a user has written a limits: block, dropping the
+            # key here makes their config fail to load rather than degrade to
+            # the previous unlimited behaviour. If the ceiling logic needs to go,
+            # leave this entry and let parse_run_limits return an inactive
+            # RunLimits.
+            "limits",
         },
     )
     default_model_raw = _get_default_model_mapping(raw)
@@ -302,6 +311,7 @@ def load_runtime_context(
         "stages": stages,
         "target": target,
         "evaluation": pipeline.evaluation if pipeline else None,
+        "limits": parse_run_limits(raw.get("limits")),
     }
 
 
@@ -404,6 +414,52 @@ def reject_unknown_keys(raw: dict[str, Any], *, field_name: str, allowed: set[st
     unknown = sorted(set(raw).difference(allowed))
     if unknown:
         raise ValueError(f"{field_name} has unsupported field(s): {', '.join(unknown)}")
+
+
+def parse_run_limits(raw: Any, *, field_name: str = "limits") -> RunLimits:
+    """Parse the optional top-level ``limits:`` block.
+
+    A missing or empty block yields an inactive :class:`RunLimits`, so configs
+    written before this existed behave exactly as they did.
+    """
+    if raw is None:
+        return RunLimits()
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    reject_unknown_keys(
+        raw,
+        field_name=field_name,
+        allowed={"max_total_calls", "max_total_tokens", "max_wall_time_s", "on_exceed"},
+    )
+
+    def _positive_int(key: str) -> int | None:
+        value = raw.get(key)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field_name}.{key} must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"{field_name}.{key} must be a positive integer")
+        return value
+
+    max_wall_time_s = raw.get("max_wall_time_s")
+    if max_wall_time_s is not None:
+        if isinstance(max_wall_time_s, bool) or not isinstance(max_wall_time_s, (int, float)):
+            raise ValueError(f"{field_name}.max_wall_time_s must be a positive number")
+        if max_wall_time_s <= 0:
+            raise ValueError(f"{field_name}.max_wall_time_s must be a positive number")
+        max_wall_time_s = float(max_wall_time_s)
+
+    on_exceed = raw.get("on_exceed", "stop")
+    if on_exceed not in ("stop", "warn"):
+        raise ValueError(f"{field_name}.on_exceed must be 'stop' or 'warn'")
+
+    return RunLimits(
+        max_total_calls=_positive_int("max_total_calls"),
+        max_total_tokens=_positive_int("max_total_tokens"),
+        max_wall_time_s=max_wall_time_s,
+        on_exceed=on_exceed,
+    )
 
 
 def parse_model_config(
