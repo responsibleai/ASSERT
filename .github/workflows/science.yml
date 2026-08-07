@@ -64,8 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.11" }
       - name: Install deps
         run: |
@@ -82,11 +82,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # full history for baseline/treatment diff
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.11" }
 
       - name: Install deps
@@ -141,10 +141,14 @@ jobs:
 
       - name: Resolve baseline and treatment refs
         id: refs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASELINE="${{ github.event.pull_request.base.sha }}"
-            TREATMENT="${{ github.sha }}"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            BASELINE="${PR_BASE_SHA}"
+            TREATMENT="${HEAD_SHA}"
           else
             git fetch origin main
             BASELINE="$(git rev-list -1 --before='7 days ago' origin/main)"
@@ -170,7 +174,7 @@ jobs:
 
       - name: Restore cached baseline runs
         id: baseline_cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: artifacts/regression-baselines
           key: ${{ steps.cache_key.outputs.key }}
@@ -189,7 +193,7 @@ jobs:
 
       - name: Save baseline runs to cache
         if: always() && steps.baseline_cache.outputs.cache-hit != 'true' && hashFiles('artifacts/regression-baselines/.complete') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: artifacts/regression-baselines
           key: ${{ steps.cache_key.outputs.key }}
@@ -207,7 +211,7 @@ jobs:
 
       - name: Upload regression artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: regression-results
           path: artifacts/regression/
@@ -215,7 +219,7 @@ jobs:
 
       - name: Upload Phoenix collector log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: phoenix-log
           path: artifacts/phoenix/
