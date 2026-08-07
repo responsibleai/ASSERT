@@ -52,6 +52,7 @@ from assert_ai.core.runtime_safety import (
     PipelineWatchdog,
     run_stage_coro,
 )
+from assert_ai.core.run_result import RunResult, RunState
 from assert_ai.display import label_metric
 from assert_ai.stages import STAGES
 
@@ -589,6 +590,55 @@ def run_pipeline(
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
 ) -> int:
+    """Execute configured stages and return the legacy process exit code."""
+    return run_pipeline_result(
+        config=config,
+        force_stages=force_stages,
+        strict=strict,
+        overrides=overrides,
+        concurrency=concurrency,
+        path_policy=path_policy,
+    ).exit_code
+
+
+def run_pipeline_result(
+    *,
+    config: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    overrides: list[str] | None = None,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+) -> RunResult:
+    """Execute configured stages and return a structured terminal outcome."""
+    try:
+        return _run_pipeline_result(
+            config=config,
+            force_stages=force_stages,
+            strict=strict,
+            overrides=overrides,
+            concurrency=concurrency,
+            path_policy=path_policy,
+        )
+    except Exception:  # noqa: BLE001
+        log.error("[runner] Unexpected pipeline setup error", exc_info=True)
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="INTERNAL",
+            error_message="Unexpected pipeline setup error",
+        )
+
+
+def _run_pipeline_result(
+    *,
+    config: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    overrides: list[str] | None = None,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+) -> RunResult:
     """Execute configured stages.
 
     Programmatic callers are responsible for any desired dotenv bootstrap.
@@ -625,7 +675,12 @@ def run_pipeline(
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
-        return 1
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="CONFIG_INVALID",
+            error_message=_result_error_message(str(exc), path_policy=path_policy),
+        )
 
     # CLI --concurrency wins over the YAML-resolved value so a single run can be
     # widened or narrowed without editing the config. We mutate the live
@@ -647,8 +702,15 @@ def run_pipeline(
     invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
     if invalid_forced:
         joined = ", ".join(invalid_forced)
-        log.error(f"[config error] --force-stage stage(s) not present in config: {joined}")
-        return 1
+        message = f"--force-stage stage(s) not present in config: {joined}"
+        log.error(f"[config error] {message}")
+        return _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="CONFIG_INVALID",
+            error_message=message,
+        )
 
     # Cascade: forcing an upstream stage logically invalidates every stage
     # downstream of it. Without this, `--force-stage test_set` regenerates test_set
@@ -768,7 +830,6 @@ def run_pipeline(
                 else run_root / "config.yaml"
             )
             shutil.copy2(config_path, config_snapshot)
-    failed_stage: str | None = None
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}
 
@@ -833,10 +894,12 @@ def _run_stages_inner(
     stage_usage: dict[str, dict[str, Any]],
     heartbeat: ManifestHeartbeat | None,
     watchdog: PipelineWatchdog | None,
-) -> int:
+) -> RunResult:
     """Stage execution loop. Extracted so the outer function can manage
     heartbeat/watchdog lifecycle in a single try/finally."""
     failed_stage: str | None = None
+    failed_error_code: str | None = None
+    failed_error_message: str | None = None
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -915,6 +978,11 @@ def _run_stages_inner(
             # Print just that message; suppress the multi-screen litellm/httpx
             # traceback unless the user opts into verbose output.
             ok = False
+            stage_error_code = "RUN_FAILED"
+            stage_error_message = _result_error_message(
+                str(exc),
+                path_policy=ctx.get("path_policy"),
+            )
             log.error(f"[{stage_name}] {exc}")
             if os.environ.get("ASSERT_VERBOSE_ERRORS") == "1":
                 log.debug("Full traceback:", exc_info=True)
@@ -922,6 +990,8 @@ def _run_stages_inner(
                 log.info("(set ASSERT_VERBOSE_ERRORS=1 to see the full traceback)")
         except Exception:  # noqa: BLE001
             ok = False
+            stage_error_code = "RUN_FAILED"
+            stage_error_message = f"Unexpected error while running {stage_name}"
             log.error(f"[{stage_name}] Unexpected error", exc_info=True)
 
         if not ok and stage_name in artifact_plans:
@@ -970,6 +1040,8 @@ def _run_stages_inner(
 
         if not ok:
             failed_stage = stage_name
+            failed_error_code = stage_error_code
+            failed_error_message = stage_error_message
             break
 
     total_elapsed = time.monotonic() - pipeline_start
@@ -1015,11 +1087,58 @@ def _run_stages_inner(
     else:
         log.error(f"Pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
-    if manifest is None:
-        return 0 if failed_stage is None else 1
+    if manifest is not None:
+        manifest.ended_at = datetime.now(timezone.utc).isoformat()
+        manifest.status = "completed" if failed_stage is None else "failed"
+        _record_run_artifacts(manifest, ctx, run_root)
+        _write_manifest(manifest, run_root)
 
-    manifest.ended_at = datetime.now(timezone.utc).isoformat()
-    manifest.status = "completed" if failed_stage is None else "failed"
-    _record_run_artifacts(manifest, ctx, run_root)
-    _write_manifest(manifest, run_root)
-    return 0 if failed_stage is None else 1
+    if failed_stage is None:
+        return _run_result_from_context(
+            ctx,
+            state=RunState.COMPLETED,
+            exit_code=0,
+        )
+    return _run_result_from_context(
+        ctx,
+        state=RunState.FAILED,
+        exit_code=1,
+        failed_stage=failed_stage,
+        error_code=failed_error_code or "RUN_FAILED",
+        error_message=failed_error_message or f"Pipeline failed at {failed_stage}",
+    )
+
+
+def _run_result_from_context(
+    ctx: dict[str, Any],
+    *,
+    state: RunState,
+    exit_code: int,
+    failed_stage: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> RunResult:
+    suite_root = ctx.get("suite_root")
+    run_root = ctx.get("run_root")
+    return RunResult(
+        state=state,
+        exit_code=exit_code,
+        suite_id=ctx.get("suite_id"),
+        run_id=ctx.get("run_id"),
+        suite_root=Path(suite_root) if suite_root is not None else None,
+        run_root=Path(run_root) if run_root is not None else None,
+        failed_stage=failed_stage,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
+def _result_error_message(
+    message: str,
+    *,
+    path_policy: RuntimePathPolicy | None,
+) -> str:
+    if path_policy is None:
+        return message
+    workspace = str(path_policy.workspace_root)
+    return message.replace(workspace, ".")
