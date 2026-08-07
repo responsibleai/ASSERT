@@ -550,7 +550,33 @@ export function resolveArtifactPath(requestPath: string): string {
 	if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
 		throw new Error('Artifact path escaped artifacts root');
 	}
-	return resolvedPath;
+
+	// The lexical check above cannot see symlinks: a link inside the artifacts
+	// root that points outside it resolves to a path that still looks contained.
+	// Compare real paths so the link target is what gets checked. The root is
+	// itself resolved because it may sit under a symlinked parent, which would
+	// otherwise make every contained path look like an escape.
+	let realRoot: string;
+	try {
+		realRoot = fs.realpathSync(artifactsRoot);
+	} catch {
+		realRoot = artifactsRoot;
+	}
+
+	let realPath: string;
+	try {
+		realPath = fs.realpathSync(resolvedPath);
+	} catch {
+		// Path does not exist yet. The lexical check already passed, and callers
+		// handle the missing file.
+		return resolvedPath;
+	}
+
+	const realRelative = path.relative(realRoot, realPath);
+	if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+		throw new Error('Artifact path escaped artifacts root');
+	}
+	return realPath;
 }
 
 function readObject(value: unknown): Record<string, unknown> | null {
