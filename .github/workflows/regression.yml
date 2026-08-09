@@ -18,6 +18,11 @@ on:
       - '.claude/skills/**'
       - 'pytest.ini'
       - '.github/workflows/regression.yml'
+      # Dependency metadata decides what CI installs, so a resolution break
+      # (see #304) shows up here first. Without these the pin that fixes such a
+      # break cannot itself be verified by this workflow.
+      - 'pyproject.toml'
+      - 'uv.lock'
       # Example dirs the unit tests genuinely load from disk (verified by
       # removing each and watching the suite fail):
       #   tests/test_library_e2e.py         reads langgraph-foundry-hosted/eval_config.yaml
