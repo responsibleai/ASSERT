@@ -113,6 +113,21 @@ class InitCommandTest(unittest.TestCase):
             ])
             self.assertNotEqual(result.exit_code, 0)
 
+    def test_non_utf8_describe_file_fails_cleanly(self) -> None:
+        """A non-UTF-8 file exits via _error, not an UnicodeDecodeError traceback."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            # UTF-16 bytes are not decodable as UTF-8.
+            Path("describe.txt").write_bytes("a measurable behavior".encode("utf-16"))
+            result = runner.invoke(cli, [
+                "init",
+                "--describe-file", "describe.txt",
+                "--non-interactive",
+            ])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertNotIsInstance(result.exception, UnicodeDecodeError)
+            self.assertIn("not valid UTF-8", result.output)
+
     @patch("assert_ai.init._design_agent.chat_completion")
     @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_dry_run_does_not_write(self, _mock_sys, mock_llm) -> None:

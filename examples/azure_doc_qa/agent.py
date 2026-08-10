@@ -10,13 +10,19 @@ Architecture:
            → escalation (human handoff)
 
 Usage:
-    One config per risk lives under ``evals/``; pick the one you want to measure.
+    One config per risk lives under ``evals/``; the tool mode and the risk are
+    independent axes. ``USE_MOCK_TOOLS`` swaps the ``product_docs`` backend for
+    every suite (``internal_docs`` is always mocked), so either config below
+    runs under either mode.
 
     # Real MCP mode (requires Azure auth + Node.js):
     assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
 
-    # Mock mode (offline, no auth needed):
-    USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+    # Mock mode (offline, no auth needed) — same config, mode toggled:
+    USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
+
+    # The other risk, run the same two ways:
+    assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
 """
 
 from __future__ import annotations

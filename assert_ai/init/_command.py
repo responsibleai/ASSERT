@@ -167,7 +167,10 @@ def init(
     if describe is not None and describe_file is not None:
         _error("--describe and --describe-file are mutually exclusive")
     if describe_file is not None:
-        describe = describe_file.read_text(encoding="utf-8").strip()
+        try:
+            describe = describe_file.read_text(encoding="utf-8").strip()
+        except UnicodeDecodeError:
+            _error(f"{describe_file} is not valid UTF-8 text")
         if not describe:
             _error(f"{describe_file} is empty")
 

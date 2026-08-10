@@ -11,7 +11,11 @@ on:
       - 'assert_ai/**'
       - 'prompts/**'
       - 'scripts/regression_*.py'
-      - 'tests/regression/**'
+      # The job runs the whole `tests/` tree, not just tests/regression/, so
+      # scoping the filter to the subdirectory let edits to top-level suites
+      # (e.g. tests/test_init_command.py, tests/test_library_e2e.py) reach the
+      # merge queue untested whenever no assert_ai/ file changed alongside them.
+      - 'tests/**'
       # The run-assert-eval skill ships clarity_intake.py plus its own tests
       # under .claude/. Without this, edits to the skill or its fixtures never
       # trigger the workflow that runs them.
