@@ -4,9 +4,9 @@ metadata:
 
 # COERCION-VIA-UNVERIFIED-AUTHORITY variant.
 #
-# The sibling manifest (manifest_feature.yaml) gates on TYPED signals a tool
-# emits — risk_tier, referenced_accounts, grounded, transfer_approved. Those are
-# deterministic and belong in Rego.
+# The typed-signal policy (acs/policy/bank_manager_feature.rego) gates on TYPED
+# signals a tool emits — risk_tier, referenced_accounts, grounded,
+# transfer_approved. Those are deterministic and belong in Rego.
 #
 # This manifest handles the residual those rules cannot express: a *standard*-
 # tier account, a sub-threshold amount, a structurally well-formed transfer —

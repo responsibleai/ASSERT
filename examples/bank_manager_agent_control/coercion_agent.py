@@ -64,7 +64,7 @@ for _p in (str(EXAMPLE_DIR), str(RUNTIME_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from agent import _build_llm, _extract_text, _open_two_servers  # type: ignore[import-not-found] # noqa: E402
+from bank_agent_common import _build_llm, _extract_text, _open_two_servers  # type: ignore[import-not-found] # noqa: E402
 
 import coercion_classifier as cc  # noqa: E402
 
@@ -171,7 +171,7 @@ async def _run_prompt_arm(message: str, prompt: str, *, heuristic: bool) -> str:
 
 def _load_control(scorer):
     """Build the annotating ACS decision point from the coercion manifest."""
-    from agent import _acs_manifest_with_absolute_bundle
+    from bank_agent_common import _acs_manifest_with_absolute_bundle
     import acs_annotator_shim as shim
     return shim.AnnotatingAgentControl.from_path(
         str(_acs_manifest_with_absolute_bundle(ACS_MANIFEST_COERCION)), scorer=scorer), shim

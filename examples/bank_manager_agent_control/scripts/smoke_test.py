@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent          # scripts/
 EXAMPLE = HERE.parent                           # the example root
 RUNTIME = EXAMPLE / "runtime"                    # engine modules + knowledge corpus
 sys.path.insert(0, str(RUNTIME))  # allow sibling imports (kb_backend, feature_policy, …)
+sys.path.insert(0, str(EXAMPLE.parent.parent))  # repo root, for `examples.` package imports
 
 _passed, _failed, _skipped = 0, 0, 0
 
@@ -115,16 +116,23 @@ def offline_feature_policy_tests():
 
     def acs_feature_artifacts_present():
         pol = EXAMPLE / "acs" / "policy" / "bank_manager_feature.rego"
-        man = EXAMPLE / "acs" / "manifest_feature.yaml"
         assert pol.exists(), "feature Rego policy missing"
-        assert man.exists(), "feature manifest missing"
         body = pol.read_text()
         assert "risk_tier" in body and "referenced_accounts" in body, "feature Rego must gate on typed signals"
         assert "ACC-100" not in body, "feature Rego must not hardcode account ids"
 
+    def acs_behavior_manifests_present():
+        for name in ("manifest_tier_authorization.yaml", "manifest_coercion.yaml"):
+            assert (EXAMPLE / "acs" / name).exists(), f"missing ACS manifest {name}"
+        tier = EXAMPLE / "acs" / "policy_tier_authz" / "tier_authorization.rego"
+        coercion = EXAMPLE / "acs" / "policy" / "bank_manager_coercion.rego"
+        assert tier.exists(), "tier-authorization Rego missing"
+        assert coercion.exists(), "coercion Rego missing"
+
     check("policy: generalization premise (feature beats text on LN-3002)", generalization_premise)
     check("policy: host snapshot state machine", host_state_machine)
-    check("policy: ACS feature artifacts present + typed", acs_feature_artifacts_present)
+    check("policy: typed feature Rego present + typed", acs_feature_artifacts_present)
+    check("policy: both behaviors' ACS artifacts present", acs_behavior_manifests_present)
 
 
 # ---------------------------------------------------------------------------
@@ -160,19 +168,23 @@ def deps_tests():
     try:
         import langgraph  # noqa: F401
         import importlib
-        import examples.bank_manager_agent_control.agent as agent  # noqa: F401
-        importlib.reload(agent)
-        print("  PASS  deps: agent module imports")
+        import examples.bank_manager_agent_control.bank_agent_common as common  # noqa: F401
+        importlib.reload(common)
+        print("  PASS  deps: shared agent module imports")
         globals()["_passed"] += 1
 
-        def feature_callables_present():
-            for name in ("chat_unguarded_realistic", "chat_unguarded_realistic_prompted",
-                         "chat_guarded_acs_feature"):
-                assert callable(getattr(agent, name)), f"missing callable {name}"
-            assert agent.MCP_SERVER_BANK.exists() and agent.MCP_SERVER_KB.exists()
-            assert agent.ACS_MANIFEST_FEATURE.exists()
+        def behavior_callables_present():
+            import examples.bank_manager_agent_control.coercion_agent as coercion
+            import examples.bank_manager_agent_control.agent_tier_authz as tier
+            for name in ("chat_coercion_baseline", "chat_coercion_hardened_prompt",
+                         "chat_coercion_acs_classifier"):
+                assert callable(getattr(coercion, name)), f"missing callable {name}"
+            for name in ("chat_baseline_tier_authz", "chat_defensive_prompt_tier_authz",
+                         "chat_acs_rego_tier_authz"):
+                assert callable(getattr(tier, name)), f"missing callable {name}"
+            assert common.MCP_SERVER_BANK.exists() and common.MCP_SERVER_KB.exists()
 
-        check("deps: feature ASSERT callables + two-server paths", feature_callables_present)
+        check("deps: both behaviors' ASSERT callables + two-server paths", behavior_callables_present)
     except Exception as e:  # noqa: BLE001
         skip("agent module import", f"{type(e).__name__}: {e}")
 
