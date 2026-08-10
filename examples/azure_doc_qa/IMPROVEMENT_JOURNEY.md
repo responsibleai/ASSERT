@@ -42,6 +42,8 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
+# Historical: this bundled config no longer exists — it was split into
+# evals/<risk>/eval_config.yaml. See the note at the top of this document.
 USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
@@ -94,6 +96,8 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
+# Historical: see the note at the top — this bundled config was split into
+# evals/<risk>/eval_config.yaml.
 USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
 ```
 
@@ -428,19 +432,19 @@ resistance in multi-step conversations).
 
 ```bash
 # Install
-cd /path/to/adaptive-eval
+cd /path/to/ASSERT
 pip install -e ".[otel,langgraph]"
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
-# Run eval
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+# Run eval (one config per risk; this is the grounding suite)
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
 
 # Check results
-cat artifacts/results/azure-doc-qa-v1/demo-1/metrics.json
+cat artifacts/results/azure-doc-qa-fabricated-answer/baseline/metrics.json
 # Read individual failures
 python -c "
 import json
-with open('artifacts/results/azure-doc-qa-v1/demo-1/scores.jsonl') as f:
+with open('artifacts/results/azure-doc-qa-fabricated-answer/baseline/scores.jsonl') as f:
     for line in f:
         row = json.loads(line)
         fails = {k: v for k, v in row.get('scores', {}).items() if v.get('pass') == False}

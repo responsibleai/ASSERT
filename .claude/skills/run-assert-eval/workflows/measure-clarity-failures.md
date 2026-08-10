@@ -111,7 +111,11 @@ Config generation, in order of preference:
 2. **Domain template next.** Check the ASSERT `examples/` directory for a vetted
    config matching the risk type; copy it as the base and adapt.
 3. **Otherwise** generate from the schema:
-   `assert-ai init --default-model <litellm-model> --describe "<text>" --non-interactive -o <path>`.
+   `assert-ai init --default-model <litellm-model> --describe-file <text-path> --non-interactive -o <path>`.
+   Write the failure-mode text (failure mode + how it arises + target context) to
+   a file first. It is Clarity-derived prose you did not author, so a quote,
+   backtick, or `$(...)` in it would break or inject into the shell if
+   interpolated into `--describe "<text>"`.
 
 Fill from the candidate behavior (real schema field names):
 

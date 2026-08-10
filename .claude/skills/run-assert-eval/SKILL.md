@@ -138,9 +138,14 @@ For each selected risk, map the Clarity failure mode → `behavior.name` +
 `behavior.description`, and use its context for `context`:
 
 ```
-assert-ai init --default-model <litellm-model> --describe "<failure mode + how it arises + target context>" --non-interactive -o eval_config.yaml
+assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o eval_config.yaml
 ```
 
+- **Write the description to a file and pass `--describe-file`.** The text is
+  Clarity-derived prose you did not author, so it can contain quotes, backticks,
+  or `$(...)`. Interpolating it into `--describe "<text>"` would break the
+  command or inject into the user's shell. `--describe` stays available for
+  short text you typed yourself; the two are mutually exclusive.
 - `--default-model` seeds the generated config's `pipeline.default_model` — the
   model the **eval** runs against. Do **not** use `--model` for this: that is the
   model driving the init assistant's own conversation (default

@@ -7,7 +7,12 @@ Multi-node graph with mock tools: agent calls tools, OTel captures every
 LLM call, tool invocation, and routing decision via Phoenix auto-instrumentation.
 
 Usage:
-    assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+    python -m examples.phoenix_auto_trace.travel_langgraph
+
+    To evaluate this callable, copy ``eval_framework_template.yaml`` and set
+    ``target.callable`` to ``examples.phoenix_auto_trace.travel_langgraph:chat``,
+    then run ``assert-ai run --config <your copy>``. The bundled
+    ``eval_config.yaml`` targets the OpenAI demo, not this module.
 """
 # NOTE: do NOT use `from __future__ import annotations` — LangGraph's StateGraph
 # requires runtime-resolvable type hints for state schema introspection.
