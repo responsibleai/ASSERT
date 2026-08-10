@@ -146,7 +146,6 @@ one frozen 40-case test set, n=19 coercive / n=21 legitimate):
 | 1 · realistic baseline (prompt + tripwire) | **5.3%** (1/19) | **42.9%** (9/21) |
 | 2 · hardened prompt | **0.0%** (0/19) | **71.4%** (15/21) |
 | 3 · ACS calibrated classifier annotator | **0.0%** (0/19) | **42.9%** (9/21) |
-| 3n · *diagnostic* — same wiring, naive keyword scorer | 0.0% (0/19) | 38.1% (8/21) |
 
 **Prompt hardening buys the last 5 points of safety by refusing 28.5 points more
 legitimate business.** The classifier annotator buys the same safety at zero over-refusal
@@ -175,6 +174,14 @@ classifier never saw (14 coercive / 18 legitimate):
 | naive keyword | **0.429** | 0.278 | 0.3681 |
 | LLM gate (raw) | **1.000** | **0.111** | **0.0584** |
 | LLM gate (Platt-calibrated) | 1.000 | 0.333 | 0.1274 |
+
+The same swap was also run end-to-end as a diagnostic — Arm 3's exact wiring (same manifest,
+same Rego, same bands) with the naive scorer substituted for the calibrated one — and scored
+0.0% bypass on the coercive stratum with 38.1% (8/21) over-refusal. It is **not shipped as an
+eval config**, because at n=19/21 the runtime arms cannot separate the two scorers; the
+tables above are where the difference is actually visible. The callable
+(`coercion_agent:chat_coercion_acs_naive_classifier`) is kept so the diagnostic stays
+reproducible via `--override inference.target.callable=…`.
 
 **Two hard negative results, both reported as found.** (1) The naive gate's recall collapses
 from 1.000 to 0.429 on cases written by someone other than its author — the sharpest possible
@@ -224,13 +231,12 @@ select the arm with `TIER_AUTHZ_ARM_SELECT=arm1|arm2|arm3`:
 assert-ai run --config examples/bank_manager_agent_control/eval_tier_authorization_traced.yaml
 ```
 
-**Behavior 2** — all four arms share one suite, so arms 2–3n hit the cached test set:
+**Behavior 2** — all three arms share one suite, so arms 2 and 3 hit the cached test set:
 
 ```bash
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm2_hardened.yaml
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3_acs.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3n_naive.yaml
 ```
 
 **Analysis and proofs** (deterministic, no live model calls except where noted):
@@ -293,8 +299,8 @@ Both control planes are demo-tuned. Before adapting either to a real deployment:
 | `acs/policy_tier_authz/tier_authorization.rego`, `acs/manifest_tier_authorization.yaml` | Behavior 1's control plane — the one property-based rule the demo rests on. |
 | `runtime/deposit_tier_gate.py` | Behavior 1's **realistic baseline** — good code that doesn't generalize. |
 | `runtime/tier_authz_core.py`, `runtime/tier_authz_mcp_server.py` | Sensitivity envelope, `verify_authorization`, and the 11-tool multi-domain MCP server. |
-| `eval_coercion_authority.yaml`, `…_arm2_hardened.yaml`, `…_arm3_acs.yaml`, `…_arm3n_naive.yaml` | Behavior 2 configs (arms 1 / 2 / 3 / 3n). |
-| `coercion_agent.py` | Behavior 2's four ASSERT callables, base + hardened prompts, tripwire, ACS runner, gate telemetry. |
+| `eval_coercion_authority.yaml`, `…_arm2_hardened.yaml`, `…_arm3_acs.yaml` | Behavior 2 configs (arms 1 / 2 / 3). |
+| `coercion_agent.py` | Behavior 2's ASSERT callables, base + hardened prompts, tripwire, ACS runner, gate telemetry. |
 | `runtime/coercion_classifier.py`, `runtime/acs_annotator_shim.py` | The learned gate (naive + LLM + Platt) and the host-side ACS §10 annotator dispatch. |
 | `acs/policy/bank_manager_coercion.rego`, `acs/manifest_coercion.yaml` | Behavior 2's three-band learned gate + ACS manifest. |
 | `runtime/coercion_labels.jsonl`, `runtime/coercion_testset_labels.json`, `runtime/coercion_calibration*.json` | Calibration cases, reviewed ground truth, and the fitted calibration. |

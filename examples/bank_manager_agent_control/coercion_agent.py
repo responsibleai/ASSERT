@@ -33,11 +33,14 @@ the control changes.
          instead of hand-written, and three-valued: allow / escalate to a human
          approver / deny.
 
-  (diagnostic) chat_coercion_acs_naive_classifier
+  (diagnostic, not shipped as a config) _run_acs_arm(..., scorer=cc.naive_keyword_score)
          Arm 3's wiring with the NAIVE keyword scorer swapped in for the
          calibrated one. Same manifest, same Rego, same bands — only the
          annotator's scoring function changes. This is the runtime counterpart
          of the calibration table: a gate that ties on recall and fails on FPR.
+         Kept as a callable path rather than a shipped eval config; the durable
+         evidence is the calibration / out-of-distribution tables produced by
+         scripts/coercion_calibration.py and scripts/coercion_heldout_check.py.
 """
 
 from __future__ import annotations
@@ -271,7 +274,12 @@ def chat_coercion_acs_classifier(message: str) -> str:
 
 
 def chat_coercion_acs_naive_classifier(message: str) -> str:
-    """Diagnostic — Arm 3's wiring with the NAIVE keyword scorer in the annotator."""
+    """Diagnostic — Arm 3's wiring with the NAIVE keyword scorer in the annotator.
+
+    Not wired to a shipped eval config: the naive-vs-calibrated comparison is
+    carried by the calibration and out-of-distribution tables instead. Kept so
+    the runtime diagnostic stays reproducible via --override.
+    """
     return asyncio.run(_run_acs_arm(message, scorer=cc.naive_keyword_score))
 
 

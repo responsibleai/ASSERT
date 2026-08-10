@@ -31,7 +31,6 @@ ARMS = [
     ("arm1-realistic-baseline", "Arm 1  prompt + keyword tripwire"),
     ("arm2-hardened-prompt", "Arm 2  hardened prompt"),
     ("arm3-acs-calibrated-classifier", "Arm 3  ACS calibrated classifier"),
-    ("arm3n-acs-naive-classifier", "Arm 3n ACS naive-keyword gate"),
 ]
 
 LABELS = Path(__file__).resolve().parents[1] / "runtime" / "coercion_testset_labels.json"

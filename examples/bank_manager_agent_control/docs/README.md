@@ -38,8 +38,8 @@ this file is the setup and mechanics reference.
 | | Behavior 1 · sensitivity-tier authorization | Behavior 2 · coercion via unverified authority |
 |---|---|---|
 | Suite | `tier-authorization` | `bank-manager-coercion-authority` |
-| Configs | `eval_tier_authorization.yaml` (callable target), `eval_tier_authorization_traced.yaml` (connector target) | `eval_coercion_authority.yaml`, `eval_coercion_arm2_hardened.yaml`, `eval_coercion_arm3_acs.yaml`, `eval_coercion_arm3n_naive.yaml` |
-| Arms | 1 realistic baseline · 2 defensive prompt · 3 ACS Rego | 1 realistic baseline · 2 hardened prompt · 3 ACS classifier annotator · 3n naive-scorer diagnostic |
+| Configs | `eval_tier_authorization.yaml` (callable target), `eval_tier_authorization_traced.yaml` (connector target) | `eval_coercion_authority.yaml`, `eval_coercion_arm2_hardened.yaml`, `eval_coercion_arm3_acs.yaml` |
+| Arms | 1 realistic baseline · 2 defensive prompt · 3 ACS Rego | 1 realistic baseline · 2 hardened prompt · 3 ACS classifier annotator |
 | Cases per arm | 72 | 40 (19 coercive / 21 legitimate) |
 | Control artifact | `acs/policy_tier_authz/tier_authorization.rego` | `acs/policy/bank_manager_coercion.rego` + `runtime/coercion_classifier.py` |
 | Baseline artifact | `runtime/deposit_tier_gate.py` | `coercion_agent.py::BASE_PROMPT` + the keyword tripwire |
@@ -66,8 +66,9 @@ matter most when quoting results:
 - `agent_tier_authz.py` / `agent_tier_authz_adapter.py` — Behavior 1's three arms plus the
   connector adapter that serializes `tool_call` / `tool_result` events into the judge
   transcript.
-- `coercion_agent.py` — Behavior 2's four arms, both prompts, the keyword tripwire, the ACS
-  annotator runner, and the gate audit log.
+- `coercion_agent.py` — Behavior 2's arms, both prompts, the keyword tripwire, the ACS
+  annotator runner, and the gate audit log. Also carries the naive-scorer diagnostic callable,
+  which has no shipped config.
 - `runtime/tier_authz_mcp_server.py` — Behavior 1's MCP server: 11 tools across four domains
   plus `verify_authorization`, over the shared `bank_core` data model.
 - `runtime/realistic_bank_mcp_server.py` + `runtime/bank_core.py` — the multi-domain bank
@@ -209,13 +210,23 @@ assert-ai run --config examples/bank_manager_agent_control/eval_tier_authorizati
 Set `TIER_AUTHZ_TELEMETRY=<path>.jsonl` to capture the per-turn deterministic enforcement
 log that `scripts/analyze_tier_authz.py` reads.
 
-**Behavior 2** — all four arms share one suite, so arms 2–3n hit the cached test set:
+**Behavior 2** — all three arms share one suite, so arms 2 and 3 hit the cached test set:
 
 ```bash
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm2_hardened.yaml
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3_acs.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3n_naive.yaml
+```
+
+The naive-scorer diagnostic (Arm 3's wiring with the keyword scorer substituted for the
+calibrated one) is not shipped as a config — the naive-vs-calibrated difference is carried by
+the calibration and out-of-distribution tables, not by the runtime arms, which are
+underpowered to separate them. To reproduce it anyway:
+
+```bash
+assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3_acs.yaml \
+  --override run=arm3n-acs-naive-classifier \
+  --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_acs_naive_classifier
 ```
 
 Refitting the classifier calibration (optional; hits the model) and re-deriving ground truth:
