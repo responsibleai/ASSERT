@@ -153,6 +153,13 @@ _PERMISSIBILITY_RATE_KEY_BY_METRIC = {
     "permissible_policy_violation_rate": "permissible_policy_violation_rate",
 }
 
+# The bucket detail that carries the counts behind each stored rate, so prompt
+# and scenario halves can be pooled from counts rather than averaged.
+_PERMISSIBILITY_BUCKET_BY_RATE_KEY = {
+    "not_permissible_policy_violation_rate": "policy_violation_on_not_permissible",
+    "permissible_policy_violation_rate": "policy_violation_on_permissible",
+}
+
 #: The half of the split the matrix leads with. ``policy_violation`` unions
 #: permissible and impermissible behaviors, so ranking behaviors by it can order
 #: them by the wrong thing entirely -- a behavior can carry a high union rate
@@ -456,9 +463,47 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     return float(rate) if isinstance(rate, (int, float)) else None
 
 
+def _pooled_rate(pairs: Iterable[tuple[int, int]]) -> float | None:
+    """Pool ``(flagged, scored)`` pairs into one rate.
+
+    Rates must be recombined from counts, never averaged: prompt and scenario
+    halves routinely differ in both rate and size, so the mean of two rates is
+    not the rate of the whole.
+    """
+    flagged = scored = 0
+    for hit, total in pairs:
+        flagged += hit
+        scored += total
+    return flagged / scored if scored else None
+
+
+def _binary_counts(summary: Any) -> tuple[int, int] | None:
+    """Return ``(flagged, scored)`` for a binary dimension summary."""
+    if not isinstance(summary, dict) or summary.get("kind") == "ordinal":
+        return None
+    counts = summary.get("counts")
+    if not isinstance(counts, dict):
+        return None
+    flagged = counts.get(1, counts.get("1", 0))
+    passed = counts.get(0, counts.get("0", 0))
+    if not isinstance(flagged, int) or not isinstance(passed, int):
+        return None
+    total = flagged + passed
+    return (flagged, total) if total else None
+
+
 def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | None:
+    """Rate for ``metric`` across a run's prompt and scenario rows.
+
+    Both halves are pooled. Reporting whichever half happened to be present
+    first silently drops the other, and they are not interchangeable -- on the
+    career-health CV-injection baseline the prompt rows score 64% and the
+    scenario rows 88%, so a prompt-only cell understates the run by 12 points
+    with nothing on screen to say half the data was excluded.
+    """
     prompt_metrics = run_summary.get("prompt_metrics") or {}
     scenario_metrics = run_summary.get("scenario_metrics") or {}
+    halves = [m for m in (prompt_metrics, scenario_metrics) if isinstance(m, dict)]
 
     # The permissibility split is not a judged dimension -- it is derived from
     # node judgments plus the taxonomy and stored as a top-level rate on the
@@ -468,12 +513,30 @@ def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | Non
     # reads as "no violations" rather than "not wired up".
     split_key = _PERMISSIBILITY_RATE_KEY_BY_METRIC.get(metric)
     if split_key is not None:
-        for metrics in (prompt_metrics, scenario_metrics):
-            if isinstance(metrics, dict) and split_key in metrics:
-                rate = metrics.get(split_key)
-                if isinstance(rate, (int, float)):
-                    return float(rate)
+        bucket_key = _PERMISSIBILITY_BUCKET_BY_RATE_KEY[split_key]
+        pairs = [
+            counts
+            for metrics in halves
+            if (counts := _binary_counts(metrics.get(bucket_key))) is not None
+        ]
+        if pairs:
+            return _pooled_rate(pairs)
+        # Fall back to the stored rate when counts are unavailable -- an older
+        # artifact may carry the rate without the bucket detail.
+        for metrics in halves:
+            rate = metrics.get(split_key)
+            if isinstance(rate, (int, float)):
+                return float(rate)
         return None
+
+    pairs = [
+        counts
+        for metrics in halves
+        if isinstance(metrics.get("dimensions"), dict)
+        and (counts := _binary_counts(metrics["dimensions"].get(metric))) is not None
+    ]
+    if pairs:
+        return _pooled_rate(pairs)
 
     prompt_rate = _dimension_rate(prompt_metrics, metric)
     if prompt_rate is not None:

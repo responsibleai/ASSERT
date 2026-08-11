@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
@@ -368,3 +369,112 @@ def test_matrix_warns_that_split_halves_have_different_denominators(tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert "denominator" in result.output.lower()
+
+
+# --- prompt + scenario pooling -------------------------------------------
+#
+# A run's prompt and scenario rows are separate metric sets. Reporting whichever
+# was present first silently drops the other, and they are not interchangeable:
+# on the career-health CV-injection baseline the prompt rows score 64% and the
+# scenario rows 88%, so a prompt-only cell understated the run by 12 points with
+# nothing on screen to say half the data was excluded.
+
+
+def _mixed_run(
+    results_root: Path,
+    suite_id: str,
+    run_id: str,
+    behavior_name: str,
+    prompt_flags: list[bool],
+    scenario_flags: list[bool],
+) -> None:
+    run_dir = results_root / suite_id / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"status": "completed", "stages": {"judge": "completed"}}), encoding="utf-8"
+    )
+    (run_dir / "config.yaml").write_text(f"behavior:\n  name: {behavior_name}\n", encoding="utf-8")
+    rows = [_score_row(flag) for flag in prompt_flags]
+    for flag in scenario_flags:
+        row = _score_row(flag)
+        row["tester_model"] = "test-tester"
+        rows.append(row)
+    _write_jsonl(run_dir / "scores.jsonl", rows)
+
+
+def test_matrix_pools_prompt_and_scenario_rows(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    # 1/4 prompt + 3/4 scenario = 4/8 pooled. Prompt-only would report 0.25.
+    _mixed_run(results_root, "beh", "beh-baseline", "beh",
+               [True, False, False, False], [True, True, True, False])
+    _mixed_run(results_root, "beh", "beh-governed", "beh",
+               [False, False, False, False], [False, False, False, False])
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root),
+         "--metric", "policy_violation", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["cells"]["beh"]["baseline"] == 0.5
+
+
+def test_matrix_pools_from_counts_not_by_averaging_rates(tmp_path: Path) -> None:
+    """Unequal halves: the mean of the two rates is not the rate of the whole."""
+    results_root = tmp_path / "results"
+    # 1/1 prompt (100%) + 1/9 scenario (11.1%) = 2/10 pooled (20%).
+    # Averaging the two rates would give 55.6%.
+    _mixed_run(results_root, "beh", "beh-baseline", "beh",
+               [True], [True] + [False] * 8)
+    _mixed_run(results_root, "beh", "beh-governed", "beh", [False], [False])
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "--suite", "beh", "--results-dir", str(results_root),
+         "--metric", "policy_violation", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    baseline = json.loads(result.output)["cells"]["beh"]["baseline"]
+    assert baseline == pytest.approx(0.2), baseline
+
+
+def test_matrix_pools_the_permissibility_split_across_both_halves(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    run_dir = results_root / "beh" / "beh-baseline"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"status": "completed", "stages": {"judge": "completed"}}), encoding="utf-8"
+    )
+    (run_dir / "config.yaml").write_text("behavior:\n  name: beh\n", encoding="utf-8")
+    (results_root / "beh" / "taxonomy.json").write_text(
+        json.dumps({"behavior_categories": [
+            {"name": "must never", "permissible": False},
+            {"name": "allowed", "permissible": True},
+        ]}),
+        encoding="utf-8",
+    )
+    # 1/2 impermissible in prompt, 1/2 in scenario -> 2/4 pooled.
+    rows = [
+        _split_score_row(impermissible=True, permissible=False),
+        _split_score_row(impermissible=False, permissible=False),
+    ]
+    for flag in (True, False):
+        row = _split_score_row(impermissible=flag, permissible=False)
+        row["tester_model"] = "test-tester"
+        rows.append(row)
+    _write_jsonl(run_dir / "scores.jsonl", rows)
+
+    _make_split_run(results_root, "beh2", "beh2-baseline", "beh2", [(False, False)])
+
+    result = CliRunner().invoke(
+        cli,
+        ["results", "matrix", "beh/beh-baseline", "beh2/beh2-baseline",
+         "--results-dir", str(results_root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation_not_permissible"
+    assert payload["cells"]["beh"]["baseline"] == 0.5
