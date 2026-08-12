@@ -11,7 +11,8 @@
         <a href="https://responsibleai.github.io/ASSERT/">🌐 Visit project website</a> |
         <a href="https://github.com/responsibleai/ASSERT/blob/main/docs/targets/callable.md">🔌 View supported targets</a> |
         <a href="https://github.com/responsibleai/ASSERT/blob/main/docs/cli/overview.md">📘 CLI Reference</a> |
-        <a href="https://github.com/responsibleai/ASSERT/blob/main/examples/README.md">🧪 Examples</a>
+        <a href="https://github.com/responsibleai/ASSERT/blob/main/examples/README.md">🧪 Examples</a> |
+        <a href="https://github.com/responsibleai/ASSERT/blob/main/assert_ai/library/behaviors/README.md">📋 Behavior Library</a>
 </p>
 <p align="center">
         <a href="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml"><img src="https://github.com/responsibleai/ASSERT/actions/workflows/build.yml/badge.svg" alt="Build status"></a>
@@ -35,6 +36,7 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 ## What you get with ASSERT
 
 - **Spec-driven coverage** - test cases are generated from your product requirements and context, not a generic benchmark. You specify the behaviors that you want to test for
+- **Curated behavior library** - a growing catalog of atomic, ready-to-use behavior presets ([`assert_ai/library/behaviors/`](assert_ai/library/behaviors/README.md)) spanning safety, bias/fairness, and agentic failure modes — the single source of truth for common behaviors, so you often don't have to write one from scratch. Pair with the [scenario library](assert_ai/library/scenarios/README.md) for ready-made application context.
 - **Test any model endpoint** via integrations with [LiteLLM](https://github.com/BerriAI/litellm), supporting 100+ model endpoints from platform providers such as Bedrock, Azure, OpenAI, VertexAI, Cohere, Anthropic, Sagemaker, HuggingFace, VLLM, NVIDIA NIM.
 - **Test any agent or multi-agent system** via integrations with [OpenInference](https://github.com/Arize-ai/openinference/). Evaluate a LangGraph agent, a CrewAI / OpenAI Agents SDK / DSPy / LlamaIndex / AutoGen system, custom multi-agent orchestration, a Python callable, or a hosted model — without rewriting the evaluation orchestration pipeline.
 - **Agent trace-grounded judgment** - the recommended integration captures OpenTelemetry spans (OpenInference auto-instruments 33+ frameworks in two lines — `from assert_ai import auto_trace; auto_trace.enable()` — or you can emit your own with the OTel SDK) so the judge can cite tool calls, routing, model calls, and latency as evidence — not just the final response.

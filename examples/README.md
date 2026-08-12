@@ -30,6 +30,25 @@ assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgra
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
+## Reuse a behavior from the library — check here first
+
+Before writing a `behavior.description` from scratch, check the **[Behavior Library](../assert_ai/library/behaviors/README.md)**
+(`assert_ai/library/behaviors/`) — the single source of truth for atomic,
+ready-to-use behavior presets shipped with ASSERT. Each preset is scoped to
+one mechanism (one judge verdict, one behavioral claim), covering safety,
+bias/fairness, and agentic failure modes. Browse the full catalog with:
+
+```powershell
+assert-ai library list --kind behavior
+assert-ai library show <preset-name>
+```
+
+Pair a preset with application context from the **[Scenario Library](../assert_ai/library/scenarios/README.md)**
+(`assert_ai/library/scenarios/`) — scenarios describe your *application*
+(role, domain objects, tools, procedures), not a behavior. One config per
+behavior, sharing a common scenario's `context:`, is the pattern every
+example in this directory follows.
+
 ## Worked evaluations
 
 Every config below measures one behavior. Each directory README covers the

@@ -70,6 +70,12 @@ jobs:
         run: |
           python -m pip install -e ".[dev,otel]"
 
+      - name: Check the behavior library
+        # Guards two things the reference library cannot enforce by itself:
+        # that presets stay atomic (best-practices 8.D), and that
+        # examples/behavior_specs/*.md never drifts from the shipped YAML.
+        run: python scripts/check_behavior_library.py
+
       - name: Install viewer npm dependencies
         # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
         # sources that import npm packages (e.g. `yaml` in artifacts.ts).
