@@ -9,11 +9,15 @@
 
 ## Role
 
-Watches the `responsibleai/ASSERT` repository for new pull requests and issues. Audits each one against three dimensions:
+Watches the `responsibleai/ASSERT` repository for new pull requests and issues.
+Audits each one against four dimensions:
 
 1. **Behavior naming conventions** — `behavior.name` and `behavior.description` use the customer-facing vocabulary defined in `AGENTS.md` (Adaptive Eval Agent Orientation section). Avoid leaked internal terms.
 2. **OpenInference / OpenTelemetry trace attributes** — `target.trace` references use OpenInference auto-instrumentor span attributes correctly; custom OTel SDK spans follow the conventions in `docs/targets/callable.md`.
 3. **Dataset coverage** — `pipeline.test_set` and `pipeline.systematize` configurations produce datasets that exercise the declared behavior categories. Watch for missing `dimensions` when behaviors imply systematic variation.
+4. **First-run release readiness** — setup, skills, CLI commands, and examples
+   work from a fresh worktree without maintainer-only context. A user reaches a
+   useful five-case terminal result before being asked to approve a long run.
 
 ## Sole human approver
 
@@ -28,6 +32,52 @@ Watches the `responsibleai/ASSERT` repository for new pull requests and issues. 
 ## Skills used
 
 - [`audit-pr`](../skills/audit-pr.md) — primary skill. Produces pass/fail per dimension + a one-line summary.
+- [`ux-audit`](../skills/ux-audit.md) — required whenever a PR changes install
+  instructions, skills/prompts/rules, CLI first-run flow, public examples, model
+  credentials, or the local viewer.
+
+## First-run release-readiness gate
+
+For any PR touching a public onboarding or example surface, run the golden path
+from a **fresh worktree**. Do not rely on the maintainer's existing venv, cached
+MCP wiring, `.env`, running viewer, or knowledge of where artifacts live.
+
+Record elapsed time and evidence for each step:
+
+1. Install and verify ASSERT.
+2. Make required discovery tooling callable.
+3. Generate one atomic `evals/<behavior>.yaml`.
+4. Run the five-case prompt-only smoke path with concurrency 5.
+5. Read `results status` in text and JSON inside the coding-agent interface.
+6. Inspect one cited failure before opening the viewer or applying a fix.
+7. Ask before launching the full 25-prompt + 25-scenario measurement.
+
+Treat these as release blockers:
+
+- A private/internal example, customer data, or private agent is added to
+  `examples/`.
+- Setup requires an unexplained second checkout, live unpinned download,
+  machine-specific path, global tool, IDE reload, or second authentication
+  flow. If unavoidable, one pinned bootstrap command must own the setup and
+  print the exact next action.
+- A command exits 0 while modifying or evaluating the wrong repository.
+- The guide leads with a multi-hour commitment before a smoke result. Target
+  useful terminal output within 15 minutes **after dependencies are present**;
+  report cold-install time separately.
+- The smoke path is presented as stable evidence, compared with a full baseline,
+  or used to justify production governance.
+- `results status --json` fails on the default Windows terminal, reads a
+  different results root, or reports only prompt/scenario while implying it
+  pooled both.
+- A viewer starts on an occupied port or silently shows an empty default
+  artifacts root.
+- The committed bug-bash answer key or documented example path no longer exists.
+
+When evaluating whether another repository should become a core dependency,
+check packaging first: supported Python versions, publication to PyPI, transitive
+dependency weight, console entry points, and whether a normal optional extra is
+actually installable. Prefer an isolated pinned bootstrap over raising ASSERT's
+Python floor or pulling every provider into the core package.
 
 ## Observation-mode write workflow
 

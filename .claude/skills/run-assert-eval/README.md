@@ -12,13 +12,14 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `SKILL.md` | Claude Code skill entry (the canonical instructions). |
 | `../../.github/prompts/run-assert-eval.prompt.md` | GitHub Copilot mirror. |
 | `../../.cursor/rules/assert.mdc` | Cursor mirror. |
-| `workflows/measure-clarity-failures.md` | The 9-step measurement workflow (parse → triage → configs → run → report → close loop → curate example). |
+| `workflows/measure-clarity-failures.md` | The 10-step smoke-first measurement workflow (parse → triage → config → smoke → opt-in full run → report → close loop → curate example). |
 | `workflows/govern-and-remeasure.md` | The ACS governance workflow: turn a measured failure into a deployable ACS policy (`assert-ai acs generate`), wrap the agent, and re-run the same eval to prove the failure rate dropped. |
 | `workflows/diagnose-acs-delta.md` | Fallback reference manual for when a governed run's delta comes out wrong (no drop, or over-gating rose) — symptom-indexed, 15 rules. Most are prevented by the pre-flight classification in `govern-and-remeasure.md` Step 1a. |
+| `setup_clarity.py` | Pinned one-command bootstrap: installs Clarity in a cached Python 3.12 tool environment and writes a pip-mode MCP config without a second checkout. |
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
 | `tests/` | Pytest suite + real Clarity fixtures for the parser. |
 | `SETUP-CHECKLIST.md` | One-time in-IDE MCP setup + end-to-end verification. |
-| `BUG_BASH.md` | Facilitated bug-bash guide — one shared procedure, run against each of the eight example domains as a separate lane. |
+| `BUG_BASH.md` | Facilitated bug-bash guide — one shared smoke-first procedure, run against each of the seven public example domains as a separate lane. |
 
 Keep the three skill surfaces (`SKILL.md`, the Copilot prompt, the Cursor rule)
 methodologically aligned when changing the flow.
@@ -40,7 +41,8 @@ methodologically aligned when changing the flow.
 3. **Measurement (this skill):** `clarity_intake.py` turns failure docs into
    candidate behaviors; `workflows/measure-clarity-failures.md` runs a **mandatory
    human triage gate**, generates **one flat `evals/<atomic_behavior>.yaml` per
-   selected failure**, runs them sequentially, and reports one behavior per column.
+   selected failure**, proves the loop first with a five-case prompt-only smoke,
+   then asks before sequential full runs and reports one behavior per column.
 4. **Governance (ACS, optional):** when a run surfaces a real failure the user wants
    to *fix and prove*, `workflows/govern-and-remeasure.md` first **classifies the
    failure against the baseline** (Step 1a — semantic `output` gate vs. structural

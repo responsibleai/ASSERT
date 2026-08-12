@@ -580,8 +580,8 @@ the **non-permissible** violation rate should drop. Watch `overrefusal` and the
 Read the headline pair for each run and difference them:
 
 ```
-assert-ai results status <suite> baseline      --json
-assert-ai results status <suite> acs-governed  --json
+assert-ai results status <suite> baseline      --json --summary-only
+assert-ai results status <suite> acs-governed  --json --summary-only
 ```
 
 | Metric (from `--json`) | Baseline → governed | Win condition |

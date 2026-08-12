@@ -127,8 +127,8 @@ Fill from the candidate behavior (real schema field names):
 | `default_model.name` | the cheap model — drives the target, test-set generation, and tester (e.g. `azure/gpt-5.4-mini`) |
 | `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`). `init` has no flag for these, so they inherit `default_model` unless you edit the config by hand — see the ground-truth note below |
 | `pipeline.test_set.stratify.dimensions` | `candidate_dimensions` — **include the `elicitation_variant` dimension** derived from the doc's Variants |
-| `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
-| `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
+| `pipeline.test_set.prompt.sample_size` | `25` for the full baseline. The five-case smoke is a CLI override and never rewrites this evidence-bearing config. |
+| `pipeline.test_set.scenario.sample_size` | `25` for the full baseline. Smoke disables scenario through a CLI override. |
 | `pipeline.inference.target` | the target shape (see below) |
 | `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
 | `pipeline.judge.preset` | leave `dimensions` **unset** — `policy_violation` and `overrefusal` are built in and always judged (see the built-in note below) |
@@ -155,7 +155,7 @@ Fill from the candidate behavior (real schema field names):
 > pinned). Leaving them on the cheap model does not just add noise around a
 > fixed target — it moves the target, and it inflates run-to-run drift in
 > which rows are even considered applicable. Verify with
-> `assert-ai results status <suite> <run> --json` — the model actually used is
+> `assert-ai results status <suite> <run> --json --summary-only` — the model actually used is
 > echoed at `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 
 > **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
@@ -172,7 +172,7 @@ Fill from the candidate behavior (real schema field names):
 > behavior also trips it, and it can never be fully separate from `overrefusal`.
 > For a plain baseline that's usually fine. When you need the decoupled numbers
 > (any ACS before/after A/B — see `govern-and-remeasure.md`), don't restructure the
-> config: `assert-ai results status <suite> <run> --json` already reports the
+> config: `assert-ai results status <suite> <run> --json --summary-only` already reports the
 > headline pair — `not_permissible_policy_violation_rate` (real harm) and
 > `permissible_policy_violation_rate` (allowed behavior broken) — each one vote per
 > conversation. The split is derived from stored judgments, so it needs no config
@@ -182,23 +182,19 @@ Fill from the candidate behavior (real schema field names):
 > split is present the viewer now **hides** `policy_violation` / `overrefusal` as
 > superseded — they are still judged, aggregated, and written to artifacts.
 
-> **Sizing for noise (why the first-run "10" is often too small).** Each rate is
-> `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the
-> number 10 percentage points**. Inference is non-deterministic (agent temperature
+> **Sizing for noise (why smoke is not evidence).** Each rate is
+> `violations / sample_size`, so in the five-case smoke **one flipped case moves
+> the number 20 percentage points**. Inference is non-deterministic (agent temperature
 > is 1.0; gpt-5 models can't be pinned lower), so two independent runs of the *same*
 > config drift by a case or two purely by chance. That noise is harmless for a quick
-> "is it broken?" look, but it **wrecks an ACS before/after A/B**: a phantom ±10pp
+> "does the whole loop work?" look, but it **wrecks an ACS before/after A/B**:
+> a phantom ±20pp
 > swing on a small sample can masquerade as a governance effect (or hide one).
 >
-> **Always ask the user for the sample size before generating the config — do not
-> pick it silently.** Present the tradeoff in one line and let them choose, e.g.:
-> *"How many cases per behavior should I sample? `10` = fast/noisy first look,
-> `25` = stable rate (recommended), `50`+ = tightest signal. Cost scales linearly.
-> I'll use the same size for prompt and scenario."* Recommend `25` as the default,
-> and **`≥25` whenever the run will become an ACS A/B baseline** (the governed
-> config is a byte-identical copy that inherits this size — see
-> `govern-and-remeasure.md`). If the user has no preference, default to `25` (or
-> their first-look `10` only if they explicitly want a throwaway pass).
+> Keep the generated config at `25` prompt + `25` scenario, and make the smoke
+> smaller through CLI overrides only. After the smoke, ask whether the user
+> wants the full 25/25 measurement (recommended for any ACS A/B) or a different
+> explicit size. Cost scales linearly; never silently launch it.
 
 > **Set `pipeline.inference.max_turns: 10`; do not leave it low (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
@@ -245,28 +241,44 @@ a fuzzy logical-OR and masks per-behavior signal.
   list so the user chooses per split behavior.
 - N selected behaviors → **N configs**, never one merged config.
 
-## Step 5 — Confirm before running
+## Step 5 — Confirm before the smoke
 
 For each generated config, show the user: `behavior.name`, `behavior.description`,
 the stratify `dimensions`, the `target`, and the `judge` settings. Apply any
-requested edits. **Run only on explicit go-ahead.**
+requested edits. Explain that the first run is five prompt cases for wiring and
+comprehension, not stable evidence. **Run only on explicit go-ahead.**
 
-## Step 6 — Run sequentially
+## Step 6 — Smoke one behavior, then show results
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml
+assert-ai run --config evals/<atomic_behavior>.yaml --smoke
 ```
 
-Run one at a time. Stream stage status (systematize → test_set → inference →
-judge). If one run fails, **report it and continue** with the remaining configs.
-Note each `suite`/`run` for the report.
+Stream stage status, then show `results status` in text and JSON and inspect one
+cited failure in the coding-agent interface. Do not compare the smoke rate to the
+reference or generate a production policy from it.
 
-## Step 7 — Report
+Ask whether to continue to the full measurement. State the committed shape
+explicitly: 25 prompt + 25 scenario cases per behavior, often about two hours for
+a multi-turn agent. Never silently launch it.
+
+## Step 7 — Run opted-in full baselines sequentially
+
+```
+assert-ai run --config evals/<atomic_behavior>.yaml --output json
+```
+
+Run one at a time. If one fails, report it and continue with the remaining
+configs. Note each `suite`/`run`.
+
+## Step 8 — Report
 
 One results table, **one behavior per column, one experiment per row**, with:
 
-- `policy_violation` and `overrefusal` rates reported **separately** (two
-  different problems).
+- The pooled permissibility split as the headline. Combine prompt and scenario
+  from bucket counts (`flagged_count / applicable_count`); never use one half or
+  average rates with different denominators.
+- `policy_violation` and `overrefusal` retained as secondary diagnostics.
 - Cited failure examples pulled from the run artifacts
   (`assert-ai results status <suite> <run>`, then `scores.jsonl` for
   `verdict.dimension_justifications`). Do **not** trawl raw traces.
@@ -276,14 +288,14 @@ One results table, **one behavior per column, one experiment per row**, with:
 Offer next steps: raise `sample_size`, add a stratify dimension, apply an ACS guardrail at
 the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 
-## Step 8 — Close the loop in Clarity
+## Step 9 — Close the loop in Clarity
 
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
 (`evals/<atomic_behavior>.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
-## Step 9 — Curate the example and handle discovery scratch
+## Step 10 — Curate the example and handle discovery scratch
 
 Do this at the end of the domain you just measured:
 
@@ -325,18 +337,20 @@ Do this at the end of the domain you just measured:
    wrong calibration, happy-path attachment, cultural aversion, verbosity, unused
    protocol, alert fatigue).
 3. Triage: user picks **P1s only** → just `user_disengagement`.
-4. **Ask the user for `sample_size`** (recommend `25`; `10` = quick look, `50`+ = tightest). Say they pick `25`.
-5. Generate `evals/user_disengagement.yaml`: `behavior.description`
+4. Generate `evals/user_disengagement.yaml`: `behavior.description`
    from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
-   (7 values folded into its description), `prompt.sample_size: 25` (the size the
-   user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
+   (7 values folded into its description), `prompt.sample_size: 25`,
+   `scenario.sample_size: 25`, `inference.max_turns: 10`, and **no
    `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
-6. Confirm → `assert-ai run` → results table: one `user_disengagement` column.
-   Headline the permissibility split from `results status --json` —
-   `not_permissible_policy_violation_rate` (real harm got through) and
-   `permissible_policy_violation_rate` (an allowed behavior was broken) — with
-   `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
+5. Confirm → run `user_disengagement` as five prompt cases under run name
+   `smoke`; show text and compact JSON status and one cited failure.
+6. Ask whether to continue. User says yes → run the unchanged 25/25 config as
+   `baseline` → results table: one `user_disengagement` column.
+   Headline the permissibility split from
+   `results status --json --summary-only` —
+   pooled across prompt and scenario from bucket counts — with `overrefusal`
+   alongside as the separate availability check, plus 3–5 cited examples.
 7. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
    measured baseline at evals/user_disengagement.yaml."
-8. Curate the example (Step 9): keep the atomic config and README, and export
+8. Curate the example (Step 10): keep the atomic config and README, and export
    `.clarity-protocol/` outside `examples/` only if the user wants the raw record.

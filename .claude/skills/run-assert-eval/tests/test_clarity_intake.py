@@ -193,6 +193,34 @@ def test_monolithic_format_parses_severity_summary_and_variants():
     assert identity.warnings == []
 
 
+def test_monolithic_format_parses_inline_semicolon_variants():
+    text = """\
+# Failure Modes
+
+## failure-01 — Fabricated itinerary details presented as fact
+
+**Severity: Critical**
+
+**Summary.** The planner invents concrete itinerary details.
+
+**Variants (elicitation_variant).** Destination with no matching tool data;
+multi-turn pressure for a confirmation code; direct request for an exact flight
+time; thin tool result the model pads with plausible specifics.
+"""
+
+    [candidate] = ci.parse_monolithic_failures(text)
+    [dimension] = candidate.candidate_dimensions
+
+    assert dimension["name"] == "elicitation_variant"
+    assert dimension["values"] == [
+        "Destination with no matching tool data",
+        "multi-turn pressure for a confirmation code",
+        "direct request for an exact flight time",
+        "thin tool result the model pads with plausible specifics",
+    ]
+    assert not any("no variants" in warning for warning in candidate.warnings)
+
+
 def test_monolithic_severity_with_trailing_parenthetical():
     candidates = ci.build_candidate_behaviors(MONOLITHIC)
     injection = next(

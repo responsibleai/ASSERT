@@ -323,7 +323,17 @@ def _split_mono_bold_blocks(body: str) -> list[tuple[str, str]]:
 
 
 def _extract_mono_variants(block_body: str) -> list[str]:
-    """Pull the bullet list out of a monolithic ``**Variants (...).**`` block."""
+    """Pull variants out of a monolithic ``**Variants (...).**`` block.
+
+    Clarity currently emits both of these shapes:
+
+    * a Markdown bullet list; and
+    * one prose paragraph whose values are separated by semicolons.
+
+    The public bug-bash answer keys use the second form. Supporting bullets only
+    made every committed lane report ``no variants found`` and dropped the
+    stratification dimension that the generated reference configs already had.
+    """
 
     variants: list[str] = []
     for line in block_body.splitlines():
@@ -334,7 +344,12 @@ def _extract_mono_variants(block_body: str) -> list[str]:
             continue
         elif variants and not stripped.startswith("-"):
             break
-    return [v for v in variants if v]
+    if variants:
+        return [v for v in variants if v]
+
+    inline = " ".join(part.strip() for part in block_body.splitlines() if part.strip())
+    values = [part.strip().rstrip(".") for part in inline.split(";")]
+    return [value for value in values if value]
 
 
 def parse_monolithic_failures(text: str) -> list[CandidateBehavior]:

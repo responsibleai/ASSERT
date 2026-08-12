@@ -68,11 +68,15 @@ runs*, or *watch a live run*.
    MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`,
    `record_suggestion`, …) are callable in this session. Clarity is the
    risk-discovery engine — the skill drives its real MCP tools, it does not
-   reimplement it. If the tools are missing, the server is not wired up yet: guide
-   the user through `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]`
-   extra, run `clarity embed .` to generate `.vscode/mcp.json`, reload MCP servers)
-   and confirm the LLM provider is configured (`clarity doctor` — Clarity supports
-   GitHub Copilot, Anthropic, OpenAI, Azure AI, and Gemini).
+   reimplement it. If the tools are missing, the server is not wired up yet:
+   guide the user through `SETUP-CHECKLIST.md`, whose recommended command is:
+   ```
+   python .claude/skills/run-assert-eval/setup_clarity.py .
+   ```
+   That pinned bootstrap creates one cached Python 3.12 tool environment and a
+   pip-mode `.vscode/mcp.json`; it does not require a second source checkout, a
+   global `uv`, or a `clarity` command (the Clarity package does not install
+   one). Reload MCP servers and confirm `run_clarity` is callable.
 
    If the Clarity MCP tools cannot be made available, STOP and help the user
    resolve it. Do not proceed with a non-Clarity path.
@@ -254,6 +258,33 @@ single helper call at the top of the callable module — see `docs/targets/calla
 
 ### 5. Run the pipeline
 
+**Smoke first.** A first-time user should see the whole loop before being asked
+to approve a long measurement. Run one selected behavior under a separate run
+name with exactly five prompt cases, no scenarios, and concurrency 5:
+
+```
+assert-ai run --config evals/<atomic_behavior>.yaml --smoke
+```
+
+Stream every stage. Immediately show the terminal results:
+
+```
+assert-ai results status <suite> smoke
+assert-ai results status <suite> smoke --json --summary-only
+```
+
+The smoke rate is directional only. Do not cite it, compare it to a committed
+reference, or author a production ACS policy from five cases. Its purpose is to
+prove target import, trace capture, generation, inference, judging, artifacts,
+and the results UX in minutes.
+
+**Then ask before the full run.** Explain that a stable baseline uses 25 prompt
+and 25 scenario cases and can take about two hours for a multi-turn agent. If the
+user opts in, restore the full config and use a new run name such as `baseline`.
+Never silently launch the full loop.
+
+For a full run:
+
 ```
 assert-ai run --config evals/<atomic_behavior>.yaml --output json
 ```
@@ -277,11 +308,17 @@ bulk trace trawling is not.
    flagged rates (split into prompt and scenario). Report the violation dimension and
    `overrefusal` SEPARATELY — they are two different problems. Note: the built-in
    `policy_violation` ORs over ALL violated taxonomy nodes (permissible included), so
-   it couples with `overrefusal`. The headline pair is the permissibility split: add
-   `--json` and read `not_permissible_policy_violation_rate` (real harm got through)
-   and `permissible_policy_violation_rate` (the agent broke a behavior it was allowed
-   to do), each one vote per conversation. Those are the two numbers to headline in an
-   ACS A/B — harm should drop while permissible stays flat (see
+   it couples with `overrefusal`. The headline pair is the permissibility split:
+   use `--json --summary-only` so a coding agent gets compact metrics rather
+   than every raw score row. There are **two** metric sets: `prompt_metrics` and
+   `scenario_metrics`. For each side of the split, pool the bucket detail from
+   both sets: sum `flagged_count`, sum `applicable_count`, divide. Do not read
+   whichever half appears first and do not average rates — the denominators
+   differ, and real runs show 50+ point gaps between prompt and scenario.
+   `not_permissible_policy_violation_rate` means real harm got through;
+   `permissible_policy_violation_rate` means the agent broke a behavior it was
+   allowed to do. Those pooled numbers are the headline pair in an ACS A/B —
+   harm should drop while permissible stays flat (see
    `workflows/govern-and-remeasure.md`). The viewer exposes the same pair as the
    dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
    rendered on screen as **Harm (non-permissible)** / **Permissible behavior violated**.
@@ -296,6 +333,11 @@ bulk trace trawling is not.
 3. **Cost and timing**: read `metrics.json` for token usage and elapsed time per stage.
    This file contains cost metadata only, not score roll-ups.
 
+If artifacts are outside the repository's default `artifacts/results`, pass
+`--results-dir <root>` to every `results` command. Never rely on the current
+directory to select a results root: editable installs can otherwise resolve a
+different checkout and return a valid-looking table for the wrong project.
+
 For **Results Q&A mode**, answer the user's specific question from these same artifacts
 (e.g. rank dimensions by flagged rate for "top failure mode", then quote
 `dimension_justifications` for the cited examples). Don't emit the full template unless asked.
@@ -306,13 +348,22 @@ After reporting, point the user to the bundled viewer for anything visual or
 self-directed — it went through extensive design iteration and owns the exploration
 surface Copilot should not replicate:
 
+Before starting a viewer, check whether port 5174 is already serving the desired
+artifacts. If it is, reuse it. Otherwise start with an explicit root and port:
+
 ```
-cd viewer && npm install && npm run dev   # then open http://localhost:5174
+cd viewer
+npm install
+ARTIFACTS_ROOT=<results-root> npm run dev -- --port 5174
 ```
+
+On PowerShell set `$env:ARTIFACTS_ROOT` first. If 5174 is occupied by a different
+viewer, choose another port and print the actual URL; never silently show an
+empty default artifacts root.
 
 Select the suite and run for forest plots, per-dimension breakdowns, facet grouping,
 the permissible vs. not-permissible policy-violation split (also available from
-`assert-ai results status --json` and rendered by `results compare`),
+`assert-ai results status --json --summary-only` and rendered by `results compare`),
 and a transcript drawer with the judge's `[N]` citations highlighted on the cited turns.
 Suggest it specifically when the user wants to:
 
@@ -333,7 +384,7 @@ CLI). It requires a **callable** target whose high-risk tools can be wrapped
 (`control.protect_tool`); a hosted-model Prompt Agent target has nothing
 wrappable. Follow `workflows/govern-and-remeasure.md` for the full loop
 (baseline → `acs generate` → `acs validate` → governed run → delta from two
-`results status --json` calls → export each run to standalone HTML → close the
+`results status --json --summary-only` calls → export each run to standalone HTML → close the
 loop in Clarity). Note `results compare --metric` **cannot** take either half of
 the permissibility split — the split is written as a sibling of `dimensions`, so
 difference the two `status --json` values instead.
@@ -364,7 +415,8 @@ Present a short summary with this structure:
 - Permissible behavior violated: X% (N/M cases) [`permissible_policy_violation_rate`]
 - Overrefusal rate: X% (N/M cases) — the separate availability check
 
-Report the permissibility split as the headline pair (from `results status --json`);
+Report the permissibility split as the headline pair (from
+`results status --json --summary-only`);
 the raw `policy_violation` rate ORs over all violated nodes and couples the two, so
 quote it only as context, never as the headline.
 
