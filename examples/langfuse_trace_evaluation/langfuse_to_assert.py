@@ -387,6 +387,68 @@ def extract_messages(payload: Any) -> list[dict[str, str]]:
     return messages
 
 
+def _reconcile_message_sequence(
+    history: list[dict[str, str]],
+    incoming: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Merge one model input into session history and return its new messages.
+
+    Langfuse traces may contain the full conversation, a trailing slice of it,
+    or only the current turn. Reconcile by removing a repeated leading system
+    prompt, then the longest suffix of prior history that matches the incoming
+    prefix. Sequence overlap, rather than session-wide content counts, keeps a
+    later identical user turn when the preceding assistant response differs.
+    """
+    messages = [message for message in incoming if message["role"] != "tool"]
+    if not messages:
+        return []
+
+    system_overlap = 0
+    while (
+        system_overlap < len(history)
+        and system_overlap < len(messages)
+        and history[system_overlap]["role"] == "system"
+        and history[system_overlap] == messages[system_overlap]
+    ):
+        system_overlap += 1
+
+    remaining = messages[system_overlap:]
+    overlap = 0
+    for size in range(min(len(history), len(remaining)), 0, -1):
+        if history[-size:] == remaining[:size]:
+            overlap = size
+            break
+
+    novel = remaining[overlap:]
+    history.extend(novel)
+    return novel
+
+
+def _append_generation_output(
+    history: list[dict[str, str]],
+    payload: Any,
+) -> None:
+    """Append assistant output so a repeated next user turn stays distinguishable."""
+    messages = [
+        message
+        for message in extract_messages(payload)
+        if message["role"] in ("system", "user", "assistant")
+    ]
+    if messages:
+        history.extend(messages)
+        return
+
+    parsed = _maybe_json(payload)
+    if isinstance(parsed, str) and parsed.strip():
+        history.append({"role": "assistant", "content": parsed})
+    elif isinstance(parsed, dict):
+        for key in ("content", "text", "output", "response", "completion", "result"):
+            text = parsed.get(key)
+            if isinstance(text, str) and text.strip():
+                history.append({"role": "assistant", "content": text})
+                break
+
+
 # --------------------------------------------------------------------------- #
 # Observation -> OTLP span
 # --------------------------------------------------------------------------- #
@@ -560,7 +622,7 @@ def trace_to_spans(
     *,
     keep_native_convention: bool = True,
     synthesize_turns: bool | None = None,
-    seen_turn_counts: dict[tuple[str, str], int] | None = None,
+    message_history: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert one Langfuse trace (with observations) to a list of OTLP spans.
 
@@ -576,26 +638,20 @@ def trace_to_spans(
     observations.sort(key=lambda o: (str(o.get("startTime") or ""), str(o.get("id") or "")))
 
     spans: list[dict[str, Any]] = []
-    seen_turn_counts = seen_turn_counts if seen_turn_counts is not None else {}
+    message_history = message_history if message_history is not None else []
 
     def append_unseen_turns(messages: list[dict[str, str]], before_ns: int, seed: str) -> int:
-        relevant = [m for m in messages if m["role"] in ("user", "system")]
-        local_counts: dict[tuple[str, str], int] = {}
+        novel = _reconcile_message_sequence(message_history, messages)
+        relevant = [message for message in novel if message["role"] in ("user", "system")]
         added = 0
         for position, msg in enumerate(relevant):
-            key = (msg["role"], msg["content"])
-            occurrence = local_counts.get(key, 0) + 1
-            local_counts[key] = occurrence
-            if occurrence <= seen_turn_counts.get(key, 0):
-                continue
-            seen_turn_counts[key] = occurrence
             spans.append(
                 synthetic_turn_span(
                     role=msg["role"],
                     text=msg["content"],
                     trace_id_hex=trace_id_hex,
                     session_id=session_id,
-                    seed=f"{seed}:{position}:{occurrence}",
+                    seed=f"{seed}:{position}",
                     # Keep system/user order stable immediately before the LLM
                     # call that consumed the messages.
                     start_ns=max(before_ns - 1000 * (len(relevant) - position), 0),
@@ -604,19 +660,19 @@ def trace_to_spans(
             added += 1
         return added
 
-    synthesized_from_generation = 0
+    generation_turns_seen = False
     for obs in observations:
         obs_start = iso_to_unix_nano(obs.get("startTime"))
         if synthesize_turns and str(obs.get("type") or "").upper() == "GENERATION":
-            # Each call can replay the full conversation history. Occurrence
-            # counts are shared across traces in the same Langfuse session, so
-            # only newly appended turns are emitted while repeated identical
-            # user messages remain distinguishable.
-            synthesized_from_generation += append_unseen_turns(
-                extract_messages(obs.get("input")),
-                obs_start,
-                f"{trace_id_hex}:{obs.get('id')}",
-            )
+            messages = extract_messages(obs.get("input"))
+            if any(message["role"] in ("user", "system") for message in messages):
+                generation_turns_seen = True
+                append_unseen_turns(
+                    messages,
+                    obs_start,
+                    f"{trace_id_hex}:{obs.get('id')}",
+                )
+                _append_generation_output(message_history, obs.get("output"))
         spans.append(
             observation_to_span(
                 obs,
@@ -626,13 +682,14 @@ def trace_to_spans(
             )
         )
 
-    if synthesize_turns and synthesized_from_generation == 0:
+    if synthesize_turns and not generation_turns_seen:
         # Some traces have no GENERATION observation. Fall back to trace.input.
         append_unseen_turns(
             extract_messages(trace.get("input")) or _fallback_user_turn(trace),
             iso_to_unix_nano(trace.get("timestamp")),
             f"{trace_id_hex}:trace",
         )
+        _append_generation_output(message_history, trace.get("output"))
     return spans
 
 
@@ -656,7 +713,7 @@ def convert_traces(
     if synthesize_turns is None:
         synthesize_turns = not assert_recovers_input_messages()
     spans: list[dict[str, Any]] = []
-    seen_turns_by_session: dict[str, dict[tuple[str, str], int]] = {}
+    message_history_by_session: dict[str, list[dict[str, str]]] = {}
     ordered_traces = sorted(
         (trace for trace in traces if isinstance(trace, dict)),
         key=lambda trace: (
@@ -673,7 +730,7 @@ def convert_traces(
                 trace,
                 keep_native_convention=keep_native_convention,
                 synthesize_turns=synthesize_turns,
-                seen_turn_counts=seen_turns_by_session.setdefault(session_id, {}),
+                message_history=message_history_by_session.setdefault(session_id, []),
             )
         )
     return {
