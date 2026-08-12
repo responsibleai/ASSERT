@@ -44,7 +44,9 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = [
-  "arize-phoenix>=15.0.0",
+  # Phoenix 19.18+ fails during pytest plugin loading on Python 3.11 because
+  # its frozen dataclass uses an unhashable MappingProxyType default.
+  "arize-phoenix>=15.0.0,<19.18",
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
 ]
