@@ -524,6 +524,7 @@ def _log_run_headline(run_root: Path) -> None:
     from assert_ai.results import (
         compute_prompt_metrics,
         compute_scenario_metrics,
+        has_permissibility_split_data,
     )
     from assert_ai.core.io import load_json, load_jsonl
 
@@ -574,11 +575,7 @@ def _log_run_headline(run_root: Path) -> None:
             log.info(f"  {label}: {' · '.join(parts)}")
 
     metric_sets = (prompt_metrics or {}, scenario_metrics or {})
-    has_permissibility_split = any(
-        "not_permissible_policy_violation_rate" in metrics
-        or "permissible_policy_violation_rate" in metrics
-        for metrics in metric_sets
-    )
+    has_permissibility_split = has_permissibility_split_data(*metric_sets)
     if has_permissibility_split:
         _emit(
             label_metric("not_permissible_policy_violation_rate"),

@@ -27,6 +27,7 @@ from assert_ai.results import (
     compute_dimension_summary,
     compute_policy_violation_by_permissibility,
     detect_dimensions,
+    has_permissibility_split_data,
 )
 from assert_ai.stages import STAGE_NAMES
 
@@ -254,7 +255,7 @@ def _visible_dimension_summaries(metrics: dict[str, Any]) -> list[tuple[str, dic
     dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
     visible: list[tuple[str, dict[str, Any]]] = []
 
-    if _has_permissibility_split(metrics):
+    if has_permissibility_split_data(metrics):
         for metric in (_POLICY_VIOLATION_NOT_PERMISSIBLE, _POLICY_VIOLATION_PERMISSIBLE):
             summary = metrics.get(_DERIVED_PERMISSIBILITY_SUMMARY_KEYS[metric])
             if isinstance(summary, dict):
@@ -484,12 +485,15 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
 def _resolve_compare_metric(metric: str | None, run_summaries: Iterable[dict[str, Any]]) -> str:
     if metric:
         return metric
-    for run_summary in run_summaries:
-        if _has_permissibility_split(
+    summaries = list(run_summaries)
+    if summaries and all(
+        has_permissibility_split_data(
             run_summary.get("prompt_metrics") or {},
             run_summary.get("scenario_metrics") or {},
-        ):
-            return _POLICY_VIOLATION_NOT_PERMISSIBLE
+        )
+        for run_summary in summaries
+    ):
+        return _POLICY_VIOLATION_NOT_PERMISSIBLE
     return DEFAULT_COMPARE_METRIC
 
 
@@ -497,7 +501,7 @@ def _available_compare_metrics(run_summaries: Iterable[dict[str, Any]]) -> set[s
     available: set[str] = set()
     for run_summary in run_summaries:
         available.update(_detect_dimensions(run_summary.get("prompt_rows") or []))
-        if _has_permissibility_split(
+        if has_permissibility_split_data(
             run_summary.get("prompt_metrics") or {},
             run_summary.get("scenario_metrics") or {},
         ):
@@ -998,12 +1002,13 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
             return
 
         console = _console(no_color=no_color)
-        split = any(
-            _has_permissibility_split(
-                run_summary.get("prompt_metrics") or {},
-                run_summary.get("scenario_metrics") or {},
+        runs = suite_summary["runs"]
+        split = bool(runs) and all(
+            has_permissibility_split_data(
+                (run_summary or {}).get("prompt_metrics") or {},
+                (run_summary or {}).get("scenario_metrics") or {},
             )
-            for run_summary in suite_summary["runs"]
+            for run_summary in runs
         )
         table = Table(title=f"Runs in {suite}", box=None, show_header=True, show_edge=False, pad_edge=False)
         table.add_column("Run", style="cyan", no_wrap=True)
@@ -1101,12 +1106,13 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         console.print(summary)
 
         if suite_summary["runs"]:
-            split = any(
-                _has_permissibility_split(
-                    run_summary.get("prompt_metrics") or {},
-                    run_summary.get("scenario_metrics") or {},
+            runs = suite_summary["runs"]
+            split = all(
+                has_permissibility_split_data(
+                    (run_summary or {}).get("prompt_metrics") or {},
+                    (run_summary or {}).get("scenario_metrics") or {},
                 )
-                for run_summary in suite_summary["runs"]
+                for run_summary in runs
             )
             table = Table(title="Runs", box=None, show_header=True, show_edge=False, pad_edge=False)
             table.add_column("Run", style="cyan", no_wrap=True)
@@ -1244,7 +1250,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
     shell_complete=_complete_metric,
     help=(
         "Judge dimension to use for the top behavior-category delta table. "
-        "Defaults to impermissible behavior violations when the split is available."
+        "Defaults to impermissible behavior violations when every compared run has split data."
     ),
 )
 @click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
@@ -1471,7 +1477,7 @@ def _run_within_suite_compare(
     shell_complete=_complete_metric,
     help=(
         "Judge dimension to compare. Defaults to impermissible behavior "
-        "violations when the split is available."
+        "violations when every compared run has split data."
     ),
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")

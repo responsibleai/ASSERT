@@ -17,6 +17,7 @@ from assert_ai.cli import (
 from assert_ai.results import (
     compute_policy_violation_by_permissibility,
     compute_prompt_metrics,
+    has_permissibility_split_data,
 )
 
 
@@ -351,6 +352,32 @@ def _write_split_results(results_root: Path, suite_id: str = "metrics-suite") ->
         )
 
 
+def _make_run_judgments_stale(results_root: Path, run_id: str) -> None:
+    """Make one run predate the suite taxonomy without changing legacy scores."""
+    scores_path = results_root / "metrics-suite" / run_id / "scores.jsonl"
+    rows = [json.loads(line) for line in scores_path.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        for judgment in row["verdict"]["node_judgments"]:
+            judgment["node_index"] = 100 + int(judgment["node_index"])
+            judgment["node_name"] = f"stale-{judgment['node_name']}"
+    scores_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _set_prompt_behavior(results_root: Path, run_id: str, behavior: str) -> None:
+    scores_path = results_root / "metrics-suite" / run_id / "scores.jsonl"
+    rows = [json.loads(line) for line in scores_path.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        if not row.get("tester_model"):
+            row["dimensions"]["behavior"] = behavior
+    scores_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
 class ResultsCliTest(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
@@ -380,6 +407,32 @@ class ResultsCliTest(unittest.TestCase):
         self.assertIn("Prompt permissible violations", result.output)
         self.assertIn("Scenario impermissible violations", result.output)
         self.assertIn("Scenario permissible violations", result.output)
+
+    def test_list_falls_back_when_any_run_lacks_current_split_data(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            results_root = Path(tmp_dir) / "results"
+            _write_split_results(results_root)
+            _make_run_judgments_stale(results_root, "run-1")
+
+            result = self.runner.invoke(
+                cli,
+                [
+                    "results",
+                    "list",
+                    "--results-dir",
+                    str(results_root),
+                    "--suite",
+                    "metrics-suite",
+                    "--no-color",
+                ],
+                env={"COLUMNS": "220"},
+                terminal_width=220,
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Prompt policy violations", result.output)
+        self.assertIn("Prompt overrefusals", result.output)
+        self.assertNotIn("Prompt impermissible violations", result.output)
 
     def test_run_detail_defaults_to_split_metrics_but_json_keeps_legacy_metrics(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -411,6 +464,32 @@ class ResultsCliTest(unittest.TestCase):
         self.assertIn("not_permissible_policy_violation_rate", prompt)
         self.assertIn("permissible_policy_violation_rate", prompt)
 
+    def test_run_detail_falls_back_when_current_taxonomy_matches_no_judgments(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            results_root = Path(tmp_dir) / "results"
+            _write_split_results(results_root)
+            _make_run_judgments_stale(results_root, "run-1")
+
+            result = self.runner.invoke(
+                cli,
+                [
+                    "results",
+                    "status",
+                    "metrics-suite",
+                    "run-1",
+                    "--results-dir",
+                    str(results_root),
+                    "--no-color",
+                ],
+                terminal_width=180,
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Policy violation", result.output)
+        self.assertIn("Overrefusal", result.output)
+        self.assertNotIn("Impermissible behavior violated", result.output)
+        self.assertNotIn("Permissible behavior violated", result.output)
+
     def test_compare_defaults_to_impermissible_split_and_accepts_permissible_split(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             results_root = Path(tmp_dir) / "results"
@@ -440,6 +519,42 @@ class ResultsCliTest(unittest.TestCase):
 
         self.assertEqual(permissible_result.exit_code, 0, permissible_result.output)
         self.assertIn("Run Comparison (metrics-suite, Permissible behavior violated)", permissible_result.output)
+
+    def test_compare_falls_back_when_any_run_lacks_current_split_data(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            results_root = Path(tmp_dir) / "results"
+            _write_split_results(results_root)
+            _make_run_judgments_stale(results_root, "run-1")
+            _set_prompt_behavior(results_root, "run-2", "allowed")
+
+            result = self.runner.invoke(
+                cli,
+                [
+                    "results",
+                    "compare",
+                    "metrics-suite",
+                    "run-1",
+                    "run-2",
+                    "--results-dir",
+                    str(results_root),
+                    "--no-color",
+                ],
+                terminal_width=180,
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Run Comparison (metrics-suite, Policy violation)", result.output)
+        self.assertIn("Top behavior category deltas", result.output)
+
+    def test_empty_bucket_does_not_hide_a_valid_one_sided_split(self) -> None:
+        metrics = {
+            "policy_violation_on_permissible": {"count": 1, "rate": 0.0},
+            "policy_violation_on_not_permissible": {"count": 0, "rate": None},
+            "permissible_policy_violation_rate": 0.0,
+            "not_permissible_policy_violation_rate": None,
+        }
+
+        self.assertTrue(has_permissibility_split_data(metrics))
 
     def test_compare_without_taxonomy_keeps_policy_violation_default(self) -> None:
         with TemporaryDirectory() as tmp_dir:
