@@ -9,7 +9,10 @@ Architecture:
                                    → safety_advisor → itinerary_optimizer
 
 Usage:
-    assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+    One config per risk lives under ``evals/``; pick the one you want to measure.
+
+    assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+    assert-ai run --config examples/travel_planner_langgraph/evals/fabricated_travel_details.yaml
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 ---
 agent: agent
-description: 'Run an ASSERT evaluation starting from Clarity-discovered risks. Drives the real Clarity MCP tools (run_clarity) in-IDE to discover risks, generates one atomic eval_config.yaml per selected risk, runs the assert-ai pipeline, and reports per-dimension pass/violation rates with trace-cited failure examples.'
+description: 'Run an ASSERT evaluation starting from Clarity-discovered risks. Drives the real Clarity MCP tools (run_clarity) in-IDE to discover risks, generates one flat evals/<atomic_behavior>.yaml per selected risk, runs the assert-ai pipeline, and reports per-dimension pass/violation rates with trace-cited failure examples.'
 ---
 
 # Run an ASSERT evaluation
@@ -28,10 +28,11 @@ Copilot is for *answering questions* and *synthesis* — direct answers, failure
 
 ## Preconditions (check, don't assume)
 
-1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
+1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install from PyPI — not an editable install of the user's own repo:
    ```
-   python -m pip install -e ".[otel,langgraph]"
+   python -m pip install "assert-ai[otel]"
    ```
+   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via `litellm`'s own dependency — no separate extra to install. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
 
 2. **Clarity MCP server available** (required for Run mode): the `clarity-agent` MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`, …) are callable in this session. Clarity is the risk-discovery engine — the skill drives its real MCP tools, it does not reimplement it. If the tools are missing, the server is not wired up yet: guide the user through `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]` extra, run `clarity embed .` to generate `.vscode/mcp.json`, reload MCP servers) and confirm the LLM provider is configured (`clarity doctor` — Clarity supports GitHub Copilot, Anthropic, OpenAI, Azure AI, and Gemini). If the Clarity MCP tools cannot be made available, STOP and help the user resolve it. Do not proceed with a non-Clarity path.
 
@@ -51,9 +52,9 @@ Read Clarity's output to enumerate risks:
 - **`.clarity-protocol/failures/failures.md`** — the failure modes, causal chains, and management plans. Each distinct failure mode is one candidate ASSERT behavior.
 - **`.clarity-protocol/summary.md`, `goal/requirements.md`, `solution/architecture.md`** — target/context for the eval's `context` field.
 
-**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop → archive the protocol — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
+**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop → curate the example — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
 
-> **Before a fresh discovery run, check the archive gate.** `.clarity-protocol/` is gitignored, single-domain scratch; `run_clarity` **overwrites** it, destroying the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery. If an unarchived protocol from another domain is present, STOP and archive it to `examples/<prev-domain>/Clarity Protocol/` (and commit it) first.
+> **Before a fresh discovery run, check the preservation gate.** `.clarity-protocol/` is gitignored, single-domain scratch; `run_clarity` **overwrites** it. If another domain's protocol is present, STOP and let the user export it to a user-owned location or explicitly discard it. Never commit the raw discovery workspace into `examples/`.
 
 Clarity records severity/management-plan signal (the parser maps Critical→P1, High→P2, Medium→P3, ranges→max) — order and annotate by what Clarity actually captured; do not fabricate priorities.
 
@@ -66,14 +67,15 @@ Clarity intentionally over-produces (whole-lifecycle threat modeling). Do NOT au
 ASSERT performs best with **one atomic behavior per eval**. Never bundle multiple risks into one config — bundling makes `policy_violation` a fuzzy logical-OR and hides per-behavior signal.
 
 - **1 selected risk** → generate one config and run once.
-- **N selected risks** → generate N atomic `eval_config.yaml` files and run them sequentially, one per behavior.
+- **N selected risks** → generate N flat `evals/<atomic_behavior>.yaml` files and run them sequentially, one per behavior.
 
 For each selected risk, map the Clarity failure mode → `behavior.name` + `behavior.description`, and use its context for `context`:
 
 ```
-assert-ai init --default-model <litellm-model> --describe "<failure mode + how it arises + target context>" --non-interactive -o eval_config.yaml
+assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o evals/<atomic_behavior>.yaml
 ```
 
+- **Write the description to a file and pass `--describe-file`.** The text is Clarity-derived prose you did not author, so it can contain quotes, backticks, or `$(...)`; interpolating it into `--describe "<text>"` would break the command or inject into the user's shell. `--describe` stays available for short text you typed yourself; the two are mutually exclusive.
 - `--default-model` seeds the generated config's `pipeline.default_model` — the model the **eval** runs against. Do **not** use `--model` for this: that is the init assistant's own conversation model (default `azure/gpt-5.4-mini`) and has no effect on the eval. Note `--default-model` is a prompt-level hint the design agent is asked to *confirm*, not a deterministic write — verify the value actually landed in the generated YAML.
 - **Pin `systematize` and `judge` to the strong model by hand after init.** `init` has no `--systematize-model` / `--judge-model` flag, so every stage inherits `default_model` unless you edit the config. Run the eval cheap and the two ground-truth stages strong — `default_model.name: azure/gpt-5.4-mini` (target, test-set, tester) plus `pipeline.systematize.model: azure/gpt-5.4` and `pipeline.judge.model: azure/gpt-5.4`. This is the convention in the repo's own `examples/` configs. `systematize` authors the behavior tree and the permissible / non-permissible split that **every** metric is computed against, and `judge` decides both applicability and violation per row on a single sample (`judge.n` defaults to `1`, judge temperature unpinned) — a weak model there moves the target rather than adding noise around it, and inflates run-to-run applicability drift. Verify after the run with `assert-ai results status <suite> <run> --json` → `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 - **Check the built-in presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …); `assert-ai library show <name>` prints one. If one matches the risk, seed with `--behavior <name>` / `--judge-preset <name>` instead of generating from scratch.
@@ -88,19 +90,20 @@ Help the user set the right target in the config:
 
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: use `target.callable` WITH `target.trace` so the judge can cite tool calls and routing.
 - **Hosted model** with a system prompt and optional tools: use `target.model` and `target.tools`.
-- **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`.
+- **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`; do not add a `--trace` flag to `assert-ai run`.
+- **Black-box HTTP endpoint** you cannot import as Python: use `target.endpoint` — the runtime POSTs `{"message": ..., "history": [...]}` and reads `{"response": ...}`, so no wrapper code is needed (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response shape differs. Either way the judge sees only final text, so this is a fallback, not the recommended path.
 
 **The callable contract — verify before the first run.** Full signature and return-type rules live in `docs/targets/callable.md`. Two behaviors that doc omits can silently corrupt a run:
 
 - **`history` is detected by parameter *name*, not position.** Multi-turn is enabled only when a parameter is literally named `history`. Name it `messages`, `conversation`, or `chat_history` and every scenario **silently degrades to single-turn** — the run completes, the viewer renders, and the numbers are wrong with no warning. That invalidates the baseline and any ACS delta measured against it.
-- **Module resolution has a four-step fallback**: `sys.path` → the config's own directory → the current working directory → direct file load. An `agent.py` beside `eval_config.yaml` resolves even when the CLI runs from the repo root, but a same-named module earlier on `sys.path` wins — prefer a domain-unique module name over a bare `agent`.
+- **Module resolution has a four-step fallback**: `sys.path` → the config's own directory → the current working directory → direct file load. An `agent.py` beside the YAML config resolves even when the CLI runs from the repo root, but a same-named module earlier on `sys.path` wins — prefer a domain-unique module name over a bare `agent`.
 
 **Why `target.trace` is not optional.** Judge visibility by integration path: a plain `str` return exposes 1 of 8 signals (final text only), a LiteLLM-style response 4 of 8 (adds final tool calls, token usage, model name), and OTel traces 8 of 8 (adds *intermediate* tool calls, routing / sub-agent decisions, intermediate model calls, per-span latency). Without traces a tool-misuse or wrong-routing failure is largely invisible to scoring. Use ASSERT's OTel auto-instrumentation (33 frameworks — LangChain/LangGraph, CrewAI, OpenAI Agents SDK, DSPy, LlamaIndex, AutoGen, MAF, Pydantic AI, …), a single helper call at the top of the callable module, rather than hand-writing spans.
 
 ### 5. Run the pipeline
 
 ```
-assert-ai run --config eval_config.yaml --output json
+assert-ai run --config evals/<atomic_behavior>.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status to the user as each stage completes. For N configs, run them sequentially and track each `suite`/`run`. Re-run from a stage with `--force-stage <stage>`. Note the `suite` and `run` names from the config for Step 6.
@@ -140,6 +143,14 @@ See `docs/guides/use-local-viewer.md` for the full layout.
 ### 8. Govern the failure and re-measure (ACS)
 
 When a run surfaces `policy_violation` failures and the user wants to **fix and prove it**, generate a deployable **ACS** (Agent Control Specification) policy from the findings and re-run the same eval against the governed agent to show the failure rate dropped — the ACS delta. Uses ASSERT's native `assert-ai acs generate` / `validate` adapter (no external `acs` CLI). Requires a **callable** target whose high-risk tools can be wrapped (`control.protect_tool`); a hosted-model Prompt Agent target has nothing wrappable. Follow `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md` (baseline → `acs generate` → `acs validate` → governed run → delta from two `results status --json` calls → export each run to standalone HTML → close the loop in Clarity). **Classify the failure before generating the policy** (Step 1a): read the baseline's `verdict.dimension_justifications` to decide semantic (`output` annotator) vs structural (tool gate), and confirm the harm actually routes through the tool you plan to gate — getting that wrong is the main cause of a gate that fires ~0 times. Always regenerate-and-re-gate on a deny (never a flat-refusal fallback, which is scored as overrefusal). If the delta still comes out wrong, `../../.claude/skills/run-assert-eval/workflows/diagnose-acs-delta.md` is the symptom-indexed diagnostic manual (cap ~4 attempts). Reference: `examples/billing_support_agent/agent.py` (baseline callable shape; the governed entrypoint is a workflow output, not checked in).
+
+### 9. Hand off to CI
+
+Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
+
+```
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
 
 ## Output format
 

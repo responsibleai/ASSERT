@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Render the trade-off chart for a 4-variant ASSERT demo.
+"""Render the trade-off chart for the bank-manager ASSERT demo.
 
-Supports multiple demo suites via the ``--suite`` flag (default:
-``bank-manager-agent-shield``; ``incident-triage-agent-v1`` is the new
-4-axis demo). For each variant, computes:
+For each variant, computes:
 
   - overrefusal rate (x axis)
   - max behavior rate across all "behavior under test" judge dims
@@ -19,12 +17,10 @@ after fresh runs.
 Output:
 
   --suite bank-manager-agent-shield   -> examples/bank_manager_agent_shield/artifacts/trade_off.png
-  --suite incident-triage-agent-v1    -> examples/incident_triage_agent/artifacts/trade_off.png
 
 Run from the repo root:
 
   python scripts/render_trade_off.py
-  python scripts/render_trade_off.py --suite incident-triage-agent-v1
 
 This script intentionally stays stdlib-friendly: only matplotlib (already
 a base dependency of assert-ai) is required.
@@ -109,53 +105,8 @@ BANK_MANAGER_SUITE = Suite(
     ),
 )
 
-# Variants for the incident-triage demo (PR #43 + 4-axis extension).
-# The artifact_dir names match the `run:` values in the eval configs;
-# unlike bank-manager, incident-triage uses descriptive run names rather
-# than chronological letters. Placeholder numbers track the PR #43 scenario
-# rail (canonical headline) reported at n=200 -- see
-# examples/incident_triage_agent/README.md Appendix A §4.1.
-INCIDENT_TRIAGE_SUITE = Suite(
-    name="incident-triage-agent-v1",
-    example_dir=REPO_ROOT / "examples" / "incident_triage_agent",
-    behavior_dims=(
-        "policy_violation",
-        "ordering_violation",
-        "pager_violation",
-        "channel_violation",
-        "pii_leak",
-        "pii_leak_under_pressure_viol",
-        "xpia_relay",
-        "escalation_violation",
-        "alert_id_drift",
-        "severity_drift_under_pressure_viol",
-        "wrong_severity",
-        "fabrication",
-    ),
-    overrefusal_dim="overrefusal",
-    variants=(
-        # Demo path: variant A (baseline) -> variant C (ACS gates).
-        # Variants B (naive-prompt) and D (guarded-with-shield-gepa) are
-        # documented experiments whose predictions did not land at n=200;
-        # they remain on the chart for transparency but render faded.
-        # See examples/incident_triage_agent/README.md Appendix B.
-        Variant("baseline-weak-prompt",       "A: baseline (demo)",            "#d62728", 0.808, 0.556, "PR-#43 n=200 scenario", is_demo_path=True),
-        Variant("naive-prompt",               "B: naive DO-NOT prompt",        "#ff7f0e", 0.05, 0.85, "demo-plan prediction", is_demo_path=False),
-        Variant("guarded-with-shield",        "C: ACS gates (demo)",           "#1f77b4", 0.835, 0.51, "PR-#43 n=200 scenario", is_demo_path=True),
-        Variant("guarded-with-shield-gepa",   "D: ACS + GEPA placeholder",     "#2ca02c", 0.08, 0.45, "demo-plan prediction", is_demo_path=False),
-    ),
-    title=(
-        "Incident-triage trade-off: behavior rate vs overrefusal (n=200+200)\n"
-        "demo path: A (baseline) → C (ACS gates); B & D shown faded as experiments"
-    ),
-    # Draw an arrow from A (index 0) to C (index 2) to mark the demo path.
-    demo_path_arrow=(0, 2),
-)
-
-
 SUITES: dict[str, Suite] = {
     BANK_MANAGER_SUITE.name: BANK_MANAGER_SUITE,
-    INCIDENT_TRIAGE_SUITE.name: INCIDENT_TRIAGE_SUITE,
 }
 
 

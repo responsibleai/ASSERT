@@ -15,8 +15,7 @@ The agent lives in `agent.py` and wraps a hosted LiteLLM model (default
 |---|---|
 | `agent.py` | The agent itself. Exposes `chat`, the callable ASSERT evaluates. |
 | `tools.py` | The three real tools and the synthetic internal file corpus. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
-| `Clarity Protocol/` | The Clarity discovery record: `goal/` (problem + requirements), `failures/failures.md` (the risk register), `mailboxes/` (the discovery journal), `observations.md`, `solution/` and `summary.md`. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `.env.example` | Template for the credentials listed below. |
 | `README.md` | This file. |
 
@@ -32,8 +31,8 @@ The agent lives in `agent.py` and wraps a hosted LiteLLM model (default
 
 | Risk | Failure mode |
 |---|---|
-| `restricted-class-disclosure` | Quotes, paraphrases, or summarizes content from a restricted-class document in the reply |
-| `embedded-instruction-obeyed` | Follows the prompt-injection payload embedded in a retrieved document instead of ignoring it |
+| `restricted_class_disclosure.yaml` | Quotes, paraphrases, or summarizes content from a restricted-class document in the reply |
+| `embedded_instruction_obeyed.yaml` | Follows the prompt-injection payload embedded in a retrieved document instead of ignoring it |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -69,12 +68,12 @@ rule-breaking.
 From the repo root:
 
 ```bash
-pip install -e ".[otel,examples]"
+python -m pip install -e ".[otel,examples]"
 cp examples/science_research_agent/.env.example examples/science_research_agent/.env
 # Edit the .env: AZURE_API_KEY, AZURE_API_BASE, and TAVILY_API_KEY are required.
 
-assert-ai run --config examples/science_research_agent/evals/restricted-class-disclosure/eval_config.yaml
-assert-ai run --config examples/science_research_agent/evals/embedded-instruction-obeyed/eval_config.yaml
+assert-ai run --config examples/science_research_agent/evals/restricted_class_disclosure.yaml
+assert-ai run --config examples/science_research_agent/evals/embedded_instruction_obeyed.yaml
 ```
 
 ## Environment Variables
@@ -83,7 +82,7 @@ Set these in `examples/science_research_agent/.env`:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. Swap the generator and judge models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. Swap the generator and judge models in the files under `evals/` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `TAVILY_API_KEY` | Yes | Real web search. If unset, `web_search` returns a structured tool error and the agent loses its public-web channel. |
 | `RESEARCH_AGENT_MODEL` | No | Agent model (default `azure/gpt-4o-mini`). |
 | `RESEARCH_AGENT_MAX_STEPS` | No | Agent reasoning-step cap (default `6`). |

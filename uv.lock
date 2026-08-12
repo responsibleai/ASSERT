@@ -4407,7 +4407,7 @@ dev = [
 requires-dist = [
     { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
-    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0" },
+    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0,<19.18" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
     { name = "autogen-agentchat", marker = "extra == 'examples'", specifier = ">=0.7.5" },
     { name = "autogen-ext", marker = "extra == 'examples'", specifier = ">=0.7.5" },

@@ -22,8 +22,8 @@ or failures for their agent, model, or app.
 
 1. **If `.clarity-protocol/failures/failures.md` exists** → go to **Step 1 (Parse)**.
 2. **If it does not exist** → run discovery first:
-   - **Run the archive gate below first** — a fresh discovery run destroys any
-     unarchived protocol from a previous domain.
+   - **Run the preservation gate below first** — a fresh discovery run destroys
+     any protocol from a previous domain.
    - Call the Clarity MCP tool **`run_clarity`**. Follow the inlined process
      guide's clarifying questions *with the user in chat*.
    - Persist findings via **`write_protocol_document`** and **`record_failure`**.
@@ -34,7 +34,7 @@ or failures for their agent, model, or app.
      `clarity embed`, reload MCP servers, confirm `run_clarity` is callable. Do
      **not** substitute a plain-language risk guess — that produces low-signal evals.
 
-### Archive gate (blocking — check before any fresh `run_clarity`)
+### Preservation gate (blocking — check before any fresh `run_clarity`)
 
 `.clarity-protocol/` is a single, non-namespaced scratch directory at the repo
 root, and it is **gitignored**. A fresh discovery run **overwrites** the prior
@@ -44,12 +44,12 @@ never committed, that content is **unrecoverable**.
 Before calling `run_clarity` for a *new* agent/domain:
 
 1. **Check** whether `.clarity-protocol/` exists and is non-empty.
-2. **If it does**, determine whether it has already been archived — i.e. an
-   `examples/<prev-domain>/Clarity Protocol/` copy exists whose `failures/` matches.
-3. **If it has not been archived, STOP.** Do not call `run_clarity`. Tell the user
-   which domain the existing protocol belongs to and offer to archive it now
-   (Step 9). Proceed only once it is archived or the user explicitly says to
-   discard it.
+2. **If it does, STOP.** Do not call `run_clarity`. Tell the user which domain
+   the existing protocol belongs to and offer to export it to a user-owned
+   location outside `examples/`.
+3. Proceed only after the user has preserved it or explicitly said to discard
+   it. Do not commit the raw protocol, mailboxes, snapshots, or transcripts to
+   this repository.
 
 Skip this gate only when `.clarity-protocol/` is absent or empty. Clarity
 re-scaffolds a clean one on the next `run_clarity`.
@@ -98,8 +98,8 @@ runs**.
 
 ## Step 3 — Confirm scope, then generate one config per selected behavior
 
-For **each** selected behavior, produce its **own** `eval_config.yaml` under its
-own directory: `evals/<failure-slug>/eval_config.yaml`. Never bundle.
+For **each** selected behavior, produce its **own** flat config:
+`evals/<atomic_behavior>.yaml`. Use a clear snake_case filename. Never bundle.
 
 Config generation, in order of preference:
 
@@ -111,7 +111,11 @@ Config generation, in order of preference:
 2. **Domain template next.** Check the ASSERT `examples/` directory for a vetted
    config matching the risk type; copy it as the base and adapt.
 3. **Otherwise** generate from the schema:
-   `assert-ai init --default-model <litellm-model> --describe "<text>" --non-interactive -o <path>`.
+   `assert-ai init --default-model <litellm-model> --describe-file <text-path> --non-interactive -o <path>`.
+   Write the failure-mode text (failure mode + how it arises + target context) to
+   a file first. It is Clarity-derived prose you did not author, so a quote,
+   backtick, or `$(...)` in it would break or inject into the shell if
+   interpolated into `--describe "<text>"`.
 
 Fill from the candidate behavior (real schema field names):
 
@@ -231,7 +235,7 @@ Fill from the candidate behavior (real schema field names):
 
 ## Step 4 — Atomicity (enforce)
 
-**One atomic behavior per `eval_config.yaml`.** Bundling makes `policy_violation`
+**One atomic behavior per YAML.** Bundling makes `policy_violation`
 a fuzzy logical-OR and masks per-behavior signal.
 
 - A single Clarity failure mode is usually one behavior → one config.
@@ -250,7 +254,7 @@ requested edits. **Run only on explicit go-ahead.**
 ## Step 6 — Run sequentially
 
 ```
-assert-ai run --config evals/<slug>/eval_config.yaml
+assert-ai run --config evals/<atomic_behavior>.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
@@ -277,40 +281,29 @@ the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
-(`evals/<slug>/`). This keeps Clarity's staleness tracking aware of the eval.
+(`evals/<atomic_behavior>.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
-## Step 9 — Archive the protocol into the example folder
+## Step 9 — Curate the example and handle discovery scratch
 
-Do this **at the end of the domain you just measured**, not at the start of the
-next one — waiting means the archive depends on remembering, and the entry-gate
-above is only a backstop.
+Do this at the end of the domain you just measured:
 
-Copy the finished protocol out of the gitignored scratch directory and into that
-domain's self-contained example folder, colocated with the agent it describes:
-
-```
-.clarity-protocol/  →  examples/<domain>/Clarity Protocol/
-```
-
-- Preserve the durable docs — `goal/`, `solution/`, `failures/`. `transcripts/`
-  (and usually `mailboxes/`) can be left behind.
-- **Commit it.** The point of the move is that the destination is tracked while
-  the source is not; an uncommitted copy solves nothing.
-- This is the `Clarity Protocol/` slot of the per-example replication package in
-  `SKILL.md`, alongside that domain's `evals/` and `acs/`.
-- Confirm the copy is readable before any subsequent `run_clarity` overwrites the
-  source.
-
-If the user declines, note explicitly that the protocol will be **destroyed** by
-the next discovery run and is not recoverable from git.
+1. Keep one selected failure mode per YAML under `evals/`.
+2. Write or update the example README with the scenario, setup, run command,
+   suite/run result path, and a concise behavior table.
+3. Do not copy generated taxonomies, test sets, result artifacts, mailboxes,
+   snapshots, or the raw protocol into `examples/`.
+4. If the user needs the raw discovery record, export `.clarity-protocol/` to a
+   user-owned location outside the example tree before the next discovery run.
+   Otherwise state that the next run will overwrite it.
 
 ## Constraints (all mandatory)
 
 - **One atomic behavior per config.** Never bundle.
-- **Never start a fresh `run_clarity` over an unarchived protocol.** `.clarity-protocol/`
-  is gitignored scratch; overwriting it destroys the prior domain's discovery record
-  with no git recovery. Run the archive gate first (Entry conditions), archive via
-  Step 9, or get an explicit discard instruction from the user.
+- **Never start a fresh `run_clarity` over an unpreserved protocol.**
+  `.clarity-protocol/` is gitignored scratch; overwriting it destroys the prior
+  domain's discovery record with no git recovery. Run the preservation gate
+  first (Entry conditions), export it outside `examples/`, or get an explicit
+  discard instruction from the user.
 - **Triage gate + pre-run confirmation are human decisions.** Never auto-run all
   discovered risks. Declining writes nothing and runs nothing.
 - **`.clarity-protocol/` files are the source of truth.** Parser JSON is a
@@ -333,7 +326,7 @@ the next discovery run and is not recoverable from git.
    protocol, alert fatigue).
 3. Triage: user picks **P1s only** → just `user_disengagement`.
 4. **Ask the user for `sample_size`** (recommend `25`; `10` = quick look, `50`+ = tightest). Say they pick `25`.
-5. Generate `evals/user-disengagement/eval_config.yaml`: `behavior.description`
+5. Generate `evals/user_disengagement.yaml`: `behavior.description`
    from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
    user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
@@ -344,7 +337,6 @@ the next discovery run and is not recoverable from git.
    `permissible_policy_violation_rate` (an allowed behavior was broken) — with
    `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
 7. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
-   measured baseline at evals/user-disengagement/."
-8. Archive the protocol (Step 9): copy `.clarity-protocol/` to
-   `examples/support_bot/Clarity Protocol/` and commit it, before any future
-   `run_clarity` overwrites the scratch directory.
+   measured baseline at evals/user_disengagement.yaml."
+8. Curate the example (Step 9): keep the atomic config and README, and export
+   `.clarity-protocol/` outside `examples/` only if the user wants the raw record.

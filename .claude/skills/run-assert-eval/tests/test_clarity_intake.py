@@ -241,5 +241,54 @@ def test_malformed_doc_degrades_without_crashing():
     assert any("missing '## Summary'" in w for w in malformed.warnings)
 
 
+# --- link containment -------------------------------------------------------
+
+
+@pytest.mark.parametrize("link", ["../../SECRET.md", "ABSOLUTE"])
+def test_doc_link_escaping_failures_dir_is_not_read(tmp_path, link):
+    """``failures.md`` is LLM-authored, so its links must stay inside the dir.
+
+    A ``..`` segment or an absolute path would otherwise pull an arbitrary file
+    into the parser output and from there into agent context.
+    """
+
+    secret = tmp_path / "SECRET.md"
+    secret.write_text(
+        "# Failure: Exfiltrated\n\n**Severity:** High\n\n## Summary\n\nTOP_SECRET_VALUE\n",
+        encoding="utf-8",
+    )
+    target = secret.as_posix() if link == "ABSOLUTE" else link
+
+    failures = tmp_path / "proto" / "failures"
+    failures.mkdir(parents=True)
+    (failures / "failures.md").write_text(
+        f"# Failures\n\n1. **[Escape]({target})** (High) index summary\n",
+        encoding="utf-8",
+    )
+
+    candidate = ci.build_candidate_behaviors(failures)[0]
+    assert "TOP_SECRET_VALUE" not in candidate.description
+    assert candidate.description == "index summary"  # falls back to the index
+    assert any("escapes the failures directory" in w for w in candidate.warnings)
+
+
+def test_doc_link_inside_failures_dir_is_still_read(tmp_path):
+    failures = tmp_path / "proto" / "failures"
+    failures.mkdir(parents=True)
+    (failures / "failures.md").write_text(
+        "# Failures\n\n1. **[Legit](nested/failure-01-real.md)** (Medium) index summary\n",
+        encoding="utf-8",
+    )
+    (failures / "nested").mkdir()
+    (failures / "nested" / "failure-01-real.md").write_text(
+        "# Failure: Real\n\n**Severity:** Medium\n\n## Summary\n\nDoc summary wins.\n",
+        encoding="utf-8",
+    )
+
+    candidate = ci.build_candidate_behaviors(failures)[0]
+    assert candidate.description == "Doc summary wins."
+    assert not any("escapes" in w for w in candidate.warnings)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

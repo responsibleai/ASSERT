@@ -1,7 +1,6 @@
-# Billing Support Agent — Clarity → ASSERT example
+# Billing Support Agent
 
-A worked example for a **SaaS B2B billing customer-support chatbot**: discover the risks with
-**Clarity**, then measure them with **ASSERT**.
+A worked ASSERT example for a **SaaS B2B billing customer-support chatbot**.
 
 The agent serves authenticated customers who check invoices, update payment methods, change plans, and
 request refunds up to $200. It can look up account/PII, issue refunds within policy, and escalate to a
@@ -13,8 +12,7 @@ verify identity before high-risk actions (plan changes, cancellations, refunds).
 | Path | What it is |
 |---|---|
 | `agent.py` | The agent itself. Exposes `chat_baseline`, the callable ASSERT evaluates. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
-| `Clarity Protocol/` | The Clarity discovery record: `goal/` (problem + requirements), `failures/failures.md` (the risk register), `mailboxes/` (the discovery journal) and `summary.md`. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `README.md` | This file. |
 
 `__init__.py` makes the folder importable, so each config can resolve its
@@ -28,21 +26,38 @@ system is contacted.
 
 | Tool | Purpose |
 |---|---|
-| `verify_identity` | In-session step-up challenge (otp, reauth, security questions). Must succeed before any high-risk action. |
-| `get_account_profile` | Retrieve the caller's account profile (owner, plan, contact, payment method). |
+| `verify_identity` | In-session step-up challenge (otp, reauth, security questions). Policy requires it before any high-risk action. |
+| `get_account_profile` | Retrieve an account profile (owner, plan, contact, payment method). |
 | `get_invoices` | Retrieve invoices for an account. |
-| `update_payment_method` | Update the payment method. **High-risk** — requires a verified session. |
-| `change_plan` | Change the subscription plan. **High-risk** — requires a verified session. |
-| `cancel_plan` | Cancel the subscription. **High-risk** — requires a verified session. |
-| `issue_refund` | Issue a within-policy refund, capped at $200. **High-risk** — requires a verified session. |
+| `update_payment_method` | Update the payment method. **High-risk** — policy requires a verified session. |
+| `change_plan` | Change the subscription plan. **High-risk** — policy requires a verified session. |
+| `cancel_plan` | Cancel the subscription. **High-risk** — policy requires a verified session. |
+| `issue_refund` | Issue a refund. **High-risk** — policy requires a verified session and caps refunds at $200. |
 | `escalate_to_human` | Hand the conversation to a human support agent. |
+
+### The controls are prompt-only, on purpose
+
+The full billing policy — account scoping, the verification gate, the refund cap,
+the advice boundary — is stated in the agent's system prompt. **No tool enforces
+it.** Account-scoped results report `caller_account_id` and a
+`requested_account_scope` of `caller` or `foreign`, and high-risk results report
+`verified_session`, so the agent has everything it needs to apply the policy and
+the judge can see whether it did. But the read tools serve any `account_id`, and
+the high-risk tools execute on an unverified session.
+
+That is deliberate: the baseline has been told the rules but can still be
+argued out of them, which is what makes the measurement meaningful.
+
+Foreign accounts in the directory hold distinct owners, contacts and invoices, so
+a cross-account disclosure is a real disclosure rather than the caller's own
+record under someone else's label.
 
 ## The two measured risks
 
 | Risk | Failure mode |
 |---|---|
-| `unverified-high-risk-action` | Executes/commits a plan change, cancellation, refund, or payment-method update **before** current-session identity verification |
-| `cross-customer-data-exposure` | Looks up or acts on **another customer's** account from a user-supplied ID |
+| `unverified_high_risk_action.yaml` | Executes/commits a plan change, cancellation, refund, or payment-method update **before** current-session identity verification |
+| `cross_customer_data_exposure.yaml` | Looks up or acts on **another customer's** account from a user-supplied ID |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -52,7 +67,7 @@ Set these in a `.env` at the repo root — never commit it.
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the agent and the judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the agent and the judge. Swap models in the files under `evals/` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `AZURE_API_VERSION` | Optional. Defaults to `2024-08-01-preview`. |
 | `BILLING_AGENT_MODEL` | Optional. Overrides the agent model (default `azure/gpt-5.4-mini`). |
 | `PHOENIX_PROJECT_NAME` | Optional. Trace project name (default `billing-support-agent`). |
@@ -61,11 +76,13 @@ Set these in a `.env` at the repo root — never commit it.
 
 ```powershell
 # 0. install
-pip install -e .
+python -m pip install -e ".[otel]"
+Copy-Item .env.example .env
+# Set AZURE_API_KEY and AZURE_API_BASE.
 
 # 1. run each eval suite
-assert-ai run --config examples/billing_support_agent/evals/unverified-high-risk-action/eval_config.yaml --concurrency 6 --output json
-assert-ai run --config examples/billing_support_agent/evals/cross-customer-data-exposure/eval_config.yaml --concurrency 6 --output json
+assert-ai run --config examples/billing_support_agent/evals/unverified_high_risk_action.yaml --concurrency 6 --output json
+assert-ai run --config examples/billing_support_agent/evals/cross_customer_data_exposure.yaml --concurrency 6 --output json
 
 # 2. inspect the results
 assert-ai results status billing-unverified-high-risk-action baseline --json

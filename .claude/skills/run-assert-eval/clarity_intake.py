@@ -454,13 +454,18 @@ def build_candidate_behaviors(protocol_dir: str | Path) -> list[CandidateBehavio
     candidates: list[CandidateBehavior] = []
     for entry in entries:
         warnings = list(entry["warnings"])
-        doc_path = failures_dir / entry["doc_path"]
+        doc_path = _safe_doc_path(failures_dir, entry["doc_path"])
         description = entry["summary"]
         dimensions: list[dict] = []
         multi_behavior = False
         suggested_splits: list[str] = []
 
-        if doc_path.is_file():
+        if doc_path is None:
+            warnings.append(
+                f"failure doc path escapes the failures directory, ignored: "
+                f"{entry['doc_path']}"
+            )
+        elif doc_path.is_file():
             doc = parse_failure_doc(doc_path.read_text(encoding="utf-8"), str(doc_path))
             warnings.extend(doc["warnings"])
             if doc["summary"]:
@@ -497,6 +502,23 @@ def build_candidate_behaviors(protocol_dir: str | Path) -> list[CandidateBehavio
 def _priority_sort_key(priority: str) -> int:
     match = re.search(r"\d+", priority)
     return int(match.group()) if match else 99
+
+
+def _safe_doc_path(failures_dir: Path, raw: str) -> Path | None:
+    """Resolve a ``failures.md`` link inside ``failures_dir``, or ``None`` if it escapes.
+
+    ``failures.md`` is LLM-authored from repo content, so its links are not fully
+    trusted. ``Path.__truediv__`` lets an absolute value silently replace the base,
+    and it does not collapse ``..``, so a crafted entry could otherwise pull an
+    arbitrary file into the parser output — and from there into agent context.
+    """
+
+    try:
+        base = failures_dir.resolve()
+        candidate = (base / raw).resolve()
+    except OSError:
+        return None
+    return candidate if candidate.is_relative_to(base) else None
 
 
 def _resolve_failures_dir(protocol_dir: str | Path) -> Path:

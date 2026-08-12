@@ -92,7 +92,7 @@ README_preannounce.md
 # protocol docs (goal/, solution/, failures/) and ignore only transcripts/.
 /.clarity-protocol/
 # Generated eval configs written by the measure-clarity-failures workflow
-# (evals/<failure-slug>/eval_config.yaml). Per-target output; adopters may commit these.
+# (evals/<atomic_behavior>.yaml). Per-target output; adopters may commit these.
 /evals/
 # Per-domain governance ledger written by the govern-and-remeasure workflow.
 # Local working artifact (holds SharePoint links); adopters may commit their own.

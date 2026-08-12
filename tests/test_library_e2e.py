@@ -622,9 +622,13 @@ class ExampleConfigTest(unittest.TestCase):
     """The example eval_config.yaml that uses presets loads correctly."""
 
     def test_example_travel_planner_config_loads(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
@@ -635,9 +639,13 @@ class ExampleConfigTest(unittest.TestCase):
         self.assertIn("overrefusal", dim_names)
 
     def test_example_config_inline_overrides_preset(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)

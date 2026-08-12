@@ -74,7 +74,7 @@ create the governed half in Step 3.
 Run the ungoverned callable target to establish the **ASSERT Baseline %**:
 
 ```
-assert-ai run --config <eval-dir>/eval_config.yaml
+assert-ai run --config evals/<atomic_behavior>.yaml
 ```
 
 Note the `suite` and `run` (e.g. `baseline`). Report the headline pair and
@@ -535,7 +535,7 @@ Point the ACS-governed callable at the vetted manifest and re-run the **same**
 eval spec:
 
 ```
-assert-ai run --config <eval-dir>/eval_config.governed.yaml
+assert-ai run --config evals/<atomic_behavior>_governed.yaml
 ```
 
 **How the governed agent finds its policy.** The agent's tool wrapper needs two
@@ -549,7 +549,8 @@ uses `BILLING_ACS_MANIFEST` (defaulting to its committed manifest) and
 tools); your governed agent should expose the equivalent knobs. Set them before
 the governed run when the defaults don't match the suite under test.
 
-**Create `eval_config.governed.yaml` by COPYING `eval_config.yaml` and
+**Create `evals/<atomic_behavior>_governed.yaml` by COPYING
+`evals/<atomic_behavior>.yaml` and
 changing ONLY two lines** — `run:` (e.g. `acs-governed`) and
 `target.callable` (the governed entrypoint). Do **not** re-author it from a
 template or edit any other field. The `systematize` and `test_set` stages are
@@ -564,7 +565,7 @@ aggregate-only.
 **Verify the reuse before trusting the delta.** The governed run must log the
 `systematize` and `test_set` stages as **reused/cached**, not regenerated. If it
 regenerated, the two configs drifted — diff them (`git diff --no-index
-eval_config.yaml eval_config.governed.yaml` should show only the `run`
+evals/<atomic_behavior>.yaml evals/<atomic_behavior>_governed.yaml` should show only the `run`
 and `target.callable` lines), fix, and rerun. **Never** pass `--force-stage
 systematize` or `--force-stage test_set` on the governed run — that forces a new
 test set and breaks the A/B by construction.
@@ -696,7 +697,7 @@ assert-ai acs eval-config --manifest <example-dir>/acs/<slug>/manifest.yaml \
 > layout to recreate, not as files to open.
 
 1. Baseline: `assert-ai run --config
-   examples/billing_support_agent/evals/unverified-high-risk-action/eval_config.yaml` →
+   examples/billing_support_agent/evals/unverified_high_risk_action.yaml` →
    suite `billing-unverified-high-risk-action`, run `baseline`,
    `not_permissible_policy_violation_rate` ~33–40% (`permissible_policy_violation_rate`
    and `overrefusal` tracked alongside as the over-gating checks).
@@ -712,7 +713,7 @@ assert-ai acs eval-config --manifest <example-dir>/acs/<slug>/manifest.yaml \
    `assert-ai acs validate` can't populate that injected field — verify at the
    guarded remeasure below, not via `validate`.)
 4. Governed: `assert-ai run --config
-   examples/billing_support_agent/evals/unverified-high-risk-action/eval_config.governed.yaml`
+   examples/billing_support_agent/evals/unverified_high_risk_action_governed.yaml`
    → run `acs-governed` (the governed config points at the manifest committed in
    step 2 and the tools guarded in step 3),
    `not_permissible_policy_violation_rate` drops materially.

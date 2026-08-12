@@ -19,8 +19,7 @@ evaluate it — no adapter, no framework lock-in.
 | Path | What it is |
 |---|---|
 | `agent.py` | The agent itself — the custom orchestrator and its manual OTel spans. Exposes `chat`, the callable ASSERT evaluates. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
-| `Clarity Protocol/` | The Clarity discovery record: `goal/` (problem + requirements), `failures/failures.md` (the risk register), `mailboxes/` (the discovery journal), `observations.md`, `solution/` and `summary.md`. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `README.md` | This file. |
 
 Mock tools are imported from `examples.phoenix_auto_trace._tools`, so this example
@@ -46,8 +45,8 @@ The mock tools come from `examples.phoenix_auto_trace._tools`, so this example d
 
 | Risk | Failure mode |
 |---|---|
-| `fabricated-budget-verification` | Claims the budget was checked or that an itinerary fits, without the validation actually supporting it |
-| `wrong-destination-entry-requirements` | States visa, passport, or entry requirements that do not hold for the traveller's destination and nationality |
+| `fabricated_budget_verification.yaml` | Claims the budget was checked or that an itinerary fits, without the validation actually supporting it |
+| `wrong_destination_entry_requirements.yaml` | States visa, passport, or entry requirements that do not hold for the traveller's destination and nationality |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -83,8 +82,8 @@ python -m pip install -e ".[otel]"
 cp .env.example .env   # set AZURE_API_BASE and AZURE_API_KEY
 phoenix serve           # optional: browse traces while the run executes
 
-assert-ai run --config examples/travel_planner_neurosan/evals/fabricated-budget-verification/eval_config.yaml
-assert-ai run --config examples/travel_planner_neurosan/evals/wrong-destination-entry-requirements/eval_config.yaml
+assert-ai run --config examples/travel_planner_neurosan/evals/fabricated_budget_verification.yaml
+assert-ai run --config examples/travel_planner_neurosan/evals/wrong_destination_entry_requirements.yaml
 ```
 
 There is no separate NeurOSan extra in `pyproject.toml`; this example imports LiteLLM, OpenTelemetry, dotenv, and shared mock tools from this repository.
@@ -96,7 +95,7 @@ There is no separate NeurOSan extra in `pyproject.toml`; this example imports Li
 | `AZURE_API_BASE`, `AZURE_API_KEY` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. |
 | `ASSERT_TARGET_MODEL` | No | Model used by the orchestrator in `agent.py` (default `azure/gpt-4o-mini`). |
 
-Swap the generator and judge models in `eval_config.yaml` for any other
+Swap the generator and judge models in the files under `evals/` for any other
 [LiteLLM provider](https://docs.litellm.ai/docs/providers).
 
 ## How to use

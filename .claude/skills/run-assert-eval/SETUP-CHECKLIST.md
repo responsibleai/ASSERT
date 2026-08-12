@@ -67,13 +67,12 @@ once per workspace, then the `run-assert-eval` skill's discovery front door
   ANTHROPIC_API_KEY, azure_ad_token).
 - Do not edit inside the Clarity-managed block in `AGENTS.md`
   (between `<!-- clarity-begin -->` and `<!-- clarity-end -->`).
-- **Committing `.clarity-protocol/`**: this repo gitignores it because the protocol
+- **Preserving `.clarity-protocol/`**: this repo gitignores it because the protocol
   describes a *system-under-test*, not this framework — it's per-target runtime
   output. In **your own product's repo**, the protocol describes your product, so
   prefer committing the durable docs (`goal/`, `solution/`, `failures/`) and
-  ignoring only `transcripts/` (and optionally `mailboxes/`). When you finish a
-  domain here, archive its protocol into `examples/<domain>/Clarity Protocol/` and
-  **commit it** so it is preserved alongside that domain's `evals/` and `acs/` —
-  this is Step 9 of `workflows/measure-clarity-failures.md`, and a blocking gate
-  before any fresh `run_clarity` enforces it (the source dir is gitignored, so an
-  overwrite is unrecoverable). See the per-example replication package in `SKILL.md`.
+  ignoring only `transcripts/` (and optionally `mailboxes/`). In this framework
+  repo, do not copy generated discovery workspaces into `examples/`. Before a new
+  discovery run overwrites the scratch directory, offer to export it to a
+  user-owned location outside the example tree. Commit only the curated atomic
+  config and README needed to run the example.

@@ -12,7 +12,7 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `SKILL.md` | Claude Code skill entry (the canonical instructions). |
 | `../../.github/prompts/run-assert-eval.prompt.md` | GitHub Copilot mirror. |
 | `../../.cursor/rules/assert.mdc` | Cursor mirror. |
-| `workflows/measure-clarity-failures.md` | The 9-step measurement workflow (parse → triage → configs → run → report → close loop → archive protocol). |
+| `workflows/measure-clarity-failures.md` | The 9-step measurement workflow (parse → triage → configs → run → report → close loop → curate example). |
 | `workflows/govern-and-remeasure.md` | The ACS governance workflow: turn a measured failure into a deployable ACS policy (`assert-ai acs generate`), wrap the agent, and re-run the same eval to prove the failure rate dropped. |
 | `workflows/diagnose-acs-delta.md` | Fallback reference manual for when a governed run's delta comes out wrong (no drop, or over-gating rose) — symptom-indexed, 15 rules. Most are prevented by the pre-flight classification in `govern-and-remeasure.md` Step 1a. |
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
@@ -33,14 +33,14 @@ methodologically aligned when changing the flow.
 2. **Handoff (files, not JSON):** Clarity writes `.clarity-protocol/`. The
    measurement side reads `failures/failures.md` (index) and `failure-NN-*.md`
    (individual docs). Those files are the **source of truth**; the parser's JSON is
-   a disposable cache. Note it is **gitignored, single-domain scratch** — the next
-   `run_clarity` overwrites it, so each domain's protocol is archived to
-   `examples/<domain>/Clarity Protocol/` at the end of its run (Step 9), guarded by
-   a blocking check before any fresh discovery.
+   a disposable cache. The directory is **gitignored, single-domain scratch**.
+   Before another discovery run overwrites it, let the user export it to a
+   user-owned location if they need the raw record. Do not commit discovery
+   workspaces into `examples/`; examples keep only curated configs and docs.
 3. **Measurement (this skill):** `clarity_intake.py` turns failure docs into
    candidate behaviors; `workflows/measure-clarity-failures.md` runs a **mandatory
-   human triage gate**, generates **one atomic `eval_config.yaml` per selected
-   failure**, runs them sequentially, and reports one behavior per column.
+   human triage gate**, generates **one flat `evals/<atomic_behavior>.yaml` per
+   selected failure**, runs them sequentially, and reports one behavior per column.
 4. **Governance (ACS, optional):** when a run surfaces a real failure the user wants
    to *fix and prove*, `workflows/govern-and-remeasure.md` first **classifies the
    failure against the baseline** (Step 1a — semantic `output` gate vs. structural

@@ -80,7 +80,8 @@ Full checklist, including end-to-end verification: [`SETUP-CHECKLIST.md`](.claud
 
 #### 2. Explore what it produces
 
-Eight domains under [`examples/`](examples/README.md) were built end-to-end with this skill, so you can read a finished result before running your own:
+Six worked domains under [`examples/`](examples/README.md) show the complete
+agent, one-behavior-per-YAML configs, setup, and results flow:
 
 | Domain | Target shape |
 |---|---|
@@ -89,11 +90,12 @@ Eight domains under [`examples/`](examples/README.md) were built end-to-end with
 | [`travel_planner_neurosan`](examples/travel_planner_neurosan/) | Multi-agent network |
 | [`azure_doc_qa`](examples/azure_doc_qa/) | Retrieval-grounded Q&A |
 | [`change_control_agent`](examples/change_control_agent/) | Approval-workflow agent |
-| [`career_health_assessment`](examples/career_health_assessment/) | Assessment agent |
 | [`science_research_agent`](examples/science_research_agent/) | Research agent |
-| [`prompt_agents`](examples/prompt_agents/) | Hosted model + system prompt |
 
-Each one contains the same four things — `Clarity Protocol/` (the discovered risks), `evals/<risk>/eval_config.yaml` (one config per risk), `agent.py` (the target), and a README explaining the directory.
+The separate [`prompt_agents`](examples/prompt_agents/) directory is a compact
+target-shape gallery, not another worked domain. Worked examples keep only the
+runtime files, atomic eval configs, and README needed to understand and run
+them; generated discovery and result artifacts stay uncommitted.
 
 #### 3. Run an evaluation
 
@@ -159,8 +161,33 @@ The same skill ships for three assistants, plus the workflows it follows:
 ```bash
 pip install -e ".[otel,langgraph]"       # install
 cp .env.example .env                     # add your provider key
-assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
+
+### Add a CI safety gate
+
+Use [`responsibleai/assert-ai-action`](https://github.com/responsibleai/assert-ai-action) to run ASSERT as a PR regression gate — it fails the build when a change makes agent behavior significantly worse.
+
+Install the skills into your coding agent (Cursor, Claude Code, Copilot, and [40+ others](https://github.com/vercel-labs/skills#supported-agents)). Two commands, because the bundle spans two repos on purpose — the evaluation skill is owned here in ASSERT and installed from here, so it never goes stale:
+
+```bash
+npx skills add responsibleai/ASSERT --skill run-assert-eval --yes
+npx skills add responsibleai/assert-ai-action --skill wire-assert-ci --yes
+```
+
+Run them separately. `skills add` takes one package per invocation and silently ignores extras while still exiting 0, so a combined command looks like it worked and leaves you with half the bundle.
+
+Then ask it to wire the gate:
+
+> Use the `wire-assert-ci` skill to add an ASSERT safety gate to this repo.
+
+No Node? Paste this instead — the agent fetches the skills itself:
+
+```text
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
+
+See [`docs/ci/`](docs/ci/README.md) for the short hand-off.
 
 <table align="center" style="width: 100%; border: 1px solid #d0d7de; border-collapse: collapse;">
         <tr>

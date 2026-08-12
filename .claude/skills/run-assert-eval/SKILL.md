@@ -5,8 +5,8 @@ description: >
   user wants to evaluate, test, or check an AI agent, LLM app, or model against
   requirements/policies (e.g. "evaluate my agent for budget violations", "test
   that the support bot never gives legal advice"). Drives the real Clarity MCP
-  tools (run_clarity) in-IDE to discover risks, then generates one atomic
-  eval_config.yaml per selected risk, runs the pipeline, and reports
+  tools (run_clarity) in-IDE to discover risks, then generates one flat
+  evals/<atomic_behavior>.yaml per selected risk, runs the pipeline, and reports
   pass/violation rates with trace-cited failure examples.
 ---
 
@@ -52,10 +52,17 @@ runs*, or *watch a live run*.
 
 ## Preconditions (check, don't assume)
 
-1. **ASSERT installed**: `assert-ai --help` succeeds. If not, guide install:
+1. **ASSERT installed**: `assert-ai --help` succeeds. If not, guide install from
+   PyPI — not an editable install of the user's own repo:
    ```
-   python -m pip install -e ".[otel,langgraph]"
+   python -m pip install "assert-ai[otel]"
    ```
+   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]`
+   for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via
+   `litellm`'s own dependency — no separate extra to install. Use
+   `pip install -e ".[otel,langgraph]"` **only** when the working directory is a
+   clone of the ASSERT repo itself; inside a customer repo it installs the wrong
+   package.
 
 2. **Clarity MCP server available** (required for Run mode): the `clarity-agent`
    MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`,
@@ -102,16 +109,17 @@ Read Clarity's output to enumerate risks:
   — target/context for the eval's `context` field.
 
 **For the full measurement path** — parse → triage → one atomic config per selected
-failure → sequential runs → report → close the loop → archive the protocol — follow
+failure → sequential runs → report → close the loop → curate the example — follow
 `workflows/measure-clarity-failures.md`. Use the intake parser
 (`clarity_intake.py`) to convert `failures.md` into candidate behaviors with
 severity→priority mapping and variant-derived stratify dimensions.
 
-> **Before a *fresh* discovery run, check the archive gate.** `.clarity-protocol/`
+> **Before a *fresh* discovery run, check the preservation gate.** `.clarity-protocol/`
 > is gitignored, single-domain scratch; `run_clarity` **overwrites** it, destroying
-> the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery. If
-> a protocol from another domain is present and unarchived, STOP and archive it to
-> `examples/<prev-domain>/Clarity Protocol/` first.
+> the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery.
+> If a protocol from another domain is present, STOP and let the user export it
+> to a user-owned location or explicitly discard it. Never commit the raw
+> discovery workspace into `examples/`.
 
 Clarity records severity/management-plan signal (the parser maps Critical→P1,
 High→P2, Medium→P3, ranges→max). Order and annotate by what Clarity actually
@@ -131,16 +139,21 @@ risks into one config — bundling makes `policy_violation` a fuzzy logical-OR a
 hides per-behavior signal.
 
 - **1 selected risk** → generate one config and run once.
-- **N selected risks** → generate N atomic `eval_config.yaml` files and run them
-  sequentially, one per behavior.
+- **N selected risks** → generate N flat `evals/<atomic_behavior>.yaml` files
+  and run them sequentially, one per behavior.
 
 For each selected risk, map the Clarity failure mode → `behavior.name` +
 `behavior.description`, and use its context for `context`:
 
 ```
-assert-ai init --default-model <litellm-model> --describe "<failure mode + how it arises + target context>" --non-interactive -o eval_config.yaml
+assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o evals/<atomic_behavior>.yaml
 ```
 
+- **Write the description to a file and pass `--describe-file`.** The text is
+  Clarity-derived prose you did not author, so it can contain quotes, backticks,
+  or `$(...)`. Interpolating it into `--describe "<text>"` would break the
+  command or inject into the user's shell. `--describe` stays available for
+  short text you typed yourself; the two are mutually exclusive.
 - `--default-model` seeds the generated config's `pipeline.default_model` — the
   model the **eval** runs against. Do **not** use `--model` for this: that is the
   model driving the init assistant's own conversation (default
@@ -199,7 +212,9 @@ Help the user set the right target in the config:
 - **Hosted model** with a system prompt and optional tools:
   use `target.model` and `target.tools`.
 - **Pre-collected traces** (no live inference needed):
-  use `assert-ai judge-traces --traces <path> --config <path>`.
+  use `assert-ai judge-traces --traces <path> --config <path>`; do not add a `--trace` flag to `assert-ai run`.
+- **Black-box HTTP endpoint** you cannot import as Python:
+  use `target.endpoint` — the runtime POSTs `{"message": ..., "history": [...]}` and reads `{"response": ...}`, so no wrapper code is needed (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response shape differs. Either way the judge sees only final text, so this is a fallback, not the recommended path.
 
 #### The callable contract — verify before the first run
 
@@ -215,7 +230,7 @@ Two behaviors that doc does **not** cover can silently corrupt a run:
   therefore any ACS delta measured against it.
 - **Module resolution has a four-step fallback**: `sys.path` → the **config's own
   directory** → the current working directory → direct file load. An `agent.py` sitting
-  beside `eval_config.yaml` resolves even when the CLI is invoked from the repo root —
+  beside the YAML config resolves even when the CLI is invoked from the repo root —
   but a same-named module earlier on `sys.path` wins, so prefer a domain-unique module
   name over a bare `agent`.
 
@@ -240,7 +255,7 @@ single helper call at the top of the callable module — see `docs/targets/calla
 ### 5. Run the pipeline
 
 ```
-assert-ai run --config eval_config.yaml --output json
+assert-ai run --config evals/<atomic_behavior>.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status
@@ -332,6 +347,14 @@ match the signature, apply the smallest fix, cap at ~4 attempts.
 `examples/billing_support_agent/agent.py` shows the baseline callable shape; the
 governed entrypoint is an output of that workflow, not a checked-in file.
 
+### 9. Hand off to CI
+
+Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
+
+```
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
+
 ## Output format
 
 Present a short summary with this structure:
@@ -379,18 +402,15 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 - **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
 - **Close the loop** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives, so Clarity's staleness tracking stays aware of it.
 - **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
-- **Organize by domain across runs** — this workflow is run repeatedly for different agents/domains, so keep materials namespaced. (a) Prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`); because `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` are keyed by suite, domain-prefixed names coexist without overwriting. (b) **`.clarity-protocol/` is single-domain scratch** at the repo root (not namespaced) — the next `run_clarity` overwrites the prior domain's `failures/`, `goal/`, `solution/`. Before starting discovery for a *new* domain, **move the finished protocol into that domain's example folder** as `examples/<domain>/Clarity Protocol/`, colocated with the agent it describes. (c) **Keep each example self-contained so anyone can replicate the run from its folder alone** — see "Per-example replication package" below.
-- **Per-example replication package** — every domain you evaluate must end up as a single self-contained folder under `examples/<domain>/` containing everything needed to reproduce its Clarity → ASSERT → ACS → ASSERT run, laid out identically across domains:
+- **Organize by domain across runs** — prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`), so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not collide. Treat `.clarity-protocol/` as uncommitted single-domain scratch; preserve it outside `examples/` only when the user asks.
+- **Per-example package** — every worked example must be a small, self-contained folder under `examples/<domain>/` containing only what a customer needs to understand and reproduce the ASSERT run:
   - `agent.py` (+ any real runtime deps it imports, e.g. `tools.py` / `mock_tools.py`) — the shared baseline.
   - `agent_guarded*.py` — the governed target(s); each **imports** the baseline from `agent.py` and adds only the ACS enforcement, so the A/B differs by nothing but the gate.
-  - `README.md` — what the agent does, the risks evaluated, and the baseline → governed deltas.
-  - `Clarity Protocol/` — the colocated Clarity risk-discovery protocol for this domain.
-  - `evals/<risk>/eval_config.yaml` + `evals/<risk>/eval_config.governed.yaml` — one baseline/governed pair per risk (governed is a byte-identical copy differing only in `run:` and `target.callable`).
+  - `README.md` — scenario, setup, atomic behaviors, run commands, and result paths.
+  - `evals/<atomic_behavior>.yaml` + `evals/<atomic_behavior>_governed.yaml` — one baseline/governed pair per behavior (governed is a byte-identical copy differing only in `run:` and `target.callable`).
   - `acs/<risk>/manifest.yaml` + `acs/<risk>/policy/*.rego` — the reviewed, committed policy the governed agent enforces.
-  This is the layout **you produce**, and it is identical across domains. The
-  checked-in examples currently ship only the hand-written parts (`agent.py` plus
-  any real runtime deps such as `tools.py`); everything else in this list is
-  generated by a run of this skill, so don't expect to find it already there.
+  Do not commit generated taxonomies, test sets, result artifacts, discovery
+  mailboxes, snapshots, or protocol archives.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Triage before running** — never auto-generate an eval for every Clarity failure mode; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.
