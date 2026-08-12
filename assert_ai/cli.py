@@ -120,7 +120,32 @@ def _error(message: str) -> None:
 
 
 def _echo_json(payload: Any) -> None:
-    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    # JSON is a machine-readable surface and must survive the default Windows
+    # console encoding. ``ensure_ascii=False`` let artifact text containing an
+    # arrow (U+2192) reach Click's cp1252 stream and crash `results status
+    # --json` with UnicodeEncodeError -- the exact command the public skill uses
+    # to read permissibility metrics. Escapes preserve the same JSON value while
+    # keeping the transport ASCII-safe on every terminal.
+    click.echo(json.dumps(payload, ensure_ascii=True, indent=2))
+
+
+def _json_summary(payload: Any) -> Any:
+    """Copy a results payload without raw prompt/scenario rows.
+
+    `results status --json` includes the full score rows for programmatic clients.
+    A coding agent that only needs the headline metrics should not have to ingest
+    hundreds of kilobytes before it can answer a one-line question.
+    """
+
+    if isinstance(payload, dict):
+        return {
+            key: _json_summary(value)
+            for key, value in payload.items()
+            if key not in {"prompt_rows", "scenario_rows"}
+        }
+    if isinstance(payload, list):
+        return [_json_summary(value) for value in payload]
+    return payload
 
 
 def _format_timestamp(value: Any) -> str:
@@ -811,6 +836,14 @@ cli.add_command(init)
     ),
     show_envvar=True,
 )
+@click.option(
+    "--smoke",
+    is_flag=True,
+    help=(
+        "Run a five-case prompt-only wiring check as run 'smoke' with "
+        "concurrency 5. Directional only; not a stable baseline."
+    ),
+)
 @click.option("--strict", is_flag=True, help="Fail on malformed JSONL inputs instead of skipping bad rows.")
 @click.option("--override", "overrides", multiple=True, help="Override a config value, e.g. test_set.sample_size=10.")
 @click.option(
@@ -845,6 +878,7 @@ def run(
     ctx: click.Context,
     config: Path,
     force_stage: tuple[str, ...],
+    smoke: bool,
     strict: bool,
     overrides: tuple[str, ...],
     concurrency: int | None,
@@ -863,6 +897,38 @@ def run(
             log_file=log_file,
             json_output=(output_format == "json"),
         )
+    effective_overrides = list(overrides)
+    if smoke:
+        owned = {
+            "run",
+            "test_set.sample_size",
+            "pipeline.test_set.prompt.sample_size",
+            "pipeline.test_set.scenario",
+        }
+        conflicts = [
+            override
+            for override in effective_overrides
+            if override.split("=", 1)[0].strip() in owned
+        ]
+        if conflicts:
+            _error(
+                "--smoke owns run name and test-set shape; remove conflicting "
+                f"override(s): {', '.join(conflicts)}"
+            )
+        if concurrency not in (None, 5):
+            _error("--smoke fixes concurrency at 5; remove --concurrency or use 5")
+        effective_overrides = [
+            "run=smoke",
+            "pipeline.test_set.prompt.sample_size=5",
+            "pipeline.test_set.scenario=null",
+            *effective_overrides,
+        ]
+        concurrency = 5
+        click.echo(
+            "Smoke mode: 5 prompt cases, no scenarios, concurrency 5. "
+            "Rates are directional only.",
+            err=True,
+        )
     runner = _load_runner_module()
     # Emit the resolved Azure auth mode AFTER runner.py has loaded ``.env``
     # and called ``refresh_azure_auth_mode(force=True)`` — so the log reflects
@@ -875,7 +941,7 @@ def run(
         config=str(config),
         force_stages=list(force_stage),
         strict=strict,
-        overrides=list(overrides),
+        overrides=effective_overrides,
         concurrency=concurrency,
     )
     raise SystemExit(rc)
@@ -989,9 +1055,23 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
     help="Results root to inspect.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
+@click.option(
+    "--summary-only",
+    is_flag=True,
+    help="With --json, omit raw prompt/scenario rows and emit compact metrics metadata.",
+)
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
-def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: bool, no_color: bool):
+def results_status(
+    suite: str,
+    run: Optional[str],
+    results_dir: Path,
+    as_json: bool,
+    summary_only: bool,
+    no_color: bool,
+):
     """Show suite-level or run-level status information."""
+    if summary_only and not as_json:
+        _error("--summary-only requires --json")
     results_root = _resolve_results_dir(results_dir)
     suite_dir = results_root / suite
     if not suite_dir.exists():
@@ -1002,7 +1082,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         if suite_summary is None:
             _error(f"Suite has no readable artifacts: {suite}")
         if as_json:
-            _echo_json(suite_summary)
+            _echo_json(_json_summary(suite_summary) if summary_only else suite_summary)
             return
 
         console = _console(no_color=no_color)
@@ -1059,7 +1139,7 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         **run_summary,
     }
     if as_json:
-        _echo_json(payload)
+        _echo_json(_json_summary(payload) if summary_only else payload)
         return
 
     console = _console(no_color=no_color)

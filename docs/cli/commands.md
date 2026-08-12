@@ -66,6 +66,8 @@ Required:
 Optional:
 
 - `--force-stage <stage>` repeatable (`systematize`, `test_set`, `inference`, `judge`)
+- `--smoke`: run 5 prompt cases, no scenarios, concurrency 5, under run name
+  `smoke` (directional wiring check, not a stable baseline)
 - `--strict`
 - `--override <key=value>` repeatable
 - `-v`, `--verbose`
@@ -105,6 +107,8 @@ Options:
 
 - `--results-dir <path>` optional
 - `--json` optional flag
+- `--summary-only` with `--json`: omit raw prompt/scenario rows and emit compact
+  metrics metadata (recommended for coding agents and terminal inspection)
 - `--no-color` optional flag
 
 ## `results compare`

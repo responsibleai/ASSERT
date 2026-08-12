@@ -98,6 +98,53 @@ class CliTest(unittest.TestCase):
         mock_runner.run_pipeline.assert_called_once()
         self.assertEqual(mock_runner.run_pipeline.call_args.kwargs["concurrency"], 5)
 
+    def test_run_smoke_forwards_fixed_shape(self) -> None:
+        with self.runner.isolated_filesystem():
+            config = Path("eval.yaml")
+            config.write_text("suite: test\nstages: []\n", encoding="utf-8")
+
+            import unittest.mock
+
+            mock_runner = unittest.mock.MagicMock()
+            mock_runner.run_pipeline.return_value = 0
+            with patch("assert_ai.cli._load_runner_module", return_value=mock_runner):
+                result = self.runner.invoke(
+                    cli,
+                    ["run", "--config", str(config), "--smoke"],
+                )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        kwargs = mock_runner.run_pipeline.call_args.kwargs
+        self.assertEqual(kwargs["concurrency"], 5)
+        self.assertEqual(
+            kwargs["overrides"],
+            [
+                "run=smoke",
+                "pipeline.test_set.prompt.sample_size=5",
+                "pipeline.test_set.scenario=null",
+            ],
+        )
+        self.assertIn("Rates are directional only", result.output)
+
+    def test_run_smoke_rejects_conflicting_shape_override(self) -> None:
+        with self.runner.isolated_filesystem():
+            config = Path("eval.yaml")
+            config.write_text("suite: test\nstages: []\n", encoding="utf-8")
+            result = self.runner.invoke(
+                cli,
+                [
+                    "run",
+                    "--config",
+                    str(config),
+                    "--smoke",
+                    "--override",
+                    "pipeline.test_set.prompt.sample_size=10",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("--smoke owns run name and test-set shape", result.output)
+
     def test_verbose_flag_accepted(self) -> None:
         result = self.runner.invoke(cli, ["-v", "--help"])
         self.assertEqual(result.exit_code, 0, msg=result.output)
