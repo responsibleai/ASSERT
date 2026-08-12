@@ -19,6 +19,7 @@
 		isNotApplicableVerdictDimension,
 		multiJudgeDimensionAgreementLabel
 	} from '$lib/judgment.js';
+	import { metricTitleLabel } from '$lib/labels.js';
 
 	let {
 		item,
@@ -36,7 +37,7 @@
 	const multiJudge = $derived(item.multi_judge as MultiJudge | undefined);
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return metricTitleLabel(metric);
 	}
 	function metricOutcomeText(flag: boolean | number | string | null): string {
 		if (flag === null) return 'n/a';

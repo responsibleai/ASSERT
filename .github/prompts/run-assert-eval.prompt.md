@@ -24,10 +24,11 @@ Copilot is for *answering questions* and *synthesis* — direct answers, failure
 
 ## Preconditions (check, don't assume)
 
-1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
+1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install from PyPI — not an editable install of the user's own repo:
    ```
-   python -m pip install -e ".[otel,langgraph]"
+   python -m pip install "assert-ai[otel]"
    ```
+   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]` for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via `litellm`'s own dependency — no separate extra to install. Use `pip install -e ".[otel,langgraph]"` **only** when the working directory is a clone of the ASSERT repo itself; inside a customer repo it installs the wrong package.
 
 2. **Provider creds exist** in `.env`. NEVER read or print `.env`. If a run fails with an auth error, tell the user which variable NAMES are required (AZURE_API_KEY, AZURE_API_BASE, OPENAI_API_KEY, etc.) — never their values.
 
@@ -55,7 +56,8 @@ Help the user set the right target in the config:
 
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: use `target.callable` WITH `target.trace` so the judge can cite tool calls and routing.
 - **Hosted model** with a system prompt and optional tools: use `target.model` and `target.tools`.
-- **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`.
+- **Pre-collected traces** (no live inference needed): use `assert-ai judge-traces --traces <path> --config <path>`; do not add a `--trace` flag to `assert-ai run`.
+- **Black-box HTTP endpoint** you cannot import as Python: use `target.endpoint` — the runtime POSTs `{"message": ..., "history": [...]}` and reads `{"response": ...}`, so no wrapper code is needed (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response shape differs. Either way the judge sees only final text, so this is a fallback, not the recommended path.
 
 ### 3. Run the pipeline
 
@@ -99,6 +101,14 @@ Select the suite and run for forest plots, per-dimension breakdowns, facet group
 - **watch a run in progress** → viewer live run monitor (`manifest.json`-driven)
 
 See `docs/guides/use-local-viewer.md` for the full layout.
+
+### 6. Hand off to CI
+
+Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
+
+```
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
 
 ## Output format
 

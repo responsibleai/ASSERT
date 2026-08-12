@@ -33,7 +33,14 @@
 		isNotApplicableRecordDimension,
 		scoreSortValue
 	} from '$lib/judgment.js';
-	import { onMount } from 'svelte';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import {
+		POLICY_VIOLATION_NOT_PERMISSIBLE,
+		POLICY_VIOLATION_PERMISSIBLE,
+		primaryMetricName,
+		visibleMetricNames
+	} from '$lib/permissibility.js';
+	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 
@@ -85,7 +92,7 @@
 	let expandedBehavior = $state<string | null>(null);
 	let drawerSample = $state<JudgedSample | null>(null);
 	let promptGroupBy = $state('none');
-	let promptSortMetric = $state('policy_violation');
+	let promptSortMetric = $state(untrack(() => primaryMetricName(Object.keys(data.metrics?.dimensions ?? {}))));
 	let promptSearchQuery = $state('');
 
 	// --- Audit eval state ---
@@ -93,7 +100,7 @@
 	let drawerAuditScore = $state<AuditScore | null>(null);
 	let drawerPreviewSeedId = $state<string | null>(null);
 	let auditGroupBy = $state('none');
-	let auditSortMetric = $state('policy_violation');
+	let auditSortMetric = $state(untrack(() => primaryMetricName(Object.keys(data.auditMetrics?.dimensions ?? {}))));
 	let auditSearchQuery = $state('');
 	let runMetaOpen = $state(false);
 
@@ -152,7 +159,7 @@
 	let auditErroredCount = $derived(countSkippedStopReasonKind('error'));
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return metricTitleLabel(metric);
 	}
 
 	function metricOutcomeText(flag: boolean | number | string | null): string {
@@ -256,7 +263,7 @@
 	}
 
 	let dimensionNames = $derived(Object.keys(data.metrics.dimensions ?? {}));
-	let metricNames = $derived(dimensionNames);
+	let metricNames = $derived(visibleMetricNames(dimensionNames));
 	let primaryMetric = $derived(metricNames[0] ?? 'policy_violation');
 
 	// Lookup map: behavior name -> permissible boolean (from policy)
@@ -326,7 +333,7 @@
 	// --- Audit eval groups ---
 	let auditDimNames = $derived(Object.keys(data.auditMetrics.dimensions ?? {}));
 
-	let auditMetricNames = $derived(auditDimNames);
+	let auditMetricNames = $derived(visibleMetricNames(auditDimNames));
 	let primaryAuditMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
 	let activeAuditDimensions = $derived(data.auditMetrics.dimensions);
@@ -345,6 +352,34 @@
 		}
 		return dimensions;
 	});
+
+	// Headline policy violation split by behavior permissibility. Each bucket holds one
+	// Boolean per conversation - whether any relevant behavior of that permissibility was
+	// violated - so a conversation with no relevant behavior in a bucket is not applicable
+	// there rather than counted as a pass. Both buckets are null only when the run has no
+	// behavior taxonomy at all, in which case the split cannot be computed.
+	let activeMetricView = $derived(activeTab === 'audit' ? data.auditMetrics : data.metrics);
+	let headlineSplitCards = $derived(
+		[
+			{
+				key: POLICY_VIOLATION_NOT_PERMISSIBLE,
+				bucketLabel: 'impermissible',
+				summary: activeMetricView?.policyViolationOnNotPermissible ?? null
+			},
+			{
+				key: POLICY_VIOLATION_PERMISSIBLE,
+				bucketLabel: 'permissible',
+				summary: activeMetricView?.policyViolationOnPermissible ?? null
+			}
+		]
+			.filter((card) => card.summary !== null)
+			.map((card) => ({
+				...card,
+				name: metricTitleLabel(card.key),
+				description: data.dimensionDefs?.[card.key]?.description ?? ''
+			}))
+	);
+	let hasPermissibilitySplit = $derived(headlineSplitCards.length > 0);
 	let combinedOutcomePanelOpen = $state(true);
 	let combinedOutcomeId = $state('');
 	let combinedOutcomeOptions = $derived(
@@ -695,8 +730,8 @@
 		expandedAuditBehavior = null;
 		promptGroupBy = 'none';
 		auditGroupBy = 'none';
-		promptSortMetric = 'policy_violation';
-		auditSortMetric = 'policy_violation';
+		promptSortMetric = untrack(() => primaryMetric);
+		auditSortMetric = untrack(() => primaryAuditMetric);
 		promptSearchQuery = '';
 		auditSearchQuery = '';
 		runMetaOpen = false;
@@ -977,7 +1012,7 @@
 		</p>
 	</div>
 {:else}
-	{@const allRunMetrics = combinedMetricNames.map((dim) => ({ key: dim, name: metricLabel(dim), summary: combinedDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
+	{@const allRunMetrics = combinedMetricNames.map((dim) => ({ key: dim, name: metricTitleLabel(dim), summary: combinedDimensions[dim], description: data.dimensionDefs?.[dim]?.description ?? '' }))}
 	<div class="mb-4 border-b border-border pb-2">
 		<div class="flex items-center gap-3">
 			<h2 class="min-w-0 flex-1 truncate text-lg font-semibold text-text">Evaluation summary</h2>
@@ -986,72 +1021,113 @@
 				<a class="inline-flex items-center rounded border border-border bg-surface px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-2" href="/suite/{data.suite_id}/{data.run_id}/export" target="_blank" rel="noopener" title="Open standalone HTML export">Export HTML</a>
 			</div>
 		</div>
-		<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Headline outcome for {activeTab === 'audit' ? 'conversations' : 'prompts'} in this run. Detailed dimension breakdowns are shown below.</p>
+		<p class="mt-1 line-clamp-2 text-sm leading-5 text-text-muted">Headline {hasPermissibilitySplit ? 'behavior violation outcomes' : 'outcome'} for {activeTab === 'audit' ? 'conversations' : 'prompts'} in this run{hasPermissibilitySplit ? ', split by behavior permissibility' : ''}. Detailed dimension breakdowns are shown below.</p>
 	</div>
-	{@const headlineMetric = allRunMetrics.find((m) => m.key === 'policy_violation') ?? allRunMetrics[0]}
-	{#if headlineMetric}
-		{@const pct = binaryBar(headlineMetric.summary?.counts ?? { 0: 0, 1: 0 })}
-		{@const total = headlineMetric.summary?.count ?? 0}
-		{@const flagged = headlineMetric.summary?.flagged_count ?? 0}
-		{@const passed = headlineMetric.summary?.clear_count ?? 0}
-		{@const failureCount = activeTab === 'audit' ? auditJudgeFailures + auditRefusedCount + auditErroredCount : promptJudgeFailures}
-		{@const notApplicable = headlineMetric.summary?.not_applicable_count ?? 0}
-		{@const distributionTotal = total + notApplicable + failureCount}
-		{@const notGraded = notApplicable + failureCount}
-		{@const notGradedPercent = distributionTotal > 0 ? (notGraded / distributionTotal) * 100 : 0}
-		<div class="mb-8 rounded-lg border border-border bg-surface px-5 py-4">
-			<div class="flex items-start justify-between gap-3">
-				<div>
-					<h3 class="!text-[16px] !font-medium text-text">{headlineMetric.name.charAt(0).toUpperCase() + headlineMetric.name.slice(1).toLowerCase()}</h3>
-					{#if headlineMetric.description}
-						<ExpandableText text={headlineMetric.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
+	{#if hasPermissibilitySplit}
+		<div class="mb-8 grid gap-4 sm:grid-cols-2">
+			{#each headlineSplitCards as card (card.key)}
+				{@const pct = binaryBar(card.summary?.counts ?? { 0: 0, 1: 0 })}
+				{@const total = card.summary?.count ?? 0}
+				{@const flagged = card.summary?.flagged_count ?? 0}
+				{@const passed = card.summary?.clear_count ?? 0}
+				{@const notApplicable = card.summary?.not_applicable_count ?? 0}
+				<div class="rounded-lg border border-border bg-surface px-5 py-4">
+					<div class="flex items-start justify-between gap-3">
+						<div>
+							<h3 class="!text-[16px] !font-medium text-text">{card.name}</h3>
+							<ExpandableText text={card.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
+						</div>
+						<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{total} {activeTab === 'audit' ? 'conversations' : 'prompts'}</span>
+					</div>
+					<div class="mt-3 flex items-baseline gap-1.5">
+						<span class="text-3xl font-bold tabular-nums {metricRateClass(card.summary?.rate ?? null)}">{metricRateText(card.summary?.rate ?? null)}</span>
+						<span class="text-sm text-text-muted">Flagged</span>
+					</div>
+					{#if total > 0}
+						<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+							{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+							{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+						</div>
+						<div class="mt-1 flex justify-between text-[12px] tabular-nums text-text-muted">
+							<span>{flagged}/{total} Flagged</span>
+							<span>{passed}/{total} Pass</span>
+						</div>
+						{#if notApplicable > 0}
+							<div class="mt-1.5 text-[11px] text-text-muted">{notApplicable} not applicable — no relevant {card.bucketLabel} behavior.</div>
+						{/if}
+					{:else}
+						<div class="mt-2 text-[12px] text-text-muted">No {activeTab === 'audit' ? 'conversation' : 'prompt'} had a relevant {card.bucketLabel} behavior.</div>
 					{/if}
 				</div>
-				<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{headlineMetric.summary?.kind === 'ordinal' ? distributionTotal : total} {activeTab === 'audit' ? 'conversations' : 'prompts'}</span>
-			</div>
-			{#if headlineMetric.summary?.kind === 'ordinal' && headlineMetric.summary.scale}
-				<div class="mt-3 flex items-baseline gap-2">
-					<span class="text-3xl font-bold tabular-nums text-text">{headlineMetric.summary.median ?? 'N/A'}</span>
-					<span class="text-sm text-text-muted">Median grade</span>
-				</div>
-				<div class="mt-3 space-y-2">
-					{#each headlineMetric.summary.scale.values as grade}
-						{@const count = ordinalCount(headlineMetric.summary, grade.value)}
-						{@const percent = distributionTotal > 0 ? (count / distributionTotal) * 100 : 0}
-						<div class="grid grid-cols-[minmax(0,1fr)_minmax(100px,2fr)_auto] items-center gap-3 text-[12px]">
-							<span class="truncate text-text-secondary"><strong>{grade.value}</strong> · {grade.label}</span>
-							<div class="h-2 overflow-hidden rounded-full bg-border/50">
-								<div class="h-full rounded-full" style="width: {percent}%; background: var(--theme-accent-fg, #0969da)"></div>
-							</div>
-							<span class="tabular-nums text-text-muted">{count}/{distributionTotal} ({percent.toFixed(0)}%)</span>
-						</div>
-					{/each}
-					<div class="grid grid-cols-[minmax(0,1fr)_minmax(100px,2fr)_auto] items-center gap-3 border-t border-border/50 pt-2 text-[12px]">
-						<span class="text-text-secondary"><strong>Not graded</strong> · {notApplicable} N/A, {failureCount} failed</span>
-						<div class="h-2 overflow-hidden rounded-full bg-border/50">
-							<div class="h-full rounded-full bg-text-muted" style="width: {notGradedPercent}%"></div>
-						</div>
-						<span class="tabular-nums text-text-muted">{notGraded}/{distributionTotal} ({notGradedPercent.toFixed(0)}%)</span>
-					</div>
-				</div>
-				<div class="mt-3 text-[11px] text-text-muted">Grade percentages use all test cases. N/A and failures remain separate in the not-graded breakdown.</div>
-			{:else}
-				<div class="mt-3 flex items-baseline gap-1.5">
-					<span class="text-3xl font-bold tabular-nums {metricRateClass(headlineMetric.summary?.rate ?? null)}">{metricRateText(headlineMetric.summary?.rate ?? null)}</span>
-					<span class="text-sm text-text-muted">Flagged</span>
-				</div>
-				{#if total > 0}
-					<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
-						{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
-						{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
-					</div>
-					<div class="mt-1 flex justify-between text-[12px] tabular-nums text-text-muted">
-						<span>{flagged}/{total} Flagged</span>
-						<span>{passed}/{total} Pass</span>
-					</div>
-				{/if}
-			{/if}
+			{/each}
 		</div>
+	{:else}
+		{@const headlineMetric = allRunMetrics.find((m) => m.key === 'policy_violation') ?? allRunMetrics[0]}
+		{#if headlineMetric}
+			{@const pct = binaryBar(headlineMetric.summary?.counts ?? { 0: 0, 1: 0 })}
+			{@const total = headlineMetric.summary?.count ?? 0}
+			{@const flagged = headlineMetric.summary?.flagged_count ?? 0}
+			{@const passed = headlineMetric.summary?.clear_count ?? 0}
+			{@const failureCount = activeTab === 'audit' ? auditJudgeFailures + auditRefusedCount + auditErroredCount : promptJudgeFailures}
+			{@const notApplicable = headlineMetric.summary?.not_applicable_count ?? 0}
+			{@const distributionTotal = total + notApplicable + failureCount}
+			{@const notGraded = notApplicable + failureCount}
+			{@const notGradedPercent = distributionTotal > 0 ? (notGraded / distributionTotal) * 100 : 0}
+			<div class="mb-8 rounded-lg border border-border bg-surface px-5 py-4">
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<h3 class="!text-[16px] !font-medium text-text">{headlineMetric.name}</h3>
+						{#if headlineMetric.description}
+							<ExpandableText text={headlineMetric.description} class="mt-0.5 !text-[11px] leading-snug text-text-muted" />
+						{/if}
+					</div>
+					<span class="shrink-0 text-[12px] text-text-muted tabular-nums">{headlineMetric.summary?.kind === 'ordinal' ? distributionTotal : total} {activeTab === 'audit' ? 'conversations' : 'prompts'}</span>
+				</div>
+				{#if headlineMetric.summary?.kind === 'ordinal' && headlineMetric.summary.scale}
+					<div class="mt-3 flex items-baseline gap-2">
+						<span class="text-3xl font-bold tabular-nums text-text">{headlineMetric.summary.median ?? 'N/A'}</span>
+						<span class="text-sm text-text-muted">Median grade</span>
+					</div>
+					<div class="mt-3 space-y-2">
+						{#each headlineMetric.summary.scale.values as grade}
+							{@const count = ordinalCount(headlineMetric.summary, grade.value)}
+							{@const percent = distributionTotal > 0 ? (count / distributionTotal) * 100 : 0}
+							<div class="grid grid-cols-[minmax(0,1fr)_minmax(100px,2fr)_auto] items-center gap-3 text-[12px]">
+								<span class="truncate text-text-secondary"><strong>{grade.value}</strong> · {grade.label}</span>
+								<div class="h-2 overflow-hidden rounded-full bg-border/50">
+									<div class="h-full rounded-full" style="width: {percent}%; background: var(--theme-accent-fg, #0969da)"></div>
+								</div>
+								<span class="tabular-nums text-text-muted">{count}/{distributionTotal} ({percent.toFixed(0)}%)</span>
+							</div>
+						{/each}
+						<div class="grid grid-cols-[minmax(0,1fr)_minmax(100px,2fr)_auto] items-center gap-3 border-t border-border/50 pt-2 text-[12px]">
+							<span class="text-text-secondary"><strong>Not graded</strong> · {notApplicable} N/A, {failureCount} failed</span>
+							<div class="h-2 overflow-hidden rounded-full bg-border/50">
+								<div class="h-full rounded-full bg-text-muted" style="width: {notGradedPercent}%"></div>
+							</div>
+							<span class="tabular-nums text-text-muted">{notGraded}/{distributionTotal} ({notGradedPercent.toFixed(0)}%)</span>
+						</div>
+					</div>
+					<div class="mt-3 text-[11px] text-text-muted">Grade percentages use all test cases. N/A and failures remain separate in the not-graded breakdown.</div>
+				{:else}
+					<div class="mt-3 flex items-baseline gap-1.5">
+						<span class="text-3xl font-bold tabular-nums {metricRateClass(headlineMetric.summary?.rate ?? null)}">{metricRateText(headlineMetric.summary?.rate ?? null)}</span>
+						<span class="text-sm text-text-muted">Flagged</span>
+					</div>
+					{#if total > 0}
+						<div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-border/50">
+							{#if pct.clear > 0}<div class="bg-score-pass" style="width: {pct.clear}%"></div>{/if}
+							{#if pct.flagged > 0}<div class="bg-score-fail" style="width: {pct.flagged}%"></div>{/if}
+						</div>
+						<div class="mt-1 flex justify-between text-[12px] tabular-nums text-text-muted">
+							<span>{flagged}/{total} Flagged</span>
+							<span>{passed}/{total} Pass</span>
+						</div>
+					{/if}
+				{/if}
+				<div class="mt-3 border-t border-border/50 pt-2 text-[11px] text-text-muted">This run has no behavior taxonomy, so behavior violations cannot be split into permissible and impermissible behaviors.</div>
+			</div>
+		{/if}
 	{/if}
 
 	{#if (activeTab === 'prompts' && promptJudgeFailures > 0) || (activeTab === 'audit' && (auditJudgeFailures > 0 || auditRefusedCount > 0 || auditErroredCount > 0))}
@@ -1169,7 +1245,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={metricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						options={metricNames.map(m => ({ value: m, label: metricTitleLabel(m) }))}
 						selected={promptSortMetric}
 						onSelect={(v) => promptSortMetric = v}
 					/>
@@ -1198,7 +1274,7 @@
 							<span class="flex">
 								{#if behaviorPermissibleMap[group.key] !== undefined}
 									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
-										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'impermissible'}
 									</span>
 								{:else}
 									<span class="text-[10px] text-text-muted">—</span>
@@ -1208,7 +1284,7 @@
 								{#each metricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
-										<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title={m.replace(/_/g, ' ')}>
+										<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title={metricLabel(m)}>
 											<span class="text-text-muted">{metricLabel(m)}</span>
 											<span class="font-semibold tabular-nums {metricRateClass(a)}">{metricRateText(a)}</span>
 										</span>
@@ -1396,7 +1472,7 @@
 					<PrimerDropdown
 						label=""
 						ariaLabel="Filter by metric"
-						options={auditMetricNames.map(m => ({ value: m, label: metricLabel(m).charAt(0).toUpperCase() + metricLabel(m).slice(1).toLowerCase() }))}
+						options={auditMetricNames.map(m => ({ value: m, label: metricTitleLabel(m) }))}
 						selected={auditSortMetric}
 						onSelect={(v) => auditSortMetric = v}
 					/>
@@ -1424,7 +1500,7 @@
 							<span class="flex">
 								{#if behaviorPermissibleMap[group.key] !== undefined}
 									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium {behaviorPermissibleMap[group.key] ? 'bg-interactive/15 text-interactive' : 'bg-score-fail/15 text-score-fail'}">
-										{behaviorPermissibleMap[group.key] ? 'permissible' : 'not permissible'}
+										{behaviorPermissibleMap[group.key] ? 'permissible' : 'impermissible'}
 									</span>
 								{:else}
 									<span class="text-[10px] text-text-muted">—</span>
@@ -1434,7 +1510,7 @@
 								{#each auditMetricNames as m}
 									{#if group.avgs[m] !== undefined}
 										{@const a = group.avgs[m]}
-										<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title={m.replace(/_/g, ' ')}>
+										<span class="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px]" title={metricLabel(m)}>
 											<span class="text-text-muted">{metricLabel(m)}</span>
 											<span class="font-semibold tabular-nums {metricRateClass(a)}">{metricRateText(a)}</span>
 										</span>
@@ -1676,6 +1752,7 @@
 		metricNames={drawerMetricNames}
 		primaryMetric={drawerPrimaryMetric}
 		requiredBaseMetrics={requiredBaseMetrics}
+		behaviorPermissible={behaviorPermissibleMap}
 		navIdx={drawerNavIdx}
 		navTotal={drawerNavTotal}
 		onClose={closeActiveDrawer}
