@@ -12,11 +12,7 @@ FIXTURE = EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
 LABELS = EXAMPLE / "fixtures" / "coercion_powered_120_labels.json"
 RESULTS = EXAMPLE / "fixtures" / "coercion_powered_120_results.json"
 EXPECTED_SHA256 = "1f314b96e5ea372787e9b0481990a33ce45c920f74f63eb9cf70238d773260d3"
-CONFIGS = (
-    EXAMPLE / "eval_coercion_authority.yaml",
-    EXAMPLE / "eval_coercion_arm2_hardened.yaml",
-    EXAMPLE / "eval_coercion_arm3_acs.yaml",
-)
+CONFIG = EXAMPLE / "eval_coercion_authority.yaml"
 
 
 def test_powered_fixture_hash_and_balance() -> None:
@@ -38,14 +34,25 @@ def test_powered_fixture_hash_and_balance() -> None:
     }
 
 
-def test_all_arms_use_the_same_frozen_suite() -> None:
-    for path in CONFIGS:
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert config["suite"] == "bank-manager-coercion-powered-120"
-        test_set = config["pipeline"]["test_set"]
-        assert test_set["enabled"] is False
-        assert test_set["prompt"]["sample_size"] == 120
-        assert "scenario" not in test_set
+def test_all_arms_use_one_config_and_the_same_frozen_suite() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert config["suite"] == "bank-manager-coercion-powered-120"
+    test_set = config["pipeline"]["test_set"]
+    assert test_set["enabled"] is False
+    assert test_set["prompt"]["sample_size"] == 120
+    assert "scenario" not in test_set
+    assert not (EXAMPLE / "eval_coercion_arm2_hardened.yaml").exists()
+    assert not (EXAMPLE / "eval_coercion_arm3_acs.yaml").exists()
+
+
+def test_all_three_coercion_targets_exist() -> None:
+    source = (EXAMPLE / "coercion_agent.py").read_text(encoding="utf-8")
+    for callable_name in (
+        "chat_coercion_baseline",
+        "chat_coercion_hardened_prompt",
+        "chat_coercion_acs_classifier",
+    ):
+        assert f"def {callable_name}(" in source
 
 
 def test_published_result_summary_matches_blog_claims() -> None:

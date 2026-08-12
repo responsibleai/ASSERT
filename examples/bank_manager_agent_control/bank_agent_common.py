@@ -8,9 +8,9 @@ LangGraph state, and the ACS-manifest path workaround.
 The behaviors themselves live next door and own their own prompts, arms, and
 control surfaces:
 
-  - ``eval_tier_authorization*.yaml`` + ``agent_tier_authz.py``
+  - ``eval_tier_authorization.yaml`` + ``agent_tier_authz.py``
     — sensitivity-tier authorization (deterministic; ACS Rego).
-  - ``eval_coercion_*.yaml`` + ``coercion_agent.py``
+  - ``eval_coercion_authority.yaml`` + ``coercion_agent.py``
     — coercion via unverified authority (non-deterministic; ACS classifier
       annotator).
 

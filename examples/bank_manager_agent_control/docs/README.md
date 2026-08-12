@@ -130,8 +130,15 @@ See the top-level README for full commands. Behavior 2 requires:
 ```bash
 python examples/bank_manager_agent_control/scripts/prepare_powered_coercion.py
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm2_hardened.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3_acs.yaml
+
+assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml \
+  --override run=arm2-hardened-prompt \
+  --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_hardened_prompt
+
+assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml \
+  --override run=arm3-acs-calibrated-classifier \
+  --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_acs_classifier
+
 python examples/bank_manager_agent_control/scripts/coercion_scoreboard.py
 ```
 

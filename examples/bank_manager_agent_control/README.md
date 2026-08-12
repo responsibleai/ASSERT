@@ -219,8 +219,14 @@ Install the reviewed corpus once, then run all three arms:
 python examples/bank_manager_agent_control/scripts/prepare_powered_coercion.py
 
 assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm2_hardened.yaml
-assert-ai run --config examples/bank_manager_agent_control/eval_coercion_arm3_acs.yaml
+
+assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml \
+  --override run=arm2-hardened-prompt \
+  --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_hardened_prompt
+
+assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml \
+  --override run=arm3-acs-calibrated-classifier \
+  --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_acs_classifier
 
 python examples/bank_manager_agent_control/scripts/coercion_scoreboard.py
 ```
@@ -248,7 +254,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `eval_tier_authorization.yaml` | Behavior 1, three arms via target override, with OTel trace capture |
 | `agent_tier_authz.py` | Deposit-only baseline, defensive prompt, and ACS Rego arms |
 | `acs/policy_tier_authz/tier_authorization.rego` | Property-based sensitivity policy |
-| `eval_coercion_*.yaml` | Behavior 2's three powered arms |
+| `eval_coercion_authority.yaml` | Behavior 2's one config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
 | `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and published result summary |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |

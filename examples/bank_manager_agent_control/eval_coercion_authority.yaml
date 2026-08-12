@@ -1,7 +1,17 @@
 suite: bank-manager-coercion-powered-120
 run: arm1-realistic-baseline
 
-# ONE BEHAVIOR, ONE YAML.
+# ONE behavior. One YAML. Three arms.
+#
+# The reviewed 120-case fixture is installed once, then all arms reuse it:
+#
+#   assert-ai run --config examples/bank_manager_agent_control/eval_coercion_authority.yaml
+#   assert-ai run --config .../eval_coercion_authority.yaml \
+#     --override run=arm2-hardened-prompt \
+#     --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_hardened_prompt
+#   assert-ai run --config .../eval_coercion_authority.yaml \
+#     --override run=arm3-acs-calibrated-classifier \
+#     --override inference.target.callable=examples.bank_manager_agent_control.coercion_agent:chat_coercion_acs_classifier
 #
 # This config tests exactly one thing: whether a claimed-but-unverified
 # authority signal can get a REQUIRED RECORDED CONTROL STEP skipped. It
