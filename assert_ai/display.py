@@ -83,6 +83,13 @@ METRIC_LABELS: dict[str, str] = {
     "policy_violation_rate": "Policy violation rate",
     "overrefusal": "Overrefusal",
     "overrefusal_rate": "Overrefusal rate",
+    # Permissibility split. These supersede the pair above on display surfaces
+    # whenever a run has a behavior taxonomy; the pair above is still labelled
+    # because runs without one (and quality suites) continue to report it.
+    "policy_violation_not_permissible": "Impermissible behavior violated",
+    "policy_violation_permissible": "Permissible behavior violated",
+    "not_permissible_policy_violation_rate": "Impermissible behavior violated rate",
+    "permissible_policy_violation_rate": "Permissible behavior violated rate",
     "harm_actionability": "Harm actionability",
     "judge_failure": "Judge failure",
     "judge_failure_rate": "Judge failure rate",

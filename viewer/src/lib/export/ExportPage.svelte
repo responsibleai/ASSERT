@@ -21,6 +21,8 @@
 		multiJudgeHasDisagreement,
 		multiJudgeMeanAgreement
 	} from '$lib/judgment.js';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { visibleMetricNames } from '$lib/permissibility.js';
 	import ExportSeedDetail from './ExportSeedDetail.svelte';
 
 	type MetricSummary = DimensionMetrics;
@@ -88,7 +90,7 @@
 	}
 
 	function metricLabel(metric: string): string {
-		return metric.replace(/_/g, ' ');
+		return metricTitleLabel(metric);
 	}
 	function metricOutcomeText(flag: boolean | number | string | null): string {
 		if (flag === null) return 'n/a';
@@ -155,8 +157,8 @@
 
 	const promptDimensionNames = $derived(Object.keys(data.metrics?.dimensions ?? {}));
 	const auditDimensionNames = $derived(Object.keys(data.auditMetrics?.dimensions ?? {}));
-	const promptMetricNames = $derived(promptDimensionNames);
-	const auditMetricNames = $derived(auditDimensionNames);
+	const promptMetricNames = $derived(visibleMetricNames(promptDimensionNames));
+	const auditMetricNames = $derived(visibleMetricNames(auditDimensionNames));
 	const promptPrimaryMetric = $derived(promptMetricNames[0] ?? 'policy_violation');
 	const auditPrimaryMetric = $derived(auditMetricNames[0] ?? 'policy_violation');
 
@@ -171,7 +173,7 @@
 	const promptMetricCards = $derived(
 		promptMetricNames.map((dim) => ({
 			key: dim,
-			name: metricLabel(dim),
+			name: metricTitleLabel(dim),
 			summary: data.metrics?.dimensions?.[dim],
 			description: data.dimensionDefs?.[dim]?.description ?? ''
 		}))
@@ -179,7 +181,7 @@
 	const auditMetricCards = $derived(
 		auditMetricNames.map((dim) => ({
 			key: dim,
-			name: metricLabel(dim),
+			name: metricTitleLabel(dim),
 			summary: data.auditMetrics?.dimensions?.[dim],
 			description: data.dimensionDefs?.[dim]?.description ?? ''
 		}))

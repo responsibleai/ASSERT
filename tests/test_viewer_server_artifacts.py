@@ -21,6 +21,7 @@ DIMENSIONS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "dimensions.ts"
 ARTIFACTS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "artifacts.ts"
 CONFIG_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "config.ts"
 JUDGMENT_SRC = ROOT / "viewer" / "src" / "lib" / "judgment.ts"
+PERMISSIBILITY_SRC = ROOT / "viewer" / "src" / "lib" / "permissibility.ts"
 RESULT_VIEW_SRC = ROOT / "viewer" / "src" / "lib" / "result-view.ts"
 TYPES_SRC = ROOT / "viewer" / "src" / "lib" / "types.ts"
 
@@ -34,6 +35,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         artifacts_path = harness_dir / "artifacts.ts"
         config_path = harness_dir / "config.ts"
         judgment_path = harness_dir / "judgment.ts"
+        permissibility_path = harness_dir / "permissibility.ts"
         result_view_path = harness_dir / "result-view.ts"
         types_path = harness_dir / "types.ts"
 
@@ -45,11 +47,13 @@ class ViewerServerArtifactsTest(unittest.TestCase):
             .replace("./artifacts.js", "./artifacts.ts")
             .replace("./metrics.js", "./metrics.ts")
             .replace("$lib/judgment.js", "./judgment.ts")
+            .replace("$lib/permissibility.js", "./permissibility.ts")
             .replace("$lib/result-view.js", "./result-view.ts")
         )
         metrics_source = (
             METRICS_SRC.read_text(encoding="utf-8")
             .replace("$lib/judgment.js", "./judgment.ts")
+            .replace("$lib/permissibility.js", "./permissibility.ts")
             .replace("./dimensions.js", "./dimensions.ts")
             .replace("$lib/types.js", "./types.ts")
         )
@@ -66,6 +70,11 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         judgment_source = JUDGMENT_SRC.read_text(encoding="utf-8").replace(
             "./types.js", "./types.ts"
         )
+        permissibility_source = (
+            PERMISSIBILITY_SRC.read_text(encoding="utf-8")
+            .replace("./judgment.js", "./judgment.ts")
+            .replace("./types.js", "./types.ts")
+        )
         result_view_source = RESULT_VIEW_SRC.read_text(encoding="utf-8").replace(
             "$lib/types.js", "./types.ts"
         )
@@ -76,6 +85,7 @@ class ViewerServerArtifactsTest(unittest.TestCase):
         artifacts_path.write_text(artifacts_source, encoding="utf-8")
         shutil.copyfile(CONFIG_SRC, config_path)
         judgment_path.write_text(judgment_source, encoding="utf-8")
+        permissibility_path.write_text(permissibility_source, encoding="utf-8")
         result_view_path.write_text(result_view_source, encoding="utf-8")
         shutil.copyfile(TYPES_SRC, types_path)
         return data_path

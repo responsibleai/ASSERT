@@ -7,6 +7,10 @@
  */
 
 import { getVerdictFlag, scoreSortValue } from './judgment.js';
+import {
+	POLICY_VIOLATION_NOT_PERMISSIBLE,
+	POLICY_VIOLATION_PERMISSIBLE
+} from './permissibility.js';
 import type { AuditScore, JudgedSample, GroupAxis, GroupContext, GroupEntry, NodeJudgment } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -185,12 +189,19 @@ export function groupByAxis<T extends { verdict?: Record<string, unknown> | null
 		return {
 			key,
 			label: key,
-			items: [...g.items].sort(
-				(a, b) => {
-					return scoreSortValue(a as { verdict?: Record<string, unknown> | null }, 'policy_violation')
-						- scoreSortValue(b as { verdict?: Record<string, unknown> | null }, 'policy_violation');
-				}
-			),
+			items: [...g.items].sort((a, b) => {
+				const left = a as { verdict?: Record<string, unknown> | null };
+				const right = b as { verdict?: Record<string, unknown> | null };
+				// Tracked headline pair leads; policy_violation breaks ties so rows that
+				// are not applicable to either bucket still sort deterministically.
+				return (
+					scoreSortValue(left, POLICY_VIOLATION_NOT_PERMISSIBLE) -
+						scoreSortValue(right, POLICY_VIOLATION_NOT_PERMISSIBLE) ||
+					scoreSortValue(left, POLICY_VIOLATION_PERMISSIBLE) -
+						scoreSortValue(right, POLICY_VIOLATION_PERMISSIBLE) ||
+					scoreSortValue(left, 'policy_violation') - scoreSortValue(right, 'policy_violation')
+				);
+			}),
 			avgs,
 			total: g.items.length,
 		};

@@ -5,6 +5,7 @@
  * CSV serialization helpers — RFC 4180 compliant, zero dependencies.
  */
 
+import { metricSortRank } from '$lib/permissibility.js';
 import type { AuditTranscript, InteractionMessage } from '$lib/types.js';
 
 const FORMULA_PREFIXES = new Set(['=', '+', '-', '@', '\t', '|']);
@@ -62,9 +63,8 @@ export function detectJudgeDimensions(
 		}
 	}
 	return [...dims].sort((left, right) => {
-		if (left === 'policy_violation') return -1;
-		if (right === 'policy_violation') return 1;
-		return left.localeCompare(right);
+		const priority = metricSortRank(left) - metricSortRank(right);
+		return priority !== 0 ? priority : left.localeCompare(right);
 	});
 }
 
