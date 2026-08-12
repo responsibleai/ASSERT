@@ -125,10 +125,12 @@ def _config_fingerprint(
     target: TargetConfig,
     evaluation: EvaluationConfig,
 ) -> str:
+    runtime = asdict(evaluation.inference)
+    runtime["concurrency"] = 1
     payload = {
         "attacks_sha256": hashlib.sha256(attacks_path.read_bytes()).hexdigest(),
         "target": asdict(target),
-        "runtime": asdict(evaluation.inference),
+        "runtime": runtime,
         "pyrit_version": PYRIT_VERSION,
     }
     return hashlib.sha256(

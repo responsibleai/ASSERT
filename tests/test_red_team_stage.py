@@ -38,10 +38,12 @@ from assert_ai.core.transcript import (
     TranscriptMetadata,
 )
 from assert_ai.init._validate import validate_raw_config
+from assert_ai.runner import _copy_run_config
 from assert_ai.stages import STAGES
 from assert_ai.stages.red_team import (
     ExecutedAttack,
     TargetObservation,
+    _config_fingerprint,
     _finding_evidence,
     _sink_evidence_error,
     _validate_evidence_capability,
@@ -450,6 +452,58 @@ class RedTeamPlanTest(unittest.TestCase):
 
 
 class RedTeamStageTest(unittest.TestCase):
+    def test_runner_preserves_pinned_red_team_config_before_preflight(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source = root / "source.yaml"
+            source.write_text("suite: changed\n", encoding="utf-8")
+            run_root = root / "results" / "suite" / "run"
+            run_root.mkdir(parents=True)
+            saved = run_root / "config.yaml"
+            saved.write_text("suite: pinned\n", encoding="utf-8")
+
+            _copy_run_config(
+                {
+                    "config_path": source,
+                    "stages": [("red_team", {})],
+                },
+                run_root,
+            )
+            self.assertEqual(saved.read_text(encoding="utf-8"), "suite: pinned\n")
+
+            _copy_run_config(
+                {
+                    "config_path": source,
+                    "stages": [("inference", {})],
+                },
+                run_root,
+            )
+            self.assertEqual(saved.read_text(encoding="utf-8"), "suite: changed\n")
+
+    def test_red_team_fingerprint_ignores_inert_concurrency(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            attacks_path = Path(tmp_dir) / "attacks.yaml"
+            attacks_path.write_text(ATTACK_YAML, encoding="utf-8")
+            target = TargetConfig(
+                callable="target.module:chat",
+                trace=TraceConfig(),
+            )
+            first = _config_fingerprint(
+                attacks_path=attacks_path,
+                target=target,
+                evaluation=EvaluationConfig(
+                    inference=InferenceConfig(concurrency=1)
+                ),
+            )
+            second = _config_fingerprint(
+                attacks_path=attacks_path,
+                target=target,
+                evaluation=EvaluationConfig(
+                    inference=InferenceConfig(concurrency=8)
+                ),
+            )
+            self.assertEqual(first, second)
+
     def test_stage_snapshots_relative_attack_data_for_run_config(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

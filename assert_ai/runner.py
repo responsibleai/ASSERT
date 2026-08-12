@@ -177,6 +177,21 @@ def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: 
     )
 
 
+def _copy_run_config(ctx: dict[str, Any], run_root: Path) -> None:
+    config_path = ctx.get("config_path")
+    if config_path is None or not Path(config_path).is_file():
+        return
+    saved_config_path = run_root / "config.yaml"
+    red_team_enabled = any(
+        stage_name == "red_team" and stage_cfg.get("enabled", True)
+        for stage_name, stage_cfg in ctx.get("stages", [])
+    )
+    if red_team_enabled and saved_config_path.exists():
+        return
+    if Path(config_path).resolve() != saved_config_path.resolve():
+        shutil.copy2(config_path, saved_config_path)
+
+
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
     """Print a human-readable stage header."""
     tag = f"[{stage_name}]"
@@ -763,11 +778,7 @@ def run_pipeline(
     if selected_run_stage and run_root is not None:
         run_root.mkdir(parents=True, exist_ok=True)
         manifest = _build_manifest(ctx)
-        config_path = ctx.get("config_path")
-        if config_path is not None and Path(config_path).is_file():
-            saved_config_path = run_root / "config.yaml"
-            if Path(config_path).resolve() != saved_config_path.resolve():
-                shutil.copy2(config_path, saved_config_path)
+        _copy_run_config(ctx, run_root)
     failed_stage: str | None = None
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}
