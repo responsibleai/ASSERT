@@ -568,7 +568,7 @@ dev = [
 requires-dist = [
     { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
-    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0" },
+    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = "==15.3.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
     { name = "assert-ai", extras = ["otel", "langgraph", "analysis", "examples", "regression", "azure-aad", "acs"], marker = "extra == 'all'" },
     { name = "autogen-agentchat", marker = "extra == 'examples'", specifier = ">=0.7.5" },
@@ -1234,14 +1234,14 @@ name = "cohere"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastavro" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-core" },
-    { name = "requests" },
-    { name = "tokenizers" },
-    { name = "types-requests" },
-    { name = "typing-extensions" },
+    { name = "fastavro", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "httpx", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "pydantic", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "pydantic-core", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "requests", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "tokenizers", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "types-requests", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
+    { name = "typing-extensions", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/67/7aff8a870889ee931aa19e1deb138691e3cc909ee61e1daea86f3475a818/cohere-6.1.0.tar.gz", hash = "sha256:6a52bb459b71b5e79735412ee1a8e87028c5b3afba050c39815fe03c083249b3", size = 207302, upload-time = "2026-04-10T19:44:43.103Z" }
 wheels = [
@@ -7364,7 +7364,7 @@ name = "types-requests"
 version = "2.33.0.20260408"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "urllib3" },
+    { name = "urllib3", marker = "sys_platform != 'emscripten' or extra == 'extra-9-assert-ai-all' or extra != 'extra-9-assert-ai-dspy' or (extra == 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/69/6a/749dc53a54a3f35842c1f8197b3ca6b54af6d7458a1bfc75f6629b6da666/types_requests-2.33.0.20260408.tar.gz", hash = "sha256:95b9a86376807a216b2fb412b47617b202091c3ea7c078f47cc358d5528ccb7b", size = 23882, upload-time = "2026-04-08T04:34:49.33Z" }
 wheels = [

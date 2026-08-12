@@ -19,4 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pinned Phoenix to `15.3.0` so the supported Python 3.11 test environment can import its pytest plugin.
+
 [Unreleased]: https://github.com/responsibleai/ASSERT/commits/main
