@@ -2,38 +2,6 @@
 
 This is the recommended starting point for evaluating any agent or multi-agent system with ASSERT. It runs a real LangGraph travel planner through `target.callable` and `target.trace`, then uses Phoenix/OpenInference OpenTelemetry spans so the judge can inspect tool calls, routing, and intermediate decisions — not just the final response.
 
-## One behavior per config
-
-This example also demonstrates the config layout we recommend for CI gating.
-
-| Path | Behavior | Use |
-|---|---|---|
-| `eval_config.yaml` | `prompt_injection` | Quickstart — run this first |
-| `behaviors/tool-selection.yaml` | `incorrect_tool_selection_failures` | Full suite |
-| `behaviors/grounding.yaml` | `grounding_attribution_errors` | Full suite |
-| `behaviors/constraints.yaml` | `explicit_constraint_violation_failures` | Full suite |
-| `behaviors/verification.yaml` | `insufficient_verification_failures` | Full suite |
-| `behaviors/stereotyping.yaml` | `stereotyping` | Full suite |
-| `behaviors/sycophancy.yaml` | `sycophancy` | Full suite |
-
-Every file shares the same `context:` — the same application — and measures exactly **one** mechanism. That is what makes a verdict attributable: when the gate fails, you learn *which* mechanism regressed, not just that something did. Bundling all seven into one config would produce a single blended number nobody can act on. See [best practices §8.D](../../docs/config/best-practices.md).
-
-```bash
-# quickstart — one behavior
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
-
-# full suite — one run per behavior
-assert-ai run --config examples/travel_planner_langgraph/behaviors/grounding.yaml
-```
-
-In CI, gate on all of them at once:
-
-```yaml
-- uses: changliu2/assert-ai-action@v1
-  with:
-    configs: examples/travel_planner_langgraph/behaviors/*.yaml
-```
-
 ## Architecture
 
 `agent.py` builds a four-node LangGraph `StateGraph` and exposes `chat_sync(message)` as the callable entrypoint. `auto_trace.py` registers Phoenix auto-instrumentation before importing that entrypoint.
@@ -65,16 +33,16 @@ research -- optional ToolNode --> itinerary_optimizer -- good answer --> END
 
 ## Scenario
 
-The eval targets a travel planner that must produce grounded, constraint-respecting itineraries while staying safe under adversarial pressure. Each config in the table above tests exactly one mechanism against the same application; the table below breaks down `eval_config.yaml` (the quickstart, `prompt_injection`) as a representative example — every sibling config under `behaviors/` follows the same shape with a different `behavior.preset` and judge rubric.
+The eval targets a travel planner that must produce grounded, constraint-respecting itineraries while staying safe under adversarial pressure.
 
 | Config area | What this example probes |
 |---|---|
-| `behavior.preset` | `prompt_injection` — one atomic behavior; `behaviors/*.yaml` cover the other six (tool selection, grounding, constraints, verification, stereotyping, sycophancy). |
-| `context` | A LangGraph travel planner with flight, hotel, weather, advisory, and budget-validation tools. Shared verbatim across all seven configs. |
-| `pipeline.systematize` | Generates 4 `behavior_categories` from the single-behavior spec. |
+| `behavior.description` | Quality failures: wrong or missing tools, ignored budgets, fabricated flights/hotels/prices. Safety failures: stereotyping, tool-output prompt injection, and sycophantic agreement with bad plans. |
+| `context` | A LangGraph travel planner with flight, hotel, weather, advisory, and budget-validation tools. |
+| `pipeline.systematize` | Generates 6 `behavior_categories` from the behavior spec. |
 | `pipeline.test_set.stratify.dimensions` | Varies `traveler_type` and `trip_type`. |
 | `pipeline.inference` | Runs up to 6 turns against `examples.travel_planner_langgraph.auto_trace:chat_sync`. |
-| `pipeline.judge` | Scores `policy_violation` (custom rubric: did the assistant act on injected instructions) and `overrefusal`, via `safety-core`. |
+| `pipeline.judge` | Scores `policy_violation` and `overrefusal` with `safety-core` plus a stricter custom rubric. |
 
 ## Value-add
 

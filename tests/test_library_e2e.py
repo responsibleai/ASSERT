@@ -690,8 +690,8 @@ class ExampleConfigTest(unittest.TestCase):
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
         dims = ctx["evaluation"].judge.dimensions
         pv = next(d for d in dims if d["name"] == "policy_violation")
-        # The inline override has custom text for the atomic travel behavior.
-        self.assertIn("injected instructions", pv["description"])
+        # The inline override has custom text, not the preset default
+        self.assertIn("quality or safety failure", pv["description"])
 
 
 if __name__ == "__main__":
