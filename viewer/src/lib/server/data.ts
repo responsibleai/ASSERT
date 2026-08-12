@@ -1263,7 +1263,8 @@ async function loadSuiteHeavyData(
 
 		const hasPromptScores = promptScores.length > 0;
 		const hasAuditScores = auditScores.length > 0;
-		const hasScoreStage = manifest?.stages?.judge != null;
+		const hasScoreStage =
+			manifest?.stages?.judge != null || manifest?.stages?.red_team != null;
 		const behaviors = metricBehaviors(snapshot, runSnapshot.config, manifest?.artifact_versions ?? null);
 
 		const addedToRuns =

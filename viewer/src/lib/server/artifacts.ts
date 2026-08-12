@@ -246,7 +246,7 @@ function rebuildViewerInstruction(runDir: string): string {
 	});
 	const pipeline = readObject(config?.pipeline);
 	const stage = readObject(pipeline?.red_team) ? 'red_team' : 'judge';
-	return `Rebuild it by re-running ${stage} for this run: uv run assert-ai run --config ${configPath} --resume --force-stage ${stage}`;
+	return `Rebuild it by re-running ${stage} for this run: uv run assert-ai run --config ${configPath} --force-stage ${stage}`;
 }
 
 function validateViewerFileMetadata(

@@ -419,6 +419,7 @@ def _print_stage_done(
         new = s.get("new_count", count)
         findings = s.get("findings", 0)
         trajectory_only = s.get("trajectory_only_findings", 0)
+        skipped = s.get("skipped_count", 0)
         if cached and new:
             cache_extra = f" ({new} new, {cached} cached)"
         elif cached and not new:
@@ -431,6 +432,8 @@ def _print_stage_done(
                 f", {trajectory_only} trajectory-only "
                 f"finding{'s' if trajectory_only != 1 else ''}"
             )
+        if skipped:
+            extra += f", {skipped} unscored"
         log.info(
             f"{tag} \u2713 Completed {count} attacks{cache_extra}{extra} "
             f"({elapsed:.1f}s){suffix}"
@@ -761,7 +764,9 @@ def run_pipeline(
         manifest = _build_manifest(ctx)
         config_path = ctx.get("config_path")
         if config_path is not None and Path(config_path).is_file():
-            shutil.copy2(config_path, run_root / "config.yaml")
+            saved_config_path = run_root / "config.yaml"
+            if Path(config_path).resolve() != saved_config_path.resolve():
+                shutil.copy2(config_path, saved_config_path)
     failed_stage: str | None = None
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}

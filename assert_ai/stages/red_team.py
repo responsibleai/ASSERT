@@ -8,10 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import yaml
 
 from assert_ai.config import resolve_stage_paths
 from assert_ai.core.config_model import (
@@ -219,6 +222,19 @@ def _pyrit_score_value(result: Any | None) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _contains_text(value: Any, needle: str) -> bool:
+    if isinstance(value, str):
+        return needle in value.casefold()
+    if isinstance(value, dict):
+        return any(
+            _contains_text(key, needle) or _contains_text(item, needle)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_text(item, needle) for item in value)
+    return needle in str(value).casefold()
+
+
 def _finding_evidence(
     transcript: Transcript,
     *,
@@ -226,17 +242,6 @@ def _finding_evidence(
     outbound_sinks: tuple[OutboundSink, ...],
 ) -> tuple[bool, str | None, list[int]]:
     """Search target-visible output and outbound tool arguments for a canary."""
-    def contains_text(value: Any, needle: str) -> bool:
-        if isinstance(value, str):
-            return needle in value.casefold()
-        if isinstance(value, dict):
-            return any(
-                contains_text(key, needle) or contains_text(item, needle)
-                for key, item in value.items()
-            )
-        if isinstance(value, (list, tuple, set)):
-            return any(contains_text(item, needle) for item in value)
-        return needle in str(value).casefold()
 
     message_index_by_event = {
         int(message_id.removeprefix("event:")): index
@@ -272,7 +277,7 @@ def _finding_evidence(
             for sink in outbound_sinks:
                 if sink.tool_name != tool_name or sink.argument not in tool_args:
                     continue
-                if not contains_text(
+                if not _contains_text(
                     tool_args[sink.argument],
                     normalized_substring,
                 ):
@@ -292,11 +297,13 @@ def _finding_evidence(
     return False, None, []
 
 
-def _sink_configuration_error(
+def _sink_evidence_error(
     transcript: Transcript,
     *,
     outbound_sinks: tuple[OutboundSink, ...],
-) -> str | None:
+    substring: str,
+) -> tuple[str, bool] | None:
+    normalized_substring = substring.casefold()
     for event in transcript.events:
         edit = event.edit.model_dump()
         if edit.get("type") != "tool_call":
@@ -309,7 +316,25 @@ def _sink_configuration_error(
             if sink.tool_name == tool_name and sink.argument not in tool_args:
                 return (
                     f"Configured outbound sink {tool_name}.{sink.argument} was "
-                    f"observed as tool {tool_name}, but the argument was absent."
+                    f"observed as tool {tool_name}, but the argument was absent.",
+                    True,
+                )
+            if (
+                sink.tool_name == tool_name
+                and sink.argument in tool_args
+                and _contains_text(tool_args[sink.argument], normalized_substring)
+                and sink.result_contains is not None
+                and (
+                    not isinstance(edit.get("tool_result"), str)
+                    or sink.result_contains.casefold()
+                    not in str(edit.get("tool_result")).casefold()
+                )
+            ):
+                return (
+                    f"Outbound sink {tool_name}.{sink.argument} contained the "
+                    "scored value, but the tool result did not match the "
+                    "configured success marker.",
+                    False,
                 )
     return None
 
@@ -426,6 +451,8 @@ async def _execute_attacks(
             request = normalized_conversation[-1].get_piece()
             objective = str(request.original_value or request.converted_value or "")
             attack_definition = attack_by_objective[objective]
+            if auth_errors:
+                raise next(iter(auth_errors.values()))
             runtime = build_target_session(
                 target=self._target_config,
                 test_case_payload={
@@ -790,13 +817,14 @@ async def run_red_team(
                     "evidence could not be evaluated."
                 )
                 retryable = True
-            else:
-                scoring_error = _sink_configuration_error(
+            elif not policy_violation:
+                sink_error = _sink_evidence_error(
                     observation.transcript,
                     outbound_sinks=plan.outbound_sinks,
+                    substring=plan.scorer_value,
                 )
-                if scoring_error is not None:
-                    retryable = True
+                if sink_error is not None:
+                    scoring_error, retryable = sink_error
         else:
             policy_violation, evidence_surface, evidence_turns = False, None, []
             scoring_error = item.error or "Target execution did not produce an observation."
@@ -883,6 +911,15 @@ async def run_red_team(
         if row.get("judge_status") == "scoring_skipped"
         and ((((row.get("red_team") or {}).get("finding") or {}).get("retryable")))
     )
+    skipped = sum(
+        1
+        for row in final_scores
+        if row.get("judge_status") == "scoring_skipped"
+        and (
+            (((row.get("red_team") or {}).get("finding") or {}).get("retryable"))
+            is False
+        )
+    )
     trajectory_only_findings = sum(
         1
         for row in final_scores
@@ -904,6 +941,7 @@ async def run_red_team(
         "cached_count": len(completed_ids),
         "findings": findings,
         "errored_count": errors,
+        "skipped_count": skipped,
         "trajectory_only_findings": trajectory_only_findings,
     }
 
@@ -922,6 +960,31 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
     )
+    run_root = Path(ctx["run_root"]).resolve()
+    attack_snapshot_dir = run_root / ".red_team"
+    attack_snapshot_dir.mkdir(parents=True, exist_ok=True)
+    attack_snapshot_path = attack_snapshot_dir / Path(cfg["attacks_path"]).name
+    resolved_attacks_path = Path(cfg["attacks_path"]).resolve()
+    if resolved_attacks_path != attack_snapshot_path.resolve():
+        shutil.copy2(resolved_attacks_path, attack_snapshot_path)
+    saved_config_path = run_root / "config.yaml"
+    if saved_config_path.exists():
+        saved_config = yaml.safe_load(saved_config_path.read_text(encoding="utf-8"))
+        if isinstance(saved_config, dict):
+            saved_config["suite"] = ctx["suite_id"]
+            saved_config["run"] = ctx["run_id"]
+            saved_config["results_dir"] = str(ctx["results_dir"])
+            pipeline = saved_config.get("pipeline")
+            if isinstance(pipeline, dict):
+                red_team_config = dict(raw_cfg)
+                red_team_config["attacks_path"] = str(
+                    Path(".red_team") / attack_snapshot_path.name
+                )
+                pipeline["red_team"] = red_team_config
+                saved_config_path.write_text(
+                    yaml.safe_dump(saved_config, sort_keys=False),
+                    encoding="utf-8",
+                )
     result = await run_red_team(
         attacks_path=cfg["attacks_path"],
         save_dir=cfg["save_dir"],
@@ -943,6 +1006,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
                 "trajectory_only_findings",
                 0,
             ),
+            "skipped_count": result.get("skipped_count", 0),
             "errored_count": result.get("errored_count", 0),
         },
     }

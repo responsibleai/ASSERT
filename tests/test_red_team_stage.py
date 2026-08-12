@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import yaml
+
 from assert_ai.config import load_runtime_context, parse_pipeline_config
 from assert_ai.core.config_model import (
     EvaluationConfig,
@@ -41,8 +43,9 @@ from assert_ai.stages.red_team import (
     ExecutedAttack,
     TargetObservation,
     _finding_evidence,
-    _sink_configuration_error,
+    _sink_evidence_error,
     _validate_evidence_capability,
+    run as run_red_team_stage,
     run_red_team,
 )
 from assert_ai.viewer_read_model import _runtime_mode
@@ -281,8 +284,7 @@ class RedTeamPlanTest(unittest.TestCase):
             ),
             (False, None, []),
         )
-        transcript.events.insert(
-            1,
+        transcript.events[1:1] = [
             TranscriptEvent(
                 view=["target"],
                 actor="tool",
@@ -292,7 +294,16 @@ class RedTeamPlanTest(unittest.TestCase):
                     tool_result='{"status":"sent"}',
                 ),
             ),
-        )
+            TranscriptEvent(
+                view=["target"],
+                actor="tool",
+                edit=ToolCallEdit(
+                    tool_name="post",
+                    tool_args={"channel": "health"},
+                    tool_result='{"status":"sent"}',
+                ),
+            ),
+        ]
         self.assertEqual(
             _finding_evidence(
                 transcript,
@@ -383,16 +394,135 @@ class RedTeamPlanTest(unittest.TestCase):
                 )
             ],
         )
-        error = _sink_configuration_error(
+        error = _sink_evidence_error(
             transcript,
             outbound_sinks=(
                 OutboundSink(tool_name="post", argument="message"),
             ),
+            substring="ASSERT_CANARY_TEST",
         )
-        self.assertIn("argument was absent", error or "")
+        self.assertIn("argument was absent", error[0] if error else "")
+        self.assertTrue(error[1] if error else False)
+
+    def test_unconfirmed_sink_result_is_terminal_unscored_evidence(self) -> None:
+        transcript = Transcript(
+            metadata=TranscriptMetadata(
+                kind="prompt",
+                test_case_id="attack",
+                behavior="SensitiveDataLeakage",
+                target="target",
+                tester_model="",
+            ),
+            events=[
+                TranscriptEvent(
+                    view=["target"],
+                    actor="tool",
+                    edit=ToolCallEdit(
+                        tool_name="post",
+                        tool_args={"message": "ASSERT_CANARY_TEST"},
+                        tool_result='{"status":"error"}',
+                    ),
+                )
+            ],
+        )
+        error = _sink_evidence_error(
+            transcript,
+            outbound_sinks=(
+                OutboundSink(
+                    tool_name="post",
+                    argument="message",
+                    result_contains='"status":"sent"',
+                ),
+            ),
+            substring="ASSERT_CANARY_TEST",
+        )
+        self.assertIn("did not match", error[0] if error else "")
+        self.assertFalse(error[1] if error else True)
 
 
 class RedTeamStageTest(unittest.TestCase):
+    def test_stage_snapshots_relative_attack_data_for_run_config(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            attacks_path = config_dir / "attacks.yaml"
+            attacks_path.write_text(ATTACK_YAML, encoding="utf-8")
+            config_path = config_dir / "eval_config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "suite: suite",
+                        "run: run",
+                        "pipeline:",
+                        "  red_team:",
+                        "    attacks_path: attacks.yaml",
+                        "    target:",
+                        "      callable: target.module:chat",
+                        "      trace:",
+                        "        backend: otel",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            run_root = root / "results" / "suite" / "run"
+            run_root.mkdir(parents=True)
+            saved_config_path = run_root / "config.yaml"
+            saved_config_path.write_text(
+                config_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            context = {
+                "config_path": config_path,
+                "artifacts_root": root / "artifacts",
+                "results_dir": root / "results",
+                "suite_id": "suite-overridden",
+                "run_id": "run-overridden",
+                "suite_root": run_root.parent,
+                "run_root": run_root,
+                "target": TargetConfig(
+                    callable="target.module:chat",
+                    trace=TraceConfig(),
+                ),
+                "evaluation": EvaluationConfig(
+                    inference=InferenceConfig(concurrency=1)
+                ),
+            }
+
+            with patch(
+                "assert_ai.stages.red_team.run_red_team",
+                return_value={
+                    "inference_set_path": str(run_root / "inference_set.jsonl"),
+                    "scores_path": str(run_root / "scores.jsonl"),
+                    "count": 1,
+                    "new_count": 1,
+                    "cached_count": 0,
+                    "findings": 1,
+                    "trajectory_only_findings": 1,
+                    "skipped_count": 0,
+                    "errored_count": 0,
+                },
+            ):
+                asyncio.run(
+                    run_red_team_stage(
+                        context,
+                        {"attacks_path": "attacks.yaml"},
+                    )
+                )
+
+            snapshot = run_root / ".red_team" / "attacks.yaml"
+            self.assertEqual(snapshot.read_text(encoding="utf-8"), ATTACK_YAML)
+            saved_config = yaml.safe_load(
+                saved_config_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                saved_config["pipeline"]["red_team"]["attacks_path"],
+                ".red_team/attacks.yaml",
+            )
+            self.assertEqual(saved_config["suite"], "suite-overridden")
+            self.assertEqual(saved_config["run"], "run-overridden")
+            self.assertEqual(saved_config["results_dir"], str(root / "results"))
+
     def test_run_writes_native_findings_and_viewer_metadata(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -944,6 +1074,7 @@ class RedTeamStageTest(unittest.TestCase):
                 )
 
             self.assertEqual(first["errored_count"], 0)
+            self.assertEqual(first["skipped_count"], 1)
             self.assertEqual(second["cached_count"], 1)
             execute.assert_called_once()
             score = load_jsonl(run_root / "scores.jsonl")[0]
