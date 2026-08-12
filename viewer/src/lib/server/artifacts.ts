@@ -241,7 +241,12 @@ function runSeedRows(
 
 function rebuildViewerInstruction(runDir: string): string {
 	const configPath = path.resolve(runDir, RUN_CONFIG_FILE);
-	return `Rebuild it by re-running judge for this run: uv run assert-ai run --config ${configPath} --resume --force-stage judge`;
+	const config = readYamlFile<Record<string, unknown>>(configPath, {
+		missingOk: true
+	});
+	const pipeline = readObject(config?.pipeline);
+	const stage = readObject(pipeline?.red_team) ? 'red_team' : 'judge';
+	return `Rebuild it by re-running ${stage} for this run: uv run assert-ai run --config ${configPath} --resume --force-stage ${stage}`;
 }
 
 function validateViewerFileMetadata(
@@ -611,16 +616,22 @@ export function loadRunJudgeTaxonomyForRun(suiteId: string, runId: string): Taxo
 
 export function loadRunRuntimeMode(config: Record<string, unknown> | null): string | null {
 	const pipeline = readObject(config?.pipeline);
-	const inference = readObject(pipeline?.inference);
-	const redTeam = readObject(pipeline?.red_team);
-	const target = readObject(inference?.target) ?? readObject(redTeam?.target);
+	const inferenceRaw = readObject(pipeline?.inference);
+	const redTeamRaw = readObject(pipeline?.red_team);
+	const inference = inferenceRaw?.enabled === false ? null : inferenceRaw;
+	const redTeam = redTeamRaw?.enabled === false ? null : redTeamRaw;
+	const inferenceTarget = readObject(inference?.target);
+	const target = inferenceTarget ?? readObject(redTeam?.target);
+	const targetFromRedTeam = !inferenceTarget && Boolean(target);
 	const tools = readObject(target?.tools);
 
 	if (typeof target?.connector === 'string' && target.connector) return 'external';
-	if (typeof target?.callable === 'string' && target.callable) {
+	if (targetFromRedTeam && typeof target?.callable === 'string' && target.callable) {
 		return readObject(target.trace) ? 'otel_traced' : 'callable';
 	}
-	if (typeof target?.endpoint === 'string' && target.endpoint) return 'http_endpoint';
+	if (targetFromRedTeam && typeof target?.endpoint === 'string' && target.endpoint) {
+		return 'http_endpoint';
+	}
 	if (typeof tools?.module === 'string' && tools.module) return 'tool_module';
 	if (typeof tools?.toolset === 'string' && tools.toolset) return 'simulated';
 

@@ -890,9 +890,9 @@
 				<span class="rounded-full bg-surface-2 px-2 py-0.5 text-text-muted">
 					PyRIT outcome: {item.red_team.pyrit.outcome}
 				</span>
-				{#if item.red_team.finding.score_disagreement}
-					<span class="rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-300">
-						final response and trajectory scores differ
+				{#if item.red_team.finding.trajectory_only}
+					<span class="rounded-full bg-interactive/10 px-2 py-0.5 font-medium text-interactive">
+						trajectory-only finding
 					</span>
 				{/if}
 			</div>

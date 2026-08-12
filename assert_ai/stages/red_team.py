@@ -28,7 +28,7 @@ from assert_ai.core.io import (
     write_json,
     write_jsonl,
 )
-from assert_ai.core.model_client import Message
+from assert_ai.core.model_client import LLMAuthError, LLMInputError, Message
 from assert_ai.core.red_team import (
     FINDING_SCHEMA_VERSION,
     PYRIT_VERSION,
@@ -70,6 +70,7 @@ class TargetObservation:
     transcript: Transcript
     runtime_mode: str
     error: str | None = None
+    tool_evidence_available: bool = True
 
 
 @dataclass
@@ -78,6 +79,7 @@ class ExecutedAttack:
     result: Any | None
     observation: TargetObservation | None
     error: str | None = None
+    retryable: bool = False
 
 
 def _load_pyrit() -> SimpleNamespace:
@@ -148,11 +150,17 @@ def _validate_evidence_capability(
         )
     if not plan.outbound_sinks:
         return
+    if target.tools is not None and target.tools.simulator is not None:
+        raise ValueError(
+            "red_team attack data declares outbound_sinks, but simulated tool "
+            "results cannot prove an outbound action. Use a traced callable or "
+            "a hosted model with a real tool module."
+        )
     if target.is_endpoint:
         raise ValueError(
             "red_team attack data declares outbound_sinks, but endpoint targets "
             "do not expose tool-call evidence. Use a traced callable, a hosted "
-            "model with a tool module, or a hosted model with a fixed toolset."
+            "model with a real tool module."
         )
     if target.is_external:
         raise ValueError(
@@ -169,7 +177,7 @@ def _validate_evidence_capability(
         raise ValueError(
             "red_team attack data declares outbound_sinks, but this hosted target "
             "does not declare target.tools. Use a traced callable, a hosted model "
-            "with a tool module, or a hosted model with a fixed toolset."
+            "with a real tool module."
         )
 
 
@@ -242,7 +250,7 @@ def _finding_evidence(
     for event_index, event in enumerate(transcript.events):
         edit = event.edit.model_dump()
         edit_type = edit.get("type")
-        if edit_type in {"add_message", "set_system_message"}:
+        if edit_type == "add_message":
             message = edit.get("message")
             if not isinstance(message, dict):
                 continue
@@ -284,6 +292,28 @@ def _finding_evidence(
     return False, None, []
 
 
+def _sink_configuration_error(
+    transcript: Transcript,
+    *,
+    outbound_sinks: tuple[OutboundSink, ...],
+) -> str | None:
+    for event in transcript.events:
+        edit = event.edit.model_dump()
+        if edit.get("type") != "tool_call":
+            continue
+        tool_name = edit.get("tool_name")
+        tool_args = edit.get("tool_args")
+        if not isinstance(tool_name, str) or not isinstance(tool_args, dict):
+            continue
+        for sink in outbound_sinks:
+            if sink.tool_name == tool_name and sink.argument not in tool_args:
+                return (
+                    f"Configured outbound sink {tool_name}.{sink.argument} was "
+                    f"observed as tool {tool_name}, but the argument was absent."
+                )
+    return None
+
+
 def _red_team_metadata(
     *,
     attack: AttackDefinition,
@@ -292,6 +322,7 @@ def _red_team_metadata(
     policy_violation: bool,
     evidence_surface: str | None,
     pyrit_score: bool | None,
+    retryable: bool,
 ) -> dict[str, Any]:
     last_score = getattr(result, "last_score", None)
     return {
@@ -306,9 +337,8 @@ def _red_team_metadata(
             "policy_violation": policy_violation,
             "evidence_surface": evidence_surface,
             "pyrit_score": pyrit_score,
-            "score_disagreement": (
-                pyrit_score is not None and pyrit_score != policy_violation
-            ),
+            "trajectory_only": policy_violation and pyrit_score is False,
+            "retryable": retryable,
         },
         "pyrit": {
             "version": PYRIT_VERSION,
@@ -377,6 +407,8 @@ async def _execute_attacks(
     target_id = _target_identifier(target)
     attack_by_objective = {attack.objective: attack for attack in attacks}
     observations: dict[str, TargetObservation] = {}
+    observations_by_objective: dict[str, TargetObservation] = {}
+    auth_errors: dict[str, LLMAuthError] = {}
 
     class AssertPromptTarget(pyrit.PromptTarget):
         def __init__(self, *, target_config: TargetConfig) -> None:
@@ -462,6 +494,8 @@ async def _execute_attacks(
 
             conversation_id = str(request.conversation_id)
             if runtime_error is not None:
+                is_input_refusal = isinstance(runtime_error, LLMInputError)
+                label = "TARGET INPUT REFUSED" if is_input_refusal else "TARGET ERROR"
                 transcript.add_event(
                     TranscriptEvent(
                         view=["target", "combined"],
@@ -470,19 +504,35 @@ async def _execute_attacks(
                             message=TranscriptMessage(
                                 role="system",
                                 content=(
-                                    "[TARGET ERROR: "
+                                    f"[{label}: "
                                     f"{type(runtime_error).__name__}: {runtime_error}]"
                                 ),
                             )
                         ),
                     )
                 )
-                transcript.stop_reason = "target_error"
-                observations[conversation_id] = TargetObservation(
+                transcript.stop_reason = (
+                    "target_input_refused" if is_input_refusal else "target_error"
+                )
+                observation = TargetObservation(
                     transcript=transcript,
                     runtime_mode=runtime.runtime_mode,
-                    error=str(runtime_error),
+                    error=f"{type(runtime_error).__name__}: {runtime_error}",
+                    tool_evidence_available=False,
                 )
+                observations[conversation_id] = observation
+                observations_by_objective[objective] = observation
+                if is_input_refusal:
+                    return [
+                        pyrit.construct_response_from_request(
+                            request=request,
+                            response_text_pieces=[
+                                f"[TARGET INPUT REFUSED: {runtime_error}]"
+                            ],
+                        )
+                    ]
+                if isinstance(runtime_error, LLMAuthError):
+                    auth_errors[objective] = runtime_error
                 raise runtime_error
 
             if runtime_result is None:
@@ -498,11 +548,21 @@ async def _execute_attacks(
             transcript.stop_reason = (
                 "runtime_close_error" if close_error is not None else "completed"
             )
-            observations[conversation_id] = TargetObservation(
+            raw_result = runtime_result.raw if isinstance(runtime_result.raw, dict) else {}
+            trace_events = raw_result.get("trace_events")
+            tool_evidence_available = (
+                bool(trace_events)
+                if runtime.runtime_mode == "otel_traced"
+                else True
+            )
+            observation = TargetObservation(
                 transcript=transcript,
                 runtime_mode=runtime.runtime_mode,
                 error=str(close_error) if close_error is not None else None,
+                tool_evidence_available=tool_evidence_available,
             )
+            observations[conversation_id] = observation
+            observations_by_objective[objective] = observation
             return [
                 pyrit.construct_response_from_request(
                     request=request,
@@ -546,6 +606,8 @@ async def _execute_attacks(
         ],
         return_partial_on_failure=True,
     )
+    if auth_errors:
+        raise next(iter(auth_errors.values()))
 
     completed_by_index = {
         input_index: result
@@ -555,16 +617,25 @@ async def _execute_attacks(
             strict=True,
         )
     }
+    incomplete_by_objective = dict(execution.incomplete_objectives)
     executed: list[ExecutedAttack] = []
     for index, attack_definition in enumerate(attacks):
         result = completed_by_index.get(index)
         if result is None:
+            exception = incomplete_by_objective.get(attack_definition.objective)
+            observation = observations_by_objective.get(attack_definition.objective)
+            error = (
+                f"{type(exception).__name__}: {exception}"
+                if exception is not None
+                else "PyRIT did not return a completed result for this objective."
+            )
             executed.append(
                 ExecutedAttack(
                     attack=attack_definition,
                     result=None,
-                    observation=None,
-                    error="PyRIT did not return a completed result for this objective.",
+                    observation=observation,
+                    error=error,
+                    retryable=True,
                 )
             )
             continue
@@ -578,6 +649,18 @@ async def _execute_attacks(
                 error=(
                     str(getattr(result, "error_message", "") or "")
                     or (observation.error if observation is not None else None)
+                ),
+                retryable=bool(
+                    (
+                        str(getattr(result, "error_message", "") or "")
+                        or (
+                            observation.error
+                            if observation is not None
+                            and observation.transcript.stop_reason
+                            != "target_input_refused"
+                            else None
+                        )
+                    )
                 ),
             )
         )
@@ -636,7 +719,15 @@ async def run_red_team(
     completed_scores = {
         str(row.get("test_case_id"))
         for row in score_rows
-        if row.get("test_case_id") and row.get("judge_status") == "ok"
+        if row.get("test_case_id")
+        and (
+            row.get("judge_status") == "ok"
+            or (
+                row.get("judge_status") == "scoring_skipped"
+                and (((row.get("red_team") or {}).get("finding") or {}).get("retryable"))
+                is False
+            )
+        )
     }
     completed_ids = completed_inference.intersection(completed_scores)
     if completed_inference != completed_scores:
@@ -675,14 +766,41 @@ async def run_red_team(
         result = item.result
         observation = item.observation
         pyrit_score = _pyrit_score_value(result)
+        scoring_error: str | None = None
+        retryable = item.retryable
         if observation is not None:
             policy_violation, evidence_surface, evidence_turns = _finding_evidence(
                 observation.transcript,
                 substring=plan.scorer_value,
                 outbound_sinks=plan.outbound_sinks,
             )
+            if observation.transcript.stop_reason == "target_input_refused":
+                scoring_error = item.error or "Target input was refused."
+                retryable = False
+            elif item.error:
+                scoring_error = item.error
+                retryable = True
+            elif (
+                plan.outbound_sinks
+                and observation.runtime_mode == "otel_traced"
+                and not observation.tool_evidence_available
+            ):
+                scoring_error = (
+                    "The traced callable emitted no spans, so outbound tool "
+                    "evidence could not be evaluated."
+                )
+                retryable = True
+            else:
+                scoring_error = _sink_configuration_error(
+                    observation.transcript,
+                    outbound_sinks=plan.outbound_sinks,
+                )
+                if scoring_error is not None:
+                    retryable = True
         else:
             policy_violation, evidence_surface, evidence_turns = False, None, []
+            scoring_error = item.error or "Target execution did not produce an observation."
+            retryable = True
         red_team = _red_team_metadata(
             attack=attack_definition,
             result=result,
@@ -690,6 +808,7 @@ async def run_red_team(
             policy_violation=policy_violation,
             evidence_surface=evidence_surface,
             pyrit_score=pyrit_score,
+            retryable=retryable,
         )
 
         if observation is not None:
@@ -722,27 +841,31 @@ async def run_red_team(
         inference_row["red_team"] = red_team
         append_jsonl_row(inference_set_path, inference_row)
 
-        if item.error and observation is None:
+        if scoring_error is not None:
             score_row = _skipped_score_row(
                 attack=attack_definition,
                 target=target_id,
                 red_team=red_team,
-                error=item.error,
+                error=scoring_error,
             )
         else:
             score_row = build_score_row(
                 attack=attack_definition,
                 target=target_id,
                 red_team=red_team,
-                risk_categories=tuple(plan.risk_categories.values()),
+                risk_category=next(iter(plan.risk_categories.values())),
                 policy_violation=policy_violation,
                 evidence_turns=evidence_turns,
                 evidence_surface=evidence_surface,
             )
-            if red_team["finding"]["score_disagreement"]:
-                log.warning(
-                    "[red_team] PyRIT final-response score disagreed with the "
-                    "ASSERT trajectory finding for attack %s",
+            if (
+                red_team["finding"]["trajectory_only"]
+                and policy_violation
+                and pyrit_score is False
+            ):
+                log.info(
+                    "[red_team] ASSERT captured a trajectory-only finding for "
+                    "attack %s",
                     attack_definition.attack_id,
                 )
         append_jsonl_row(scores_path, score_row)
@@ -755,15 +878,24 @@ async def run_red_team(
         if bool(((row.get("verdict") or {}).get("dimensions") or {}).get("policy_violation"))
     )
     errors = sum(
-        1 for row in final_scores if row.get("judge_status") == "scoring_skipped"
-    )
-    score_disagreements = sum(
         1
         for row in final_scores
-        if bool((((row.get("red_team") or {}).get("finding") or {}).get("score_disagreement")))
+        if row.get("judge_status") == "scoring_skipped"
+        and ((((row.get("red_team") or {}).get("finding") or {}).get("retryable")))
     )
-    if errors and errors == len(executed) and not completed_ids:
-        raise RuntimeError("All red-team attacks failed before producing a target result.")
+    trajectory_only_findings = sum(
+        1
+        for row in final_scores
+        if bool(((row.get("verdict") or {}).get("dimensions") or {}).get("policy_violation"))
+        and (
+            (((row.get("red_team") or {}).get("finding") or {}).get("pyrit_score"))
+            is False
+        )
+    )
+    if errors:
+        raise RuntimeError(
+            f"{errors} red-team attack(s) failed before producing a complete finding."
+        )
     return {
         "inference_set_path": str(inference_set_path),
         "scores_path": str(scores_path),
@@ -772,7 +904,7 @@ async def run_red_team(
         "cached_count": len(completed_ids),
         "findings": findings,
         "errored_count": errors,
-        "score_disagreements": score_disagreements,
+        "trajectory_only_findings": trajectory_only_findings,
     }
 
 
@@ -807,7 +939,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "new_count": result.get("new_count", 0),
             "cached_count": result.get("cached_count", 0),
             "findings": result.get("findings", 0),
-            "score_disagreements": result.get("score_disagreements", 0),
+            "trajectory_only_findings": result.get(
+                "trajectory_only_findings",
+                0,
+            ),
             "errored_count": result.get("errored_count", 0),
         },
     }

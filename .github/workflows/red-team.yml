@@ -22,7 +22,7 @@ jobs:
       - name: Install ASSERT with PyRIT
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[redteam,otel]"
+          python -m pip install -e ".[redteam]"
 
       - name: Run red-team agent example
         run: |

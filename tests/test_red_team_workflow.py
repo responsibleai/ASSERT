@@ -18,7 +18,7 @@ class RedTeamWorkflowTest(unittest.TestCase):
 
         self.assertIn("workflow_dispatch", workflow[True])
         self.assertEqual(workflow["permissions"], {"contents": "read"})
-        self.assertIn(".[redteam,otel]", text)
+        self.assertIn(".[redteam]", text)
         uses = re.findall(r"uses:\s*([^\s#]+)", text)
         self.assertTrue(uses)
         for action in uses:

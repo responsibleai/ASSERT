@@ -251,7 +251,6 @@ export function normalizeScenarioResult(
 		llm_calls: llmCalls,
 		target_runtime_mode: score.target_runtime_mode ?? null,
 		dimensions: score.dimensions ?? seedInfo?.dimensions,
-		red_team: score.red_team,
 		context: {
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,

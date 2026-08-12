@@ -265,14 +265,14 @@ The first supported path uses PyRIT `PromptSendingAttack`, Foundry-compatible `B
 Accepted keys:
 
 - `attacks_path` - required path to the red-team attack YAML file.
-- `target` - required target mapping. Uses the same `model`, `callable`, `endpoint`, `connector`, `system_prompt`, and `trace` fields as `pipeline.inference.target`.
+- `target` - required target mapping. Uses the same `model`, `callable`, `endpoint`, `connector`, `system_prompt`, `tools`, and `trace` fields as `pipeline.inference.target`.
 - `concurrency` - positive integer. Default: `1`. Traced callable targets are serialized so their in-process spans do not mix across attacks.
 - `max_tool_calls` - positive integer. Default: `10`.
 - `tool_timeout_s` - optional positive number.
 - `startup_timeout_s` - optional positive number.
 - `save_dir` - optional run output directory.
 
-`red_team` is a complete execution and scoring path, so it cannot be combined with enabled `pipeline.inference` or `pipeline.judge` stages in the same config.
+`red_team` is a complete suite-input, execution, and scoring path, so it cannot be combined with enabled `pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, or `pipeline.judge` stages in the same config.
 
 Attack data schema:
 
@@ -299,11 +299,11 @@ attacks:
     harm_categories: [SensitiveDataLeakage]
 ```
 
-The stage materializes the attack definitions into the suite's standard `taxonomy.json` and `test_set.jsonl`. Findings stay in the standard score shape with `policy_violation`, `overrefusal`, and `node_judgments`. A sibling `red_team` object records PyRIT outcome, risk category, attack strategy, trajectory evidence surface, and any disagreement between PyRIT's final-response score and ASSERT's captured agent trajectory.
+The first plan format defines exactly one risk category because its substring scorer is plan-wide. The stage materializes the attack definitions into the suite's standard `taxonomy.json` and `test_set.jsonl`. Findings stay in the standard score shape with `policy_violation` and `node_judgments`; `overrefusal` is recorded as not applicable. A sibling `red_team` object records PyRIT outcome, risk category, attack strategy, trajectory evidence surface, and whether ASSERT found evidence outside the final response.
 
-`scoring.outbound_sinks` is the explicit trust-boundary declaration for tool evidence. Each entry names the outbound tool and argument that may carry the scored value. Optional `result_contains` text confirms the tool result represents the intended successful action. Tool arguments that are not listed are not treated as disclosures.
+`scoring.outbound_sinks` is the explicit trust-boundary declaration for tool evidence. Each entry names the outbound tool and argument that may carry the scored value. Optional `result_contains` text must match the tool's returned success marker; it does not independently prove external delivery. Tool arguments that are not listed are not treated as disclosures. If an observed sink tool omits the configured argument, the run fails instead of recording a clean finding.
 
-When `outbound_sinks` is non-empty, the target must expose tool evidence. Use a callable with `target.trace` or a hosted model with declared tool-module or fixed-toolset `target.tools`. HTTP endpoints, connectors, untraced callables, and hosted agents without local tool definitions are rejected instead of producing a false-clean finding. Simulator-only tool configs are not supported by `red_team` because attack definitions do not carry per-test tool schemas.
+When `outbound_sinks` is non-empty, the target must expose non-simulated tool evidence. Use a callable with `target.trace` or a hosted model with a real tool-module backend. HTTP endpoints, connectors, untraced callables, hosted agents without local tool definitions, and simulator-backed tool configs are rejected instead of producing a false-clean finding.
 
 Example:
 

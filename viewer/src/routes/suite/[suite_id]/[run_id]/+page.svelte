@@ -230,11 +230,13 @@
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		seeds: 'Test Set Generation',
 		inference: 'Inference',
+		red_team: 'Red Teaming',
 		judge: 'Scoring',
 	};
 
 	const STAGE_TOOLTIPS: Record<string, string> = {
 		inference: 'Evaluation test set of prompts and scenarios are sent to target model or agent and responses are recorded.',
+		red_team: 'PyRIT attacks are sent to the target and native ASSERT findings are recorded.',
 		judge: 'Target responses or behaviors are scored for each judge dimension.',
 	};
 

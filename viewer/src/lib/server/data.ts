@@ -190,7 +190,8 @@ function readRedTeam(value: unknown): RedTeamFindingMetadata | undefined {
 		typeof record.attack_strategy !== 'string' ||
 		!finding ||
 		typeof finding.policy_violation !== 'boolean' ||
-		typeof finding.score_disagreement !== 'boolean' ||
+		typeof finding.trajectory_only !== 'boolean' ||
+		typeof finding.retryable !== 'boolean' ||
 		!pyrit ||
 		typeof pyrit.version !== 'string' ||
 		typeof pyrit.outcome !== 'string'
@@ -220,7 +221,8 @@ function readRedTeam(value: unknown): RedTeamFindingMetadata | undefined {
 				typeof finding.evidence_surface === 'string' ? finding.evidence_surface : null,
 			pyrit_score:
 				typeof finding.pyrit_score === 'boolean' ? finding.pyrit_score : null,
-			score_disagreement: finding.score_disagreement
+			trajectory_only: finding.trajectory_only,
+			retryable: finding.retryable
 		},
 		pyrit: {
 			version: pyrit.version,
@@ -645,7 +647,6 @@ function buildAuditScoreRow(
 		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		target_runtime_mode: runtimeMode,
 		dimensions,
-		red_team: readRedTeam(scoreRow.red_team) ?? readRedTeam(transcriptRow?.red_team),
 		metadata: {
 			turns_count: turnsCount,
 			stop_reason: stopReason,
@@ -806,7 +807,8 @@ function buildRunListEntries(snapshot: SuiteSnapshot): {
 
 		const hasPromptScores = promptScores.length > 0;
 		const hasAuditScores = auditScores.length > 0;
-		const hasScoreStage = manifest?.stages?.judge != null;
+		const hasScoreStage =
+			manifest?.stages?.judge != null || manifest?.stages?.red_team != null;
 		const behaviors = metricBehaviors(snapshot, runSnapshot.config, manifest?.artifact_versions ?? null);
 
 		if ((hasPromptScores || hasScoreStage) && !(manifest?.status === 'failed' && !hasPromptScores)) {
@@ -1120,7 +1122,9 @@ function loadSuiteListItem(suiteId: string): SuiteListItem | null {
 		const scenarioRows = runSnapshot.scoreRows.filter((row) => hasKind(row, 'scenario'));
 		const hasData = promptRows.length > 0 || scenarioRows.length > 0;
 		const hasEvalStage =
-			runSnapshot.manifest?.stages?.inference != null || runSnapshot.manifest?.stages?.judge != null;
+			runSnapshot.manifest?.stages?.inference != null ||
+			runSnapshot.manifest?.stages?.judge != null ||
+			runSnapshot.manifest?.stages?.red_team != null;
 		if (!hasData && !hasEvalStage) continue;
 		if (!hasData && runSnapshot.manifest?.status === 'failed') continue;
 		evalRunCount += 1;

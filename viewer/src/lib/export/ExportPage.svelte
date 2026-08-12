@@ -71,6 +71,7 @@
 	const RUN_STAGE_LABELS: Record<string, string> = {
 		seeds: 'Test Set Generation',
 		inference: 'Inference',
+		red_team: 'Red Teaming',
 		judge: 'Scoring'
 	};
 

@@ -225,9 +225,15 @@ def _runtime_mode(config: dict[str, Any] | None) -> str | None:
     pipeline = config.get("pipeline")
     inference = pipeline.get("inference") if isinstance(pipeline, dict) else None
     red_team = pipeline.get("red_team") if isinstance(pipeline, dict) else None
+    if isinstance(inference, dict) and inference.get("enabled", True) is False:
+        inference = None
+    if isinstance(red_team, dict) and red_team.get("enabled", True) is False:
+        red_team = None
     target = inference.get("target") if isinstance(inference, dict) else None
+    target_from_red_team = False
     if not isinstance(target, dict) and isinstance(red_team, dict):
         target = red_team.get("target")
+        target_from_red_team = True
     if not isinstance(target, dict):
         return None
 
@@ -236,11 +242,11 @@ def _runtime_mode(config: dict[str, Any] | None) -> str | None:
         return "external"
 
     callable_ref = target.get("callable")
-    if isinstance(callable_ref, str) and callable_ref:
+    if target_from_red_team and isinstance(callable_ref, str) and callable_ref:
         return "otel_traced" if isinstance(target.get("trace"), dict) else "callable"
 
     endpoint = target.get("endpoint")
-    if isinstance(endpoint, str) and endpoint:
+    if target_from_red_team and isinstance(endpoint, str) and endpoint:
         return "http_endpoint"
 
     tools = target.get("tools")
@@ -696,9 +702,6 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             prompt_rows.append(prompt_row)
             continue
 
-        red_team = _read_red_team(row.get("red_team")) or _read_red_team(
-            inference_row.get("red_team")
-        )
         audit_row = {
             "test_case_id": test_case_id,
             "behavior": row.get("behavior", ""),
@@ -709,14 +712,7 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             "verdict": _summary_verdict(row.get("verdict")),
             "judge_status": row.get("judge_status"),
             "judge_error": row.get("judge_error"),
-            "target_runtime_mode": (
-                runtime_mode
-                or (
-                    red_team.get("target_runtime_mode")
-                    if red_team is not None
-                    else None
-                )
-            ),
+            "target_runtime_mode": runtime_mode,
             "metadata": {
                 "turns_count": _count_target_conversation_messages(inference_row),
                 "stop_reason": inference_row.get("stop_reason", ""),
@@ -734,8 +730,6 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         dimension_scales = _dimension_scales(row)
         if dimension_scales:
             audit_row["dimension_scales"] = dimension_scales
-        if red_team is not None:
-            audit_row["red_team"] = red_team
         audit_rows.append(audit_row)
 
     prompt_rows_path = _viewer_cache_path(run_dir, VIEWER_PROMPT_ROWS_FILE)
@@ -769,10 +763,6 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
     if test_set_path.exists():
         manifest_payload["source_files"]["test_set.jsonl"] = _file_metadata(
             test_set_path, relative_to=relative_root
-        )
-    if manifest_path.exists():
-        manifest_payload["source_files"]["manifest.json"] = _file_metadata(
-            manifest_path, relative_to=relative_root
         )
     if config_path.exists():
         manifest_payload["source_files"]["config.yaml"] = _file_metadata(

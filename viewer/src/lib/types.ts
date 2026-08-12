@@ -213,7 +213,8 @@ export interface RedTeamFindingMetadata {
 		policy_violation: boolean;
 		evidence_surface?: string | null;
 		pyrit_score?: boolean | null;
-		score_disagreement: boolean;
+		trajectory_only: boolean;
+		retryable: boolean;
 	};
 	pyrit: {
 		version: string;
@@ -500,7 +501,6 @@ export interface AuditScore {
 	};
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
-	red_team?: RedTeamFindingMetadata;
 }
 
 export type StopReasonTone = 'refusal' | 'error' | 'info';

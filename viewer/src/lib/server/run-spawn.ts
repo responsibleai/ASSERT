@@ -241,8 +241,12 @@ function loadExistingInferenceTarget(suite: string): Record<string, unknown> | n
 	if (!configPath) return null;
 	const parsed = parseYaml(fs.readFileSync(configPath, 'utf-8'));
 	const pipeline = asRecord(asRecord(parsed).pipeline);
-	const inferenceTarget = asRecord(asRecord(pipeline.inference).target);
-	const redTeamTarget = asRecord(asRecord(pipeline.red_team).target);
+	const inference = asRecord(pipeline.inference);
+	const redTeam = asRecord(pipeline.red_team);
+	const inferenceTarget =
+		inference.enabled === false ? {} : asRecord(inference.target);
+	const redTeamTarget =
+		redTeam.enabled === false ? {} : asRecord(redTeam.target);
 	const targetRecord =
 		Object.keys(inferenceTarget).length > 0 ? inferenceTarget : redTeamTarget;
 	return Object.keys(targetRecord).length > 0 ? cloneRecord(targetRecord) : null;

@@ -72,7 +72,11 @@ def validate_raw_config(data: dict[str, Any]) -> tuple[bool, list[str]]:
     # -- behavior ------------------------------------------------------------
     behavior = data.get("behavior")
     pipeline = data.get("pipeline")
-    behavior_required = isinstance(pipeline, dict) and isinstance(pipeline.get("systematize"), dict)
+    systematize = pipeline.get("systematize") if isinstance(pipeline, dict) else None
+    behavior_required = (
+        isinstance(systematize, dict)
+        and systematize.get("enabled", True) is not False
+    )
     if behavior is None and behavior_required:
         errors.append("'behavior' is required when pipeline.systematize is configured")
     elif not isinstance(behavior, dict):

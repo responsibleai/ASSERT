@@ -125,6 +125,8 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
+  # Keep the heavyweight PyRIT stack opt-in via `redteam`; it is not required
+  # by the standard evaluation or viewer workflows.
   "assert-ai[otel,langgraph,analysis,examples,regression,azure-aad,acs]",
 ]
 dev = [

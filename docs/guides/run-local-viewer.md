@@ -75,12 +75,13 @@ One exception exists for live inference: while `manifest.stages.inference == "ru
 
 ## Read-model behavior and refresh
 
-Completed judged runs are served from run-level viewer read-model files, not by rescanning canonical JSONL on every request.
+Completed judge and red-team runs are served from run-level viewer read-model files, not by rescanning canonical JSONL on every request.
 
-If `viewer_run_manifest.json` is missing or stale, rebuild by re-running judge for that run:
+If `viewer_run_manifest.json` is missing or stale, rebuild by re-running the scoring stage for that run:
 
 ```bash
 assert-ai run --config artifacts/results/<suite>/<run>/config.yaml --resume --force-stage judge
+# Use --force-stage red_team for a red-team run.
 ```
 
 ## Expected verdict contract

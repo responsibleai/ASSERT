@@ -415,12 +415,26 @@ def _print_stage_done(
         log.info(f"{tag} \u2713 Completed {count} inferences{extra} ({elapsed:.1f}s){suffix}")
     elif stage_name == "red_team":
         count = s.get("count", 0)
+        cached = s.get("cached_count", 0)
+        new = s.get("new_count", count)
         findings = s.get("findings", 0)
-        disagreements = s.get("score_disagreements", 0)
+        trajectory_only = s.get("trajectory_only_findings", 0)
+        if cached and new:
+            cache_extra = f" ({new} new, {cached} cached)"
+        elif cached and not new:
+            cache_extra = f" ({cached} cached)"
+        else:
+            cache_extra = ""
         extra = f", {findings} finding{'s' if findings != 1 else ''}"
-        if disagreements:
-            extra += f", {disagreements} scorer disagreement{'s' if disagreements != 1 else ''}"
-        log.info(f"{tag} \u2713 Completed {count} attacks{extra} ({elapsed:.1f}s){suffix}")
+        if trajectory_only:
+            extra += (
+                f", {trajectory_only} trajectory-only "
+                f"finding{'s' if trajectory_only != 1 else ''}"
+            )
+        log.info(
+            f"{tag} \u2713 Completed {count} attacks{cache_extra}{extra} "
+            f"({elapsed:.1f}s){suffix}"
+        )
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
