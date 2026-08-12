@@ -47,6 +47,7 @@ import type {
 	DimensionMetrics,
 	LlmCallTrace,
 	PromptSeed,
+	RedTeamFindingMetadata,
 	InteractionMessage,
 	JudgeStatus,
 	JudgedSample,
@@ -174,6 +175,78 @@ function readFactors(value: unknown): Record<string, string> | undefined {
 		return typeof name === 'string' && typeof dimension === 'string';
 	}).map(([name, dimension]) => [name, name === 'behavior' ? dimension : normalizeFactorValue(dimension)]));
 	return Object.keys(dimensions).length > 0 ? dimensions : undefined;
+}
+
+function readRedTeam(value: unknown): RedTeamFindingMetadata | undefined {
+	const record = readObject(value);
+	const finding = readObject(record?.finding);
+	const pyrit = readObject(record?.pyrit);
+	if (
+		!record ||
+		typeof record.schema_version !== 'number' ||
+		typeof record.attack_id !== 'string' ||
+		typeof record.objective !== 'string' ||
+		typeof record.risk_category !== 'string' ||
+		typeof record.attack_strategy !== 'string' ||
+		!finding ||
+		typeof finding.policy_violation !== 'boolean' ||
+		typeof finding.score_disagreement !== 'boolean' ||
+		!pyrit ||
+		typeof pyrit.version !== 'string' ||
+		typeof pyrit.outcome !== 'string'
+	) {
+		return undefined;
+	}
+	const labels = readObject(record.labels);
+	return {
+		schema_version: record.schema_version,
+		attack_id: record.attack_id,
+		objective: record.objective,
+		risk_category: record.risk_category,
+		attack_strategy: record.attack_strategy,
+		harm_categories: Array.isArray(record.harm_categories)
+			? record.harm_categories.filter((item): item is string => typeof item === 'string')
+			: [],
+		labels: labels
+			? Object.fromEntries(
+					Object.entries(labels).filter(
+						(entry): entry is [string, string] => typeof entry[1] === 'string'
+					)
+				)
+			: undefined,
+		finding: {
+			policy_violation: finding.policy_violation,
+			evidence_surface:
+				typeof finding.evidence_surface === 'string' ? finding.evidence_surface : null,
+			pyrit_score:
+				typeof finding.pyrit_score === 'boolean' ? finding.pyrit_score : null,
+			score_disagreement: finding.score_disagreement
+		},
+		pyrit: {
+			version: pyrit.version,
+			conversation_id:
+				typeof pyrit.conversation_id === 'string' ? pyrit.conversation_id : undefined,
+			attack_result_id:
+				typeof pyrit.attack_result_id === 'string' ? pyrit.attack_result_id : undefined,
+			outcome: pyrit.outcome,
+			outcome_reason:
+				typeof pyrit.outcome_reason === 'string' ? pyrit.outcome_reason : undefined,
+			executed_turns:
+				typeof pyrit.executed_turns === 'number' ? pyrit.executed_turns : undefined,
+			execution_time_ms:
+				typeof pyrit.execution_time_ms === 'number' ? pyrit.execution_time_ms : undefined,
+			targeted_harm_categories: Array.isArray(pyrit.targeted_harm_categories)
+				? pyrit.targeted_harm_categories.filter(
+						(item): item is string => typeof item === 'string'
+					)
+				: undefined,
+			score_type: typeof pyrit.score_type === 'string' ? pyrit.score_type : undefined,
+			score_rationale:
+				typeof pyrit.score_rationale === 'string' ? pyrit.score_rationale : undefined
+		},
+		target_runtime_mode:
+			typeof record.target_runtime_mode === 'string' ? record.target_runtime_mode : null
+	};
 }
 
 function readBehavior(value: unknown): string {
@@ -508,6 +581,7 @@ function buildJudgedSampleRow(
 		llm_calls: readLlmCalls(transcriptRow?.llm_calls),
 		target_runtime_mode: runtimeMode,
 		dimensions: readFactors(scoreRow.dimensions) ?? readFactors(transcriptRow?.dimensions) ?? readFactors(seedRow?.dimensions),
+		red_team: readRedTeam(scoreRow.red_team) ?? readRedTeam(transcriptRow?.red_team),
 		multi_judge:
 			scoreRow.multi_judge &&
 			typeof scoreRow.multi_judge === 'object' &&
@@ -571,6 +645,7 @@ function buildAuditScoreRow(
 		behavior: readRowBehavior(scoreRow) || readRowBehavior(transcriptRow),
 		target_runtime_mode: runtimeMode,
 		dimensions,
+		red_team: readRedTeam(scoreRow.red_team) ?? readRedTeam(transcriptRow?.red_team),
 		metadata: {
 			turns_count: turnsCount,
 			stop_reason: stopReason,
@@ -1301,8 +1376,8 @@ function loadRuntimeModeForRun(suiteId: string, runId: string): string | null {
 	);
 }
 
-function hasCompletedJudge(manifest: Manifest | null): boolean {
-	return manifest?.stages?.judge === 'completed';
+function hasCompletedScoring(manifest: Manifest | null): boolean {
+	return manifest?.stages?.judge === 'completed' || manifest?.stages?.red_team === 'completed';
 }
 
 function loadCompletedRunPageData(
@@ -1359,7 +1434,7 @@ function loadCompletedRunPageData(
 export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prompts' | 'audit' = 'prompts') {
 	const suiteSnapshot = loadSuiteSnapshot(suiteId);
 	const manifest = loadRunManifestRecord(suiteId, runId);
-	if (hasCompletedJudge(manifest)) {
+	if (hasCompletedScoring(manifest)) {
 		try {
 			return loadCompletedRunPageData(suiteId, runId, suiteSnapshot, manifest, activeTab);
 		} catch (err) {
@@ -1500,7 +1575,7 @@ function loadScenarioDrawerItemFromReadModel(suiteId: string, runId: string, see
 }
 
 export async function loadPromptDrawerItem(suiteId: string, runId: string, seedId: string) {
-	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
+	if (hasCompletedScoring(loadRunManifestRecord(suiteId, runId))) {
 		try {
 			return loadPromptDrawerItemFromReadModel(suiteId, runId, seedId);
 		} catch (err) {
@@ -1511,7 +1586,7 @@ export async function loadPromptDrawerItem(suiteId: string, runId: string, seedI
 }
 
 export async function loadScenarioDrawerItem(suiteId: string, runId: string, seedId: string) {
-	if (hasCompletedJudge(loadRunManifestRecord(suiteId, runId))) {
+	if (hasCompletedScoring(loadRunManifestRecord(suiteId, runId))) {
 		try {
 			return loadScenarioDrawerItemFromReadModel(suiteId, runId, seedId);
 		} catch (err) {

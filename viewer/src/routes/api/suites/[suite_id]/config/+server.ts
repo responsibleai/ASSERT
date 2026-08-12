@@ -184,7 +184,9 @@ export const GET: RequestHandler = async ({ params }) => {
 	const behaviorName = asString(asRecord(config.behavior).name) || null;
 	const context = asString(config.context);
 	const pipeline = asRecord(config.pipeline);
-	const target = asRecord(asRecord(pipeline.inference).target);
+	const inferenceTarget = asRecord(asRecord(pipeline.inference).target);
+	const redTeamTarget = asRecord(asRecord(pipeline.red_team).target);
+	const target = Object.keys(inferenceTarget).length > 0 ? inferenceTarget : redTeamTarget;
 	const testSet = asRecord(pipeline.test_set);
 	const systemPrompt = asString(target.system_prompt);
 	const tools = asRecord(target.tools);

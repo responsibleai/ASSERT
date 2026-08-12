@@ -32,6 +32,7 @@ DEFAULT_INFERENCE_MAX_TOKENS = 10000
 # Default fan-out for the inference and judge stages. Overridable per-run via
 # ``pipeline.inference.concurrency`` in YAML or the ``--concurrency`` CLI flag.
 DEFAULT_INFERENCE_CONCURRENCY = 10
+DEFAULT_RED_TEAM_CONCURRENCY = 1
 DEFAULT_TESTER_MAX_TURNS = 10
 DEFAULT_JUDGE_TEMPERATURE = None
 DEFAULT_JUDGE_MAX_TOKENS = 12000

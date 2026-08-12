@@ -39,6 +39,7 @@ const stageLabels: Record<string, string> = {
 taxonomy: 'Behavior Categories Generation',
 test_set: 'Test Set Generation',
 inference: 'Inference',
+red_team: 'Red Teaming',
 judge: 'Scoring',
 systematization: 'Systematization',
 systematization_convert: 'Behavior Categories Conversion'

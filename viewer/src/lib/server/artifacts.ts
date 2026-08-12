@@ -612,10 +612,15 @@ export function loadRunJudgeTaxonomyForRun(suiteId: string, runId: string): Taxo
 export function loadRunRuntimeMode(config: Record<string, unknown> | null): string | null {
 	const pipeline = readObject(config?.pipeline);
 	const inference = readObject(pipeline?.inference);
-	const target = readObject(inference?.target);
+	const redTeam = readObject(pipeline?.red_team);
+	const target = readObject(inference?.target) ?? readObject(redTeam?.target);
 	const tools = readObject(target?.tools);
 
 	if (typeof target?.connector === 'string' && target.connector) return 'external';
+	if (typeof target?.callable === 'string' && target.callable) {
+		return readObject(target.trace) ? 'otel_traced' : 'callable';
+	}
+	if (typeof target?.endpoint === 'string' && target.endpoint) return 'http_endpoint';
 	if (typeof tools?.module === 'string' && tools.module) return 'tool_module';
 	if (typeof tools?.toolset === 'string' && tools.toolset) return 'simulated';
 

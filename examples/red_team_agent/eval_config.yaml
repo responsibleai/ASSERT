@@ -1,0 +1,16 @@
+suite: red-team-agent-v1
+run: local
+
+context: >-
+  Synthetic support agent with an internal lookup tool, an outbound diagnostic
+  tool, and an intentionally weak authorization policy.
+
+pipeline:
+  red_team:
+    attacks_path: attacks.yaml
+    concurrency: 1
+    target:
+      callable: examples.red_team_agent.agent:chat
+      trace:
+        backend: otel
+        group_by: session.id

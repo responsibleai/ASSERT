@@ -201,6 +201,35 @@ export interface LlmCallTrace {
 	message_ids: string[];
 }
 
+export interface RedTeamFindingMetadata {
+	schema_version: number;
+	attack_id: string;
+	objective: string;
+	risk_category: string;
+	attack_strategy: string;
+	harm_categories: string[];
+	labels?: Record<string, string>;
+	finding: {
+		policy_violation: boolean;
+		evidence_surface?: string | null;
+		pyrit_score?: boolean | null;
+		score_disagreement: boolean;
+	};
+	pyrit: {
+		version: string;
+		conversation_id?: string;
+		attack_result_id?: string;
+		outcome: string;
+		outcome_reason?: string;
+		executed_turns?: number;
+		execution_time_ms?: number;
+		targeted_harm_categories?: string[];
+		score_type?: string;
+		score_rationale?: string;
+	};
+	target_runtime_mode?: string | null;
+}
+
 export interface JudgedSample {
 	test_case_id?: string;
 	prompt: string;
@@ -222,6 +251,7 @@ export interface JudgedSample {
 	target_runtime_mode?: string | null;
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
+	red_team?: RedTeamFindingMetadata;
 }
 
 export interface ViewerResultContext {
@@ -250,6 +280,7 @@ export interface ViewerResultItem {
 	target_runtime_mode?: string | null;
 	context: ViewerResultContext;
 	dimensions?: SeedFactors;
+	red_team?: RedTeamFindingMetadata;
 }
 
 // Aggregated types for views
@@ -469,6 +500,7 @@ export interface AuditScore {
 	};
 	multi_judge?: MultiJudge;
 	dimensions?: SeedFactors;
+	red_team?: RedTeamFindingMetadata;
 }
 
 export type StopReasonTone = 'refusal' | 'error' | 'info';

@@ -23,6 +23,7 @@ from assert_ai.core.config_model import (
     DEFAULT_INFERENCE_MAX_TOOL_CALLS,
     DEFAULT_INFERENCE_MAX_TOKENS,
     DEFAULT_INFERENCE_TEMPERATURE,
+    DEFAULT_RED_TEAM_CONCURRENCY,
     TesterConfig,
     EvaluationConfig,
     JudgeConfig,
@@ -40,6 +41,7 @@ PIPELINE_STAGE_ORDER = (
     "systematize",
     "test_set",
     "inference",
+    "red_team",
     "judge",
 )
 BEHAVIOR_REQUIRED_PIPELINE_STAGES = {"systematize"}
@@ -742,6 +744,72 @@ def parse_disabled_judge_dimensions(raw: Any, *, field_name: str) -> list[str]:
     return disabled
 
 
+def _parse_stage_target(
+    stage_raw: dict[str, Any],
+    *,
+    field_name: str,
+    default_model_raw: dict[str, Any] | None,
+) -> TargetConfig:
+    target_raw = stage_raw.get("target")
+    require(target_raw is not None, f"{field_name}.target is required when {field_name} is enabled")
+    if not isinstance(target_raw, dict):
+        raise ValueError(f"{field_name}.target must be a mapping")
+    target_raw = dict(target_raw)
+    if (
+        "model" not in target_raw
+        and "connector" not in target_raw
+        and "callable" not in target_raw
+        and "endpoint" not in target_raw
+        and default_model_raw is not None
+    ):
+        target_raw["model"] = dict(default_model_raw)
+    return parse_target_config(target_raw, field_name=f"{field_name}.target")
+
+
+def _parse_runtime_config(
+    stage_raw: dict[str, Any],
+    *,
+    field_name: str,
+    include_max_turns: bool,
+    default_concurrency: int,
+) -> InferenceConfig:
+    return InferenceConfig(
+        max_tool_calls=_coalesce(
+            _optional_int(
+                stage_raw.get("max_tool_calls"),
+                field_name=f"{field_name}.max_tool_calls",
+            ),
+            DEFAULT_INFERENCE_MAX_TOOL_CALLS,
+        ),
+        max_turns=(
+            _coalesce(
+                _optional_int(
+                    stage_raw.get("max_turns"),
+                    field_name=f"{field_name}.max_turns",
+                ),
+                DEFAULT_TESTER_MAX_TURNS,
+            )
+            if include_max_turns
+            else DEFAULT_TESTER_MAX_TURNS
+        ),
+        tool_timeout_s=_optional_float(
+            stage_raw.get("tool_timeout_s"),
+            field_name=f"{field_name}.tool_timeout_s",
+        ),
+        startup_timeout_s=_optional_float(
+            stage_raw.get("startup_timeout_s"),
+            field_name=f"{field_name}.startup_timeout_s",
+        ),
+        concurrency=_coalesce(
+            _optional_int(
+                stage_raw.get("concurrency"),
+                field_name=f"{field_name}.concurrency",
+            ),
+            default_concurrency,
+        ),
+    )
+
+
 def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
     pipeline_raw = raw.get("pipeline")
     if pipeline_raw is None:
@@ -751,10 +819,13 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
 
     default_model_raw = _get_default_model_mapping(raw)
     inference_stage = pipeline_raw.get("inference")
+    red_team_stage = pipeline_raw.get("red_team")
     scorer_stage = pipeline_raw.get("judge")
 
     if inference_stage is not None and not isinstance(inference_stage, dict):
         raise ValueError("pipeline.inference must be a mapping")
+    if red_team_stage is not None and not isinstance(red_team_stage, dict):
+        raise ValueError("pipeline.red_team must be a mapping")
     if scorer_stage is not None and not isinstance(scorer_stage, dict):
         raise ValueError("pipeline.judge must be a mapping")
 
@@ -763,7 +834,26 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
     tester = None
     judge = None
     inference_enabled = inference_stage is not None and bool(inference_stage.get("enabled", True))
+    red_team_enabled = red_team_stage is not None and bool(red_team_stage.get("enabled", True))
     judge_enabled = scorer_stage is not None and bool(scorer_stage.get("enabled", True))
+    systematize_stage = pipeline_raw.get("systematize")
+    test_set_stage = pipeline_raw.get("test_set")
+    systematize_enabled = isinstance(systematize_stage, dict) and bool(
+        systematize_stage.get("enabled", True)
+    )
+    test_set_enabled = isinstance(test_set_stage, dict) and bool(
+        test_set_stage.get("enabled", True)
+    )
+    if red_team_enabled and (systematize_enabled or test_set_enabled):
+        raise ValueError(
+            "pipeline.red_team cannot be combined with pipeline.systematize or pipeline.test_set"
+        )
+    if inference_enabled and red_team_enabled:
+        raise ValueError("pipeline.inference and pipeline.red_team are mutually exclusive")
+    if red_team_enabled and judge_enabled:
+        raise ValueError(
+            "pipeline.red_team writes native ASSERT findings and cannot be combined with pipeline.judge"
+        )
 
     if inference_stage is not None:
         reject_unknown_keys(
@@ -774,14 +864,11 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
                       "test_set_path", "save_dir", "strict", "enabled", "file_path"},
         )
         if inference_enabled:
-            target_raw = inference_stage.get("target")
-            require(target_raw is not None, "pipeline.inference.target is required when inference stage is enabled")
-            if not isinstance(target_raw, dict):
-                raise ValueError("pipeline.inference.target must be a mapping")
-            target_raw = dict(target_raw)
-            if "model" not in target_raw and "connector" not in target_raw and "callable" not in target_raw and "endpoint" not in target_raw and default_model_raw is not None:
-                target_raw["model"] = dict(default_model_raw)
-            target = parse_target_config(target_raw, field_name="pipeline.inference.target")
+            target = _parse_stage_target(
+                inference_stage,
+                field_name="pipeline.inference",
+                default_model_raw=default_model_raw,
+            )
 
             tester_raw = inference_stage.get("tester")
             if tester_raw is not None:
@@ -803,27 +890,46 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
                     ),
                 )
 
-            inference_cfg = InferenceConfig(
-                max_tool_calls=_coalesce(_optional_int(
-                    inference_stage.get("max_tool_calls"),
-                    field_name="pipeline.inference.max_tool_calls",
-                ), DEFAULT_INFERENCE_MAX_TOOL_CALLS),
-                max_turns=_coalesce(_optional_int(
-                    inference_stage.get("max_turns"),
-                    field_name="pipeline.inference.max_turns",
-                ), DEFAULT_TESTER_MAX_TURNS),
-                tool_timeout_s=_optional_float(
-                    inference_stage.get("tool_timeout_s"),
-                    field_name="pipeline.inference.tool_timeout_s",
-                ),
-                startup_timeout_s=_optional_float(
-                    inference_stage.get("startup_timeout_s"),
-                    field_name="pipeline.inference.startup_timeout_s",
-                ),
-                concurrency=_coalesce(_optional_int(
-                    inference_stage.get("concurrency"),
-                    field_name="pipeline.inference.concurrency",
-                ), DEFAULT_INFERENCE_CONCURRENCY),
+            inference_cfg = _parse_runtime_config(
+                inference_stage,
+                field_name="pipeline.inference",
+                include_max_turns=True,
+                default_concurrency=DEFAULT_INFERENCE_CONCURRENCY,
+            )
+
+    if red_team_stage is not None:
+        reject_unknown_keys(
+            red_team_stage,
+            field_name="pipeline.red_team",
+            allowed={
+                "target",
+                "attacks_path",
+                "max_tool_calls",
+                "tool_timeout_s",
+                "startup_timeout_s",
+                "concurrency",
+                "save_dir",
+                "enabled",
+                "file_path",
+            },
+        )
+        if red_team_enabled:
+            attacks_path = _optional_str(
+                red_team_stage.get("attacks_path"),
+                field_name="pipeline.red_team.attacks_path",
+            )
+            if not attacks_path:
+                raise ValueError("pipeline.red_team.attacks_path is required")
+            target = _parse_stage_target(
+                red_team_stage,
+                field_name="pipeline.red_team",
+                default_model_raw=default_model_raw,
+            )
+            inference_cfg = _parse_runtime_config(
+                red_team_stage,
+                field_name="pipeline.red_team",
+                include_max_turns=False,
+                default_concurrency=DEFAULT_RED_TEAM_CONCURRENCY,
             )
 
     if scorer_stage is not None:
@@ -876,7 +982,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             )
 
     evaluation = None
-    if judge is not None or inference_enabled:
+    if judge is not None or inference_enabled or red_team_enabled:
         evaluation = EvaluationConfig(judge=judge, tester=tester, inference=inference_cfg)
 
     return PipelineConfig(target=target, evaluation=evaluation)

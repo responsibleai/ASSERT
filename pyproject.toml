@@ -54,12 +54,12 @@ langgraph = [
   "langgraph>=1.1.8",
 ]
 dspy = [
-  # Pinned for the incident-triage demo'
+  # Pinned for the incident-triage demo's
   # optimize_with_gepa.ipynb notebooks, which use dspy.GEPA (Agrawal et al.,
-  # arXiv:2507.19457). GEPA landed in DSPy ~2.7; cap at <3 until the API
-  # stabilizes. The four eval configs themselves do NOT import DSPy at
+  # arXiv:2507.19457). GEPA is available in DSPy 3.x; the unpublished 2.7
+  # range no longer resolves from PyPI. The four eval configs do NOT import DSPy at
   # runtime, so the base install works without this extra.
-  "dspy-ai>=2.7,<3",
+  "dspy>=3,<4",
 ]
 analysis = [
   "markdown-it-py>=3.0.0",
@@ -82,6 +82,11 @@ regression = [
 # working with API keys exactly as before.
 azure-aad = [
   "azure-identity>=1.19.0",
+]
+redteam = [
+  # Exact pin: PyRIT 1.0.1 was published on 2026-07-30, more than seven
+  # days before this integration was added.
+  "pyrit==1.0.1",
 ]
 acs = [
   # Bridge ASSERT findings to Agent Governance Toolkit's ACS policy runtime.
@@ -156,3 +161,15 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["assert_ai*"]
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "dspy" },
+    { extra = "examples" },
+  ],
+  [
+    { extra = "dspy" },
+    { extra = "all" },
+  ],
+]

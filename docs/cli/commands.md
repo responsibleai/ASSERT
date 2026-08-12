@@ -62,9 +62,10 @@ Required:
 
 Optional:
 
-- `--force-stage <stage>` repeatable (`systematize`, `test_set`, `inference`, `judge`)
+- `--force-stage <stage>` repeatable (`systematize`, `test_set`, `inference`, `red_team`, `judge`)
 - `--strict`
 - `--override <key=value>` repeatable
+- `--concurrency <int>` overrides inference, red-team, and judge fan-out
 - `-v`, `--verbose`
 - `-q`, `--quiet`
 - `--log-file <path>`

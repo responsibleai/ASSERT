@@ -60,6 +60,7 @@ class DisplayLabelTest(unittest.TestCase):
         self.assertEqual(display.label_stage("taxonomy"), "Behavior Categories Generation")
         self.assertEqual(display.label_stage("test_set"), "Test Set Generation")
         self.assertEqual(display.label_stage("inference"), "Inference")
+        self.assertEqual(display.label_stage("red_team"), "Red Teaming")
         self.assertEqual(display.label_stage("judge"), "Scoring")
         self.assertEqual(display.label_stage("systematization"), "Systematization")
         self.assertEqual(

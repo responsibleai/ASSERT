@@ -29,7 +29,10 @@ class StratificationStageOrderingTest(unittest.TestCase):
     def test_stratification_is_internal_to_test_set(self):
         from assert_ai.config import PIPELINE_STAGE_ORDER
 
-        self.assertEqual(PIPELINE_STAGE_ORDER, ("systematize", "test_set", "inference", "judge"))
+        self.assertEqual(
+            PIPELINE_STAGE_ORDER,
+            ("systematize", "test_set", "inference", "red_team", "judge"),
+        )
         self.assertNotIn("stratification", PIPELINE_STAGE_ORDER)
 
 

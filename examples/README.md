@@ -41,6 +41,7 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 | Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
 | Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
 | Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
+| Run a PyRIT attack against a tool-using agent | `red_team_agent/eval_config.yaml` | Secretless deterministic example. PyRIT drives the attack and ASSERT captures an outbound tool-argument disclosure that is absent from the final response. Requires `pip install -e ".[redteam,otel]"`. |
 | Call Azure OpenAI with Managed Identity / `az login` | `azure_managed_identity/eval_config.yaml` | Minimal AAD smoke test. Requires `pip install -e ".[azure-aad]"` and the *Cognitive Services OpenAI User* role on the target resource. See [`azure_managed_identity/README.md`](azure_managed_identity/README.md). |
 | Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
 | Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
@@ -53,6 +54,7 @@ See the [CLI reference](../docs/cli/commands.md#init) for all options.
 ```text
 examples/
 ├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
+├── red_team_agent/              PyRIT attack with native ASSERT findings
 ├── science_research_agent/     callable science research agent with real retrieval tools
 ├── phoenix_auto_trace/         framework instrumentation gallery
 ├── prompt_agents/              simple hosted-model and Prompt Agent configs

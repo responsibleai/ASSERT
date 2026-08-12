@@ -876,6 +876,27 @@
 				{/each}
 			</div>
 		{/if}
+		{#if item.red_team}
+			<div class="flex flex-wrap items-center gap-1.5 text-[10px]">
+				<span class="rounded-full bg-fuchsia-500/10 px-2 py-0.5 font-medium text-fuchsia-300">
+					PyRIT {item.red_team.pyrit.version}
+				</span>
+				<span class="rounded-full bg-surface-2 px-2 py-0.5 text-text-muted">
+					{item.red_team.attack_strategy}
+				</span>
+				<span class="rounded-full bg-surface-2 px-2 py-0.5 text-text-muted">
+					{item.red_team.risk_category}
+				</span>
+				<span class="rounded-full bg-surface-2 px-2 py-0.5 text-text-muted">
+					PyRIT outcome: {item.red_team.pyrit.outcome}
+				</span>
+				{#if item.red_team.finding.score_disagreement}
+					<span class="rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-300">
+						final response and trajectory scores differ
+					</span>
+				{/if}
+			</div>
+		{/if}
 	</div>
 
 	<div class="flex flex-1 min-h-0">

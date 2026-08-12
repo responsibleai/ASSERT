@@ -224,13 +224,24 @@ def _runtime_mode(config: dict[str, Any] | None) -> str | None:
         return None
     pipeline = config.get("pipeline")
     inference = pipeline.get("inference") if isinstance(pipeline, dict) else None
+    red_team = pipeline.get("red_team") if isinstance(pipeline, dict) else None
     target = inference.get("target") if isinstance(inference, dict) else None
+    if not isinstance(target, dict) and isinstance(red_team, dict):
+        target = red_team.get("target")
     if not isinstance(target, dict):
         return None
 
     connector = target.get("connector")
     if isinstance(connector, str) and connector:
         return "external"
+
+    callable_ref = target.get("callable")
+    if isinstance(callable_ref, str) and callable_ref:
+        return "otel_traced" if isinstance(target.get("trace"), dict) else "callable"
+
+    endpoint = target.get("endpoint")
+    if isinstance(endpoint, str) and endpoint:
+        return "http_endpoint"
 
     tools = target.get("tools")
     if isinstance(tools, dict):
@@ -262,6 +273,10 @@ def _read_factors(value: Any) -> dict[str, str] | None:
         if isinstance(key, str) and isinstance(dimension, str)
     }
     return dimensions or None
+
+
+def _read_red_team(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
 
 
 def _event_views(event: dict[str, Any]) -> list[str]:
@@ -640,6 +655,9 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         )
 
         if kind == "prompt":
+            red_team = _read_red_team(row.get("red_team")) or _read_red_team(
+                inference_row.get("red_team")
+            )
             prompt_row = {
                 "test_case_id": test_case_id,
                 "prompt": _prompt_preview(inference_row),
@@ -652,7 +670,14 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
                 "verdict": _summary_verdict(row.get("verdict")),
                 "judge_status": row.get("judge_status"),
                 "judge_error": row.get("judge_error"),
-                "target_runtime_mode": runtime_mode,
+                "target_runtime_mode": (
+                    runtime_mode
+                    or (
+                        red_team.get("target_runtime_mode")
+                        if red_team is not None
+                        else None
+                    )
+                ),
                 "multi_judge": _summary_multi_judge(row.get("multi_judge")),
             }
             if dimensions:
@@ -666,9 +691,14 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             dimension_scales = _dimension_scales(row)
             if dimension_scales:
                 prompt_row["dimension_scales"] = dimension_scales
+            if red_team is not None:
+                prompt_row["red_team"] = red_team
             prompt_rows.append(prompt_row)
             continue
 
+        red_team = _read_red_team(row.get("red_team")) or _read_red_team(
+            inference_row.get("red_team")
+        )
         audit_row = {
             "test_case_id": test_case_id,
             "behavior": row.get("behavior", ""),
@@ -679,7 +709,14 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
             "verdict": _summary_verdict(row.get("verdict")),
             "judge_status": row.get("judge_status"),
             "judge_error": row.get("judge_error"),
-            "target_runtime_mode": runtime_mode,
+            "target_runtime_mode": (
+                runtime_mode
+                or (
+                    red_team.get("target_runtime_mode")
+                    if red_team is not None
+                    else None
+                )
+            ),
             "metadata": {
                 "turns_count": _count_target_conversation_messages(inference_row),
                 "stop_reason": inference_row.get("stop_reason", ""),
@@ -697,6 +734,8 @@ def build_run_viewer_artifacts(run_dir: Path, *, suite_dir: Path | None = None) 
         dimension_scales = _dimension_scales(row)
         if dimension_scales:
             audit_row["dimension_scales"] = dimension_scales
+        if red_team is not None:
+            audit_row["red_team"] = red_team
         audit_rows.append(audit_row)
 
     prompt_rows_path = _viewer_cache_path(run_dir, VIEWER_PROMPT_ROWS_FILE)

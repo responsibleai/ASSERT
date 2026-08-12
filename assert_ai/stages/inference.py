@@ -597,6 +597,9 @@ def _build_target_session(
     )
 
 
+build_target_session = _build_target_session
+
+
 async def _run_prompt_test_case(
     *,
     test_case: dict[str, Any],

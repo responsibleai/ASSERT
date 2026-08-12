@@ -810,9 +810,9 @@ cli.add_command(init)
     type=click.IntRange(min=1),
     default=None,
     help=(
-        "Override inference/judge fan-out for this run. Wins over "
-        "pipeline.inference.concurrency in the YAML. Defaults to the value in "
-        f"the config (or {DEFAULT_INFERENCE_CONCURRENCY} if unset)."
+        "Override inference, red-team, and judge fan-out for this run. Wins over "
+        "the configured execution-stage concurrency. Defaults to the value in "
+        f"the config (or {DEFAULT_INFERENCE_CONCURRENCY} for inference)."
     ),
     show_envvar=True,
 )

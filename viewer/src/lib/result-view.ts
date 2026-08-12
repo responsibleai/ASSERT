@@ -219,6 +219,7 @@ export function normalizePromptResult(sample: JudgedSample): ViewerResultItem {
 		llm_calls: sample.llm_calls ?? [],
 		target_runtime_mode: sample.target_runtime_mode ?? null,
 		dimensions: sample.dimensions,
+		red_team: sample.red_team,
 		context: {
 			tools: readSeedTools(sample.seed_metadata),
 			turns_count: countConversationMessages(messages)
@@ -250,6 +251,7 @@ export function normalizeScenarioResult(
 		llm_calls: llmCalls,
 		target_runtime_mode: score.target_runtime_mode ?? null,
 		dimensions: score.dimensions ?? seedInfo?.dimensions,
+		red_team: score.red_team,
 		context: {
 			description: seedInfo?.description ?? null,
 			tools: seedInfo?.tools,

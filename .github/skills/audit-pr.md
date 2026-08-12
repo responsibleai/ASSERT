@@ -11,7 +11,7 @@ The review is evidence-first. It reports pass/fail by dimension with concrete fi
 Use this skill when a PR changes any of these surfaces:
 
 - `eval_config.yaml` or other eval spec examples
-- `pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, or `pipeline.judge` configuration
+- `pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, `pipeline.red_team`, or `pipeline.judge` configuration
 - trace capture code, OpenInference instrumentation, or target execution wrappers
 - generated or hand-authored test cases, example datasets, or docs that describe coverage
 

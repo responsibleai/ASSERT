@@ -8,13 +8,21 @@ Your config declares:
 
 1. Behavior specification (`behavior.name`, `behavior.description`)
 2. Target/system context (`context`)
-3. Pipeline stages (`pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, `pipeline.judge`)
+3. Pipeline stages (`pipeline.systematize`, `pipeline.test_set`, `pipeline.inference`, `pipeline.red_team`, `pipeline.judge`)
 
 Pipeline execution is fixed chronological order:
 
 ```text
 systematize -> test_set -> inference -> judge
 ```
+
+PyRIT red-team configs use an alternative run path:
+
+```text
+red_team -> native ASSERT findings
+```
+
+The `red_team` stage owns attack execution and deterministic scoring, so it is not combined with `inference` or `judge` in the same config.
 
 ## Top-level sections
 

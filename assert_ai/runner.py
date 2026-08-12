@@ -103,7 +103,7 @@ def _apply_config_overrides(raw: dict[str, Any], overrides: list[str] | None) ->
             _set_nested(raw, ["pipeline", "test_set", "scenario", "sample_size"], scenario_size)
             continue
         path = key.split(".")
-        if path[0] in {"systematize", "test_set", "inference", "judge"}:
+        if path[0] in {"systematize", "test_set", "inference", "red_team", "judge"}:
             path = ["pipeline", *path]
         _set_nested(raw, path, value)
     return raw
@@ -263,6 +263,16 @@ def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, 
             log.info(f"{tag} Running test cases against target ({target_name})...")
         else:
             log.info(f"{tag} Running test cases against target...")
+    elif stage_name == "red_team":
+        target = ctx.get("target")
+        target_name = ""
+        if target and target.model:
+            target_name = target.model.name or ""
+        if target and target.callable:
+            target_name = target.callable or target_name
+        attacks_path = raw_cfg.get("attacks_path") or "attack data"
+        target_suffix = f" against target ({target_name})" if target_name else ""
+        log.info(f"{tag} Running PyRIT attacks from {attacks_path}{target_suffix}...")
     elif stage_name == "judge":
         eval_cfg = ctx.get("evaluation")
         judge_model_obj = eval_cfg.judge.model if eval_cfg else None
@@ -403,6 +413,14 @@ def _print_stage_done(
         else:
             extra = ""
         log.info(f"{tag} \u2713 Completed {count} inferences{extra} ({elapsed:.1f}s){suffix}")
+    elif stage_name == "red_team":
+        count = s.get("count", 0)
+        findings = s.get("findings", 0)
+        disagreements = s.get("score_disagreements", 0)
+        extra = f", {findings} finding{'s' if findings != 1 else ''}"
+        if disagreements:
+            extra += f", {disagreements} scorer disagreement{'s' if disagreements != 1 else ''}"
+        log.info(f"{tag} \u2713 Completed {count} attacks{extra} ({elapsed:.1f}s){suffix}")
     elif stage_name == "judge":
         count = s.get("count", 0)
         failures = s.get("failures", 0)
@@ -633,7 +651,7 @@ def run_pipeline(
             log.info(f"[runner] Concurrency override: {concurrency} (CLI --concurrency)")
         else:
             log.warning(
-                "[runner] --concurrency ignored: this config has no inference stage to override."
+                "[runner] --concurrency ignored: this config has no target-execution stage to override."
             )
 
     requested_force_stages = set(force_stages or [])

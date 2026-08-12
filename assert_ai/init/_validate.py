@@ -71,10 +71,13 @@ def validate_raw_config(data: dict[str, Any]) -> tuple[bool, list[str]]:
 
     # -- behavior ------------------------------------------------------------
     behavior = data.get("behavior")
-    if behavior is None:
-        errors.append("'behavior' is required")
+    pipeline = data.get("pipeline")
+    behavior_required = isinstance(pipeline, dict) and isinstance(pipeline.get("systematize"), dict)
+    if behavior is None and behavior_required:
+        errors.append("'behavior' is required when pipeline.systematize is configured")
     elif not isinstance(behavior, dict):
-        errors.append("behavior must be a mapping")
+        if behavior is not None:
+            errors.append("behavior must be a mapping")
     else:
         beh_allowed = {"name", "description", "preset"}
         beh_unknown = sorted(set(behavior) - beh_allowed)
@@ -96,7 +99,6 @@ def validate_raw_config(data: dict[str, Any]) -> tuple[bool, list[str]]:
         errors.append("context must be a string")
 
     # -- pipeline ------------------------------------------------------------
-    pipeline = data.get("pipeline")
     if pipeline is None:
         errors.append("'pipeline' is required")
     elif not isinstance(pipeline, dict):
