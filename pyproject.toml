@@ -44,8 +44,9 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = [
-  # Phoenix 19.x and 20.x fail during pytest plugin import on Python 3.11.
-  "arize-phoenix==15.3.0",
+  # Phoenix >=19.18 fails during pytest plugin import on Python 3.11.
+  "arize-phoenix==15.3.0; python_version < '3.12'",
+  "arize-phoenix>=15.0.0; python_version >= '3.12'",
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
 ]

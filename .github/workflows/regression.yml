@@ -9,6 +9,8 @@ on:
   pull_request:
     paths:
       - 'assert_ai/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - 'prompts/**'
       - 'scripts/regression_*.py'
       - 'tests/regression/**'

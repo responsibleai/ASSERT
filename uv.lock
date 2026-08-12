@@ -5,24 +5,31 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform == 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
 ]
 conflicts = [[
     { package = "assert-ai", extra = "dspy" },
@@ -568,7 +575,8 @@ dev = [
 requires-dist = [
     { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
-    { name = "arize-phoenix", marker = "extra == 'otel'", specifier = "==15.3.0" },
+    { name = "arize-phoenix", marker = "python_full_version >= '3.12' and extra == 'otel'", specifier = ">=15.0.0" },
+    { name = "arize-phoenix", marker = "python_full_version < '3.12' and extra == 'otel'", specifier = "==15.3.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
     { name = "assert-ai", extras = ["otel", "langgraph", "analysis", "examples", "regression", "azure-aad", "acs"], marker = "extra == 'all'" },
     { name = "autogen-agentchat", marker = "extra == 'examples'", specifier = ">=0.7.5" },
@@ -1701,9 +1709,11 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 dependencies = [
     { name = "anyio" },
@@ -1741,11 +1751,14 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
     { name = "anyio" },
@@ -2892,9 +2905,11 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/cb/50b0bbc3e504ef875aea0062cdc108077e4923fb8c1209c70c80dc043933/json_repair-0.25.2.tar.gz", hash = "sha256:161a56d7e6bbfd4cad3a614087e3e0dbd0e10d402dd20dc7db418432428cb32b", size = 20458, upload-time = "2024-06-27T16:26:15.492Z" }
 wheels = [
@@ -2910,11 +2925,14 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7d/88/600f1b41f3a0e383a2e95014c25fa9fdc5fb0d6d77323e7b8e9d517271e3/json_repair-0.63.0.tar.gz", hash = "sha256:27ce6724ede2eff84c39c7d142dbfcd07c3635ebb79e4fa8e81d1b57367a1cbe", size = 52085, upload-time = "2026-08-11T09:28:29.962Z" }
 wheels = [
@@ -6899,7 +6917,8 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/eb/ac95fab0bc4658124b4ec8fbc31fc494165ab4544606ae91b9a489907dad/sqlean_py-3.49.1.tar.gz", hash = "sha256:210d89989226b988d7d6391f837387d3b81e8cd608c997e0bd37826e395970e7", size = 3319012, upload-time = "2025-05-02T11:58:24.307Z" }
 wheels = [
@@ -6930,16 +6949,20 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra == 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-all' and extra == 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version >= '3.14' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
     "python_full_version == '3.13.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
-    "python_full_version < '3.13' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version == '3.12.*' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
+    "python_full_version < '3.12' and sys_platform != 'win32' and extra != 'extra-9-assert-ai-dspy' and extra != 'extra-9-assert-ai-examples'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/61/5332f923ec20c0b3ae9b3cf05731049bd4d17714dce1dbbc69129264664e/sqlean_py-3.50.4.5.tar.gz", hash = "sha256:9764b565e7ab430ab6e9e43cb2816199c2b39926dffc93c212a52f0019278459", size = 3482387, upload-time = "2025-10-25T08:51:59.968Z" }
 wheels = [

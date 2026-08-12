@@ -25,6 +25,16 @@ class RedTeamWorkflowTest(unittest.TestCase):
             with self.subTest(action=action):
                 self.assertRegex(action, r"@[0-9a-f]{40}$")
 
+    def test_dependency_changes_trigger_regression_unit_tests(self) -> None:
+        path = (
+            Path(__file__).resolve().parent.parent
+            / ".github/workflows/regression.yml"
+        )
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        paths = workflow[True]["pull_request"]["paths"]
+        self.assertIn("pyproject.toml", paths)
+        self.assertIn("uv.lock", paths)
+
 
 if __name__ == "__main__":
     unittest.main()
