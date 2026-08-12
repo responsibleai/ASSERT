@@ -42,6 +42,17 @@ CONTEXT_SETTINGS = {
 
 DEFAULT_COMPARE_METRIC = "policy_violation"
 
+_POLICY_VIOLATION_NOT_PERMISSIBLE = "policy_violation_not_permissible"
+_POLICY_VIOLATION_PERMISSIBLE = "policy_violation_permissible"
+_DERIVED_PERMISSIBILITY_RATE_KEYS = {
+    _POLICY_VIOLATION_NOT_PERMISSIBLE: "not_permissible_policy_violation_rate",
+    _POLICY_VIOLATION_PERMISSIBLE: "permissible_policy_violation_rate",
+}
+_DERIVED_PERMISSIBILITY_SUMMARY_KEYS = {
+    _POLICY_VIOLATION_NOT_PERMISSIBLE: "policy_violation_on_not_permissible",
+    _POLICY_VIOLATION_PERMISSIBLE: "policy_violation_on_permissible",
+}
+
 _RUNNER_MODULE: Any | None = None
 _TEST_SET_METRICS_MODULE: Any | None = None
 
@@ -137,27 +148,10 @@ def _fmt_percent(value: Optional[float]) -> str:
     return f"{value * 100:.1f}%"
 
 
-_PERMISSIBILITY_SPLIT_RATE_KEYS = (
-    "not_permissible_policy_violation_rate",
-    "permissible_policy_violation_rate",
-)
-
-# Canonical metric name -> the top-level rate key it is stored under. The split
-# is derived rather than judged, so it never appears in ``dimensions``; both
-# spellings are accepted so ``--metric`` works with either the viewer-facing
-# name or the artifact key.
-_PERMISSIBILITY_RATE_KEY_BY_METRIC = {
-    "policy_violation_not_permissible": "not_permissible_policy_violation_rate",
-    "policy_violation_permissible": "permissible_policy_violation_rate",
-    "not_permissible_policy_violation_rate": "not_permissible_policy_violation_rate",
-    "permissible_policy_violation_rate": "permissible_policy_violation_rate",
-}
-
-# The bucket detail that carries the counts behind each stored rate, so prompt
-# and scenario halves can be pooled from counts rather than averaged.
-_PERMISSIBILITY_BUCKET_BY_RATE_KEY = {
-    "not_permissible_policy_violation_rate": "policy_violation_on_not_permissible",
-    "permissible_policy_violation_rate": "policy_violation_on_permissible",
+_PERMISSIBILITY_SPLIT_RATE_KEYS = tuple(_DERIVED_PERMISSIBILITY_RATE_KEYS.values())
+_PERMISSIBILITY_METRIC_ALIASES = {
+    rate_key: metric
+    for metric, rate_key in _DERIVED_PERMISSIBILITY_RATE_KEYS.items()
 }
 
 #: The half of the split the matrix leads with. ``policy_violation`` unions
@@ -165,7 +159,7 @@ _PERMISSIBILITY_BUCKET_BY_RATE_KEY = {
 #: them by the wrong thing entirely -- a behavior can carry a high union rate
 #: made up almost wholly of mishandled *permissible* work while another with a
 #: lower union rate is nearly all genuine impermissible failure.
-_MATRIX_SPLIT_METRIC = "policy_violation_not_permissible"
+_MATRIX_SPLIT_METRIC = _POLICY_VIOLATION_NOT_PERMISSIBLE
 
 
 def _has_permissibility_split(*metric_sets: Any) -> bool:
@@ -426,7 +420,7 @@ def _load_dimensions() -> dict[str, Any]:
 
 def _complete_metric(_: click.Context, __: click.Parameter, incomplete: str) -> list[CompletionItem]:
     dims = _load_dimensions()
-    items = sorted(dims.keys())
+    items = sorted(set(dims) | set(_DERIVED_PERMISSIBILITY_RATE_KEYS))
     return [CompletionItem(name) for name in items if not incomplete or name.startswith(incomplete)]
 
 
@@ -461,87 +455,6 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
         return None
     rate = summary.get("rate")
     return float(rate) if isinstance(rate, (int, float)) else None
-
-
-def _pooled_rate(pairs: Iterable[tuple[int, int]]) -> float | None:
-    """Pool ``(flagged, scored)`` pairs into one rate.
-
-    Rates must be recombined from counts, never averaged: prompt and scenario
-    halves routinely differ in both rate and size, so the mean of two rates is
-    not the rate of the whole.
-    """
-    flagged = scored = 0
-    for hit, total in pairs:
-        flagged += hit
-        scored += total
-    return flagged / scored if scored else None
-
-
-def _binary_counts(summary: Any) -> tuple[int, int] | None:
-    """Return ``(flagged, scored)`` for a binary dimension summary."""
-    if not isinstance(summary, dict) or summary.get("kind") == "ordinal":
-        return None
-    counts = summary.get("counts")
-    if not isinstance(counts, dict):
-        return None
-    flagged = counts.get(1, counts.get("1", 0))
-    passed = counts.get(0, counts.get("0", 0))
-    if not isinstance(flagged, int) or not isinstance(passed, int):
-        return None
-    total = flagged + passed
-    return (flagged, total) if total else None
-
-
-def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | None:
-    """Rate for ``metric`` across a run's prompt and scenario rows.
-
-    Both halves are pooled. Reporting whichever half happened to be present
-    first silently drops the other, and they are not interchangeable -- on the
-    career-health CV-injection baseline the prompt rows score 64% and the
-    scenario rows 88%, so a prompt-only cell understates the run by 12 points
-    with nothing on screen to say half the data was excluded.
-    """
-    prompt_metrics = run_summary.get("prompt_metrics") or {}
-    scenario_metrics = run_summary.get("scenario_metrics") or {}
-    halves = [m for m in (prompt_metrics, scenario_metrics) if isinstance(m, dict)]
-
-    # The permissibility split is not a judged dimension -- it is derived from
-    # node judgments plus the taxonomy and stored as a top-level rate on the
-    # metrics dict, not under ``dimensions``. Looking it up like an ordinary
-    # dimension therefore returns None, and the matrix renders an empty cell
-    # under a correct-looking "Impermissible behavior violated" heading, which
-    # reads as "no violations" rather than "not wired up".
-    split_key = _PERMISSIBILITY_RATE_KEY_BY_METRIC.get(metric)
-    if split_key is not None:
-        bucket_key = _PERMISSIBILITY_BUCKET_BY_RATE_KEY[split_key]
-        pairs = [
-            counts
-            for metrics in halves
-            if (counts := _binary_counts(metrics.get(bucket_key))) is not None
-        ]
-        if pairs:
-            return _pooled_rate(pairs)
-        # Fall back to the stored rate when counts are unavailable -- an older
-        # artifact may carry the rate without the bucket detail.
-        for metrics in halves:
-            rate = metrics.get(split_key)
-            if isinstance(rate, (int, float)):
-                return float(rate)
-        return None
-
-    pairs = [
-        counts
-        for metrics in halves
-        if isinstance(metrics.get("dimensions"), dict)
-        and (counts := _binary_counts(metrics["dimensions"].get(metric))) is not None
-    ]
-    if pairs:
-        return _pooled_rate(pairs)
-
-    prompt_rate = _dimension_rate(prompt_metrics, metric)
-    if prompt_rate is not None:
-        return prompt_rate
-    return _dimension_rate(scenario_metrics, metric)
 
 
 def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str) -> None:
@@ -730,7 +643,12 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
 
 def _run_behavior_name(run_dir: Path, suite_id: str) -> str:
     config_path = run_dir / "config.yaml"
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
+    config = None
+    if config_path.exists():
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError):
+            pass
     behavior = config.get("behavior") if isinstance(config, dict) else None
     if isinstance(behavior, dict) and isinstance(behavior.get("name"), str) and behavior.get("name"):
         return behavior["name"]
@@ -757,8 +675,6 @@ def _run_arm_label(run_id: str, suite_id: str) -> str:
     prefix = f"{suite_id}-"
     if run_id.startswith(prefix):
         return run_id[len(prefix):] or run_id
-    if "-" in run_id:
-        return run_id.rsplit("-", 1)[-1] or run_id
     return run_id
 
 
@@ -772,6 +688,72 @@ def _ordered_arm_labels(arms: Iterable[str]) -> list[str]:
             arm.lower(),
         ),
     )
+
+
+def _pooled_rate(pairs: Iterable[tuple[int, int]]) -> float | None:
+    """Pool ``(flagged, scored)`` pairs instead of averaging rates."""
+    flagged = scored = 0
+    for hit, total in pairs:
+        flagged += hit
+        scored += total
+    return flagged / scored if scored else None
+
+
+def _binary_counts(summary: Any) -> tuple[int, int] | None:
+    """Return ``(flagged, scored)`` for a binary dimension summary."""
+    if not isinstance(summary, dict) or summary.get("kind") == "ordinal":
+        return None
+    counts = summary.get("counts")
+    if not isinstance(counts, dict):
+        return None
+    flagged = counts.get(1, counts.get("1", 0))
+    passed = counts.get(0, counts.get("0", 0))
+    if not isinstance(flagged, int) or not isinstance(passed, int):
+        return None
+    total = flagged + passed
+    return (flagged, total) if total else None
+
+
+def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | None:
+    """Pool one metric across a run's prompt and scenario rows.
+
+    The permissibility split is derived and stored in top-level bucket summaries,
+    not in ``dimensions``. All rates are recombined from counts when possible.
+    """
+    prompt_metrics = run_summary.get("prompt_metrics") or {}
+    scenario_metrics = run_summary.get("scenario_metrics") or {}
+    halves = [metrics for metrics in (prompt_metrics, scenario_metrics) if isinstance(metrics, dict)]
+
+    canonical_metric = _PERMISSIBILITY_METRIC_ALIASES.get(metric, metric)
+    split_key = _DERIVED_PERMISSIBILITY_RATE_KEYS.get(canonical_metric)
+    if split_key is not None:
+        bucket_key = _DERIVED_PERMISSIBILITY_SUMMARY_KEYS[canonical_metric]
+        pairs = [
+            counts
+            for metrics in halves
+            if (counts := _binary_counts(metrics.get(bucket_key))) is not None
+        ]
+        if pairs:
+            return _pooled_rate(pairs)
+        for metrics in halves:
+            rate = metrics.get(split_key)
+            if isinstance(rate, (int, float)):
+                return float(rate)
+        return None
+
+    pairs = [
+        counts
+        for metrics in halves
+        if isinstance(metrics.get("dimensions"), dict)
+        and (counts := _binary_counts(metrics["dimensions"].get(metric))) is not None
+    ]
+    if pairs:
+        return _pooled_rate(pairs)
+
+    prompt_rate = _dimension_rate(prompt_metrics, metric)
+    if prompt_rate is not None:
+        return prompt_rate
+    return _dimension_rate(scenario_metrics, metric)
 
 
 def _parse_suite_run_arg(suite_run: str) -> tuple[str, str]:
@@ -1538,6 +1520,7 @@ def _run_within_suite_compare(
 @click.option(
     "--metric",
     default=None,
+    shell_complete=_complete_metric,
     help=(
         "Judge dimension to compare. Defaults to the impermissible half of the "
         "permissibility split when every run reports it, otherwise "
@@ -1559,14 +1542,23 @@ def results_matrix(
         _error("Provide at least two SUITE/RUN arguments to compare, or use --suite SUITE.")
 
     results_root = _resolve_results_dir(results_dir)
-    resolved_suite_runs: list[tuple[str, str]] = [_parse_suite_run_arg(suite_run) for suite_run in suite_runs]
+    resolved_suite_runs: list[tuple[str, str]] = []
+    seen_suite_runs: set[tuple[str, str]] = set()
+    for suite_run in suite_runs:
+        parsed = _parse_suite_run_arg(suite_run)
+        if parsed not in seen_suite_runs:
+            resolved_suite_runs.append(parsed)
+            seen_suite_runs.add(parsed)
     for suite in suites:
         suite_dir = results_root / suite
         if not suite_dir.exists():
             _error(f"Suite not found: {suite}")
         for child in sorted(suite_dir.iterdir()):
             if child.is_dir() and (child / "scores.jsonl").exists():
-                resolved_suite_runs.append((suite, child.name))
+                parsed = (suite, child.name)
+                if parsed not in seen_suite_runs:
+                    resolved_suite_runs.append(parsed)
+                    seen_suite_runs.add(parsed)
 
     if len(resolved_suite_runs) < 2:
         _error("Provide at least two runs with scores to compare.")
@@ -1575,6 +1567,7 @@ def results_matrix(
     behaviors: list[str] = []
     arms: list[str] = []
     cells: dict[str, dict[str, float | None]] = {}
+    cell_sources: dict[tuple[str, str], str] = {}
     seen_behaviors: set[str] = set()
     seen_arms: set[str] = set()
 
@@ -1586,35 +1579,64 @@ def results_matrix(
         run_summary = _load_run_summary(run_dir)
         if run_summary is None:
             _error(f"No scores in {suite_id}/{run_id}")
-        run_summaries.append(run_summary)
+        matrix_summary = {
+            "prompt_metrics": run_summary.get("prompt_metrics"),
+            "scenario_metrics": run_summary.get("scenario_metrics"),
+        }
+        run_summaries.append(matrix_summary)
 
         behavior = _run_behavior_name(run_dir, suite_id)
         arm = _run_arm_label(run_id, suite_id)
+        source = f"{suite_id}/{run_id}"
+        cell_key = (behavior, arm)
+        if previous_source := cell_sources.get(cell_key):
+            _error(
+                f"Runs '{previous_source}' and '{source}' both resolve to "
+                f"behavior '{behavior}' and arm '{arm}'. Use distinct run IDs "
+                "or select only one run for that cell."
+            )
+        cell_sources[cell_key] = source
         if behavior not in seen_behaviors:
             behaviors.append(behavior)
             seen_behaviors.add(behavior)
         if arm not in seen_arms:
             arms.append(arm)
             seen_arms.add(arm)
-        loaded.append((behavior, arm, run_summary))
+        loaded.append((behavior, arm, matrix_summary))
 
-    # Resolve the default only once every run is loaded: it depends on whether
-    # they all carry the split. Requiring *all* of them keeps the matrix from
-    # mixing halves -- one run contributing an impermissible-only rate while
-    # another contributes the union would put non-comparable numbers in the same
-    # table, which is worse than falling back to the union everywhere.
+    split_by_run = [
+        any(
+            _run_dimension_rate(run_summary, split_metric) is not None
+            for split_metric in _DERIVED_PERMISSIBILITY_RATE_KEYS
+        )
+        for run_summary in run_summaries
+    ]
+
+    # Requiring every run to have usable split data keeps the matrix from mixing
+    # an impermissible-only rate with the legacy union. Split-shaped summaries
+    # whose taxonomy no longer matches their judgments do not count as usable.
     if metric is None:
         metric = (
             _MATRIX_SPLIT_METRIC
-            if run_summaries
-            and all(
-                _has_permissibility_split(
-                    run_summary.get("prompt_metrics"),
-                    run_summary.get("scenario_metrics"),
-                )
-                for run_summary in run_summaries
-            )
+            if split_by_run and all(split_by_run)
             else DEFAULT_COMPARE_METRIC
+        )
+    metric = _PERMISSIBILITY_METRIC_ALIASES.get(metric, metric)
+
+    available_metrics: set[str] = set()
+    for run_summary in run_summaries:
+        prompt_metrics = run_summary.get("prompt_metrics")
+        scenario_metrics = run_summary.get("scenario_metrics")
+        for metrics in (prompt_metrics, scenario_metrics):
+            dimensions = metrics.get("dimensions") if isinstance(metrics, dict) else None
+            if isinstance(dimensions, dict):
+                available_metrics.update(dimensions)
+    if any(split_by_run):
+        available_metrics.update(_DERIVED_PERMISSIBILITY_RATE_KEYS)
+    if metric not in available_metrics:
+        _error(
+            f"Metric '{metric}' was not found in the compared judgments. "
+            f"Available: {sorted(available_metrics)}"
         )
 
     for behavior, arm, run_summary in loaded:
@@ -1656,7 +1678,7 @@ def results_matrix(
         table.add_row(*row)
     console.print(table)
 
-    if metric in _PERMISSIBILITY_RATE_KEY_BY_METRIC:
+    if metric in _DERIVED_PERMISSIBILITY_RATE_KEYS:
         # Each half is scored only over the rows where a behavior in that bucket
         # was relevant, so the two halves have different denominators from each
         # other and from `policy_violation`. Say so, or a reader will try to add

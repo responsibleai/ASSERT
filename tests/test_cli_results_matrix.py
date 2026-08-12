@@ -111,8 +111,8 @@ def test_results_matrix_missing_cell_renders_null_and_dash(tmp_path: Path) -> No
 
     text_result = runner.invoke(cli, [*args, "--no-color"])
     assert text_result.exit_code == 0, text_result.output
-    assert "behavior_b" in text_result.output
-    assert "-" in text_result.output
+    behavior_b_row = next(line for line in text_result.output.splitlines() if "behavior_b" in line)
+    assert behavior_b_row.rstrip().endswith("-")
 
 
 def test_results_matrix_suite_auto_expand_matches_explicit_args(tmp_path: Path) -> None:
@@ -204,6 +204,165 @@ def test_results_matrix_behavior_name_falls_back_to_suite_id(tmp_path: Path) -> 
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["behaviors"] == ["fallback-suite"]
+
+
+def test_results_matrix_preserves_full_non_prefixed_run_ids(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_run(
+        results_root,
+        "suite-a",
+        "variant-c-baseline-prompt",
+        "behavior_a",
+        [True],
+    )
+    _make_run(
+        results_root,
+        "suite-b",
+        "baseline-weak-prompt",
+        "behavior_b",
+        [False],
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "suite-a/variant-c-baseline-prompt",
+            "suite-b/baseline-weak-prompt",
+            "--results-dir",
+            str(results_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    arms = json.loads(result.output)["arms"]
+    assert arms == ["baseline-weak-prompt", "variant-c-baseline-prompt"]
+    assert "prompt" not in arms
+
+
+def test_results_matrix_rejects_duplicate_behavior_arm_cells(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_run(results_root, "suite-a", "suite-a-baseline", "shared_behavior", [True])
+    _make_run(results_root, "suite-b", "suite-b-baseline", "shared_behavior", [False])
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "suite-a/suite-a-baseline",
+            "suite-b/suite-b-baseline",
+            "--results-dir",
+            str(results_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "suite-a/suite-a-baseline" in result.output
+    assert "suite-b/suite-b-baseline" in result.output
+    assert "behavior 'shared_behavior' and arm 'baseline'" in result.output
+
+
+def test_results_matrix_rejects_unknown_metric(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_run(results_root, "beh", "beh-baseline", "beh", [True])
+    _make_run(results_root, "beh", "beh-prompted", "beh", [False])
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "--suite",
+            "beh",
+            "--results-dir",
+            str(results_root),
+            "--metric",
+            "policy_violaton",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Metric 'policy_violaton' was not found" in result.output
+    assert "policy_violation" in result.output
+
+
+def test_results_matrix_malformed_config_falls_back_to_manifest(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    for run_id, flagged in (("suite-a-baseline", True), ("suite-a-prompted", False)):
+        _make_run(results_root, "suite-a", run_id, None, [flagged])
+        run_dir = results_root / "suite-a" / run_id
+        (run_dir / "config.yaml").write_text("behavior: [\n", encoding="utf-8")
+        (run_dir / "manifest.json").write_text(
+            json.dumps({
+                "status": "completed",
+                "stages": {"judge": "completed"},
+                "behavior_name": "manifest_behavior",
+            }),
+            encoding="utf-8",
+        )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "--suite",
+            "suite-a",
+            "--results-dir",
+            str(results_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["behaviors"] == ["manifest_behavior"]
+
+
+def test_results_matrix_deduplicates_explicit_and_suite_expansion(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    _make_run(results_root, "suite-a", "suite-a-baseline", "behavior_a", [True])
+    _make_run(results_root, "suite-a", "suite-a-prompted", "behavior_a", [False])
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "suite-a/suite-a-baseline",
+            "--suite",
+            "suite-a",
+            "--results-dir",
+            str(results_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["cells"] == {
+        "behavior_a": {"baseline": 1.0, "prompted": 0.0}
+    }
+
+
+def test_results_matrix_missing_suite_is_a_cli_error(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "--suite",
+            "missing-suite",
+            "--results-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Suite not found: missing-suite" in result.output
 
 
 # --- permissibility split -------------------------------------------------
@@ -316,7 +475,9 @@ def test_matrix_accepts_the_artifact_key_spelling_of_the_split(tmp_path: Path) -
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["cells"]["beh"]["baseline"] == 0.5
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation_not_permissible"
+    assert payload["cells"]["beh"]["baseline"] == 0.5
 
 
 def test_matrix_falls_back_to_policy_violation_without_a_taxonomy(tmp_path: Path) -> None:
@@ -336,6 +497,41 @@ def test_matrix_falls_back_to_policy_violation_without_a_taxonomy(tmp_path: Path
     payload = json.loads(result.output)
     assert payload["metric"] == "policy_violation"
     assert payload["cells"]["beh"]["baseline"] == 0.5
+
+
+def test_matrix_falls_back_when_taxonomy_no_longer_matches_judgments(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    for run_id, violated in (("beh-baseline", True), ("beh-governed", False)):
+        _make_split_run(
+            results_root,
+            "beh",
+            run_id,
+            "beh",
+            [(violated, False)],
+        )
+        row = _split_score_row(impermissible=violated, permissible=False)
+        for index, node in enumerate(row["verdict"]["node_judgments"]):
+            node["node_index"] = index + 10
+            node["node_name"] = f"stale-{index}"
+        _write_jsonl(results_root / "beh" / run_id / "scores.jsonl", [row])
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "matrix",
+            "--suite",
+            "beh",
+            "--results-dir",
+            str(results_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["metric"] == "policy_violation"
+    assert payload["cells"]["beh"]["baseline"] == 1.0
 
 
 def test_matrix_does_not_mix_halves_when_only_some_runs_have_the_split(tmp_path: Path) -> None:
@@ -478,3 +674,71 @@ def test_matrix_pools_the_permissibility_split_across_both_halves(tmp_path: Path
     payload = json.loads(result.output)
     assert payload["metric"] == "policy_violation_not_permissible"
     assert payload["cells"]["beh"]["baseline"] == 0.5
+
+
+def test_matrix_matches_cv_injection_prompt_scenario_totals(tmp_path: Path) -> None:
+    results_root = tmp_path / "results"
+    run_dir = results_root / "cv-injection" / "cv-injection-baseline"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"status": "completed", "stages": {"judge": "completed"}}),
+        encoding="utf-8",
+    )
+    (run_dir / "config.yaml").write_text(
+        "behavior:\n  name: cv_injection\n",
+        encoding="utf-8",
+    )
+    (run_dir.parent / "taxonomy.json").write_text(
+        json.dumps({
+            "behavior_categories": [
+                {"name": "must never", "permissible": False},
+                {"name": "allowed", "permissible": True},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    rows: list[dict[str, Any]] = []
+    for index in range(25):
+        row = _split_score_row(
+            impermissible=index < 4,
+            permissible=index < 16,
+        )
+        if index >= 21:
+            row["verdict"]["node_judgments"][0]["relevant"] = False
+        rows.append(row)
+    for index in range(25):
+        row = _split_score_row(
+            impermissible=index < 18,
+            permissible=index < 22,
+        )
+        row["tester_model"] = "test-tester"
+        rows.append(row)
+    _write_jsonl(run_dir / "scores.jsonl", rows)
+    _make_split_run(
+        results_root,
+        "control",
+        "control-baseline",
+        "control",
+        [(False, False)],
+    )
+
+    base_args = [
+        "results",
+        "matrix",
+        "cv-injection/cv-injection-baseline",
+        "control/control-baseline",
+        "--results-dir",
+        str(results_root),
+        "--json",
+    ]
+    runner = CliRunner()
+    union_result = runner.invoke(cli, [*base_args, "--metric", "policy_violation"])
+    split_result = runner.invoke(cli, base_args)
+
+    assert union_result.exit_code == 0, union_result.output
+    assert split_result.exit_code == 0, split_result.output
+    union = json.loads(union_result.output)
+    split = json.loads(split_result.output)
+    assert union["cells"]["cv_injection"]["baseline"] == pytest.approx(38 / 50)
+    assert split["cells"]["cv_injection"]["baseline"] == pytest.approx(22 / 46)
