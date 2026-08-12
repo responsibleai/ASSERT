@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from assert_ai.core.yaml_io import dump_yaml
+
 log = logging.getLogger(__name__)
 
 
@@ -29,7 +31,7 @@ def emit_config(yaml_content: str, output: Path, *, force: bool = False) -> None
 
     # Normalize formatting.
     data = yaml.safe_load(yaml_content)
-    normalized = yaml.dump(data, default_flow_style=False, sort_keys=False)
+    normalized = dump_yaml(data)
 
     # Ensure trailing newline.
     if not normalized.endswith("\n"):

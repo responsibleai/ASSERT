@@ -21,6 +21,7 @@ from rich.table import Table
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
 from assert_ai.results import (
@@ -1882,7 +1883,7 @@ def library_show(name: str, kind: str | None, as_json: bool):
         _echo_json(data)
         return
 
-    click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+    click.echo(dump_yaml(data).rstrip())
 
 
 if __name__ == "__main__":

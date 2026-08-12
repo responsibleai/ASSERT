@@ -18,6 +18,8 @@ from typing import Any, Iterable
 
 import yaml
 
+from assert_ai.core.yaml_io import dump_yaml
+
 DEFAULT_MODEL = "azure/gpt-4o-mini"
 
 _POINT_ORDER = (
@@ -263,19 +265,7 @@ def write_eval_config(
 
 
 def _dump_eval_config_yaml(config: dict[str, Any]) -> str:
-    return yaml.dump(config, Dumper=_EvalConfigDumper, sort_keys=False)
-
-
-class _EvalConfigDumper(yaml.SafeDumper):
-    pass
-
-
-def _represent_str(dumper: yaml.SafeDumper, value: str) -> yaml.Node:
-    style = "|" if "\n" in value else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
-
-
-_EvalConfigDumper.add_representer(str, _represent_str)
+    return dump_yaml(config)
 
 
 def _judge_dimensions() -> dict[str, dict[str, Any]]:
