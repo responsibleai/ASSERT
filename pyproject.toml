@@ -44,15 +44,8 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = [
-  # Upper bound per #304. phoenix 19.18.0 added a frozen dataclass whose
-  # `boolean_names` field defaults to a `MappingProxyType`. On Python 3.11 --
-  # which is what CI runs -- mappingproxy is unhashable, and dataclasses
-  # rejects unhashable defaults as mutable, so importing phoenix raises at
-  # class-definition time. phoenix registers a pytest11 entrypoint, so this
-  # takes pytest down during plugin loading, before a single test is collected.
-  # Python 3.12 made mappingproxy hashable (so this reproduces only on 3.11),
-  # and 19.19.1 still ships the same construct -- hence the bound covers
-  # everything from 19.18 on, not just the one release that introduced it.
+  # Phoenix 19.18+ fails during pytest plugin loading on Python 3.11 because
+  # its frozen dataclass uses an unhashable MappingProxyType default.
   "arize-phoenix>=15.0.0,<19.18",
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
