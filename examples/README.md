@@ -1,64 +1,70 @@
 # Examples
 
-Runnable configs and sample agents for ASSERT.
-
-Start with the LangGraph travel planner. It is the flagship example because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
-
-> **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds the central helper (`from assert_ai import auto_trace; auto_trace.enable()`) so the judge can score tool use and routing, not just the final response.
+Runnable configs and sample agents for ASSERT. Start with the LangGraph travel
+planner: it uses `target.callable` with OpenTelemetry trace capture so the judge
+can inspect tool calls, routing, and intermediate decisions.
 
 ## First run
 
 ```powershell
 python -m venv .venv
-./.venv/Scripts/Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
-# Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
-# any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
+# Set AZURE_API_BASE and AZURE_API_KEY.
 
 assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai results status travel-langgraph-budget-overrun baseline
 ```
+
+Artifacts are written to
+`artifacts/results/travel-langgraph-budget-overrun/baseline/`.
 
 ## Create your own config
 
-Use `assert-ai init` to design an eval config interactively instead of writing YAML by hand.
-Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
-
 ```powershell
 assert-ai init --model azure/gpt-5.4-mini
-# or seed from an existing example:
 assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
 ```
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
-## Which example to start with
+## Worked evaluations
 
-| Goal | Example | Notes |
+Every config below measures one behavior. Each directory README covers the
+scenario, setup, run commands, and artifact paths.
+
+| Example | Target shape | Focus |
 |---|---|---|
-| Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/evals/budget-overrun/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: otel` so the judge sees tool calls and routing. One risk per config — `evals/` also holds `fabricated-itinerary-details/`. |
-| Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
-| Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
-| Call Azure OpenAI with Managed Identity / `az login` | `azure_managed_identity/eval_config.yaml` | Minimal AAD smoke test. Requires `pip install -e ".[azure-aad]"` and the *Cognitive Services OpenAI User* role on the target resource. See [`azure_managed_identity/README.md`](azure_managed_identity/README.md). |
-| Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
-| Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Evaluate a science research agent with real retrieval tools | `science_research_agent/evals/embedded-instruction-obeyed/eval_config.yaml` | Callable-agent example using real retrieval: `web_search`, `fetch_url`, and `file_search`. One risk per config — `evals/` also holds `restricted-class-disclosure/`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/evals/embedded-instruction-obeyed/eval_config.yaml`. |
-| Judge a multi-step workflow on its tool trace, not its final answer | `incident_triage_agent/behaviors/` + `incident_triage_agent/eval_config_baseline.yaml` | Self-contained SRE incident-triage agent that follows a written runbook ([`SOP.md`](incident_triage_agent/SOP.md)): a LiteLLM tool loop over synthetic fixtures — no external services, no Docker, just an LLM key. Wrapped as a callable target so the judge sees what it classified, where it posted, whether it redacted, and whether it escalated. [`behaviors/`](incident_triage_agent/behaviors/README.md) is the recommended one-behavior-per-YAML split (one rubric dimension per config); `eval_config_baseline.yaml` bundles the same failure modes into a single overview run. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
-| Generate ACS guardrails from ASSERT findings | `acs_guardrails/README.md` | Offline ASSERT→ACS adapter demo: synthetic findings generate `manifest.yaml` + Rego, validate known-bad outputs, then guard a callable target. |
+| [`travel_planner_langgraph/`](travel_planner_langgraph/) | LangGraph callable + OTel traces | Grounded itineraries and budget compliance. Recommended starting point. |
+| [`travel_planner_neurosan/`](travel_planner_neurosan/) | Custom multi-agent callable + manual OTel spans | Framework-independent trace integration. |
+| [`azure_doc_qa/`](azure_doc_qa/) | Multi-agent RAG callable | Confidential-data boundaries and grounded answers. |
+| [`billing_support_agent/`](billing_support_agent/) | Tool-using callable | Identity verification and account isolation. |
+| [`career_health_assessment/`](career_health_assessment/) | Prompt-only callable | Grounded, bounded career assessments. |
+| [`change_control_agent/`](change_control_agent/) | Workflow callable | Approval sequencing and record integrity. |
+| [`science_research_agent/`](science_research_agent/) | Retrieval callable | Sharing classes and retrieved prompt injection. |
+| [`incident_triage_agent/behaviors/`](incident_triage_agent/behaviors/) | Tool-using callable | Nine independently runnable SOP behaviors. |
 
-## Layout
+## Target and instrumentation galleries
 
-```text
-examples/
-├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
-├── science_research_agent/     callable science research agent with real retrieval tools
-├── phoenix_auto_trace/         framework instrumentation gallery
-├── prompt_agents/              simple hosted-model and Prompt Agent configs
-├── azure_managed_identity/     minimal Azure OpenAI eval that uses Entra ID auth
-├── behavior_specs/             reusable behavior examples and references in markdown files
-└── agents/                     simple tool modules and tool schemas
-```
+| Example | Purpose |
+|---|---|
+| [`prompt_agents/`](prompt_agents/) | Prompt Agent target shapes: model-only, simulated tools, sandbox tools, generated tools, and external connector. |
+| [`phoenix_auto_trace/`](phoenix_auto_trace/) | Auto-instrumentation across supported agent frameworks. |
+| [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry. |
+| [`azure_managed_identity/`](azure_managed_identity/) | Azure OpenAI authentication with managed identity or `az login`. |
 
-See [`behavior_specs/README.md`](behavior_specs/README.md) for reusable behavior examples and references in markdown files. These were developed to be shared as high quality behavior/concept specifications that can be used with ASSERT.
+## Specialized demos and shared assets
+
+| Directory | Purpose |
+|---|---|
+| [`acs_guardrails/`](acs_guardrails/) | Offline ASSERT-to-ACS guardrail generation demo. |
+| [`bank_manager_agent_control/`](bank_manager_agent_control/) | Multi-variant agent-control evaluation. |
+| [`benchmark/`](benchmark/) | Benchmark configuration and scripts. |
+| [`behavior_specs/`](behavior_specs/) | Reusable behavior specifications. |
+| [`agents/`](agents/) | Shared tool modules, schemas, and connector fixtures used by other examples. |
+
+For any non-trivial agent, prefer `target.callable` with `target.trace`. Use a
+plain callable without traces only for a black-box API or a quick pipeline smoke
+test.

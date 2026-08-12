@@ -51,9 +51,9 @@ Read Clarity's output to enumerate risks:
 - **`.clarity-protocol/failures/failures.md`** — the failure modes, causal chains, and management plans. Each distinct failure mode is one candidate ASSERT behavior.
 - **`.clarity-protocol/summary.md`, `goal/requirements.md`, `solution/architecture.md`** — target/context for the eval's `context` field.
 
-**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop → archive the protocol — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
+**For the full measurement path** — parse → triage → one atomic config per selected failure → sequential runs → report → close the loop → curate the example — follow `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser (`clarity_intake.py`) to convert `failures.md` into candidate behaviors (severity→priority, variant-derived stratify dimensions).
 
-> **Before a fresh discovery run, check the archive gate.** `.clarity-protocol/` is gitignored, single-domain scratch; `run_clarity` **overwrites** it, destroying the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery. If an unarchived protocol from another domain is present, STOP and archive it to `examples/<prev-domain>/Clarity Protocol/` (and commit it) first.
+> **Before a fresh discovery run, check the preservation gate.** `.clarity-protocol/` is gitignored, single-domain scratch; `run_clarity` **overwrites** it. If another domain's protocol is present, STOP and let the user export it to a user-owned location or explicitly discard it. Never commit the raw discovery workspace into `examples/`.
 
 Clarity records severity/management-plan signal (the parser maps Critical→P1, High→P2, Medium→P3, ranges→max) — order and annotate by what Clarity actually captured; do not fabricate priorities.
 

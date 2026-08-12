@@ -80,7 +80,8 @@ Full checklist, including end-to-end verification: [`SETUP-CHECKLIST.md`](.claud
 
 #### 2. Explore what it produces
 
-Eight domains under [`examples/`](examples/README.md) were built end-to-end with this skill, so you can read a finished result before running your own:
+Seven worked domains under [`examples/`](examples/README.md) show the complete
+agent, one-behavior-per-YAML configs, setup, and results flow:
 
 | Domain | Target shape |
 |---|---|
@@ -91,9 +92,11 @@ Eight domains under [`examples/`](examples/README.md) were built end-to-end with
 | [`change_control_agent`](examples/change_control_agent/) | Approval-workflow agent |
 | [`career_health_assessment`](examples/career_health_assessment/) | Assessment agent |
 | [`science_research_agent`](examples/science_research_agent/) | Research agent |
-| [`prompt_agents`](examples/prompt_agents/) | Hosted model + system prompt |
 
-Each one contains the same four things — `Clarity Protocol/` (the discovered risks), `evals/<risk>/eval_config.yaml` (one config per risk), `agent.py` (the target), and a README explaining the directory.
+The separate [`prompt_agents`](examples/prompt_agents/) directory is a compact
+target-shape gallery, not another worked domain. Worked examples keep only the
+runtime files, atomic eval configs, and README needed to understand and run
+them; generated discovery and result artifacts stay uncommitted.
 
 #### 3. Run an evaluation
 

@@ -12,9 +12,8 @@ that makes agent development systematic rather than guesswork.
 > [`evals/fabricated-ungrounded-answer/eval_config.yaml`](evals/fabricated-ungrounded-answer/eval_config.yaml)
 > and
 > [`evals/confidential-internal-leakage/eval_config.yaml`](evals/confidential-internal-leakage/eval_config.yaml).
-> The commands and rates below are preserved as they were run, so they will not
-> reproduce verbatim against the split configs; the loop they demonstrate is
-> unchanged.
+> The rates below are preserved as historical results and will not reproduce
+> verbatim against the split configs; the loop they demonstrate is unchanged.
 
 ## The Agent Under Test
 
@@ -42,9 +41,8 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
-# Historical: this bundled config no longer exists — it was split into
-# evals/<risk>/eval_config.yaml. See the note at the top of this document.
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
 ```
 
 The initial run showed a **~80% policy_violation rate** — nearly every test case
@@ -96,9 +94,8 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
-# Historical: see the note at the top — this bundled config was split into
-# evals/<risk>/eval_config.yaml.
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
 ```
 
 Result: **34/56 passing (61%)**, up from ~20%. The routing JSON leak was

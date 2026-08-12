@@ -102,16 +102,17 @@ Read Clarity's output to enumerate risks:
   — target/context for the eval's `context` field.
 
 **For the full measurement path** — parse → triage → one atomic config per selected
-failure → sequential runs → report → close the loop → archive the protocol — follow
+failure → sequential runs → report → close the loop → curate the example — follow
 `workflows/measure-clarity-failures.md`. Use the intake parser
 (`clarity_intake.py`) to convert `failures.md` into candidate behaviors with
 severity→priority mapping and variant-derived stratify dimensions.
 
-> **Before a *fresh* discovery run, check the archive gate.** `.clarity-protocol/`
+> **Before a *fresh* discovery run, check the preservation gate.** `.clarity-protocol/`
 > is gitignored, single-domain scratch; `run_clarity` **overwrites** it, destroying
-> the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery. If
-> a protocol from another domain is present and unarchived, STOP and archive it to
-> `examples/<prev-domain>/Clarity Protocol/` first.
+> the prior domain's `failures/`, `goal/`, and `solution/` with no git recovery.
+> If a protocol from another domain is present, STOP and let the user export it
+> to a user-owned location or explicitly discard it. Never commit the raw
+> discovery workspace into `examples/`.
 
 Clarity records severity/management-plan signal (the parser maps Critical→P1,
 High→P2, Medium→P3, ranges→max). Order and annotate by what Clarity actually
@@ -384,18 +385,15 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 - **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
 - **Close the loop** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives, so Clarity's staleness tracking stays aware of it.
 - **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
-- **Organize by domain across runs** — this workflow is run repeatedly for different agents/domains, so keep materials namespaced. (a) Prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`); because `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` are keyed by suite, domain-prefixed names coexist without overwriting. (b) **`.clarity-protocol/` is single-domain scratch** at the repo root (not namespaced) — the next `run_clarity` overwrites the prior domain's `failures/`, `goal/`, `solution/`. Before starting discovery for a *new* domain, **move the finished protocol into that domain's example folder** as `examples/<domain>/Clarity Protocol/`, colocated with the agent it describes. (c) **Keep each example self-contained so anyone can replicate the run from its folder alone** — see "Per-example replication package" below.
-- **Per-example replication package** — every domain you evaluate must end up as a single self-contained folder under `examples/<domain>/` containing everything needed to reproduce its Clarity → ASSERT → ACS → ASSERT run, laid out identically across domains:
+- **Organize by domain across runs** — prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`), so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not collide. Treat `.clarity-protocol/` as uncommitted single-domain scratch; preserve it outside `examples/` only when the user asks.
+- **Per-example package** — every worked example must be a small, self-contained folder under `examples/<domain>/` containing only what a customer needs to understand and reproduce the ASSERT run:
   - `agent.py` (+ any real runtime deps it imports, e.g. `tools.py` / `mock_tools.py`) — the shared baseline.
   - `agent_guarded*.py` — the governed target(s); each **imports** the baseline from `agent.py` and adds only the ACS enforcement, so the A/B differs by nothing but the gate.
-  - `README.md` — what the agent does, the risks evaluated, and the baseline → governed deltas.
-  - `Clarity Protocol/` — the colocated Clarity risk-discovery protocol for this domain.
+  - `README.md` — scenario, setup, atomic behaviors, run commands, and result paths.
   - `evals/<risk>/eval_config.yaml` + `evals/<risk>/eval_config.governed.yaml` — one baseline/governed pair per risk (governed is a byte-identical copy differing only in `run:` and `target.callable`).
   - `acs/<risk>/manifest.yaml` + `acs/<risk>/policy/*.rego` — the reviewed, committed policy the governed agent enforces.
-  This is the layout **you produce**, and it is identical across domains. The
-  checked-in examples currently ship only the hand-written parts (`agent.py` plus
-  any real runtime deps such as `tools.py`); everything else in this list is
-  generated by a run of this skill, so don't expect to find it already there.
+  Do not commit generated taxonomies, test sets, result artifacts, discovery
+  mailboxes, snapshots, or protocol archives.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Triage before running** — never auto-generate an eval for every Clarity failure mode; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.

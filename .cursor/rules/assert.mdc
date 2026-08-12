@@ -76,14 +76,14 @@ plain-language guess and never by imitating Clarity from your own head.
 Read Clarity's output: `.clarity-protocol/failures/failures.md` enumerates failure modes (each = one
 candidate ASSERT behavior); `summary.md`, `goal/requirements.md`, and `solution/architecture.md` give
 target/context. For the full measurement path (parse → triage → one atomic config per selected failure
-→ sequential runs → report → close the loop → archive the protocol), follow
+→ sequential runs → report → close the loop → curate the example), follow
 `../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser
 (`clarity_intake.py`) to turn `failures.md` into candidate behaviors (Critical→P1, High→P2, Medium→P3,
 ranges→max; variant-derived stratify dimensions). Order by what Clarity captured; do not fabricate
-priorities. **Before a fresh discovery run, check the archive gate:** `.clarity-protocol/` is gitignored,
+priorities. **Before a fresh discovery run, check the preservation gate:** `.clarity-protocol/` is gitignored,
 single-domain scratch and `run_clarity` **overwrites** it, destroying the prior domain's `failures/`,
-`goal/`, and `solution/` with no git recovery — if an unarchived protocol from another domain is present,
-STOP and archive it to `examples/<prev-domain>/Clarity Protocol/` (and commit it) first.
+`goal/`, and `solution/` with no git recovery. If another domain's protocol is present, STOP and let the
+user export it to a user-owned location or explicitly discard it. Never commit it into `examples/`.
 
 ### 2. Triage — choose which risks to measure now
 

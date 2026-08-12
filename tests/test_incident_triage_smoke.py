@@ -1,15 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Smoke test for the baseline ASSERT incident-triage example.
+"""Smoke test for the ASSERT incident-triage example.
 
 Validates the demo's static surface without making any LLM calls:
 
 - The baseline agent imports (`agent.py`) and advertises the six SOP tools.
 - The 10 incident fixtures parse and have the schema the SOP/behavior/YAML
   reference (signal fields, structured `customer_payload`).
-- The baseline eval config and every one-behavior-per-YAML config parse and
-  point at the baseline callable target (no guarded/GEPA surface remains).
+- Every one-behavior-per-YAML config parses and points at the callable target.
 
 Runs in <2 seconds, no network, no API keys. Gated by
 `.github/workflows/regression.yml` so doc/spec changes that drift this
@@ -129,15 +128,11 @@ class IncidentFixturesShapeTest(unittest.TestCase):
 
 
 class EvalConfigShapeTest(unittest.TestCase):
-    """The baseline config and every one-behavior-per-YAML config must point
-    at the baseline callable target — there is no guarded target anymore."""
+    """Every one-behavior-per-YAML config targets the same callable."""
 
     BASELINE_TARGET = "examples.incident_triage_agent.agent:chat"
 
     def setUp(self) -> None:
-        self.baseline_path = DEMO_DIR / "eval_config_baseline.yaml"
-        with self.baseline_path.open("r", encoding="utf-8") as fh:
-            self.baseline = yaml.safe_load(fh)
         self.behavior_paths = sorted((DEMO_DIR / "behaviors").glob("*.yaml"))
         self.behaviors = {}
         for path in self.behavior_paths:
@@ -148,10 +143,6 @@ class EvalConfigShapeTest(unittest.TestCase):
         self.assertEqual(len(self.behavior_paths), 9)
 
     def test_every_config_targets_the_baseline_callable(self) -> None:
-        baseline_target = (
-            self.baseline["pipeline"]["inference"]["target"]["callable"]
-        )
-        self.assertEqual(baseline_target, self.BASELINE_TARGET)
         for name, cfg in self.behaviors.items():
             target = cfg["pipeline"]["inference"]["target"]["callable"]
             self.assertEqual(
@@ -160,8 +151,7 @@ class EvalConfigShapeTest(unittest.TestCase):
 
     def test_no_config_references_a_guarded_target(self) -> None:
         # The guarded/GEPA surface is gone; nothing may point at it.
-        configs = {"eval_config_baseline.yaml": self.baseline, **self.behaviors}
-        for name, cfg in configs.items():
+        for name, cfg in self.behaviors.items():
             target = cfg["pipeline"]["inference"]["target"]["callable"]
             self.assertNotIn(
                 "guarded", target, f"{name} still targets a guarded callable"
@@ -174,7 +164,6 @@ class EvalConfigShapeTest(unittest.TestCase):
         self.assertEqual(
             len(suites), len(set(suites)), "behavior suites must be distinct"
         )
-        self.assertNotIn(self.baseline["suite"], suites)
 
 
 if __name__ == "__main__":
