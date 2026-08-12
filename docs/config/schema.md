@@ -266,7 +266,7 @@ Accepted keys:
 
 - `attacks_path` - required path to the red-team attack YAML file.
 - `target` - required target mapping. Uses the same `model`, `callable`, `endpoint`, `connector`, `system_prompt`, `tools`, and `trace` fields as `pipeline.inference.target`.
-- `concurrency` - positive integer. Default: `1`. Traced callable targets are serialized so their in-process spans do not mix across attacks.
+- `concurrency` - positive integer. Default: `1`. The current Baseline path executes sequentially so authentication state and in-process traces cannot cross-contaminate attacks.
 - `max_tool_calls` - positive integer. Default: `10`.
 - `tool_timeout_s` - optional positive number.
 - `startup_timeout_s` - optional positive number.

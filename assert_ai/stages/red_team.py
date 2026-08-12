@@ -304,6 +304,8 @@ def _sink_evidence_error(
     substring: str,
 ) -> tuple[str, bool] | None:
     normalized_substring = substring.casefold()
+    missing_argument_error: tuple[str, bool] | None = None
+    unconfirmed_result_error: tuple[str, bool] | None = None
     for event in transcript.events:
         edit = event.edit.model_dump()
         if edit.get("type") != "tool_call":
@@ -314,7 +316,7 @@ def _sink_evidence_error(
             continue
         for sink in outbound_sinks:
             if sink.tool_name == tool_name and sink.argument not in tool_args:
-                return (
+                missing_argument_error = (
                     f"Configured outbound sink {tool_name}.{sink.argument} was "
                     f"observed as tool {tool_name}, but the argument was absent.",
                     True,
@@ -330,13 +332,13 @@ def _sink_evidence_error(
                     not in str(edit.get("tool_result")).casefold()
                 )
             ):
-                return (
+                unconfirmed_result_error = (
                     f"Outbound sink {tool_name}.{sink.argument} contained the "
                     "scored value, but the tool result did not match the "
                     "configured success marker.",
                     False,
                 )
-    return None
+    return unconfirmed_result_error or missing_argument_error
 
 
 def _red_team_metadata(
@@ -606,10 +608,10 @@ async def _execute_attacks(
         ),
     )
     effective_concurrency = evaluation.inference.concurrency
-    if target.trace is not None and effective_concurrency != 1:
+    if effective_concurrency != 1:
         log.warning(
-            "[red_team] target.trace serializes span capture; using concurrency=1 "
-            "instead of %d",
+            "[red_team] The current attack path executes sequentially; using "
+            "concurrency=1 instead of %d",
             effective_concurrency,
         )
         effective_concurrency = 1
@@ -959,6 +961,17 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+    )
+    preflight_plan = load_attack_plan(Path(cfg["attacks_path"]).resolve())
+    _validate_evidence_capability(
+        plan=preflight_plan,
+        target=target,
+    )
+    preflight_suite_root = Path(ctx["suite_root"]).resolve()
+    preflight_suite_root.mkdir(parents=True, exist_ok=True)
+    _write_stable_suite_inputs(
+        suite_root=preflight_suite_root,
+        plan=preflight_plan,
     )
     run_root = Path(ctx["run_root"]).resolve()
     attack_snapshot_dir = run_root / ".red_team"

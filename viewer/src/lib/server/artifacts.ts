@@ -240,13 +240,26 @@ function runSeedRows(
 }
 
 function rebuildViewerInstruction(runDir: string): string {
-	const configPath = path.resolve(runDir, RUN_CONFIG_FILE);
-	const config = readYamlFile<Record<string, unknown>>(configPath, {
+	const runConfigPath = path.resolve(runDir, RUN_CONFIG_FILE);
+	const manifest = readJsonFile<Manifest>(path.resolve(runDir, RUN_MANIFEST_FILE), {
 		missingOk: true
 	});
-	const pipeline = readObject(config?.pipeline);
-	const stage = readObject(pipeline?.red_team) ? 'red_team' : 'judge';
-	return `Rebuild it by re-running ${stage} for this run: uv run assert-ai run --config ${configPath} --force-stage ${stage}`;
+	const sourcePath =
+		typeof manifest?.config_source === 'string' && fs.existsSync(manifest.config_source)
+			? manifest.config_source
+			: runConfigPath;
+	const suiteDir = path.dirname(runDir);
+	const resultsDir = path.dirname(suiteDir);
+	const suiteId = path.basename(suiteDir);
+	const runId = path.basename(runDir);
+	const quote = (value: string) => JSON.stringify(value);
+	return (
+		'Rebuild it by re-running the cached pipeline for this run: ' +
+		`uv run assert-ai run --config ${quote(sourcePath)} ` +
+		`--override ${quote(`suite=${suiteId}`)} ` +
+		`--override ${quote(`run=${runId}`)} ` +
+		`--override ${quote(`results_dir=${resultsDir}`)}`
+	);
 }
 
 function validateViewerFileMetadata(

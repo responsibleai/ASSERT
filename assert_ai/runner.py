@@ -146,6 +146,7 @@ def _build_manifest(ctx: dict[str, Any]) -> RunManifest:
         host = None
     return RunManifest(
         started_at=now,
+        config_source=str(Path(ctx["config_path"]).resolve()),
         pid=os.getpid(),
         host=host,
         heartbeat_at=now,

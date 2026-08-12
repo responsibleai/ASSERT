@@ -80,9 +80,13 @@ Completed judge and red-team runs are served from run-level viewer read-model fi
 If `viewer_run_manifest.json` is missing or stale, rebuild by re-running the scoring stage for that run:
 
 ```bash
-assert-ai run --config artifacts/results/<suite>/<run>/config.yaml --force-stage judge
-# Use --force-stage red_team for a red-team run.
+assert-ai run --config <original-config-path> \
+  --override suite=<suite> \
+  --override run=<run> \
+  --override results_dir=artifacts/results
 ```
+
+The viewer's error message emits the exact command using `manifest.config_source` when that source config is still available.
 
 ## Expected verdict contract
 

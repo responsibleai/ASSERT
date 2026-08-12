@@ -233,6 +233,7 @@ class RunnerManifestTest(unittest.TestCase):
             )
             self.assertEqual(manifest["stages"]["judge"], "completed")
             self.assertEqual(manifest["status"], "completed")
+            self.assertEqual(manifest["config_source"], str(cfg_path.resolve()))
             self.assertIsInstance(manifest["started_at"], str)
             self.assertIn("T", manifest["started_at"])
             self.assertIsInstance(manifest["ended_at"], str)

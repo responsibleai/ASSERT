@@ -419,6 +419,15 @@ class RedTeamPlanTest(unittest.TestCase):
                     actor="tool",
                     edit=ToolCallEdit(
                         tool_name="post",
+                        tool_args={"channel": "health"},
+                        tool_result='{"status":"sent"}',
+                    ),
+                ),
+                TranscriptEvent(
+                    view=["target"],
+                    actor="tool",
+                    edit=ToolCallEdit(
+                        tool_name="post",
                         tool_args={"message": "ASSERT_CANARY_TEST"},
                         tool_result='{"status":"error"}',
                     ),

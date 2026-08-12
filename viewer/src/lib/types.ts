@@ -101,6 +101,7 @@ export interface Manifest {
 	status?: 'running' | 'completed' | 'failed';
 	started_at?: string;
 	ended_at?: string;
+	config_source?: string;
 	stages?: Record<string, StageStatus>;
 	stage_timings?: Record<string, StageTiming>;
 	pid?: number;

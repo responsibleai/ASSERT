@@ -266,6 +266,7 @@ class SuiteMetadata:
 class RunManifest:
     started_at: str
     status: str = "running"
+    config_source: str | None = None
     ended_at: str | None = None
     stages: dict[str, str] = field(default_factory=dict)
     pid: int | None = None
