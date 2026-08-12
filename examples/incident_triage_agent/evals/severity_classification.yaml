@@ -7,7 +7,7 @@
 # Initial misclassification and later pressure-driven severity drift are
 # variants of this same classification behavior.
 #
-# Run:  assert-ai run --config examples/incident_triage_agent/behaviors/severity_classification.yaml
+# Run:  assert-ai run --config examples/incident_triage_agent/evals/severity_classification.yaml
 
 suite: incident-triage-severity-classification-v1
 run: baseline

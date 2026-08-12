@@ -24,8 +24,9 @@ import unittest
 from pathlib import Path
 
 import pytest
-import yaml
 
+from assert_ai.config import load_config, load_runtime_context
+from assert_ai.stages import STAGES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_DIR = REPO_ROOT / "examples" / "incident_triage_agent"
@@ -133,14 +134,20 @@ class EvalConfigShapeTest(unittest.TestCase):
     BASELINE_TARGET = "examples.incident_triage_agent.agent:chat"
 
     def setUp(self) -> None:
-        self.behavior_paths = sorted((DEMO_DIR / "behaviors").glob("*.yaml"))
+        self.behavior_paths = sorted((DEMO_DIR / "evals").glob("*.yaml"))
         self.behaviors = {}
         for path in self.behavior_paths:
-            with path.open("r", encoding="utf-8") as fh:
-                self.behaviors[path.name] = yaml.safe_load(fh)
+            config = load_config(path)
+            load_runtime_context(config, path, stage_modules=STAGES)
+            self.behaviors[path.name] = config
 
     def test_nine_one_behavior_configs_present(self) -> None:
         self.assertEqual(len(self.behavior_paths), 9)
+
+    def test_each_config_has_one_behavior_mapping(self) -> None:
+        for name, cfg in self.behaviors.items():
+            self.assertIsInstance(cfg.get("behavior"), dict, name)
+            self.assertNotIn("behaviors", cfg, name)
 
     def test_every_config_targets_the_baseline_callable(self) -> None:
         for name, cfg in self.behaviors.items():

@@ -14,7 +14,7 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 # Set AZURE_API_BASE and AZURE_API_KEY.
 
-assert-ai run --config examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 assert-ai results status travel-langgraph-budget-overrun baseline
 ```
 
@@ -25,7 +25,7 @@ Artifacts are written to
 
 ```powershell
 assert-ai init --model azure/gpt-5.4-mini
-assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget-overrun/eval_config.yaml
+assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
@@ -41,17 +41,16 @@ scenario, setup, run commands, and artifact paths.
 | [`travel_planner_neurosan/`](travel_planner_neurosan/) | Custom multi-agent callable + manual OTel spans | Framework-independent trace integration. |
 | [`azure_doc_qa/`](azure_doc_qa/) | Multi-agent RAG callable | Confidential-data boundaries and grounded answers. |
 | [`billing_support_agent/`](billing_support_agent/) | Tool-using callable | Identity verification and account isolation. |
-| [`career_health_assessment/`](career_health_assessment/) | Prompt-only callable | Grounded, bounded career assessments. |
 | [`change_control_agent/`](change_control_agent/) | Workflow callable | Approval sequencing and record integrity. |
 | [`science_research_agent/`](science_research_agent/) | Retrieval callable | Sharing classes and retrieved prompt injection. |
-| [`incident_triage_agent/behaviors/`](incident_triage_agent/behaviors/) | Tool-using callable | Nine independently runnable SOP behaviors. |
+| [`incident_triage_agent/evals/`](incident_triage_agent/evals/) | Tool-using callable | Nine independently runnable SOP behaviors. |
 
 ## Target and instrumentation galleries
 
 | Example | Purpose |
 |---|---|
 | [`prompt_agents/`](prompt_agents/) | Prompt Agent target shapes: model-only, simulated tools, sandbox tools, generated tools, and external connector. |
-| [`phoenix_auto_trace/`](phoenix_auto_trace/) | Auto-instrumentation across supported agent frameworks. |
+| [`phoenix_auto_trace/`](phoenix_auto_trace/) | Auto-instrumentation across supported agent frameworks, with two atomic LangGraph evals. |
 | [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry. |
 | [`azure_managed_identity/`](azure_managed_identity/) | Azure OpenAI authentication with managed identity or `az login`. |
 

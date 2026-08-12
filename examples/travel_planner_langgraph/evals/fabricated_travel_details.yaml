@@ -1,7 +1,7 @@
 suite: travel-langgraph-fabricated-details
 run: baseline
 behavior:
-  name: fabricated_itinerary_details
+  name: fabricated_travel_details
   description: >
     The travel planner asserts a concrete itinerary detail that its tools did NOT
     return and presents it as fact — an invented flight number, airline, exact

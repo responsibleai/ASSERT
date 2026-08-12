@@ -43,6 +43,10 @@ Command reference for creating, running, and inspecting evaluations.
 - [CLI Overview](cli/overview.md): Learn the core CLI workflow for initializing, running, and comparing evaluations.
 - [CLI Commands](cli/commands.md): Browse command syntax, options, and examples for each CLI command group.
 
+## CI
+
+- [CI Safety Gate](ci/README.md): Wire ASSERT into pull requests with `assert-ai-action` to block on evidence of new safety regressions.
+
 ## Targets
 
 Choose the right target integration path for your system.

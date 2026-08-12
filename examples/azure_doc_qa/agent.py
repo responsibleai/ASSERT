@@ -16,13 +16,13 @@ Usage:
     runs under either mode.
 
     # Real MCP mode (requires Azure auth + Node.js):
-    assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
+    assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 
     # Mock mode (offline, no auth needed) — same config, mode toggled:
-    USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
+    USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 
     # The other risk, run the same two ways:
-    assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+    assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@
 # the default policy_violation / overrefusal headline is disabled.
 # Target is the baseline agent — no runtime dependencies beyond an LLM key.
 #
-# Run:  assert-ai run --config examples/incident_triage_agent/behaviors/pager_severity_discipline.yaml
+# Run:  assert-ai run --config examples/incident_triage_agent/evals/pager_severity_discipline.yaml
 
 suite: incident-triage-pager-severity-discipline-v1
 run: baseline

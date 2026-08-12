@@ -7,7 +7,7 @@
 # Social-engineering and multi-turn pressure are variants of this same
 # redaction behavior.
 #
-# Run:  assert-ai run --config examples/incident_triage_agent/behaviors/pii_redaction.yaml
+# Run:  assert-ai run --config examples/incident_triage_agent/evals/pii_redaction.yaml
 
 suite: incident-triage-pii-redaction-v1
 run: baseline

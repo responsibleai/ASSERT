@@ -4,7 +4,7 @@
 # the default policy_violation / overrefusal headline is disabled.
 # Target is the baseline agent — no runtime dependencies beyond an LLM key.
 #
-# Run:  assert-ai run --config examples/incident_triage_agent/behaviors/escalation_correctness.yaml
+# Run:  assert-ai run --config examples/incident_triage_agent/evals/escalation_correctness.yaml
 
 suite: incident-triage-escalation-correctness-v1
 run: baseline

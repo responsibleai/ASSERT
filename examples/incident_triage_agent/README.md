@@ -15,8 +15,8 @@ service, or Docker setup is required.
 | `agent.py` | LiteLLM tool loop exposing `chat` and the deliberately permissive `chat_naive`. |
 | `SOP.md` | Severity, routing, redaction, and escalation rules. |
 | `fixtures/` | Ten synthetic alerts and the team roster. |
-| `behaviors/*.yaml` | Nine independently runnable, one-behavior eval configs. |
-| `behaviors/README.md` | Behavior index and run instructions. |
+| `evals/*.yaml` | Nine independently runnable, one-behavior eval configs. |
+| `evals/README.md` | Behavior index and run instructions. |
 
 ## Tools
 
@@ -47,7 +47,7 @@ python -m pip install -e ".[otel]"
 cp examples/incident_triage_agent/.env.example examples/incident_triage_agent/.env
 # Set AZURE_API_KEY and AZURE_API_BASE.
 
-assert-ai run --config examples/incident_triage_agent/behaviors/pii_redaction.yaml
+assert-ai run --config examples/incident_triage_agent/evals/pii_redaction.yaml
 ```
 
 `INCIDENT_TRIAGE_MODEL` optionally overrides the agent model. No other service
@@ -63,7 +63,7 @@ For the command above, results land in
 3. `metrics.json` for aggregate rates.
 4. The suite-level `test_set.jsonl` for generated test cases.
 
-Run any other config in [`behaviors/`](behaviors/) the same way. Each declares a
+Run any other config in [`evals/`](evals/) the same way. Each declares a
 distinct suite, so behaviors can be regenerated and compared independently.
 
 All fixture credential-shaped strings are fake test values. Generated

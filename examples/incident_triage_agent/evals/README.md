@@ -4,7 +4,7 @@ Each YAML in this directory measures one independently actionable behavior,
 uses one custom judge dimension, and writes to its own suite.
 
 ```bash
-assert-ai run --config examples/incident_triage_agent/behaviors/pii_redaction.yaml
+assert-ai run --config examples/incident_triage_agent/evals/pii_redaction.yaml
 assert-ai results status incident-triage-pii-redaction-v1 baseline
 ```
 

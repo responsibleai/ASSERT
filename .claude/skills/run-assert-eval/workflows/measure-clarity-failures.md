@@ -98,8 +98,8 @@ runs**.
 
 ## Step 3 — Confirm scope, then generate one config per selected behavior
 
-For **each** selected behavior, produce its **own** `eval_config.yaml` under its
-own directory: `evals/<failure-slug>/eval_config.yaml`. Never bundle.
+For **each** selected behavior, produce its **own** flat config:
+`evals/<atomic_behavior>.yaml`. Use a clear snake_case filename. Never bundle.
 
 Config generation, in order of preference:
 
@@ -235,7 +235,7 @@ Fill from the candidate behavior (real schema field names):
 
 ## Step 4 — Atomicity (enforce)
 
-**One atomic behavior per `eval_config.yaml`.** Bundling makes `policy_violation`
+**One atomic behavior per YAML.** Bundling makes `policy_violation`
 a fuzzy logical-OR and masks per-behavior signal.
 
 - A single Clarity failure mode is usually one behavior → one config.
@@ -254,7 +254,7 @@ requested edits. **Run only on explicit go-ahead.**
 ## Step 6 — Run sequentially
 
 ```
-assert-ai run --config evals/<slug>/eval_config.yaml
+assert-ai run --config evals/<atomic_behavior>.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
@@ -281,13 +281,13 @@ the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
-(`evals/<slug>/`). This keeps Clarity's staleness tracking aware of the eval.
+(`evals/<atomic_behavior>.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
 ## Step 9 — Curate the example and handle discovery scratch
 
 Do this at the end of the domain you just measured:
 
-1. Keep one selected failure mode per `eval_config.yaml`.
+1. Keep one selected failure mode per YAML under `evals/`.
 2. Write or update the example README with the scenario, setup, run command,
    suite/run result path, and a concise behavior table.
 3. Do not copy generated taxonomies, test sets, result artifacts, mailboxes,
@@ -326,7 +326,7 @@ Do this at the end of the domain you just measured:
    protocol, alert fatigue).
 3. Triage: user picks **P1s only** → just `user_disengagement`.
 4. **Ask the user for `sample_size`** (recommend `25`; `10` = quick look, `50`+ = tightest). Say they pick `25`.
-5. Generate `evals/user-disengagement/eval_config.yaml`: `behavior.description`
+5. Generate `evals/user_disengagement.yaml`: `behavior.description`
    from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
    user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
@@ -337,6 +337,6 @@ Do this at the end of the domain you just measured:
    `permissible_policy_violation_rate` (an allowed behavior was broken) — with
    `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
 7. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
-   measured baseline at evals/user-disengagement/."
+   measured baseline at evals/user_disengagement.yaml."
 8. Curate the example (Step 9): keep the atomic config and README, and export
    `.clarity-protocol/` outside `examples/` only if the user wants the raw record.

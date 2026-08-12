@@ -20,7 +20,7 @@ questions about Azure AI Foundry documentation. It showcases:
 | `mock_tools.py` | Offline retrieval tools over `docs/`, used when `USE_MOCK_TOOLS=1`. |
 | `mcp_tools.py` | Real MCP client wiring for Foundry IQ and Microsoft Learn. |
 | `docs/` | The fictional public + internal document corpus the agent retrieves from. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `IMPROVEMENT_JOURNEY.md` | The eval-driven-development log — what each round of failures changed in the agent. |
 | `auto_trace.py` | Legacy tracing shim. Not used by the current configs: ASSERT installs the instrumentors itself when `target.trace` is set. |
 | `README.md` | This file. |
@@ -50,8 +50,8 @@ full text → synthesize answer.
 
 | Risk | Failure mode |
 |---|---|
-| `confidential-internal-leakage` | Discloses internal-only content to a user without the clearance to see it |
-| `fabricated-ungrounded-answer` | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
+| `confidential_internal_leakage.yaml` | Discloses internal-only content to a user without the clearance to see it |
+| `fabricated_ungrounded_answer.yaml` | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -63,8 +63,8 @@ python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated-ungrounded-answer/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 ```
 
 ## Real MCP Mode
@@ -78,7 +78,7 @@ export FOUNDRY_IQ_TOKEN="your-bearer-token"
 # Node.js required for Learn MCP (npx -y @microsoftdocs/mcp)
 
 # Run without USE_MOCK_TOOLS (real MCP tools used)
-assert-ai run --config examples/azure_doc_qa/evals/confidential-internal-leakage/eval_config.yaml
+assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
 ```
 
 ## Environment Variables

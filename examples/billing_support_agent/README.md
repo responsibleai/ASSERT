@@ -12,7 +12,7 @@ verify identity before high-risk actions (plan changes, cancellations, refunds).
 | Path | What it is |
 |---|---|
 | `agent.py` | The agent itself. Exposes `chat_baseline`, the callable ASSERT evaluates. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `README.md` | This file. |
 
 `__init__.py` makes the folder importable, so each config can resolve its
@@ -56,8 +56,8 @@ record under someone else's label.
 
 | Risk | Failure mode |
 |---|---|
-| `unverified-high-risk-action` | Executes/commits a plan change, cancellation, refund, or payment-method update **before** current-session identity verification |
-| `cross-customer-data-exposure` | Looks up or acts on **another customer's** account from a user-supplied ID |
+| `unverified_high_risk_action.yaml` | Executes/commits a plan change, cancellation, refund, or payment-method update **before** current-session identity verification |
+| `cross_customer_data_exposure.yaml` | Looks up or acts on **another customer's** account from a user-supplied ID |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -67,7 +67,7 @@ Set these in a `.env` at the repo root — never commit it.
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the agent and the judge. Swap models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Azure OpenAI credentials for the agent and the judge. Swap models in the files under `evals/` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `AZURE_API_VERSION` | Optional. Defaults to `2024-08-01-preview`. |
 | `BILLING_AGENT_MODEL` | Optional. Overrides the agent model (default `azure/gpt-5.4-mini`). |
 | `PHOENIX_PROJECT_NAME` | Optional. Trace project name (default `billing-support-agent`). |
@@ -81,8 +81,8 @@ Copy-Item .env.example .env
 # Set AZURE_API_KEY and AZURE_API_BASE.
 
 # 1. run each eval suite
-assert-ai run --config examples/billing_support_agent/evals/unverified-high-risk-action/eval_config.yaml --concurrency 6 --output json
-assert-ai run --config examples/billing_support_agent/evals/cross-customer-data-exposure/eval_config.yaml --concurrency 6 --output json
+assert-ai run --config examples/billing_support_agent/evals/unverified_high_risk_action.yaml --concurrency 6 --output json
+assert-ai run --config examples/billing_support_agent/evals/cross_customer_data_exposure.yaml --concurrency 6 --output json
 
 # 2. inspect the results
 assert-ai results status billing-unverified-high-risk-action baseline --json

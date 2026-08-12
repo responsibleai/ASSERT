@@ -38,8 +38,8 @@ methodologically aligned when changing the flow.
    workspaces into `examples/`; examples keep only curated configs and docs.
 3. **Measurement (this skill):** `clarity_intake.py` turns failure docs into
    candidate behaviors; `workflows/measure-clarity-failures.md` runs a **mandatory
-   human triage gate**, generates **one atomic `eval_config.yaml` per selected
-   failure**, runs them sequentially, and reports one behavior per column.
+   human triage gate**, generates **one flat `evals/<atomic_behavior>.yaml` per
+   selected failure**, runs them sequentially, and reports one behavior per column.
 4. **Governance (ACS, optional):** when a run surfaces a real failure the user wants
    to *fix and prove*, `workflows/govern-and-remeasure.md` first **classifies the
    failure against the baseline** (Step 1a — semantic `output` gate vs. structural

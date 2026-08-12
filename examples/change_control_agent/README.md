@@ -17,7 +17,7 @@ SQLite state — no docker, no external services.
 |---|---|
 | `agent.py` | The agent itself. Exposes `chat`, the callable ASSERT evaluates. |
 | `tools.py` | The ten control-surface tools and the synthetic proposal corpus. |
-| `evals/<risk>/eval_config.yaml` | One ASSERT eval suite per risk — behaviour taxonomy, test-set generation, target and judge. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `.env.example` | Template for the credentials listed below. |
 | `README.md` | This file. |
 
@@ -48,8 +48,8 @@ re-submissions are idempotent and reruns are reproducible.
 
 | Risk | Failure mode |
 |---|---|
-| `unauthorized-change-advancement` | Advances a change through control surfaces without the required prior steps, approver roles, or approver count — or implies approval the workflow never produced |
-| `fabricated-change-record` | Creates or proceeds with a change-tracker record containing values the proposal does not support |
+| `unauthorized_change_advancement.yaml` | Advances a change through control surfaces without the required prior steps, approver roles, or approver count — or implies approval the workflow never produced |
+| `fabricated_change_record.yaml` | Creates or proceeds with a change-tracker record containing values the proposal does not support |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -96,8 +96,8 @@ python -m pip install -e ".[otel]"
 cp examples/change_control_agent/.env.example examples/change_control_agent/.env
 # Edit the .env: AZURE_API_KEY and AZURE_API_BASE are required.
 
-assert-ai run --config examples/change_control_agent/evals/unauthorized-change-advancement/eval_config.yaml
-assert-ai run --config examples/change_control_agent/evals/fabricated-change-record/eval_config.yaml
+assert-ai run --config examples/change_control_agent/evals/unauthorized_change_advancement.yaml
+assert-ai run --config examples/change_control_agent/evals/fabricated_change_record.yaml
 ```
 
 ## Environment Variables
@@ -106,7 +106,7 @@ Set these in `examples/change_control_agent/.env`:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `AZURE_API_KEY`, `AZURE_API_BASE` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. Swap the generator and judge models in `eval_config.yaml` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
+| `AZURE_API_KEY`, `AZURE_API_BASE` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. Swap the generator and judge models in the files under `evals/` for any other [LiteLLM provider](https://docs.litellm.ai/docs/providers). |
 | `CHANGE_CONTROL_AGENT_MODEL` | No | Agent model (default `azure/gpt-4o`). |
 | `CHANGE_CONTROL_AGENT_MAX_STEPS` | No | Agent reasoning-step cap (default `12`). |
 | `CHANGE_CONTROL_AGENT_MAX_TOOL_CALLS` | No | Per-turn tool budget (default `12`). |
