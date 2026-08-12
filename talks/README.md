@@ -5,10 +5,11 @@ viewer. No browser, build step, or sibling folders required.
 
 | Talk | Deck | Length |
 |---|---|---|
-| **AI Engineer World's Fair 2026** — *evaluate and optimize your AI agents* | [`aiewf-18min/aiewf-2026-deck.pdf`](aiewf-18min/aiewf-2026-deck.pdf) | 18 min · 7 slides |
+| **AI Engineer World's Fair 2026** — *evaluate, control, optimize your AI agents* | [`aiewf-18min/aiewf-2026-deck.pdf`](aiewf-18min/aiewf-2026-deck.pdf) | 18 min · 7 slides |
 
-The AIEWF deck walks a three-beat arc — baseline → defensive prompting → principled
-control plane — then the ASSERT + ACS announcement. The
-[`bank_manager_agent_control`](../examples/bank_manager_agent_control/README.md) example
-now runs that same arc as **two** behaviors, each against a realistic baseline rather than
-an unguarded agent; see the example README for the current arms and results.
+The revised AIEWF deck follows the current
+[`bank_manager_agent_control`](../examples/bank_manager_agent_control/README.md)
+example: ASSERT discovers two different runtime failures from written
+requirements, ACS applies the appropriate structural control, and the comparison
+measures both impermissible and permissible behavior. Behavior 2 uses the
+reviewed powered 120-case study.

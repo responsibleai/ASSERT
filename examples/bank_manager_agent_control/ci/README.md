@@ -1,63 +1,60 @@
-# ASSERT evals as an AI-safety regression gate in CI
+# Use ASSERT results as an SDLC regression gate
 
-The control-plane arm of this demo also ships as a **CI gate**, in its own standalone
-repository — because that is how teams actually adopt it: your agent is its own project that
-installs ASSERT as a dependency and wires it into `.github/workflows/`, not a fork of ASSERT.
+The bank support agent produces the inputs a release gate needs:
 
-**→ [`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)**
-&nbsp;*(the canonical CI shipping vehicle)*
+- one behavior per config;
+- one frozen test set across candidate arms;
+- impermissible and permissible behavior measurements;
+- full evidence for every failed case; and
+- paired comparisons where the same cases are rerun.
 
-There, the banking agent simply does:
+The standalone shipping example remains:
 
-```bash
-pip install "assert-ai[acs,langgraph,otel,examples]"
-```
+[`responsibleai/assert-ci-banking-demo`](https://github.com/responsibleai/assert-ci-banking-demo)
 
-and adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,
-compares it to the recorded baseline arm with a paired statistical test, and **passes only if
-the change significantly *improves* the safety dimension without regressing `overrefusal`** —
-an improvement gate, not a fixed threshold. If it fails, the build is skipped and the PR is
-blocked.
+## Gate both safety and product quality
 
-## What the gate is testing for, in this example's terms
+| Behavior | Impermissible dimension | Permissible dimension |
+|---|---|---|
+| Sensitivity-tier authorization | unauthorized exposure / `policy_violation` | standard-tier request mishandled / `overrefusal` |
+| Coercion via unverified authority | `coercion_bypass` | `legitimate_escalation_overrefusal` |
 
-Both behaviors in this example produce exactly the shape of evidence the gate consumes — a
-frozen test set, several arms scored against it, and two axes that must move in the right
-direction *together*:
+The display-level product language is **Impermissible behavior violated** and
+**Permissible behavior violated**. The lower-level dimension keys above remain
+useful for behavior-specific automation.
 
-| Behavior | Config to gate on | Safety axis | Quality axis |
-|---|---|---|---|
-| 1 · sensitivity-tier authorization | [`eval_tier_authorization_traced.yaml`](../eval_tier_authorization_traced.yaml) | `policy_violation` | `overrefusal` |
-| 2 · coercion via unverified authority | [`eval_coercion_arm3_acs.yaml`](../eval_coercion_arm3_acs.yaml) | `coercion_bypass` | `legitimate_escalation_overrefusal` |
+### Behavior 1
 
-Use the **traced** config for Behavior 1: with a text-only target the judge cannot establish
-the ordering property the behavior is about, and the dimension saturates across arms —
-a gate built on it would pass everything.
+The defensive prompt does not move the uncovered domains. The Rego arm reduces
+impermissible exposure to zero in the measured runs while preserving standard
+requests.
 
-Both behaviors also show why a *single-axis* gate is a trap:
+### Behavior 2
 
-- Behavior 1's defensive-prompt arm leaves unauthorized exposure on the domains the baseline
-  never covered at **exactly** its baseline rate — a prompt-only change that looks harmless
-  and fixes nothing.
-- Behavior 2's hardened-prompt arm closes the bypass but drives over-refusal from 42.9% to
-  71.4%. A safety-only gate would have scored that as a clean win.
+On the reviewed 120-case dataset:
 
-A two-axis improvement gate rejects both.
+| Arm | Impermissible | Permissible |
+|---|---:|---:|
+| Baseline | 8.3% | 26.7% |
+| Hardened prompt | 0.0% | 46.7% |
+| Classifier | 0.0% | 26.7% |
 
-> **Statistical note.** Behavior 2's arms are n=19 coercive / n=21 legitimate; none of the
-> bypass deltas reach p<0.05 (all p=0.31), and the closest contrast is the hardened prompt's
-> over-refusal regression at p=0.061. A paired improvement gate at that sample size will not
-> reach significance — size the gated suite for the decision you want it to make.
+A safety-only gate would accept the hardened prompt. A two-axis gate rejects it
+because it creates 20.0 percentage points more permissible violations.
 
-## Why a standalone repo is the right shipping vehicle
+## Recommended CI logic
 
-- **Matches how teams work** — the agent is a normal project that `pip install`s `assert-ai`;
-  nobody develops inside a cloned eval framework.
-- **CI is the natural home for the control-plane arm** — a gate belongs in the target repo's
-  `.github/workflows/`, next to the code it guards.
-- **Deterministic** — the standalone repo commits pre-computed ASSERT artifacts, so every CI
-  run is reproducible with no live LLM calls.
+1. Install the reviewed fixture.
+2. Execute the baseline and candidate on the same case IDs.
+3. Reject any regression in the impermissible or permissible dimensions.
+4. Use a paired test for the predeclared primary comparison.
+5. Attach the failed cases and trace evidence to the build summary.
+6. Include model/tool cost and latency when the release decision is
+   cost-sensitive.
 
-This directory is the in-repo reference and pointer; the standalone repo is where you copy the
-pattern into your own agent project.
+For the published Behavior 2 comparison, the classifier-vs-hardened permissible
+delta is -20.0 points with exact paired McNemar `p=.0169`. The classifier
+observed 0/60 coercion bypasses; its one-sided exact upper 95% bound is 4.87%.
 
+These thresholds are evidence for this agent and dataset, not universal release
+defaults. Size and calibrate each gated suite for its own decision.

@@ -1,4 +1,4 @@
-"""Bank-manager demo — shared agent plumbing.
+"""Bank support agent demo — shared agent plumbing.
 
 This module holds the pieces that are *not* part of any behavior's claim: how to
 build the target LLM, how to open the two MCP servers (a realistic multi-domain
@@ -186,4 +186,3 @@ async def _open_two_servers(stack):
     bank_tools = await load_mcp_tools(bank_session)
     kb_tools = await load_mcp_tools(kb_session)
     return bank_tools + kb_tools
-

@@ -157,6 +157,9 @@ pipeline:
     concurrency: 8
     target:
       callable: examples.bank_manager_agent_control.agent_tier_authz:chat_baseline_tier_authz
+      trace:
+        backend: otel
+        group_by: session.id
 
   judge:
     dimensions:

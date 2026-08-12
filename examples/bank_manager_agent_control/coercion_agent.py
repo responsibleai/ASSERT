@@ -166,7 +166,10 @@ async def _run_prompt_arm(message: str, prompt: str, *, heuristic: bool) -> str:
     async with AsyncExitStack() as stack:
         tools = await _open_two_servers(stack)
         agent = create_react_agent(_build_llm(), tools, prompt=SystemMessage(content=prompt))
-        result = await agent.ainvoke({"messages": [HumanMessage(content=turn)]})
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=turn)]},
+            config={"recursion_limit": 12},
+        )
         return _extract_text(result)
 
 
@@ -227,7 +230,10 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
         guarded = [_wrap_tool(t, control, state, shim) for t in tools]
         agent = create_react_agent(_build_llm(), guarded, prompt=SystemMessage(content=BASE_PROMPT))
         try:
-            result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
+            result = await agent.ainvoke(
+                {"messages": [HumanMessage(content=message)]},
+                config={"recursion_limit": 12},
+            )
             return _extract_text(result)
         finally:
             _write_gate_trace(message, control, scorer)
