@@ -42,6 +42,7 @@ from assert_ai.core.azure_auth import refresh_azure_auth_mode
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
 from assert_ai.core.io import write_json
 from assert_ai.core.model_client import (
+    BudgetExceededError,
     LLMAuthError,
     LLMInputError,
     LLMProviderError,
@@ -521,8 +522,10 @@ def _log_run_headline(run_root: Path) -> None:
     # Imported lazily to avoid a hard dependency for callers that import the
     # runner without ever invoking it (e.g. test scaffolding).
     from assert_ai.results import (
+        compute_coverage,
         compute_prompt_metrics,
         compute_scenario_metrics,
+        format_coverage,
     )
     from assert_ai.core.io import load_jsonl
 
@@ -550,6 +553,17 @@ def _log_run_headline(run_root: Path) -> None:
     log.info(f"  Target: {target}")
     log.info(f"  Judge:  {judge}")
     log.info(f"  Total:  {total} ({scored} scored)")
+
+    # Coverage sits directly above the rates, because a rate is only meaningful
+    # alongside the denominator it was computed over.
+    combined_coverage = compute_coverage(score_rows)
+    log.info(f"  {format_coverage(combined_coverage)}")
+    if combined_coverage["below_threshold"]:
+        log.warning(
+            "  Excluded rows are not a random sample - content filters reject the "
+            "most adversarial transcripts, so the true rate is likely higher than "
+            "the rates below."
+        )
 
     def _fmt_rate(value: Any) -> str:
         if value is None or not isinstance(value, (int, float)):
@@ -799,6 +813,12 @@ def _run_stages_inner(
     """Stage execution loop. Extracted so the outer function can manage
     heartbeat/watchdog lifecycle in a single try/finally."""
     failed_stage: str | None = None
+    # Whole-run consumption ceilings, if the config declared any. Running totals
+    # are carried across stages so a ceiling applies to the run rather than
+    # resetting at every stage boundary.
+    run_limits = ctx.get("limits")
+    consumed_calls = 0
+    consumed_tokens = 0
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -829,7 +849,12 @@ def _run_stages_inner(
         ctx["_stage_forced"] = stage_name in requested_force_stages
         usage_acc: UsageAccumulator | None = None
         try:
-            with track_usage() as usage_acc:
+            with track_usage(
+                run_limits,
+                baseline_calls=consumed_calls,
+                baseline_tokens=consumed_tokens,
+                started_at=pipeline_start,
+            ) as usage_acc:
                 # run_stage_coro replaces asyncio.run with bounded teardown:
                 # if the stage's event loop can't shut down its default
                 # executor within 300s (typically because a user target left
@@ -872,6 +897,19 @@ def _run_stages_inner(
                 else:
                     finalize_artifact_plan(ctx, artifact_plans[stage_name])
             ok = True
+        except BudgetExceededError as exc:
+            # The operator's own ceiling, not a provider failure. Stop the
+            # pipeline but let the normal per-stage bookkeeping below run, so
+            # whatever was produced before the ceiling remains valid and
+            # readable rather than being discarded.
+            ok = False
+            budget_exceeded = str(exc)
+            ctx["_budget_exceeded"] = budget_exceeded
+            log.error(
+                "[%s] %s. Stopping the run. Artifacts produced so far are kept "
+                "and remain readable.",
+                stage_name, exc,
+            )
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
             # Classified LLM errors already carry a clean, actionable message.
             # Print just that message; suppress the multi-screen litellm/httpx
@@ -901,6 +939,9 @@ def _run_stages_inner(
             stage_payload = usage_acc.to_dict()
             stage_payload["elapsed_s"] = round(elapsed, 3)
             stage_usage[stage_name] = stage_payload
+        if usage_acc is not None:
+            consumed_calls += usage_acc.calls
+            consumed_tokens += usage_acc.total_tokens()
         if ok:
             _print_stage_done(stage_name, elapsed, stage_result.get("_summary"), usage_acc)
         else:
@@ -935,7 +976,9 @@ def _run_stages_inner(
             break
 
     total_elapsed = time.monotonic() - pipeline_start
+    budget_exceeded = ctx.get("_budget_exceeded")
     metrics_written = False
+    metrics_write_error: str | None = None
     if run_root is not None and stage_usage:
         try:
             metrics_path = run_root / "metrics.json"
@@ -952,8 +995,17 @@ def _run_stages_inner(
                     f"{_format_token_count(totals['output_tokens'])} out · "
                     f"{cache_pct:.1f}% cached"
                 )
-        except Exception:  # noqa: BLE001
-            log.debug("Failed to write metrics.json", exc_info=True)
+        except Exception as exc:  # noqa: BLE001
+            # This was logged at DEBUG, so a failed write lost the entire cost
+            # record while the run still reported success. The failure is now
+            # visible in the log and recorded in the manifest.
+            metrics_write_error = f"{type(exc).__name__}: {exc}"
+            log.warning(
+                "Failed to write metrics.json (%s). Token usage and cost "
+                "accounting for this run were not recorded.",
+                metrics_write_error,
+            )
+            log.debug("metrics.json write traceback", exc_info=True)
 
     if failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
@@ -975,13 +1027,26 @@ def _run_stages_inner(
                 log.info("View in browser:")
                 log.info(f"  cd viewer && npm run dev    (then open http://localhost:5174/suite/{suite_id}/{run_id})")
     else:
-        log.error(f"Pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
+        if budget_exceeded is not None:
+            log.error(
+                f"Pipeline stopped by a configured run limit at {failed_stage} "
+                f"({total_elapsed:.1f}s): {budget_exceeded}"
+            )
+        else:
+            log.error(f"Pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
     if manifest is None:
         return 0 if failed_stage is None else 1
 
     manifest.ended_at = datetime.now(timezone.utc).isoformat()
     manifest.status = "completed" if failed_stage is None else "failed"
+    if budget_exceeded is not None:
+        manifest.stopped_by_limit = budget_exceeded
+    if metrics_write_error is not None:
+        # Recorded on the manifest so the gap is discoverable later, not only in
+        # whatever log stream happened to be attached at the time.
+        manifest.metrics_write_failed = True
+        manifest.metrics_write_error = metrics_write_error
     _record_run_artifacts(manifest, ctx, run_root)
     _write_manifest(manifest, run_root)
     return 0 if failed_stage is None else 1

@@ -254,6 +254,39 @@ class PipelineConfig:
 
 
 @dataclass
+class RunLimits:
+    """Whole-run consumption ceilings.
+
+    Every other limit in ASSERT is per-call or per-task - max_tool_calls,
+    max_turns, model timeout - so nothing bounds a run as a whole. The realistic
+    failure is a typo: ``sample_size: 5000`` against an expensive judge, with
+    nothing able to stop it once it starts.
+
+    All fields default to None, meaning unlimited, so a config without a
+    ``limits:`` block behaves exactly as it did before.
+
+    There is deliberately no cost ceiling. ASSERT carries no pricing table, and
+    a cost limit computed from an invented one would be wrong in whichever
+    direction the operator could least afford. Token and call ceilings are
+    directly measurable and are what is offered instead.
+    """
+
+    max_total_calls: int | None = None
+    max_total_tokens: int | None = None
+    max_wall_time_s: float | None = None
+    on_exceed: str = "stop"
+
+    def is_active(self) -> bool:
+        return any(
+            value is not None
+            for value in (self.max_total_calls, self.max_total_tokens, self.max_wall_time_s)
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass
 class SuiteMetadata:
     created_at: str
 
@@ -278,6 +311,14 @@ class RunManifest:
     progress: dict[str, Any] | None = None
     artifact_versions: dict[str, dict[str, Any]] = field(default_factory=dict)
     stage_timings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Set when metrics.json could not be written. Without this a failed write
+    # loses the entire cost record while the run still reports success, so the
+    # gap has to be recorded somewhere durable rather than only in the log.
+    metrics_write_failed: bool | None = None
+    metrics_write_error: str | None = None
+    # Set when a configured run limit stopped the pipeline, so the run is
+    # distinguishable from one that failed on an error.
+    stopped_by_limit: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         empty_collection_keys = {"artifact_versions", "stage_timings"}
