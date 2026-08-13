@@ -123,6 +123,23 @@ def _load_acs_symbol(name: str) -> Any:
         _handle_missing_acs_dependency(exc)
 
 
+def _handle_missing_foundry_dependency(exc: ModuleNotFoundError) -> None:
+    missing = getattr(exc, "name", "") or "Foundry extra"
+    _error(
+        f"Could not import Foundry dependency '{missing}'. Install the Foundry extra first, for example:\n"
+        "  python -m pip install -e \".[foundry]\""
+    )
+
+
+def _load_foundry_symbol(name: str) -> Any:
+    try:
+        import assert_ai.integrations.foundry as foundry
+
+        return getattr(foundry, name)
+    except ModuleNotFoundError as exc:
+        _handle_missing_foundry_dependency(exc)
+
+
 def _console(*, no_color: bool = False) -> Console:
     return Console(highlight=False, color_system=None if no_color else "auto")
 
@@ -1636,6 +1653,300 @@ def results_compare_suites(
             f"{s['with_tools']}/{s['inference_rows']}",
         )
     console.print(struct_table)
+
+
+@cli.group(cls=SuggestingGroup, short_help="Publish ASSERT runs to an Azure AI Foundry project")
+def foundry():
+    """Publish a completed ASSERT run to an Azure AI Foundry project.
+
+    Subcommands register ASSERT judge dimensions as versioned custom
+    evaluators, upload the scored rows as a Foundry dataset asset, and
+    POST the eval + eval.run that binds them. Foundry then renders per-
+    dimension scores in its Evaluations tab.
+
+    Requires the ``foundry`` extra: ``pip install -e ".[foundry]"``.
+    ``--help`` works without the extra installed.
+    """
+
+
+def _parse_passing_when_true(pair: str) -> tuple[str, bool]:
+    """Parse a ``dim=true|false`` --passing-when-true flag value."""
+    if "=" not in pair:
+        raise click.BadParameter(
+            f"expected 'name=true' or 'name=false', got {pair!r}"
+        )
+    name, _, raw_value = pair.partition("=")
+    name = name.strip()
+    raw_value = raw_value.strip().lower()
+    if not name:
+        raise click.BadParameter("dimension name is empty")
+    if raw_value in ("true", "1", "yes"):
+        return name, True
+    if raw_value in ("false", "0", "no"):
+        return name, False
+    raise click.BadParameter(
+        f"expected true/false for {name!r}, got {raw_value!r}"
+    )
+
+
+@foundry.command("push", short_help="Publish an ASSERT run directory to a Foundry project")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--project",
+    default=None,
+    help=(
+        "Foundry project. Accepts: endpoint URL "
+        "(https://<account>.services.ai.azure.com/api/projects/<project>), "
+        "the '<account>/<project>' shorthand, or a Cognitive Services project "
+        "ARM id. Required for real pushes; optional for --dry-run (the exporter "
+        "makes no network calls in dry-run mode)."
+    ),
+)
+@click.option(
+    "--evaluator-mode",
+    type=click.Choice(["code", "prompt", "both"], case_sensitive=False),
+    default="both",
+    show_default=True,
+    help=(
+        "Which evaluator variant(s) to register. 'code' plucks the pre-computed "
+        "ASSERT score (deterministic, no judge cost). 'prompt' has Foundry re-judge "
+        "with its own LLM against the ASSERT rubric (stochastic, one judge call per "
+        "row × dim). 'both' registers both side-by-side."
+    ),
+)
+@click.option(
+    "--eval-name",
+    default=None,
+    help=(
+        "Override the eval definition name (default: 'ASSERT: <suite_id>'). "
+        "Bump this when the ASSERT judge dimensions change so Foundry doesn't "
+        "reject the push for testing_criteria drift."
+    ),
+)
+@click.option(
+    "--run-name",
+    default=None,
+    help="Override the eval run name (default: 'ASSERT run: <run_id>').",
+)
+@click.option(
+    "--dataset-name",
+    default=None,
+    help=(
+        "Override the Foundry dataset asset name (default: 'assert-<suite_id>' "
+        "sanitized to Foundry's a-z / 0-9 / hyphen / underscore character class). "
+        "The dataset *version* is always the content hash of the row payload — "
+        "identical row content reuses the existing version."
+    ),
+)
+@click.option(
+    "--passing-when-true",
+    "passing_when_true",
+    multiple=True,
+    metavar="DIM=TRUE|FALSE",
+    help=(
+        "Override the pass direction for a custom judge dimension. Repeatable. "
+        "'DIM=true' means the ASSERT verdict True is a PASS; 'DIM=false' is the "
+        "default violation-flag convention (True = fail). Built-in dimensions "
+        "(policy_violation, overrefusal) cannot be overridden."
+    ),
+)
+@click.option(
+    "--judge-threshold",
+    type=float,
+    default=3.0,
+    show_default=True,
+    help=(
+        "Pass threshold for prompt-variant evaluators (ordinal 1-5 rubric). "
+        "3.0 = mid-scale, matches the code variant's default 0.5 in [0.0, 1.0]."
+    ),
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Do not make any network calls. Print what the exporter would send.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
+@click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
+def foundry_push(
+    run_dir: Path,
+    project: str | None,
+    evaluator_mode: str,
+    eval_name: str | None,
+    run_name: str | None,
+    dataset_name: str | None,
+    passing_when_true: tuple[str, ...],
+    judge_threshold: float,
+    dry_run: bool,
+    as_json: bool,
+    no_color: bool,
+) -> None:
+    """Publish a completed ASSERT run to Azure AI Foundry.
+
+    Loads RUN_DIR, registers one Foundry custom evaluator per ASSERT
+    judge dimension (per requested variant), uploads the scored rows
+    as a project-scoped dataset asset, and POSTs an eval + eval.run
+    that references both.
+
+    Requires the 'foundry' extra: pip install -e ".[foundry]"
+    """
+    # --project is only needed when we'll actually hit Foundry. Enforcing
+    # it at the click layer would block --dry-run in a fresh checkout
+    # (no `az login`, no exported endpoint), which contradicts the
+    # runbook's pitch of dry-run as the fastest way to catch config
+    # mistakes before touching a real project.
+    if not dry_run and not project:
+        _error("Missing option '--project' (required for real pushes; optional for --dry-run).")
+        return
+
+    push_run_dir = _load_foundry_symbol("push_run_dir")
+    push_error_cls = _load_foundry_symbol("PushError")
+    dry_result_cls = _load_foundry_symbol("DryRunResult")
+    dataset_rows_error_cls = _load_foundry_symbol("DatasetRowsError")
+    evaluator_spec_error_cls = _load_foundry_symbol("EvaluatorSpecError")
+
+    overrides: dict[str, bool] = {}
+    for pair in passing_when_true:
+        name, value = _parse_passing_when_true(pair)
+        overrides[name] = value
+
+    try:
+        result = push_run_dir(
+            str(run_dir),
+            project=project,
+            evaluator_mode=evaluator_mode.lower(),  # type: ignore[arg-type]
+            eval_name=eval_name,
+            run_name=run_name,
+            dataset_name=dataset_name,
+            passing_when_true=overrides,
+            judge_threshold=judge_threshold,
+            dry_run=dry_run,
+        )
+    except (push_error_cls, dataset_rows_error_cls, evaluator_spec_error_cls) as exc:
+        _error(str(exc))
+        return
+
+    if isinstance(result, dry_result_cls):
+        fingerprints = dict(getattr(result, "evaluator_fingerprints", {}) or {})
+        prompt_calls = int(getattr(result, "prompt_variant_calls", 0) or 0)
+        if as_json:
+            _echo_json({
+                "dry_run": True,
+                "eval_name": result.eval_name,
+                "run_name": result.run_name,
+                "dataset_name": result.dataset_name,
+                "dataset_version": result.dataset_version,
+                "dataset_row_count": result.dataset_row_count,
+                "judge_deployment": result.judge_deployment,
+                "passing_when_true": dict(result.passing_when_true),
+                "prompt_variant_calls": prompt_calls,
+                "evaluators": [
+                    {
+                        "name": spec.evaluator_name,
+                        "variant": spec.variant,
+                        "fingerprint": fingerprints.get(spec.evaluator_name, ""),
+                    }
+                    for spec in result.evaluator_specs
+                ],
+            })
+            return
+
+        console = _console(no_color=no_color)
+        console.print("Dry-run -- no network calls made.\n")
+
+        summary = Table(box=None, show_header=False, show_edge=False, pad_edge=False)
+        summary.add_column("Field", style="cyan", no_wrap=True)
+        summary.add_column("Value", style="white")
+        summary.add_row("Eval name", result.eval_name)
+        summary.add_row("Run name", result.run_name)
+        summary.add_row("Dataset name", result.dataset_name)
+        summary.add_row("Dataset version", result.dataset_version)
+        summary.add_row("Dataset rows", str(result.dataset_row_count))
+        summary.add_row("Judge model", result.judge_deployment or "(unresolved)")
+        overrides_str = ", ".join(
+            f"{k}={str(v).lower()}" for k, v in sorted(dict(result.passing_when_true).items())
+        ) or "(none)"
+        summary.add_row("Passing-when-true", overrides_str)
+        if prompt_calls:
+            summary.add_row(
+                "LLM calls (prompt variant)",
+                f"~{prompt_calls} (1 per row x prompt evaluator)",
+            )
+        else:
+            summary.add_row("LLM calls (prompt variant)", "0 (code-only mode)")
+        console.print(summary)
+
+        if result.evaluator_specs:
+            table = Table(
+                title=f"Evaluators ({len(result.evaluator_specs)})",
+                box=None,
+                show_header=True,
+                show_edge=False,
+                pad_edge=False,
+            )
+            table.add_column("Name", style="cyan", no_wrap=True)
+            table.add_column("Variant", style="white", no_wrap=True)
+            table.add_column("Fingerprint", style="white", no_wrap=True)
+            for spec in result.evaluator_specs:
+                table.add_row(
+                    spec.evaluator_name,
+                    spec.variant,
+                    fingerprints.get(spec.evaluator_name, ""),
+                )
+            console.print(table)
+        return
+
+    reused_set = set(result.reused_evaluators)
+
+    if as_json:
+        _echo_json({
+            "dry_run": False,
+            "eval_id": result.eval_id,
+            "run_id": result.run_id,
+            "reused_eval": result.reused_eval,
+            "dataset": {
+                "name": result.dataset_ref.name,
+                "version": result.dataset_ref.version,
+                "asset_id": result.dataset_ref.asset_id,
+                "reused": result.reused_dataset,
+            },
+            "evaluators": [
+                {
+                    "name": ref.evaluator_name,
+                    "version": ref.evaluator_version,
+                    "variant": ref.variant,
+                    "reused": ref.evaluator_name in reused_set,
+                }
+                for ref in result.evaluator_refs
+            ],
+        })
+        return
+
+    console = _console(no_color=no_color)
+    summary = Table(box=None, show_header=False, show_edge=False, pad_edge=False)
+    summary.add_column("Field", style="cyan", no_wrap=True)
+    summary.add_column("Value", style="white")
+    summary.add_row("Eval", f"{result.eval_id}{' (reused)' if result.reused_eval else ''}")
+    summary.add_row("Run", result.run_id)
+    summary.add_row(
+        "Dataset",
+        f"{result.dataset_ref.asset_id}{' (reused)' if result.reused_dataset else ''}",
+    )
+    console.print(summary)
+
+    if result.evaluator_refs:
+        title = f"Evaluators ({len(result.evaluator_refs)}"
+        if reused_set:
+            title += f", {len(reused_set)} reused"
+        title += ")"
+        table = Table(title=title, box=None, show_header=True, show_edge=False, pad_edge=False)
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Version", style="white", no_wrap=True)
+        table.add_column("Variant", style="white", no_wrap=True)
+        table.add_column("Status", style="white", no_wrap=True)
+        for ref in result.evaluator_refs:
+            status = "reused" if ref.evaluator_name in reused_set else "new"
+            table.add_row(ref.evaluator_name, f"v{ref.evaluator_version}", ref.variant, status)
+        console.print(table)
 
 
 @cli.group(cls=SuggestingGroup, short_help="Generate and validate ACS policies from ASSERT findings")

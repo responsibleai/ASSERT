@@ -86,6 +86,22 @@ regression = [
 azure-aad = [
   "azure-identity>=1.19.0",
 ]
+# Publish completed ASSERT runs to an Azure AI Foundry project. Registers
+# ASSERT judge dimensions as versioned custom evaluators (code-based, so
+# Foundry replays ASSERT's own scores without re-judging; prompt-based is
+# available side-by-side for second-opinion runs), uploads the scored
+# rows as a Foundry dataset, and creates the eval + eval.run that binds
+# them together. Uses the first-party azure-ai-projects SDK for the
+# datasets, evaluators, and evals data-plane calls; DefaultAzureCredential
+# for auth (`az login`, workload identity, or managed identity all work).
+foundry = [
+  # Cap the major so `.beta.*` API drift (evaluators.get_version /
+  # create_version / delete_version live under `.beta.evaluators` in
+  # the current SDK) doesn't silently break re-pushes on a `pip install
+  # -U`. Re-verify + widen the cap when a compatible newer major ships.
+  "azure-ai-projects>=2.2.0,<3.0.0",
+  "azure-identity>=1.19.0",
+]
 acs = [
   # Bridge ASSERT findings to Agent Governance Toolkit's ACS policy runtime.
   # `acs-generator` (pure Python) synthesizes the manifest + Rego from a
