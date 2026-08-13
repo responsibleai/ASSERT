@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 import {
-	getRecordFlag,
 	getRecordMetricValue,
 	getRequiredBaseMetricNames,
 	isBooleanFlag,
@@ -228,10 +227,6 @@ function addDimensionValue(aggregate: EventDimensionAggregate, value: unknown): 
 	}
 }
 
-function dimensionRate(dimensions: Record<string, DimensionMetrics>, name: string): number | null {
-	return dimensions[name]?.rate ?? null;
-}
-
 export function computeAuditRunMetrics(
 	scores: AuditScore[],
 	behaviors: Behavior[] = []
@@ -247,12 +242,7 @@ export function computeAuditRunMetrics(
 		.map((score) => withPermissibilitySplit(score, permissibilityIndex));
 	const dimensionNames = collectDimensionNames(scoredScores);
 	const dimensionAggregates = initDimensionAggregates(dimensionNames, scoredScores);
-	const counts = emptyScoreCounts();
-
 	for (const score of scoredScores) {
-		const policyViolation = getRecordFlag(score, 'policy_violation');
-		if (policyViolation !== null) counts[policyViolation ? 1 : 0] += 1;
-
 		for (const dimensionName of dimensionNames) {
 			const dimensionValue = getRecordMetricValue(score, dimensionName);
 			if (dimensionValue === null) {
@@ -275,9 +265,6 @@ export function computeAuditRunMetrics(
 		scored_total: scoredTotal,
 		judge_failures: total - scoredTotal,
 		judge_failure_rate: total > 0 ? (total - scoredTotal) / total : 0,
-		counts,
-		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
-		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		policy_violation_on_permissible: permissibilitySplit.permissible,
 		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		dimensions,
@@ -302,12 +289,7 @@ export function computeRunMetrics(
 		.map((sample) => withPermissibilitySplit(sample, permissibilityIndex));
 	const dimensionNames = collectDimensionNames(scoredSamples);
 	const dimensionAggregates = initDimensionAggregates(dimensionNames, scoredSamples);
-	const counts = emptyScoreCounts();
-
 	for (const sample of scoredSamples) {
-		const policyViolation = getRecordFlag(sample, 'policy_violation');
-		if (policyViolation !== null) counts[policyViolation ? 1 : 0] += 1;
-
 		for (const dimensionName of dimensionNames) {
 			const dimensionValue = getRecordMetricValue(sample, dimensionName);
 			if (dimensionValue === null) {
@@ -329,9 +311,6 @@ export function computeRunMetrics(
 		judge_failures: samples.length - scoredSamples.length,
 		judge_failure_rate:
 			samples.length > 0 ? (samples.length - scoredSamples.length) / samples.length : 0,
-		counts,
-		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
-		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		policy_violation_on_permissible: permissibilitySplit.permissible,
 		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		target: samples[0]?.target ?? '—',
