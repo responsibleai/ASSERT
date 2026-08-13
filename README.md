@@ -46,10 +46,15 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 ### Quick install
 
 ```bash
+python -m pip install --upgrade pip      # requires pip >= 24.1
 pip install -e ".[otel,langgraph]"       # install
 cp .env.example .env                     # add your provider key
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
+
+The pip upgrade is required on fresh devcontainers/base images: older pip
+(< 24.1) crashes with `InvalidVersion: 'hosting'` while resolving one of the
+Azure transitive dependencies' PEP 508 markers.
 
 ### Add a CI safety gate
 
