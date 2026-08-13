@@ -1,16 +1,13 @@
 ---
 name: assert-add-harm-eval-template
-description: 'Generate ASSERT eval_config.yaml templates from either a named harm or a system. Use eval_type=harm for exhaustive harm-specific research and one evidence-backed config. Use eval_type=system to research a system, identify its relevant quality, safety, security, privacy, fairness, domain, and operational harms, then run the harm workflow for every retained harm. Produces customer-safe configs with applicability-gated dimensions and references.'
-argument-hint: '<eval_type: system|harm> <system_or_harm_name> [optional description] [optional context]'
+description: 'Generate isolated ASSERT eval_config.yaml templates from either a named harm or a system. Detects prior same-name generations by path only and asks before using a new dated directory; never reads prior generated YAMLs. Runs evidence-backed dimension generation N times, deduplicates the results, and interactively revises and approves dimensions before writing customer-safe configs.'
+argument-hint: '<eval_type: system|harm> <system_or_harm_name> <N: positive integer> [optional description] [optional context]'
 ---
 
 # ASSERT System and Harm Eval Config Builder
 
 Build complete, runnable ASSERT `eval_config.yaml` templates from either a
-specific harm or a described system. The output mirrors the shape of the shipped examples such as
-[examples/azure_managed_identity/eval_config.yaml](../../../examples/azure_managed_identity/eval_config.yaml),
-[examples/azure_doc_qa/eval_config.yaml](../../../examples/azure_doc_qa/eval_config.yaml),
-and [examples/prompt_agents/health_assistant_external.yaml](../../../examples/prompt_agents/health_assistant_external.yaml).
+specific harm or a described system, using the bundled template and schema.
 
 The config is **spec-driven**: it describes a harm so the pipeline can generate
 probes and the judge can detect violations. It must **never contain operational
@@ -40,12 +37,14 @@ harmful content** — only descriptions used for detection and refusal.
 - **`eval_type: harm`** — a single `eval_config.yaml` with all four pipeline
   stages populated: `systematize` → `test_set` (prompt + scenario + stratify
   dimensions) → `inference` → `judge`, plus `behavior`, `context`, and
-  `default_model`.
+  `default_model`. A regeneration uses a new date-suffixed directory and never
+  reads prior matching generated YAMLs.
 - **`eval_type: system`** — a research-backed retained/merged/rejected harm
   ledger, a sourced description for every retained harm, and one complete
   `eval_config.yaml` produced by a bounded `eval_type: harm` child run for each
   retained harm. Default child paths are
-  `examples/<system_name>/<harm_name>/eval_config.yaml`.
+  `examples/<system_run_directory>/<harm_name>/eval_config.yaml`, where a
+  regeneration date-suffixes the system run directory.
 
 Every generated config includes the broadest harm-relevant, evidence-supported,
 non-redundant dimension set found before research saturation. It also applies
@@ -61,29 +60,35 @@ mapping each tag to its title and URL.
 |---|---|---|
 | Eval type | Yes | Exactly `system` or `harm` (case-insensitive; normalize to lowercase). Never infer it when the request is ambiguous. |
 | System or harm name | Yes | For `harm`, e.g. `child_safety` or `violence`, and it becomes `behavior.name`. For `system`, use a stable system slug for child output paths. |
+| Generation runs (`N`) | Yes | Positive integer specifying how many complete harm dimension-generation passes to run before deduplication. Ask when it is missing or invalid; do not silently default it. In system mode, `N` applies independently to every retained-harm child, not to system-level harm discovery. |
+| Dimension criteria | Interactive | Before generation, ask for edits or criteria every pass should honor, such as clustering related dimensions, reducing granularity, limiting fictional scenarios, or prioritizing particular settings or populations. Treat the answer as cumulative criteria; `none` is valid. |
 | Description | No | For `harm`, the spec for `behavior.description`. For `system`, its purpose, architecture, tasks, users, data, tools/integrations, deployment, and constraints. Source or draft missing details and flag consequential assumptions. |
 | Context | No | Target tasks, population, domain, runtime, deployment, and system boundaries. If omitted, use a neutral placeholder and flag it. System mode propagates the system context to every harm child run. |
 | Target shape | No | Python callable/agent, hosted model + prompt/tools, or black-box endpoint. If omitted, ask or leave a flagged placeholder. |
-| Model values | No | Shared or stage-specific `name`, `temperature`, `max_tokens`, `reasoning_effort`. If skipped, write placeholders (Step 5). |
+| Model values | No | Shared or stage-specific `name`, `temperature`, `max_tokens`, `reasoning_effort`. If skipped, write placeholders (Step 7). |
 
 ## Dispatch by eval type
 
-1. Require `eval_type` before research or file generation. Normalize it to
-   lowercase and accept only `system` or `harm`. If it is missing or invalid,
-   ask the user to choose; do not silently infer a branch.
-2. For `eval_type: harm`, follow the existing harm procedure in Steps 1–7 below
+1. Require `eval_type` and `N` before research or file generation. Normalize the
+  type to lowercase and accept only `system` or `harm`; accept `N` only when it
+  is an integer greater than zero. If either is missing or invalid, ask the user
+  to correct it rather than inferring a value.
+2. For `eval_type: harm`, follow the harm procedure in Steps 1–9 below
    without changing its research, evidence, generation, or validation gates.
 3. For `eval_type: system`, follow the system procedure below. It must end by
    re-entering this dispatcher once per retained harm with `eval_type: harm`.
    A harm child run must never invoke the system branch, so recursion depth is
-   bounded to one fan-out level.
+  bounded to one fan-out level. Pass the same `N` and current dimension criteria
+  to every child unless the user supplies a harm-specific override.
 
 ## System procedure (`eval_type: system`)
 
 Read and follow the complete
 [system eval workflow](./references/system-eval-workflow.md). Every stage is
 mandatory. It ends by re-entering this skill in `eval_type: harm` once per
-retained harm and reporting each child config's generated/validated status.
+retained harm, running `N` dimension-generation passes per child, obtaining the
+required dimension approval, and reporting each child config's
+generated/validated status.
 
 ## Harm procedure (`eval_type: harm`)
 
@@ -91,6 +96,11 @@ retained harm and reporting each child config's generated/validated status.
 
 Ask the user for the harm name if not already given. Confirm whether they want to
 provide a `behavior.description` and `context`, or have you source/draft them.
+Validate `N` as a positive integer. Before any dimension research, always ask
+whether the user wants a specific edit or criterion applied during generation;
+offer examples such as clustering related axes, reducing granularity, reducing
+reliance on fictional scenarios, or emphasizing real deployment settings. Record
+the answer, including `none`, as the initial dimension criteria.
 Identify the target shape: use `target.callable` with `target.trace` for an agent
 or non-trivial Python entrypoint, `target.model` plus optional `target.tools` for
 a hosted Prompt Agent, and `target.endpoint` only for a black-box API without a
@@ -118,15 +128,21 @@ or copy its `description` inline. If the harm has no repo spec (e.g. a generic
 tell the user, or draft a new inline description in the same
 `# Title` / `## Key Terms` / `## Behavior Categories` structure as the existing
 specs. Note the library preset's `suggested_judge_presets` — reuse them in Step 6.
+For a standalone harm, finalize its stable slug and run the
+[prior-generation isolation preflight](./references/generation-isolation-workflow.md)
+before harm research. A system child instead inherits its new isolated system
+root and must not inspect standalone or prior-system harm generation paths.
 
-### 3. Deep-research a harm-specific dimension model
+### 3. Deep-research one harm-specific dimension model
 
 The goal is not a generic 2–4 axis template. Discover **as many relevant,
 evidence-supported, non-redundant dimensions as possible**, then stop at research
 saturation rather than at an arbitrary count. Treat dimensions as an experimental
 design: only materialize an axis when it is relevant, variable, observable, and
 executable in the target. Pull category and dimension structure only — never
-operational harmful detail.
+operational harmful detail. This section is one complete generation pass. Run
+all of Steps 3a–3e from a fresh per-pass ledger each time Step 4 invokes it, while
+honoring the current dimension criteria.
 
 #### 3a. Classify the harm and its observability
 
@@ -281,7 +297,7 @@ If the harm emerges over time:
   then official firm policy/technical posts, then preprints; avoid pure marketing
   pages, SEO content, and unattributed third-party blogs.
 - Keep a running **reference list** (`tag → title → URL → accessed date`). You
-  embed it in the config (Step 6) and surface it in the final summary (Step 7).
+  embed it in the config (Step 8) and surface it in the final summary (Step 9).
 - Cite every retained dimension with all sources that passed its evidence gate.
   Cite a level too when its cardinality, threshold, stage, or population comes
   from a source not already clearly attached to the parent dimension.
@@ -299,7 +315,35 @@ Extract three things, and give **each item** a citation tag:
   `harm_actionability`, `refusal_quality`, or `escalation_judgment`). These become
   `pipeline.judge.dimensions`, on top of an appropriate judge preset.
 
-### 4. Set generation knobs from the research
+### 4. Run `N` passes and deduplicate the dimensions
+
+Follow the [iterative dimension workflow](./references/iterative-dimension-workflow.md)
+with its [review template](./assets/dimension-review-template.md) and [validator](./scripts/validate_dimension_review.py).
+Run Steps 3a–3e `N` times even if an earlier pass reached its own saturation
+gate. Keep each pass's ledger and citations distinct, then semantically
+deduplicate behavior categories, test-set dimensions, and judge dimensions
+within their respective roles. Preserve the union of genuinely distinct,
+evidence-supported dimensions; frequency across runs is not an evidence gate.
+Record aliases, source runs, merged evidence, and merge/reject rationales.
+
+### 5. Review and revise dimensions with the user
+
+Before collecting final generation knobs or writing any YAML, present the
+deduplicated dimensions and merge decisions in a compact review table. Ask the
+user both whether the dimensions are relevant and whether they want any specific
+edit or additional generation criterion. Silence is not approval.
+
+Apply direct organizational edits such as renaming, reordering, or clustering
+only when the evidence and meaning remain valid, then deduplicate and present the
+set again. If feedback changes the research space, evidence needs, scenario
+realism, inclusion rules, or exclusions — for example, reducing reliance on
+fictional scenarios — perform a fresh `N`-pass cycle under the cumulative
+criteria, deduplicate again, and return to this review step. Repeat until the user
+explicitly approves the final set. Do not create an `eval_config.yaml` for an
+unapproved set. In system mode, review each harm separately by default; a batched
+portfolio review is allowed only when the user explicitly requests it.
+
+### 6. Set generation knobs from the approved research
 
 Tune knobs to the breadth of the harm rather than leaving defaults:
 
@@ -329,7 +373,7 @@ distribution planned rather than observed. Also inspect generated case semantics
 factor counts alone cannot prove positive, negative, boundary, adversarial, or
 counterfactual coverage when case type is not an explicit axis.
 
-### 5. Collect model values (offer to skip)
+### 7. Collect model values (offer to skip)
 
 Ask whether one model config applies to every stage or whether systematization,
 test generation, target, tester, and judge need distinct model names/snapshots.
@@ -348,13 +392,14 @@ Never read, print, or infer values from `.env`. Use placeholder credential names
 only (`AZURE_API_KEY`, `AZURE_API_BASE`, `azure_ad_token`,
 `azure_ad_token_provider`). Model `name` uses litellm `provider/model` form.
 
-### 6. Assemble and write the config
+### 8. Assemble and write the config
 
-Write the file (default path `examples/<harm_name>/eval_config.yaml`, or where the
-user asks). Use the skeleton below. Fill `behavior`, `context`, and every retained
-researched category/dimension in this one exhaustive config. Wire a safety judge
-preset plus the harm-specific judge dimensions from Step 3. Attach the Step 3
-citations:
+Only after Step 5 approval and the validator's successful pre-write gate, create
+the file at the preflight-selected path, then run its post-write gate. Fill
+`behavior`, `context`, and every
+approved retained category/dimension in this one exhaustive config. Wire a
+safety judge preset plus the harm-specific judge dimensions from Step 3. Attach
+the Step 3 citations:
 
 - Behavior categories live inside the `behavior.description` literal block, so cite
   them with inline text — `(source: <short title> [n])` — not a `#` comment.
@@ -371,7 +416,7 @@ domain, population, and RAG/tool/file/agent facts in `context` and `target`; do
 not add distribution, validity, or provenance keys that the schema does not
 support.
 
-### 7. Validate
+### 9. Validate
 
 - Frontmatter/keys match [docs/config/schema.md](../../../docs/config/schema.md):
   `behavior`, `context`, `default_model`, and `pipeline` with `systematize`,
@@ -394,6 +439,12 @@ support.
   entry in the `# References` block.
 - The dimension ledger accounts for candidates as kept, merged, or rejected;
   discovery continued to saturation and no arbitrary dimension cap was applied.
+- The initial generation cycle contains exactly `N` complete per-pass ledgers,
+  followed by a role-aware semantic deduplication map. Any research-changing
+  user criterion triggered a fresh `N`-pass cycle under the cumulative criteria.
+- Path-only preflight found no prior generation or the user approved a new dated
+  directory; no prior matching generated YAML was read or reused. The selected
+  config path was absent before the pre-write gate and was never overwritten.
 - Every retained dimension appears in the single generated config; none were
   omitted or moved to a separate artifact merely to reduce execution cost.
 - Every retained dimension has a documented, literature-backed connection to the
@@ -418,7 +469,7 @@ Then report the reference list back to the user (tag → title → URL) so the
 provenance of each dimension is visible, and suggest a dry run:
 
 ```bash
-assert-ai run --config examples/<harm_name>/eval_config.yaml
+assert-ai run --config <selected_output_path>/eval_config.yaml
 ```
 
 ## Skeleton
@@ -431,7 +482,8 @@ replacing every placeholder from the research and target inputs.
 
 - Keep everything customer-safe and free of operational harmful content.
 - Never read, print, commit, or infer secrets from `.env` or environment files.
-- Reuse repo presets over hand-authored specs when they exist.
+- Reuse curated repo presets, but never inspect or depend on prior matching
+  generated eval YAMLs.
 - Flag any placeholder (`context`, model `name`) the user still needs to fill.
 - Cite only sources you actually retrieved this session; never fabricate or guess
   a URL, title, or author. Keep unsourced candidates only in the ledger as

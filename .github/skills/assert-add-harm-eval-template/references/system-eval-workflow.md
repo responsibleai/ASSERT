@@ -2,11 +2,19 @@
 
 This workflow is mandatory when `eval_type` is `system`. Complete every stage,
 then return to `SKILL.md` and run the harm procedure once for every retained
-harm.
+harm. Carry the validated `N` and cumulative dimension criteria into every child
+run. `N` repeats dimension generation within each harm child; it does not repeat
+the system-level harm inventory workflow.
 
 ## S1. Define the system and evaluation boundary
 
-Collect or derive the system name and description. Establish its purpose,
+Collect or derive the stable system name, then immediately run the
+[prior-generation isolation preflight](./generation-isolation-workflow.md).
+Stop if the user chooses exit. Otherwise record its selected
+`system_run_directory` and do not read or reuse any YAML under an earlier
+matching system directory.
+
+Then establish the system description and purpose,
 in-scope tasks and decisions, user and affected populations, input/output data,
 knowledge sources, components and model/agent/RAG topology, tools and external
 integrations, authorization boundaries, deployment environment, domains and
@@ -108,20 +116,33 @@ behavior_description: <researched description or exact repo preset>
 context: <inherited system context plus why this harm applies>
 target_shape: <the system target shape from S1>
 model_values: <the shared or stage-specific values supplied by the user>
-output_path: examples/<system_name>/<harm_name>/eval_config.yaml
+N: <positive integer supplied by the user>
+dimension_criteria: <global criteria plus any harm-specific criteria>
+output_path: examples/<system_run_directory>/<harm_name>/eval_config.yaml
 ```
 
-Initialize and execute the full harm procedure in Steps 1-7 for each payload,
-including its own dimension research, references, schema validation, and dry-run
-recommendation. Do not substitute one multi-harm config for these child configs,
-do not omit a retained harm to reduce cost, and do not claim completion while any
-child run is uninitialized or invalid. Child runs may execute in parallel only
-when their output paths and research/reference ledgers are isolated.
+Initialize and execute the full harm procedure in Steps 1-9 for each payload.
+Each child runs `N` complete dimension-generation passes, semantically
+deduplicates the results, and pauses for interactive relevance and edit review.
+Obtain explicit approval before writing that child's YAML. Review children one at
+a time unless the user explicitly requests a batch review that keeps every harm's
+dimension set and approval status separate.
+
+Include each child's own dimension research, references, schema validation, and
+dry-run recommendation. Do not substitute one multi-harm config for these child
+configs, do not omit a retained harm to reduce cost, and do not claim completion
+while any child run is uninitialized, unapproved, or invalid. Child research may
+execute in parallel only when its ledgers are isolated; do not write files in
+parallel before the corresponding approvals are recorded.
+
+Every child inherits the new system run root. Do not inspect old child configs or
+use them to seed descriptions, dimensions, citations, settings, or validation.
 
 ## S6. Report the system portfolio
 
 Return a concise portfolio summary containing the system boundary and assumptions,
 the retained/merged/rejected harm ledger with source tags, each harm description,
 the path and generated/validated status of every child config, unresolved evidence
-or target gaps, and the consolidated reference list. Distinguish discovered harms
-from configs successfully generated and validated.
+or target gaps, the `N` value and criteria version used by each child, its
+deduplication and approval status, and the consolidated reference list.
+Distinguish discovered harms from configs successfully generated and validated.
