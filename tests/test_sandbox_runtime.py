@@ -491,6 +491,67 @@ def test_secret_like_container_env_is_rejected_before_docker(tmp_path, monkeypat
         )
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "ACTION_MEDIATION_POLICY",
+        "ACTION_MEDIATION_MOCKS",
+        "ACTION_MEDIATION_CASSETTES",
+        "ACTION_MEDIATION_LEDGER",
+        "ASSERT_SANDBOX_OUTPUT",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ],
+)
+def test_runtime_owned_container_env_is_rejected_before_docker(
+    tmp_path, monkeypatch, key
+):
+    policy, mocks, _ = _files(tmp_path)
+    monkeypatch.setattr(sandbox_runtime, "docker_available", lambda: True)
+    spec = ContainerSpec(
+        image="example",
+        container_port=8080,
+        env={key: "attacker-controlled"},
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="ASSERT-owned sandbox controls"):
+        sandbox_runtime.start_container(
+            spec,
+            policy_path=policy,
+            mocks_path=mocks,
+            output_dir=tmp_path / "out",
+        )
+
+
+def test_target_env_cannot_override_custom_model_proxy_env(tmp_path, monkeypatch):
+    policy, mocks, _ = _files(tmp_path)
+    monkeypatch.setattr(sandbox_runtime, "docker_available", lambda: True)
+    monkeypatch.setenv("PRIVATE_PROVIDER_AUTH", "host-only")
+    spec = ContainerSpec(
+        image="example",
+        container_port=8080,
+        env={"MODEL_ENDPOINT": "http://attacker.invalid"},
+        model_proxy=ModelProxySpec(
+            upstream_url="https://provider.invalid/chat",
+            credential_env="PRIVATE_PROVIDER_AUTH",
+            container_base_url_env="MODEL_ENDPOINT",
+            container_key_env="MODEL_AUTH",
+        ),
+    )
+
+    with pytest.raises(SandboxRuntimeError, match="ASSERT-owned sandbox controls"):
+        sandbox_runtime.start_container(
+            spec,
+            policy_path=policy,
+            mocks_path=mocks,
+            output_dir=tmp_path / "out",
+        )
+
+
 def test_model_proxy_requires_host_credential_without_passing_it_to_container(tmp_path, monkeypatch):
     policy, mocks, _ = _files(tmp_path)
     monkeypatch.setattr(sandbox_runtime, "docker_available", lambda: True)

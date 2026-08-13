@@ -489,6 +489,45 @@ class ContainerSpec:
     user: str = "65534:65534"
 
 
+_RUNTIME_OWNED_CONTAINER_ENV = frozenset({
+    "ACTION_MEDIATION_POLICY",
+    "ACTION_MEDIATION_MOCKS",
+    "ACTION_MEDIATION_CASSETTES",
+    "ACTION_MEDIATION_LEDGER",
+    "ASSERT_SANDBOX_OUTPUT",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+})
+
+
+def _runtime_owned_container_env(spec: ContainerSpec) -> frozenset[str]:
+    """Return environment keys whose values define the sandbox trust boundary."""
+    keys = set(_RUNTIME_OWNED_CONTAINER_ENV)
+    if spec.model_proxy is not None:
+        model_keys = {
+            spec.model_proxy.container_base_url_env,
+            spec.model_proxy.container_key_env,
+        }
+        collisions = model_keys & keys
+        if collisions:
+            joined = ", ".join(sorted(collisions))
+            raise SandboxRuntimeError(
+                "target.model_proxy container environment keys collide with "
+                f"ASSERT-owned sandbox controls: {joined}"
+            )
+        if len(model_keys) != 2:
+            raise SandboxRuntimeError(
+                "target.model_proxy container_base_url_env and container_key_env "
+                "must be different"
+            )
+        keys.update(model_keys)
+    return frozenset(keys)
+
+
 @dataclass
 class SandboxHandle:
     container: str
@@ -550,6 +589,14 @@ def start_container(
     if not docker_available():
         raise SandboxRuntimeError(
             "Docker is required for target.sandbox but the Docker daemon is not available"
+        )
+
+    runtime_owned_env = _runtime_owned_container_env(spec)
+    overridden = sorted(set(spec.env) & runtime_owned_env)
+    if overridden:
+        raise SandboxRuntimeError(
+            "target.env cannot override ASSERT-owned sandbox controls: "
+            + ", ".join(overridden)
         )
 
     forbidden_fragments = ("key", "token", "secret", "password", "credential")
