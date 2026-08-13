@@ -514,17 +514,19 @@ def _log_run_headline(run_root: Path) -> None:
     """Log the same headline numbers a user sees on the viewer's run page.
 
     Pulls scores from ``run_root/scores.jsonl`` and prints target/judge plus the
-    headline rates (policy violation, overrefusal, judge failure). Silently
-    does nothing if the judge stage hasn't produced scores yet — that matches
-    the viewer's behavior, which only shows the headline once scores exist.
+    permissibility-split rates and judge failure. Runs without a behavior
+    taxonomy retain the legacy policy-violation/overrefusal fallback. Silently
+    does nothing if the judge stage hasn't produced scores yet, matching the
+    viewer's behavior.
     """
     # Imported lazily to avoid a hard dependency for callers that import the
     # runner without ever invoking it (e.g. test scaffolding).
     from assert_ai.results import (
         compute_prompt_metrics,
         compute_scenario_metrics,
+        has_permissibility_split_data,
     )
-    from assert_ai.core.io import load_jsonl
+    from assert_ai.core.io import load_json, load_jsonl
 
     scores_path = run_root / "scores.jsonl"
     if not scores_path.exists():
@@ -535,8 +537,15 @@ def _log_run_headline(run_root: Path) -> None:
 
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
-    prompt_metrics = compute_prompt_metrics(prompt_rows)
-    scenario_metrics = compute_scenario_metrics(scenario_rows)
+    taxonomy = load_json(run_root.parent / "taxonomy.json")
+    raw_categories = (taxonomy or {}).get("behavior_categories")
+    behavior_categories = (
+        [entry for entry in raw_categories if isinstance(entry, dict)]
+        if isinstance(raw_categories, list)
+        else []
+    )
+    prompt_metrics = compute_prompt_metrics(prompt_rows, behavior_categories)
+    scenario_metrics = compute_scenario_metrics(scenario_rows, behavior_categories)
     primary = prompt_metrics or scenario_metrics
     if primary is None:
         return
@@ -565,16 +574,30 @@ def _log_run_headline(run_root: Path) -> None:
         if parts:
             log.info(f"  {label}: {' · '.join(parts)}")
 
-    _emit(
-        label_metric("policy_violation_rate"),
-        (prompt_metrics or {}).get("policy_violation_rate"),
-        (scenario_metrics or {}).get("policy_violation_rate"),
-    )
-    _emit(
-        label_metric("overrefusal_rate"),
-        (prompt_metrics or {}).get("overrefusal_rate"),
-        (scenario_metrics or {}).get("overrefusal_rate"),
-    )
+    metric_sets = (prompt_metrics or {}, scenario_metrics or {})
+    has_permissibility_split = has_permissibility_split_data(*metric_sets)
+    if has_permissibility_split:
+        _emit(
+            label_metric("not_permissible_policy_violation_rate"),
+            metric_sets[0].get("not_permissible_policy_violation_rate"),
+            metric_sets[1].get("not_permissible_policy_violation_rate"),
+        )
+        _emit(
+            label_metric("permissible_policy_violation_rate"),
+            metric_sets[0].get("permissible_policy_violation_rate"),
+            metric_sets[1].get("permissible_policy_violation_rate"),
+        )
+    else:
+        _emit(
+            label_metric("policy_violation_rate"),
+            metric_sets[0].get("policy_violation_rate"),
+            metric_sets[1].get("policy_violation_rate"),
+        )
+        _emit(
+            label_metric("overrefusal_rate"),
+            metric_sets[0].get("overrefusal_rate"),
+            metric_sets[1].get("overrefusal_rate"),
+        )
     _emit(
         label_metric("judge_failure_rate"),
         (prompt_metrics or {}).get("judge_failure_rate"),
