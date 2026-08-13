@@ -303,6 +303,36 @@ def test_cassette_change_invalidates_inference_cache(tmp_path):
     assert after != before
 
 
+def test_cassette_fingerprint_does_not_follow_unrelated_symlink(
+    tmp_path, symlink_or_skip
+):
+    _, mocks, setup = _files(tmp_path)
+    cassettes = tmp_path / "cassettes"
+    cassettes.mkdir()
+    (cassettes / "lookup.json").write_text('{"value":"safe"}', encoding="utf-8")
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"secret":"before"}', encoding="utf-8")
+    symlink_or_skip(cassettes / "unrelated.json", outside)
+    mocks.write_text(
+        "version: 1\nmocks:\n  - tool: lookup\n    backend: replay\n"
+        "    cassette_file: lookup\n",
+        encoding="utf-8",
+    )
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\ncassettes: ./cassettes\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "eval.yaml"
+    target = TargetConfig(sandbox="setup.yaml")
+
+    before = _inference_config_fingerprint(target, None, 100, config_path=config)
+    outside.write_text('{"secret":"after"}', encoding="utf-8")
+    after = _inference_config_fingerprint(target, None, 100, config_path=config)
+
+    assert after == before
+
+
 def test_setup_rejects_missing_replay_cassette_before_run(tmp_path):
     _, mocks, setup = _files(tmp_path)
     cassettes = tmp_path / "cassettes"

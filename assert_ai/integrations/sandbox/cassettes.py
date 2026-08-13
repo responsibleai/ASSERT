@@ -8,6 +8,7 @@ import errno
 import json
 import os
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,42 @@ def cassette_exists(cassette_dir: str | Path, name: str) -> bool:
         return False
     os.close(fd)
     return True
+
+
+def read_cassette_bytes(cassette_dir: str | Path, name: str) -> bytes:
+    """Read one cassette as bytes through the replay no-follow boundary."""
+    fd = _open_cassette_fd(cassette_dir, name)
+    with os.fdopen(fd, "rb") as stream:
+        return stream.read()
+
+
+def iter_cassette_bytes(cassette_dir: str | Path) -> Iterator[tuple[str, bytes]]:
+    """Yield replayable root-level cassette files without following symlinks.
+
+    Discovery itself considers only regular directory entries. Each discovered
+    file is then reopened through ``_open_cassette_fd`` so a symlink swap between
+    discovery and reading cannot escape the configured cassette root.
+    """
+    root = Path(cassette_dir).resolve(strict=True)
+    if not root.is_dir():
+        raise CassettePathError(f"cassette root is not a directory: {root}")
+
+    filenames: list[str] = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if not entry.name.endswith(".json") or not entry.is_file(follow_symlinks=False):
+                continue
+            stem = entry.name[:-5]
+            try:
+                if _cassette_filename(stem) != entry.name:
+                    continue
+            except CassettePathError:
+                continue
+            filenames.append(entry.name)
+
+    for filename in sorted(filenames):
+        stem = filename[:-5]
+        yield filename, read_cassette_bytes(root, stem)
 
 
 def read_cassette_json(cassette_dir: str | Path, name: str) -> Any:

@@ -162,6 +162,7 @@ def _inference_config_fingerprint(
     sandbox_sha = ""
     if target.sandbox:
         from assert_ai.integrations.sandbox import load_setup
+        from assert_ai.integrations.sandbox.cassettes import iter_cassette_bytes
 
         setup_path = Path(target.sandbox).expanduser()
         if not setup_path.is_absolute() and config_path is not None:
@@ -172,15 +173,11 @@ def _inference_config_fingerprint(
             if path is not None and path.exists():
                 sandbox_hash.update(path.read_bytes())
         if setup.cassette_dir is not None:
-            cassette_root = setup.cassette_dir.resolve()
-            for cassette_path in sorted(cassette_root.rglob("*")):
-                if not cassette_path.is_file():
-                    continue
-                relative_path = cassette_path.relative_to(cassette_root).as_posix()
+            for relative_path, cassette_bytes in iter_cassette_bytes(setup.cassette_dir):
                 sandbox_hash.update(b"\0cassette\0")
                 sandbox_hash.update(relative_path.encode("utf-8"))
                 sandbox_hash.update(b"\0")
-                sandbox_hash.update(cassette_path.read_bytes())
+                sandbox_hash.update(cassette_bytes)
         sandbox_sha = sandbox_hash.hexdigest()
     key = json_module.dumps(
         {
