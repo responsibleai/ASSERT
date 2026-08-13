@@ -40,22 +40,14 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
-        # Deliberately does NOT install the `otel` extra. `otel` pulls in
-        # `arize-phoenix`, which registers a `pytest11` entry point whose
-        # import chain runs `phoenix.trace.dsl.filter` at pytest collection
-        # time. Recent phoenix releases (19.18+) declare a frozen dataclass
-        # with a `mappingproxy` default there, which Python 3.11's dataclass
-        # machinery rejects, taking down every test job that has phoenix
-        # installed — including our own unit tests, which don't use phoenix.
-        #
-        # The base `dependencies` already ship `opentelemetry-api` / `-sdk`
-        # (all the `otel` demos need at import time), and
-        # `assert_ai.auto_trace.enable(...)` guards its `phoenix.otel`
-        # import behind a collector-availability probe, so smoke tests that
-        # instantiate the incident-triage agent still work without phoenix
-        # in the install set.
+        # The `otel` extra is required because tests/test_incident_triage_smoke.py
+        # imports examples/incident_triage_agent/agent.py, which imports
+        # opentelemetry at module load time (target.trace.backend: otel). Demo
+        # examples like that one ship as part of the unit-test surface, so the
+        # CI install set has to include the demo's optional extras even though
+        # core ASSERT doesn't need them.
         run: |
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,otel]"
 
       - name: Install viewer npm dependencies
         # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
