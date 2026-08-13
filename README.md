@@ -82,7 +82,7 @@ Full checklist, including end-to-end verification: [`SETUP-CHECKLIST.md`](.claud
 
 #### 2. Explore what it produces
 
-Seven worked domains under [`examples/`](examples/README.md) show the complete
+Six worked domains under [`examples/`](examples/README.md) show the complete
 agent, one-behavior-per-YAML configs, setup, and results flow:
 
 | Domain | Target shape |
@@ -91,7 +91,6 @@ agent, one-behavior-per-YAML configs, setup, and results flow:
 | [`travel_planner_langgraph`](examples/travel_planner_langgraph/) | LangGraph graph |
 | [`travel_planner_neurosan`](examples/travel_planner_neurosan/) | Multi-agent network |
 | [`azure_doc_qa`](examples/azure_doc_qa/) | Retrieval-grounded Q&A |
-| [`career_health_assessment`](examples/career_health_assessment/) | Prompt-only structured assessment |
 | [`change_control_agent`](examples/change_control_agent/) | Approval-workflow agent |
 | [`science_research_agent`](examples/science_research_agent/) | Research agent |
 

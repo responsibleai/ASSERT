@@ -60,7 +60,6 @@ scenario, setup, run commands, and artifact paths.
 | [`travel_planner_neurosan/`](travel_planner_neurosan/) | Custom multi-agent callable + manual OTel spans | Framework-independent trace integration. |
 | [`azure_doc_qa/`](azure_doc_qa/) | Multi-agent RAG callable | Confidential-data boundaries and grounded answers. |
 | [`billing_support_agent/`](billing_support_agent/) | Tool-using callable | Identity verification and account isolation. |
-| [`career_health_assessment/`](career_health_assessment/) | Prompt-only structured callable | Grounding, prompt injection, bounded verdicts, and protected-attribute bias. |
 | [`change_control_agent/`](change_control_agent/) | Workflow callable | Approval sequencing and record integrity. |
 | [`science_research_agent/`](science_research_agent/) | Retrieval callable | Sharing classes and retrieved prompt injection. |
 | [`incident_triage_agent/evals/`](incident_triage_agent/evals/) | Tool-using callable | Nine independently runnable SOP behaviors. |
