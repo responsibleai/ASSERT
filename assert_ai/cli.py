@@ -27,6 +27,7 @@ from assert_ai.results import (
     compute_dimension_summary,
     compute_policy_violation_by_permissibility,
     detect_dimensions,
+    has_permissibility_split_data,
 )
 from assert_ai.stages import STAGE_NAMES
 
@@ -41,6 +42,18 @@ CONTEXT_SETTINGS = {
 }
 
 DEFAULT_COMPARE_METRIC = "policy_violation"
+
+_POLICY_VIOLATION_NOT_PERMISSIBLE = "policy_violation_not_permissible"
+_POLICY_VIOLATION_PERMISSIBLE = "policy_violation_permissible"
+_DERIVED_PERMISSIBILITY_RATE_KEYS = {
+    _POLICY_VIOLATION_NOT_PERMISSIBLE: "not_permissible_policy_violation_rate",
+    _POLICY_VIOLATION_PERMISSIBLE: "permissible_policy_violation_rate",
+}
+_DERIVED_PERMISSIBILITY_SUMMARY_KEYS = {
+    _POLICY_VIOLATION_NOT_PERMISSIBLE: "policy_violation_on_not_permissible",
+    _POLICY_VIOLATION_PERMISSIBLE: "policy_violation_on_permissible",
+}
+_SUPERSEDED_DISPLAY_METRICS = {"policy_violation", "overrefusal"}
 
 _RUNNER_MODULE: Any | None = None
 _TEST_SET_METRICS_MODULE: Any | None = None
@@ -137,10 +150,7 @@ def _fmt_percent(value: Optional[float]) -> str:
     return f"{value * 100:.1f}%"
 
 
-_PERMISSIBILITY_SPLIT_RATE_KEYS = (
-    "not_permissible_policy_violation_rate",
-    "permissible_policy_violation_rate",
-)
+_PERMISSIBILITY_SPLIT_RATE_KEYS = tuple(_DERIVED_PERMISSIBILITY_RATE_KEYS.values())
 
 
 def _has_permissibility_split(*metric_sets: Any) -> bool:
@@ -165,12 +175,13 @@ def _has_permissibility_split(*metric_sets: Any) -> bool:
     )
 
 
-def _violation_column_titles(split: bool) -> tuple[str, str, str]:
+def _violation_column_titles(split: bool) -> tuple[str, ...]:
     if split:
         return (
             "Prompt impermissible violations",
             "Prompt permissible violations",
             "Scenario impermissible violations",
+            "Scenario permissible violations",
         )
     return (
         "Prompt policy violations",
@@ -183,12 +194,13 @@ def _violation_cells(
     prompt_metrics: dict[str, Any],
     scenario_metrics: dict[str, Any],
     split: bool,
-) -> tuple[str, str, str]:
+) -> tuple[str, ...]:
     if split:
         return (
             _fmt_percent(prompt_metrics.get("not_permissible_policy_violation_rate")),
             _fmt_percent(prompt_metrics.get("permissible_policy_violation_rate")),
             _fmt_percent(scenario_metrics.get("not_permissible_policy_violation_rate")),
+            _fmt_percent(scenario_metrics.get("permissible_policy_violation_rate")),
         )
     return (
         _fmt_percent(_dimension_rate(prompt_metrics, "policy_violation")),
@@ -230,6 +242,34 @@ def _fmt_dimension_summary(summary: dict[str, Any]) -> tuple[str, str, str]:
         str(count),
         _fmt_flagged_pass(summary.get("counts", {})),
     )
+
+
+def _visible_dimension_summaries(metrics: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return the dimensions shown by default on CLI detail surfaces.
+
+    The raw built-ins stay in artifacts and JSON for compatibility. When the
+    permissibility split is available, the text UI replaces that older pair
+    with the same two derived measures used by the viewer.
+    """
+    raw_dimensions = metrics.get("dimensions")
+    dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
+    visible: list[tuple[str, dict[str, Any]]] = []
+
+    if has_permissibility_split_data(metrics):
+        for metric in (_POLICY_VIOLATION_NOT_PERMISSIBLE, _POLICY_VIOLATION_PERMISSIBLE):
+            summary = metrics.get(_DERIVED_PERMISSIBILITY_SUMMARY_KEYS[metric])
+            if isinstance(summary, dict):
+                visible.append((metric, summary))
+        hidden = _SUPERSEDED_DISPLAY_METRICS
+    else:
+        hidden = set()
+
+    visible.extend(
+        (name, summary)
+        for name, summary in sorted(dimensions.items())
+        if name not in hidden and isinstance(summary, dict)
+    )
+    return visible
 
 
 def _metric_label(metric: str) -> str:
@@ -401,7 +441,7 @@ def _load_dimensions() -> dict[str, Any]:
 
 def _complete_metric(_: click.Context, __: click.Parameter, incomplete: str) -> list[CompletionItem]:
     dims = _load_dimensions()
-    items = sorted(dims.keys())
+    items = sorted(set(dims) | set(_DERIVED_PERMISSIBILITY_RATE_KEYS))
     return [CompletionItem(name) for name in items if not incomplete or name.startswith(incomplete)]
 
 
@@ -428,6 +468,10 @@ def _compute_dimension_summary(rows: Iterable[dict[str, Any]], metric: str) -> d
 
 
 def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
+    derived_rate_key = _DERIVED_PERMISSIBILITY_RATE_KEYS.get(metric)
+    if derived_rate_key is not None:
+        rate = metrics.get(derived_rate_key)
+        return float(rate) if isinstance(rate, (int, float)) else None
     dimensions = metrics.get("dimensions")
     if not isinstance(dimensions, dict):
         return None
@@ -436,6 +480,33 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
         return None
     rate = summary.get("rate")
     return float(rate) if isinstance(rate, (int, float)) else None
+
+
+def _resolve_compare_metric(metric: str | None, run_summaries: Iterable[dict[str, Any]]) -> str:
+    if metric:
+        return metric
+    summaries = list(run_summaries)
+    if summaries and all(
+        has_permissibility_split_data(
+            run_summary.get("prompt_metrics") or {},
+            run_summary.get("scenario_metrics") or {},
+        )
+        for run_summary in summaries
+    ):
+        return _POLICY_VIOLATION_NOT_PERMISSIBLE
+    return DEFAULT_COMPARE_METRIC
+
+
+def _available_compare_metrics(run_summaries: Iterable[dict[str, Any]]) -> set[str]:
+    available: set[str] = set()
+    for run_summary in run_summaries:
+        available.update(_detect_dimensions(run_summary.get("prompt_rows") or []))
+        if has_permissibility_split_data(
+            run_summary.get("prompt_metrics") or {},
+            run_summary.get("scenario_metrics") or {},
+        ):
+            available.update(_DERIVED_PERMISSIBILITY_RATE_KEYS)
+    return available
 
 
 def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str) -> None:
@@ -480,7 +551,6 @@ def _compute_prompt_metrics(
             if isinstance(row.get("judge_model"), str) and row.get("judge_model")
         ),
     ) or "-"
-    permissible_rows = [row for row in scored_rows if get_permissible_flag(row, default=False)]
     permissibility_split = compute_policy_violation_by_permissibility(
         scored_rows,
         behavior_categories,
@@ -493,7 +563,6 @@ def _compute_prompt_metrics(
         "judge_failure_rate": judge_failures / len(rows) if rows else 0.0,
         "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
         "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
-        "permissible_overrefusal_rate": _compute_dimension_summary(permissible_rows, "overrefusal")["rate"],
         "dimensions": dimensions,
         "target": target,
         "judge_model": judge_model,
@@ -588,13 +657,18 @@ def _compute_scenario_metrics(
     return metrics
 
 
+def _load_behavior_categories(suite_dir: Path) -> list[dict[str, Any]]:
+    taxonomy = load_json(suite_dir / "taxonomy.json")
+    behavior_categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(behavior_categories, list):
+        return []
+    return [entry for entry in behavior_categories if isinstance(entry, dict)]
+
+
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
     manifest = load_json(run_dir / "manifest.json")
     score_rows = load_jsonl(run_dir / "scores.jsonl")
-    taxonomy = load_json(run_dir.parent / "taxonomy.json")
-    behavior_categories = (taxonomy or {}).get("behavior_categories")
-    if not isinstance(behavior_categories, list):
-        behavior_categories = []
+    behavior_categories = _load_behavior_categories(run_dir.parent)
     prompt_rows = [row for row in score_rows if not row.get("tester_model")]
     scenario_rows = [row for row in score_rows if row.get("tester_model")]
 
@@ -698,12 +772,33 @@ def _load_all_suites(results_dir: Path) -> list[dict[str, Any]]:
     return suites
 
 
-def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, dict[str, Any]]:
+def _row_metric_value(
+    row: dict[str, Any],
+    metric: str,
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> bool | int | None:
+    if metric in _DERIVED_PERMISSIBILITY_RATE_KEYS:
+        split = compute_policy_violation_by_permissibility([row], behavior_categories)
+        bucket = "not_permissible" if metric == _POLICY_VIOLATION_NOT_PERMISSIBLE else "permissible"
+        summary = split.get(bucket)
+        if not isinstance(summary, dict) or not summary.get("count"):
+            return None
+        return bool(summary.get("flagged_count"))
+    value = get_verdict_dimension(row.get("verdict"), metric)
+    return value if is_valid_event_flag(value) else None
+
+
+def _behavior_category_metric_map(
+    rows: Iterable[dict[str, Any]],
+    metric: str,
+    behavior_categories: Iterable[dict[str, Any]] = (),
+) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
+    categories = list(behavior_categories)
     for row in rows:
         if infer_judge_status(row) != "ok":
             continue
-        value = get_verdict_dimension(row.get("verdict"), metric)
+        value = _row_metric_value(row, metric, categories)
         if not is_valid_event_flag(value):
             continue
         behavior_category = row_behavior(row)
@@ -715,7 +810,7 @@ def _behavior_category_metric_map(rows: Iterable[dict[str, Any]], metric: str) -
                 "permissible": get_permissible_flag(row),
             },
         )
-        bucket["true_count"] += int(value)
+        bucket["true_count"] += int(bool(value))
         bucket["count"] += 1
     result = {}
     for behavior_category, bucket in grouped.items():
@@ -907,21 +1002,20 @@ def results_list(results_dir: Path, suite: Optional[str], as_json: bool, no_colo
             return
 
         console = _console(no_color=no_color)
-        split = any(
-            _has_permissibility_split(
-                run_summary.get("prompt_metrics") or {},
-                run_summary.get("scenario_metrics") or {},
+        runs = suite_summary["runs"]
+        split = bool(runs) and all(
+            has_permissibility_split_data(
+                (run_summary or {}).get("prompt_metrics") or {},
+                (run_summary or {}).get("scenario_metrics") or {},
             )
-            for run_summary in suite_summary["runs"]
+            for run_summary in runs
         )
-        prompt_primary, prompt_secondary, scenario_primary = _violation_column_titles(split)
         table = Table(title=f"Runs in {suite}", box=None, show_header=True, show_edge=False, pad_edge=False)
         table.add_column("Run", style="cyan", no_wrap=True)
         table.add_column("Status", style="white", no_wrap=True)
         table.add_column("Started", style="dim", no_wrap=True)
-        table.add_column(prompt_primary, style="white", no_wrap=True)
-        table.add_column(prompt_secondary, style="white", no_wrap=True)
-        table.add_column(scenario_primary, style="white", no_wrap=True)
+        for title in _violation_column_titles(split):
+            table.add_column(title, style="white", no_wrap=True)
         table.add_column("Judge failures", style="white", no_wrap=True)
         table.add_column("Target", style="white")
         for run_summary in suite_summary["runs"]:
@@ -1012,21 +1106,20 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         console.print(summary)
 
         if suite_summary["runs"]:
-            split = any(
-                _has_permissibility_split(
-                    run_summary.get("prompt_metrics") or {},
-                    run_summary.get("scenario_metrics") or {},
+            runs = suite_summary["runs"]
+            split = all(
+                has_permissibility_split_data(
+                    (run_summary or {}).get("prompt_metrics") or {},
+                    (run_summary or {}).get("scenario_metrics") or {},
                 )
-                for run_summary in suite_summary["runs"]
+                for run_summary in runs
             )
-            prompt_primary, prompt_secondary, scenario_primary = _violation_column_titles(split)
             table = Table(title="Runs", box=None, show_header=True, show_edge=False, pad_edge=False)
             table.add_column("Run", style="cyan", no_wrap=True)
             table.add_column("Status", style="white", no_wrap=True)
             table.add_column("Current Stage", style="white", no_wrap=True)
-            table.add_column(prompt_primary, style="white", no_wrap=True)
-            table.add_column(prompt_secondary, style="white", no_wrap=True)
-            table.add_column(scenario_primary, style="white", no_wrap=True)
+            for title in _violation_column_titles(split):
+                table.add_column(title, style="white", no_wrap=True)
             for run_summary in suite_summary["runs"]:
                 prompt_metrics = run_summary.get("prompt_metrics") or {}
                 scenario_metrics = run_summary.get("scenario_metrics") or {}
@@ -1095,13 +1188,14 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Scored", str(prompt_metrics["scored_total"]))
         table.add_row(label_metric("judge_failure_rate"), _fmt_percent(prompt_metrics.get("judge_failure_rate")))
         console.print(table)
-        if prompt_metrics.get("dimensions"):
+        prompt_dimensions = _visible_dimension_summaries(prompt_metrics)
+        if prompt_dimensions:
             dim_table = Table(title="Prompt Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
             dim_table.add_column("Summary", style="white", no_wrap=True)
             dim_table.add_column("Scored", style="white", no_wrap=True)
             dim_table.add_column("Distribution", style="white", no_wrap=True)
-            for name, summary in sorted(prompt_metrics["dimensions"].items()):
+            for name, summary in prompt_dimensions:
                 summary_text, scored_text, distribution_text = _fmt_dimension_summary(summary)
                 dim_table.add_row(
                     label_metric(name),
@@ -1123,13 +1217,14 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
         table.add_row("Scored", str(scenario_metrics["scored_total"]))
         table.add_row(label_metric("judge_failure_rate"), _fmt_percent(scenario_metrics.get("judge_failure_rate")))
         console.print(table)
-        if scenario_metrics.get("dimensions"):
+        scenario_dimensions = _visible_dimension_summaries(scenario_metrics)
+        if scenario_dimensions:
             dim_table = Table(title="Scenario Dimensions", box=None, show_header=True, show_edge=False, pad_edge=False)
             dim_table.add_column("Dimension", style="cyan", no_wrap=True)
             dim_table.add_column("Summary", style="white", no_wrap=True)
             dim_table.add_column("Scored", style="white", no_wrap=True)
             dim_table.add_column("Distribution", style="white", no_wrap=True)
-            for name, summary in sorted(scenario_metrics["dimensions"].items()):
+            for name, summary in scenario_dimensions:
                 summary_text, scored_text, distribution_text = _fmt_dimension_summary(summary)
                 dim_table.add_row(
                     label_metric(name),
@@ -1151,10 +1246,12 @@ def results_status(suite: str, run: Optional[str], results_dir: Path, as_json: b
 )
 @click.option(
     "--metric",
-    default=DEFAULT_COMPARE_METRIC,
+    default=None,
     shell_complete=_complete_metric,
-    show_default=True,
-    help="Judge dimension to use for the top behavior-category delta table.",
+    help=(
+        "Judge dimension to use for the top behavior-category delta table. "
+        "Defaults to impermissible behavior violations when every compared run has split data."
+    ),
 )
 @click.option("--limit", default=8, show_default=True, type=int, help="Maximum behavior categories to show in the delta table.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
@@ -1164,7 +1261,7 @@ def results_compare(
     ctx: click.Context,
     args: tuple[str, ...],
     results_dir: Path,
-    metric: str,
+    metric: str | None,
     limit: int,
     as_json: bool,
     no_color: bool,
@@ -1224,7 +1321,7 @@ def _run_within_suite_compare(
     suite: str,
     runs: tuple[str, ...] | list[str],
     results_dir: Path,
-    metric: str,
+    metric: str | None,
     limit: int,
     as_json: bool,
     no_color: bool,
@@ -1243,17 +1340,25 @@ def _run_within_suite_compare(
             _error(f"Run not found or unreadable: {suite}/{run_id}")
         run_summaries.append(run_summary)
 
-    available_metrics: set[str] = set()
-    for run_summary in run_summaries:
-        available_metrics.update(_detect_dimensions(run_summary.get("prompt_rows") or []))
+    metric = _resolve_compare_metric(metric, run_summaries)
+    available_metrics = _available_compare_metrics(run_summaries)
     if metric not in available_metrics:
         _error(f"Metric '{metric}' was not found in the compared prompt judgments. Available: {sorted(available_metrics)}")
     _reject_ordinal_compare(run_summaries, metric)
 
     behavior_category_deltas: list[dict[str, Any]] = []
     if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
-        first_map = _behavior_category_metric_map(run_summaries[0]["prompt_rows"], metric)
-        last_map = _behavior_category_metric_map(run_summaries[-1]["prompt_rows"], metric)
+        behavior_categories = _load_behavior_categories(suite_dir)
+        first_map = _behavior_category_metric_map(
+            run_summaries[0]["prompt_rows"],
+            metric,
+            behavior_categories,
+        )
+        last_map = _behavior_category_metric_map(
+            run_summaries[-1]["prompt_rows"],
+            metric,
+            behavior_categories,
+        )
         for behavior_category in sorted(set(first_map) | set(last_map)):
             first = first_map.get(behavior_category)
             last = last_map.get(behavior_category)
@@ -1368,16 +1473,19 @@ def _run_within_suite_compare(
 )
 @click.option(
     "--metric",
-    default=DEFAULT_COMPARE_METRIC,
-    show_default=True,
-    help="Judge dimension to compare.",
+    default=None,
+    shell_complete=_complete_metric,
+    help=(
+        "Judge dimension to compare. Defaults to impermissible behavior "
+        "violations when every compared run has split data."
+    ),
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
 @click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
 def results_compare_suites(
     suite_runs: tuple[str, ...],
     results_dir: Path,
-    metric: str,
+    metric: str | None,
     as_json: bool,
     no_color: bool,
 ):
@@ -1420,6 +1528,7 @@ def results_compare_suites(
         run_summaries.append(run_summary)
         labels.append(f"{suite_id}/{run_id}")
 
+    metric = _resolve_compare_metric(metric, run_summaries)
     _reject_ordinal_compare(run_summaries, metric)
 
     # Count structural visibility from inference rows

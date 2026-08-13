@@ -128,10 +128,10 @@ let orderedRuns = $derived([
 let runColor = $derived(
 	Object.fromEntries(data.runs.map((r, i) => [r.run_id, RUN_COLORS[i]])) as Record<string, string>
 );
-function baselineDeltaFor(run: { run_id: string; policyViolationRate: number | null; dimensions: Record<string, { rate: number | null }> }) {
+function baselineDeltaFor(run: { run_id: string; dimensions: Record<string, { rate: number | null }> }) {
 	const baseline = data.runs[baselineIdx];
-	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? null);
-	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? null);
+	const avg = run.dimensions[activeMetric]?.rate ?? null;
+	const baselineAvg = baseline.dimensions[activeMetric]?.rate ?? null;
 	const delta = avg !== null && baselineAvg !== null && run.run_id !== baseline.run_id ? avg - baselineAvg : 0;
 	return { avg, baselineAvg, delta };
 }
@@ -319,7 +319,7 @@ function sampleGridMinWidth(runCount: number): string {
 				{@const dInfo = baselineDeltaFor(run)}
 				{@const avg = dInfo.avg}
 				{@const delta = dInfo.delta}
-				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
+				{@const runScores = run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 }}
 				{@const normalizedScores = binaryCounts(runScores)}
 				{@const pct = pctBar(normalizedScores)}
 				{@const totalSamples = normalizedScores[0] + normalizedScores[1]}

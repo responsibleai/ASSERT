@@ -70,9 +70,6 @@ interface PromptMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -85,9 +82,6 @@ interface AuditMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -122,9 +116,6 @@ interface CompareRunSummary {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
-	counts: BinaryCounts;
 	dimensions: Record<string, CompareDimensionSummary>;
 	samples: JudgedSample[];
 	meanAgreement: number | null;
@@ -806,9 +797,6 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -823,9 +811,6 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -842,9 +827,6 @@ function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -860,9 +842,6 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -982,9 +961,6 @@ function buildCompareRunSummary(
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
-		counts: metrics.counts,
 		dimensions,
 		samples,
 		meanAgreement,
