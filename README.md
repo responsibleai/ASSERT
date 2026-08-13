@@ -46,10 +46,40 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 ### Quick install
 
 ```bash
+python -m pip install --upgrade pip      # requires pip >= 24.1
 pip install -e ".[otel,langgraph]"       # install
 cp .env.example .env                     # add your provider key
 assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
 ```
+
+The pip upgrade is required on fresh devcontainers/base images: older pip
+(< 24.1) crashes with `InvalidVersion: 'hosting'` while resolving one of the
+Azure transitive dependencies' PEP 508 markers.
+
+### Add a CI safety gate
+
+Use [`responsibleai/assert-ai-action`](https://github.com/responsibleai/assert-ai-action) to run ASSERT as a PR regression gate — it fails the build when a change makes agent behavior significantly worse.
+
+Install the skills into your coding agent (Cursor, Claude Code, Copilot, and [40+ others](https://github.com/vercel-labs/skills#supported-agents)). Two commands, because the bundle spans two repos on purpose — the evaluation skill is owned here in ASSERT and installed from here, so it never goes stale:
+
+```bash
+npx skills add responsibleai/ASSERT --skill run-assert-eval --yes
+npx skills add responsibleai/assert-ai-action --skill wire-assert-ci --yes
+```
+
+Run them separately. `skills add` takes one package per invocation and silently ignores extras while still exiting 0, so a combined command looks like it worked and leaves you with half the bundle.
+
+Then ask it to wire the gate:
+
+> Use the `wire-assert-ci` skill to add an ASSERT safety gate to this repo.
+
+No Node? Paste this instead — the agent fetches the skills itself:
+
+```text
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
+
+See [`docs/ci/`](docs/ci/README.md) for the short hand-off.
 
 <table align="center" style="width: 100%; border: 1px solid #d0d7de; border-collapse: collapse;">
         <tr>

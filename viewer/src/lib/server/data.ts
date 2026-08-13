@@ -35,6 +35,7 @@ import {
 	emptyScoreCounts
 } from './metrics.js';
 import { getRecordFlag, isNotApplicableRecordDimension } from '$lib/judgment.js';
+import { applyPermissibilitySplit } from '$lib/permissibility.js';
 import { normalizePromptResult, normalizeScenarioResult, scenarioStopReasonDisplay } from '$lib/result-view.js';
 import type {
 	AuditRunListItem,
@@ -69,9 +70,6 @@ interface PromptMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -84,9 +82,6 @@ interface AuditMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -121,9 +116,6 @@ interface CompareRunSummary {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
-	counts: BinaryCounts;
 	dimensions: Record<string, CompareDimensionSummary>;
 	samples: JudgedSample[];
 	meanAgreement: number | null;
@@ -762,9 +754,6 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -779,9 +768,6 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -798,9 +784,6 @@ function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -816,9 +799,6 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -897,8 +877,13 @@ function formatRunDate(manifest: Manifest | null): string {
 	return value.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function buildCompareRunSummary(runId: string, manifest: Manifest | null, samples: JudgedSample[]): CompareRunSummary {
-	const metrics = computeRunMetrics(samples);
+function buildCompareRunSummary(
+	runId: string,
+	manifest: Manifest | null,
+	samples: JudgedSample[],
+	behaviors: Behavior[]
+): CompareRunSummary {
+	const metrics = computeRunMetrics(samples, behaviors);
 	if (!metrics) {
 		throw new Error(`No judged samples for run "${runId}"`);
 	}
@@ -933,9 +918,6 @@ function buildCompareRunSummary(runId: string, manifest: Manifest | null, sample
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
-		counts: metrics.counts,
 		dimensions,
 		samples,
 		meanAgreement,
@@ -1228,11 +1210,18 @@ async function loadSuiteHeavyData(
 	const primaryRunId = sortedRuns[0]?.run_id ?? sortedAuditRuns[0]?.run_id ?? null;
 	const primaryRunSnapshot = primaryRunId ? candidateSnapshots.get(primaryRunId) ?? null : null;
 
+	const primaryBehaviors = primaryRunSnapshot
+		? metricBehaviors(snapshot, primaryRunSnapshot.config, primaryRunSnapshot.manifest?.artifact_versions ?? null)
+		: [];
 	const primaryRunPromptsByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
-		? groupSamplesByBehavior(buildJudgedPromptsFromSnapshot(primaryRunSnapshot))
+		? groupSamplesByBehavior(
+				applyPermissibilitySplit(buildJudgedPromptsFromSnapshot(primaryRunSnapshot), primaryBehaviors)
+			)
 		: {};
 	const primaryRunScenariosByBehavior: Record<string, JudgedSample[]> = primaryRunSnapshot
-		? groupSamplesByBehavior(buildJudgedScenariosFromSnapshot(primaryRunSnapshot))
+		? groupSamplesByBehavior(
+				applyPermissibilitySplit(buildJudgedScenariosFromSnapshot(primaryRunSnapshot), primaryBehaviors)
+			)
 		: {};
 
 	return {
@@ -1300,11 +1289,15 @@ function loadCompletedRunPageData(
 	activeTab: 'prompts' | 'audit'
 ) {
 	const viewerReadModel = loadViewerRunReadModel(suiteId, runId);
-	const promptRows = viewerReadModel.promptRows.map((row) =>
-		normalizeJudgedSample(row as unknown as JudgedSample)
+	const judgeTaxonomy = loadRunJudgeTaxonomyForRun(suiteId, runId);
+	const behaviors = (judgeTaxonomy?.behavior_categories ?? suiteSnapshot?.taxonomy?.behavior_categories ?? []).map(normalizeBehavior);
+	const promptRows = applyPermissibilitySplit(
+		viewerReadModel.promptRows.map((row) => normalizeJudgedSample(row as unknown as JudgedSample)),
+		behaviors
 	);
-	const auditRows = viewerReadModel.auditRows.map((row) =>
-		normalizeAuditScore(row as unknown as AuditScore)
+	const auditRows = applyPermissibilitySplit(
+		viewerReadModel.auditRows.map((row) => normalizeAuditScore(row as unknown as AuditScore)),
+		behaviors
 	);
 	const promptCount = promptRows.length;
 	const auditCount = auditRows.length;
@@ -1313,8 +1306,6 @@ function loadCompletedRunPageData(
 	const samples = resolvedTab === 'prompts' ? promptRows : [];
 	const auditScores = resolvedTab === 'audit' ? auditRows : [];
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
-	const judgeTaxonomy = loadRunJudgeTaxonomyForRun(suiteId, runId);
-	const behaviors = (judgeTaxonomy?.behavior_categories ?? suiteSnapshot?.taxonomy?.behavior_categories ?? []).map(normalizeBehavior);
 	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
 	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
 
@@ -1368,8 +1359,15 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 		});
 	}
 
-	const samples = resolvedTab === 'prompts' ? buildJudgedPromptsFromSnapshot(runSnapshot) : [];
-	const auditScores = resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [];
+	const behaviors = metricBehaviors(suiteSnapshot, runSnapshot.config, runSnapshot.manifest?.artifact_versions ?? null);
+	const samples = applyPermissibilitySplit(
+		resolvedTab === 'prompts' ? buildJudgedPromptsFromSnapshot(runSnapshot) : [],
+		behaviors
+	);
+	const auditScores = applyPermissibilitySplit(
+		resolvedTab === 'audit' ? buildAuditScoresFromSnapshot(runSnapshot) : [],
+		behaviors
+	);
 	const inferencePreviewRows =
 		resolvedTab === 'audit' && auditScores.length === 0
 			? buildInferencePreviewRowsFromSnapshot(runSnapshot)
@@ -1381,7 +1379,6 @@ export function loadRunPageData(suiteId: string, runId: string, activeTab: 'prom
 
 	const scenarioSeeds = buildScenarioSeeds(suiteSnapshot);
 	const promptSeedTitleMap = buildPromptSeedTitleMap(suiteSnapshot);
-	const behaviors = metricBehaviors(suiteSnapshot, runSnapshot.config, runSnapshot.manifest?.artifact_versions ?? null);
 	const promptMetrics = resolvedTab === 'prompts' ? computeRunMetrics(samples, behaviors) : null;
 	const auditMetrics = resolvedTab === 'audit' ? computeAuditRunMetrics(auditScores, behaviors) : null;
 	const scenarioSeedMap = resolvedTab === 'audit' ? buildScenarioSeedMap(scenarioSeeds, auditScores) : {};
@@ -1535,10 +1532,15 @@ export function loadComparePageData(
 
 	for (const runId of runIds) {
 		const runSnapshot = loadRunSnapshot(suiteId, runId, suiteSnapshot?.seedRows);
-		const samples = buildSamples(runSnapshot);
+		const behaviors = metricBehaviors(
+			suiteSnapshot,
+			runSnapshot.config,
+			runSnapshot.manifest?.artifact_versions ?? null
+		);
+		const samples = applyPermissibilitySplit(buildSamples(runSnapshot), behaviors);
 		if (samples.length === 0) return null;
 
-		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples);
+		const summary = buildCompareRunSummary(runId, runSnapshot.manifest, samples, behaviors);
 		for (const [dimensionName, dimension] of Object.entries(summary.dimensions)) {
 			if (dimension.kind !== 'ordinal') metricNames.add(dimensionName);
 		}

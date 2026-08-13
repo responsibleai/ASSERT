@@ -58,7 +58,13 @@ stepping with citations highlighted). Answer in chat for "what / why / which"; h
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: `target.callable`
   WITH `target.trace` so the judge can cite tool calls and routing.
 - **Hosted model** with a system prompt and optional tools: `target.model` and `target.tools`.
-- **Pre-collected traces** (no live inference): `assert-ai judge-traces --traces <path> --config <path>`.
+- **Pre-collected traces** (no live inference): `assert-ai judge-traces --traces <path> --config <path>`;
+  do not add a `--trace` flag to `assert-ai run`.
+- **Black-box HTTP endpoint** you cannot import as Python: use `target.endpoint` — the runtime POSTs
+  `{"message": ..., "history": [...]}` and reads `{"response": ...}`, so no wrapper code is needed
+  (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response
+  shape differs. Either way the judge sees only final text, so this is a fallback, not the
+  recommended path.
 
 ### 3. Run the pipeline
 
@@ -99,6 +105,14 @@ highlighted. Suggest it when the user wants to **read a full transcript / see th
 drawer), **compare against a baseline** (viewer compare view, or `assert-ai results compare <suite>
 <runA> <runB>`), or **watch a run in progress** (live run monitor). See
 `docs/guides/use-local-viewer.md` for the layout.
+
+### 6. Hand off to CI
+
+Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
+
+```
+read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOARD.md
+```
 
 ### Output format
 

@@ -126,10 +126,12 @@ Accepted keys:
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
   - `model` — model config.
   - `timeout_s` — optional per-call timeout for generation.
+  - `sampling` — optional assignment-selection config. Default: `{method: pairwise}`.
 - `scenario` — mapping. Optional.
   - `sample_size` — integer from `1` to `100000`. Default: `100`.
   - `model` — model config.
   - `timeout_s` — optional per-call timeout for generation.
+  - `sampling` — optional assignment-selection config. Default: `{method: pairwise}`.
 - `stratify` — mapping. Optional.
   - `dimensions` — list of dimensions crossed with behavior categories.
   - `level_count` — positive integer. Default: `3`. Used when dimensions need generated levels.
@@ -141,6 +143,13 @@ Accepted keys:
 - `save_path` — optional override path for `test_set.jsonl` output.
 
 At least one of `prompt` or `scenario` is required. The fallback order for prompt generation is `test_set.prompt.model`, then `test_set.model`, then `default_model`. Scenario generation uses the same order with `test_set.scenario.model` first. Stratify generation uses `test_set.stratify.model`, then `test_set.model`, then `default_model`.
+
+Sampling methods:
+
+- `pairwise` — default. Uses an IPOG covering array; full pair coverage requires a budget at least as large as the covering array. Budgets above the covering-array size replicate its complete assignments as evenly as possible; they do not add new assignment cells.
+- `stratified` — balances across the joint Cartesian product of `stratify_by` (default `[behavior]`) and samples remaining dimensions uniformly. When the budget is smaller than the number of joint strata, it samples distinct joint strata uniformly; individual axes are not guaranteed to be marginally balanced.
+- `full_factorial` — covers every dimension cell. `replication` is `balanced` by default or `none` when `sample_size` must exactly equal the factorial size.
+- `random` — uniform random assignments. `with_replacement` defaults to `true`.
 
 `tool_source: per_test_case` requires `pipeline.inference.target.model` and `pipeline.inference.target.tools.simulator`. It rejects callable targets, endpoint targets, Python tool modules, and fixed toolsets.
 
@@ -156,6 +165,9 @@ pipeline:
     tool_source: runtime
     prompt:
       sample_size: 10
+      sampling:
+        method: stratified
+        stratify_by: [behavior]
       model:
         name: azure/gpt-4o-mini
         max_tokens: 3000

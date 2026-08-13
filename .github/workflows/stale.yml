@@ -1,0 +1,32 @@
+name: Close stale issues and PRs
+
+on:
+  schedule:
+    # Daily at 08:00 UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 90
+          days-before-issue-close: 14
+          days-before-pr-stale: 45
+          days-before-pr-close: 14
+          exempt-all-milestones: true
+          exempt-draft-pr: true
+          stale-issue-message: >
+            This issue has had no activity for 90 days and is being marked as stale.
+            It will be closed in 14 days unless updated. Reopen anytime if still relevant.
+          stale-pr-message: >
+            This PR has had no activity for 45 days and is being marked as stale.
+            It will be closed in 14 days unless updated. Reopen anytime if still relevant.
+          close-issue-message: 'Closing for hygiene. Reopen if still relevant.'
+          close-pr-message: 'Closing for hygiene. Reopen if still relevant.'

@@ -809,9 +809,8 @@ async def _run_tester_target_loop(
         assert action_message is not None
 
         target_messages.append(Message(role="user", content=action_message))
-        tester_call_id = transcript.append_llm_call(
-            **build_llm_call_trace(tester_response, source="tester")
-        )
+        tester_call_trace = build_llm_call_trace(tester_response, source="tester")
+        tester_call_id = transcript.append_llm_call(**tester_call_trace)
         message_id = f"event:{len(transcript.events)}"
         transcript.add_event(TranscriptEvent(
             view=["target", "combined"],
@@ -819,7 +818,7 @@ async def _run_tester_target_loop(
             edit=AddMessageEdit(message=TranscriptMessage(role="user", content=action_message)),
             raw={
                 "call": "tester",
-                "request": to_jsonable(tester_response.request_payload or {}),
+                "request": tester_call_trace["request"],
                 "response": serialize_response(tester_response),
             },
         ))
@@ -1140,7 +1139,7 @@ async def run_inference(
             # LLMInputError) so we emit a quieter debug log instead of
             # the warning the generic input-error handler below would
             # emit for every adversarial case.
-            test_case_id = seed_row.get("seed_id", "?")
+            test_case_id = test_case_row.get("test_case_id", "?")
             log.debug(
                 "Inference worker hit provider content filter for test case %s: %s",
                 test_case_id, exc,

@@ -3,6 +3,9 @@
 
 <script lang="ts">
 	import { getJudgeError, getRecordFlag, getRequiredBaseMetricNames, inferJudgeStatus } from '$lib/judgment.js';
+	import { untrack } from 'svelte';
+	import { metricTitleLabel } from '$lib/labels.js';
+	import { primaryMetricName, visibleMetricNames } from '$lib/permissibility.js';
 	import { buildMatchedSampleRows } from '$lib/compare-view.js';
 	import PrimerDropdown from '$lib/PrimerDropdown.svelte';
 	import { slide } from 'svelte/transition';
@@ -52,11 +55,9 @@ let expandedRows = $state<Set<string>>(new Set());
 let disagreementsOnly = $state(false);
 
 // Active metric for comparison
-let activeMetric = $state('policy_violation');
-
-function metricLabel(m: string): string {
-	return m.replace(/_/g, ' ');
-}
+// Tracked headline metric for A/B comparison: the permissibility split leads when
+// the run has a behavior taxonomy, otherwise fall back to overall policy_violation.
+let activeMetric = $state(untrack(() => primaryMetricName(data.allMetrics ?? [])));
 
 // Short label for a run's target. Callable targets ("module.path:function_name")
 // reduce to "function_name"; provider/model strings ("provider/model-name")
@@ -127,10 +128,10 @@ let orderedRuns = $derived([
 let runColor = $derived(
 	Object.fromEntries(data.runs.map((r, i) => [r.run_id, RUN_COLORS[i]])) as Record<string, string>
 );
-function baselineDeltaFor(run: { run_id: string; policyViolationRate: number | null; dimensions: Record<string, { rate: number | null }> }) {
+function baselineDeltaFor(run: { run_id: string; dimensions: Record<string, { rate: number | null }> }) {
 	const baseline = data.runs[baselineIdx];
-	const avg = activeMetric === 'policy_violation' ? run.policyViolationRate : (run.dimensions[activeMetric]?.rate ?? null);
-	const baselineAvg = activeMetric === 'policy_violation' ? baseline.policyViolationRate : (baseline.dimensions[activeMetric]?.rate ?? null);
+	const avg = run.dimensions[activeMetric]?.rate ?? null;
+	const baselineAvg = baseline.dimensions[activeMetric]?.rate ?? null;
 	const delta = avg !== null && baselineAvg !== null && run.run_id !== baseline.run_id ? avg - baselineAvg : 0;
 	return { avg, baselineAvg, delta };
 }
@@ -214,10 +215,6 @@ function sampleGridTemplate(runCount: number): string {
 
 function sampleGridMinWidth(runCount: number): string {
 	return `${runCount * 16}rem`;
-}
-
-function capitalize(s: string): string {
-	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 </script>
 
@@ -306,13 +303,13 @@ function capitalize(s: string): string {
 					<PrimerDropdown
 						label=""
 						ariaLabel="Metric"
-						options={data.allMetrics.map((metric) => ({ value: metric, label: capitalize(metricLabel(metric)) }))}
+						options={visibleMetricNames(data.allMetrics).map((metric) => ({ value: metric, label: metricTitleLabel(metric) }))}
 						selected={activeMetric}
 						onSelect={(value) => { activeMetric = value; }}
 					/>
 				</div>
 			{:else}
-				<span class="shrink-0 text-xs text-text-muted">{capitalize(metricLabel(activeMetric))}</span>
+				<span class="shrink-0 text-xs text-text-muted">{metricTitleLabel(activeMetric)}</span>
 			{/if}
 		</div>
 
@@ -322,7 +319,7 @@ function capitalize(s: string): string {
 				{@const dInfo = baselineDeltaFor(run)}
 				{@const avg = dInfo.avg}
 				{@const delta = dInfo.delta}
-				{@const runScores = activeMetric === 'policy_violation' ? run.counts : (run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 })}
+				{@const runScores = run.dimensions[activeMetric]?.counts ?? { 0: 0, 1: 0 }}
 				{@const normalizedScores = binaryCounts(runScores)}
 				{@const pct = pctBar(normalizedScores)}
 				{@const totalSamples = normalizedScores[0] + normalizedScores[1]}

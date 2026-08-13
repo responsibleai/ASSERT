@@ -22,6 +22,7 @@ assert-ai [GLOBAL_OPTIONS] COMMAND [ARGS] [OPTIONS]
 - `results`: list/status/compare suites and runs
 - `analysis`: post-hoc metrics commands
 - `judge-traces`: score pre-collected OTel traces
+- `acs`: generate, validate, and regression-check ACS policies
 - `library`: browse built-in behavior/judge presets
 
 ## `init`
@@ -117,7 +118,7 @@ assert-ai results compare <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPT
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional, default `policy_violation`
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
 - `--limit <int>` optional, default `8`
 - `--json` optional flag
 - `--no-color` optional flag
@@ -133,7 +134,7 @@ assert-ai results compare-suites <suite1>/<run1> <suite2>/<run2> [OPTIONS]
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
 - `--json` optional flag
 - `--no-color` optional flag
 
@@ -177,6 +178,72 @@ Optional:
 
 - `--group-by <attribute>` default `session.id`
 - `--output <path>`
+
+## `acs generate`
+
+Requires the `acs` extra: `python -m pip install -e ".[acs]"` (editable install of the ASSERT
+repo itself — this is not yet published as an installable extra on PyPI's `assert-ai` package).
+
+Generate a deployable ACS policy from an ASSERT run.
+
+```bash
+assert-ai acs generate [OPTIONS]
+```
+
+Required:
+
+- `--run-dir <path>` or `--suite <suite> --run <run>`
+
+Optional:
+
+- `--out <path>`
+- `--min-rate <float>` default `0.0`
+- `--min-count <int>` default `1`
+- `--model <name>`
+- `--lm-kind assert|openai-compatible` default `assert`
+- `--strict/--no-strict` default `--no-strict`
+- `--validate/--no-validate` default `--validate`
+- `--fail-on-allow` optional flag
+- `--require-block` optional flag
+
+## `acs validate`
+
+Validate an ACS manifest against an ASSERT run.
+
+```bash
+assert-ai acs validate --manifest <path> [OPTIONS]
+```
+
+Required:
+
+- `--manifest <path>`
+- `--run-dir <path>` or `--suite <suite> --run <run>`
+
+Optional:
+
+- `--min-rate <float>` default `0.0`
+- `--min-count <int>` default `1`
+- `--max-cases <int>`
+- `--fail-on-allow` optional flag
+- `--require-block` optional flag
+
+## `acs eval-config`
+
+Generate an ASSERT eval config from an existing ACS manifest.
+
+```bash
+assert-ai acs eval-config --manifest <path> --target-callable <module:function> --out <path> [OPTIONS]
+```
+
+Required:
+
+- `--manifest <path>`
+- `--target-callable <module:function>`
+- `--out <path>`
+
+Optional:
+
+- `--model <name>`
 
 ## `library list`
 
