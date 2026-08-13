@@ -15,6 +15,7 @@ if shutil.which("opa") is None:
 
 from assert_ai.integrations.acs import build_language_model, generate_policy, validate_policy
 from assert_ai.integrations.acs.findings import FindingsSummary, summarize_findings
+from assert_ai.integrations.acs.validate import _policy_references_annotators
 
 
 def _policy_plan(*, term: str = "bomb") -> dict:
@@ -212,8 +213,33 @@ def test_validate_policy_blocks_every_known_bad_example(tmp_path: Path) -> None:
     assert report.failed == 0
     assert report.ok is True
     assert report.handled_rate == pytest.approx(1.0)
+    assert report.annotator_dependent is False
     assert all(case.decision == "deny" for case in report.cases)
     assert all(case.strong_block is True for case in report.cases)
+
+
+def test_policy_references_annotators_detects_annotation_rule(tmp_path: Path) -> None:
+    (tmp_path / "policy").mkdir()
+    (tmp_path / "manifest.yaml").write_text("name: demo\n", encoding="utf-8")
+    (tmp_path / "policy" / "p.rego").write_text(
+        "package assert_guardrails\n"
+        'deny contains msg if { input.annotations.toxicity.flagged; msg := "x" }\n',
+        encoding="utf-8",
+    )
+
+    assert _policy_references_annotators(tmp_path / "manifest.yaml") is True
+
+
+def test_policy_references_annotators_false_for_deterministic(tmp_path: Path) -> None:
+    (tmp_path / "policy").mkdir()
+    (tmp_path / "manifest.yaml").write_text("name: demo\n", encoding="utf-8")
+    (tmp_path / "policy" / "p.rego").write_text(
+        "package assert_guardrails\n"
+        'deny contains msg if { input.policy_target.value.account_id != "A"; msg := "x" }\n',
+        encoding="utf-8",
+    )
+
+    assert _policy_references_annotators(tmp_path / "manifest.yaml") is False
 
 
 def test_validate_policy_discriminates_when_rule_does_not_match(

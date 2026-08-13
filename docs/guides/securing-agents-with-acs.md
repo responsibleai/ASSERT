@@ -23,7 +23,7 @@ Policy generation uses an LLM unless you pass a fake language model in Python. W
 Start from the [getting started guide](../getting-started.md) or any existing eval config:
 
 ```bash
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 ASSERT writes results under:

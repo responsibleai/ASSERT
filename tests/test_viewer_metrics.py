@@ -13,6 +13,7 @@ from tests.node_runner import node_supports_ts, node_ts_args
 
 ROOT = Path(__file__).resolve().parents[1]
 METRICS_SRC = ROOT / "viewer" / "src" / "lib" / "server" / "metrics.ts"
+PERMISSIBILITY_SRC = ROOT / "viewer" / "src" / "lib" / "permissibility.ts"
 
 
 @unittest.skipUnless(node_supports_ts(), "node binary lacks TypeScript support (need ≥ 22.6)")
@@ -33,7 +34,13 @@ class ViewerMetricsTest(unittest.TestCase):
             source = METRICS_SRC.read_text(encoding="utf-8")
             source = source.replace("from '$lib/judgment.js';", "from './judgment.js';")
             source = source.replace("from './dimensions.js';", "from './dimensions.js';")
+            source = source.replace(
+                "from '$lib/permissibility.js';", "from './permissibility.ts';"
+            )
             (harness_dir / "metrics.ts").write_text(source, encoding="utf-8")
+            (harness_dir / "permissibility.ts").write_text(
+                PERMISSIBILITY_SRC.read_text(encoding="utf-8"), encoding="utf-8"
+            )
             (harness_dir / "judgment.js").write_text(
                 textwrap.dedent(
                     """\
@@ -88,7 +95,13 @@ class ViewerMetricsTest(unittest.TestCase):
             source = METRICS_SRC.read_text(encoding="utf-8")
             source = source.replace("from '$lib/judgment.js';", "from './judgment.js';")
             source = source.replace("from './dimensions.js';", "from './dimensions.js';")
+            source = source.replace(
+                "from '$lib/permissibility.js';", "from './permissibility.ts';"
+            )
             (harness_dir / "metrics.ts").write_text(source, encoding="utf-8")
+            (harness_dir / "permissibility.ts").write_text(
+                PERMISSIBILITY_SRC.read_text(encoding="utf-8"), encoding="utf-8"
+            )
             (harness_dir / "judgment.js").write_text(
                 textwrap.dedent(
                     """\

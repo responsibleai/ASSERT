@@ -79,7 +79,7 @@ cp .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 Use the PowerShell equivalent on Windows:
@@ -94,7 +94,7 @@ Copy-Item .env.example .env
 # Create a config interactively, or use an existing one
 assert-ai init --model azure/gpt-5.4
 # or run the flagship example directly
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 ## How to help with common tasks
@@ -165,7 +165,7 @@ These skills are for end users running evaluations, not for repository maintenan
 
 | Skill | Claude Code | GitHub Copilot | Cursor | What it does |
 |---|---|---|---|---|
-| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Generate config from requirements, run pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. |
+| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Discover risks via the Clarity MCP tools (`run_clarity`) in-IDE, then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
 
 ## Output style for coding agents
 
@@ -288,3 +288,38 @@ When the maintainer activates a broader agent capability:
 3. Define the activation scope: what external writes are now allowed, on what cadence, and with what review gate.
 4. Record the activation decision (date, agent, scope) in a place the maintainer can audit later.
 5. The agent transitions from observation-only to the activated scope. Everything outside that scope still routes to the inbox.
+
+<!-- clarity-begin -->
+<!-- clarity-meta
+schema_version: 3
+mode: embedded
+protocol_dir_name: .clarity-protocol
+processes_dir: .clarity-agent/processes
+-->
+<!-- Clarity manages this block; edits between the clarity-begin / clarity-end markers will be overwritten on the next project open. Put project-specific guidance outside the markers. -->
+
+## Clarity Protocol
+
+This project uses the Clarity Protocol for structured thinking about consequential decisions: what to build and why, how it should be designed, where it might fail. Protocol documents live in `.clarity-protocol/`. A Clarity MCP server is configured for this project (see `.vscode/mcp.json`). Use its tools to interact with the protocol. The MCP responses include the relevant process guidance, so do not inspect the clarity-agent repository, read process files, install Clarity, or run Clarity CLI commands to find Clarity process instructions unless the MCP tools are unavailable.
+
+### When to engage
+
+**Before building — think when it matters.** Two triggers:
+
+1. *The user asks.* When they want to explore what to build, clarify requirements, brainstorm risks, or work through a decision: call the `run_clarity` MCP tool. Follow the guidance returned by that tool instead of searching the repo for Clarity instructions.
+
+2. *You recognize an inflection point.* Before making choices that would be expensive to reverse — new services, auth/trust models, data schemas, external integrations, significant API contracts — call `check_decision` with what you plan to do. It returns existing decisions, requirements, and architecture so you can check for conflicts. Don't interrupt for routine implementation. The test: "If this turns out wrong, is it a 5-minute fix or a multi-day rework?" Interrupt for the latter.
+
+**After building — keep the record current.** After significant implementation work (new features, architectural changes), call `get_packet_status` to find stale protocol documents. Update them with `read_protocol_document` / `write_protocol_document`. Record significant choices with `record_decision`; add risks with `record_failure`.
+
+### Behaviors (apply throughout)
+
+**Move quickly through what's obvious.** Many processes have multiple steps, but sometimes the answer to a step is already clear from context. When it is, just do it — write the result and present a summary for confirmation. Don't stop to ask permission at every small step. The goal is a natural conversation, not a checklist. Reserve interactive discussion for genuine ambiguity, tradeoffs, or decisions that need the user's judgment.
+
+**Keep outputs narrative but brief.** All `.md` files in this project — protocol documents, process guides, and instructions — are repeatedly read by both humans and LLMs. They should read as smooth, concise narrative: easy to understand on first read, with nothing that wastes the reader's attention. A reader must immediately understand both the "what" and the "why." Cut anything that doesn't carry meaningful information. Since many of these files are instructions for LLMs which create further `.md` files, they should encourage the same discipline.
+
+**Use `.clarity-protocol/notes.md` as shared memory.** At the start of every process, read `.clarity-protocol/notes.md` for guiding principles and cross-phase observations. When you notice something worth remembering — a design philosophy, a team constraint, an insight relevant to a future phase — add it. Tag actionable items for a specific phase with `[for: <phase>]` (e.g., `[for: failure-analysis] Authentication is a single point of failure`). When acting on a tagged item, remove it. Keep the file compact: consolidate redundant entries and remove items that have been absorbed into the relevant protocol documents.
+
+**Generate threat model artifacts.** When writing or updating `solution/architecture.md`, include a Mermaid threat model diagram directly in the file as a fenced ` ```mermaid ` block — the packet generator extracts it automatically. Write the diagram yourself; you'll produce a better diagram than any code generator. Also write `.clarity-protocol/system-design.json` with structured component/flow/threat data for tooling. After failure brainstorming or analysis, write `.clarity-protocol/threat-model.md` — a concise threat model summary (1-2 pages max) with top risks, severities, one-line mitigations, and single points of failure.
+
+<!-- clarity-end -->

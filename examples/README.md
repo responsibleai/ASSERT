@@ -1,66 +1,89 @@
 # Examples
 
-Runnable configs and sample agents for ASSERT.
-
-Start with the LangGraph travel planner. It is the flagship example because it exercises the real agent path on top of the universal `target.callable` integration: spec-driven test generation, inference outputs (conversations or agent actions), OTel-traced execution, and judge evidence. Phoenix/OpenInference auto-instrumentation captures the agent's OpenTelemetry spans so the judge cites tool calls, routing, and intermediate decisions in every verdict.
-
-> **Any agent works.** `target.callable` accepts any agent or multi-agent system you can invoke from a Python function — frameworks (LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, DSPy, LlamaIndex, …), custom orchestration, REST clients, or thin wrappers around hosted models. The recommended integration adds the central helper (`from assert_ai import auto_trace; auto_trace.enable()`) so the judge can score tool use and routing, not just the final response.
+Runnable configs and sample agents for ASSERT. Start with the LangGraph travel
+planner: it uses `target.callable` with OpenTelemetry trace capture so the judge
+can inspect tool calls, routing, and intermediate decisions.
 
 ## First run
 
 ```powershell
 python -m venv .venv
-./.venv/Scripts/Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
-# Edit .env with credentials for your provider. The shipped configs use `azure/...` models;
-# any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, …) works — see https://docs.litellm.ai/docs/providers.
+# Set AZURE_API_BASE and AZURE_API_KEY.
 
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
-assert-ai results status travel-planner-langgraph-v1 demo-1
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai results status travel-langgraph-budget-overrun baseline
 ```
+
+Artifacts are written to
+`artifacts/results/travel-langgraph-budget-overrun/baseline/`.
 
 ## Create your own config
 
-Use `assert-ai init` to design an eval config interactively instead of writing YAML by hand.
-Pass `--model` with any [LiteLLM model string](https://docs.litellm.ai/docs/providers) and make sure the matching API key is in your `.env`:
-
 ```powershell
 assert-ai init --model azure/gpt-5.4-mini
-# or seed from an existing example:
-assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/eval_config.yaml
+assert-ai init --model azure/gpt-5.4-mini --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 See the [CLI reference](../docs/cli/commands.md#init) for all options.
 
-## Which example to start with
+## Reuse a behavior from the library — check here first
 
-| Goal | Example | Notes |
-|---|---|---|
-| Evaluate any agent or multi-agent system (recommended) | `travel_planner_langgraph/eval_config.yaml` | Canonical example. Uses `target.callable` with `target.trace.backend: phoenix` so the judge sees tool calls and routing. |
-| Understand framework instrumentation breadth | `phoenix_auto_trace/README.md` | Same travel-planner idea across multiple framework auto-instrumentation paths using `assert_ai.auto_trace`. |
-| Run a simple hosted-model eval | `prompt_agents/health_assistant.yaml` | Most simple example: a single LLM target with a system prompt. |
-| Call Azure OpenAI with Managed Identity / `az login` | `azure_managed_identity/eval_config.yaml` | Minimal AAD smoke test. Requires `pip install -e ".[azure-aad]"` and the *Cognitive Services OpenAI User* role on the target resource. See [`azure_managed_identity/README.md`](azure_managed_identity/README.md). |
-| Evaluate a Prompt Agent with planned tools but no backend | `prompt_agents/health_assistant_simulated_tools.yaml` | Uses a fixed tool schema and simulated tool responses. |
-| Evaluate a hosted target with Python tool functions | `prompt_agents/health_assistant_sandbox.yaml` | Requires Docker. Use when you want actual tool execution around a hosted model. |
-| Evaluate a science research agent with real retrieval tools | `science_research_agent/eval_config.yaml` | Callable-agent example ported from Omni. Uses `web_search`, `fetch_url`, and `file_search`. Run `python -m pip install -e ".[examples]"`, set `TAVILY_API_KEY` for web search, then `assert-ai run --config examples/science_research_agent/eval_config.yaml`. |
-| See runtime + eval close the loop on a real workflow | `incident_triage_agent/eval_config_baseline.yaml` + `eval_config_naive_prompt.yaml` + `eval_config_guarded.yaml` + `eval_config_guarded_gepa.yaml` | Joint [AgentControlSpecification](https://github.com/responsibleai/AgentControlSpecification) + ASSERT demo. SRE incident-triage agent run across a 4-variant matrix (baseline weak prompt → naïve DO-NOT prompt → ACS gates → ACS + GEPA-optimized prompt) over a 4-axis failure-mode taxonomy to prove the runtime+eval loop and surface the security/overrefusal trade-off. See [`incident_triage_agent/README.md`](incident_triage_agent/README.md). |
-| Generate ACS guardrails from ASSERT findings | `acs_guardrails/README.md` | Offline ASSERT→ACS adapter demo: synthetic findings generate `manifest.yaml` + Rego, validate known-bad outputs, then guard a callable target. |
-| Evaluate a Microsoft Agent Framework workflow | `agent_framework_travel_planner/eval_config.yaml` | Self-contained native fan-out/fan-in workflow with an authorization gate that intentionally exposes same-type substitution and amount-drift failures. Uses MAF's native OTel spans via `trace.backend: otel` — no auto-instrumentation package. See [`agent_framework_travel_planner/README.md`](agent_framework_travel_planner/README.md). |
+Before writing a `behavior.description` from scratch, check the **[Behavior Library](../assert_ai/library/behaviors/README.md)**
+(`assert_ai/library/behaviors/`) — the single source of truth for atomic,
+ready-to-use behavior presets shipped with ASSERT. Each preset is scoped to
+one mechanism (one judge verdict, one behavioral claim), covering safety,
+bias/fairness, and agentic failure modes. Browse the full catalog with:
 
-## Layout
-
-```text
-examples/
-├── travel_planner_langgraph/   flagship callable-agent example with OTel trace capture
-├── agent_framework_travel_planner/  policy eval for a Microsoft Agent Framework workflow
-├── science_research_agent/     callable science research agent with real retrieval tools
-├── phoenix_auto_trace/         framework instrumentation gallery
-├── prompt_agents/              simple hosted-model and Prompt Agent configs
-├── azure_managed_identity/     minimal Azure OpenAI eval that uses Entra ID auth
-├── behavior_specs/             reusable behavior examples and references in markdown files
-└── agents/                     simple tool modules and tool schemas
+```powershell
+assert-ai library list --kind behavior
+assert-ai library show <preset-name>
 ```
 
-See [`behavior_specs/README.md`](behavior_specs/README.md) for reusable behavior examples and references in markdown files. These were developed to be shared as high quality behavior/concept specifications that can be used with ASSERT.
+Pair a preset with application context from the **[Scenario Library](../assert_ai/library/scenarios/README.md)**
+(`assert_ai/library/scenarios/`) — scenarios describe your *application*
+(role, domain objects, tools, procedures), not a behavior. One config per
+behavior, sharing a common scenario's `context:`, is the pattern every
+example in this directory follows.
+
+## Worked evaluations
+
+Every config below measures one behavior. Each directory README covers the
+scenario, setup, run commands, and artifact paths.
+
+| Example | Target shape | Focus |
+|---|---|---|
+| [`travel_planner_langgraph/`](travel_planner_langgraph/) | LangGraph callable + OTel traces | Grounded itineraries and budget compliance. Recommended starting point. |
+| [`travel_planner_neurosan/`](travel_planner_neurosan/) | Custom multi-agent callable + manual OTel spans | Framework-independent trace integration. |
+| [`azure_doc_qa/`](azure_doc_qa/) | Multi-agent RAG callable | Confidential-data boundaries and grounded answers. |
+| [`billing_support_agent/`](billing_support_agent/) | Tool-using callable | Identity verification and account isolation. |
+| [`change_control_agent/`](change_control_agent/) | Workflow callable | Approval sequencing and record integrity. |
+| [`agent_framework_travel_planner/`](agent_framework_travel_planner/) | Microsoft Agent Framework workflow + native OTel traces | Exact-item and exact-amount authorization for booking/payment commitments. |
+| [`science_research_agent/`](science_research_agent/) | Retrieval callable | Sharing classes and retrieved prompt injection. |
+| [`incident_triage_agent/evals/`](incident_triage_agent/evals/) | Tool-using callable | Nine independently runnable SOP behaviors. |
+
+## Target and instrumentation galleries
+
+| Example | Purpose |
+|---|---|
+| [`prompt_agents/`](prompt_agents/) | Prompt Agent target shapes: model-only, simulated tools, sandbox tools, generated tools, and external connector. |
+| [`phoenix_auto_trace/`](phoenix_auto_trace/) | Auto-instrumentation across supported agent frameworks, with two atomic LangGraph evals. |
+| [`langgraph-foundry-hosted/`](langgraph-foundry-hosted/) | LangGraph target hosted through Foundry. |
+| [`azure_managed_identity/`](azure_managed_identity/) | Azure OpenAI authentication with managed identity or `az login`. |
+
+## Specialized demos and shared assets
+
+| Directory | Purpose |
+|---|---|
+| [`acs_guardrails/`](acs_guardrails/) | Offline ASSERT-to-ACS guardrail generation demo. |
+| [`bank_manager_agent_control/`](bank_manager_agent_control/) | Multi-variant agent-control evaluation. |
+| [`benchmark/`](benchmark/) | Benchmark configuration and scripts. |
+| [`behavior_specs/`](behavior_specs/) | Reusable behavior specifications. |
+| [`agents/`](agents/) | Shared tool modules, schemas, and connector fixtures used by other examples. |
+
+For any non-trivial agent, prefer `target.callable` with `target.trace`. Use a
+plain callable without traces only for a black-box API or a quick pipeline smoke
+test.

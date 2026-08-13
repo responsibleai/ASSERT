@@ -2,13 +2,17 @@
 // Licensed under the MIT License.
 
 import {
-	getRecordFlag,
 	getRecordMetricValue,
 	getRequiredBaseMetricNames,
 	isBooleanFlag,
 	isNotApplicableRecordDimension,
 	isSuccessfulJudgment
 } from '$lib/judgment.js';
+import {
+	buildPermissibilityIndex,
+	derivePermissibilitySplit,
+	withPermissibilitySplit
+} from '$lib/permissibility.js';
 import type {
 	AuditScore,
 	AuditRunMetrics,
@@ -16,7 +20,6 @@ import type {
 	BinaryCounts,
 	DimensionMetrics,
 	JudgedSample,
-	NodeJudgment,
 	OrdinalScale,
 	RunMetrics
 } from '$lib/types.js';
@@ -112,26 +115,6 @@ function finalizeDimensionAggregate(aggregate: EventDimensionAggregate): Dimensi
 	};
 }
 
-function readNodeJudgments(verdict: Record<string, unknown> | null | undefined): NodeJudgment[] {
-	if (!verdict || typeof verdict !== 'object') return [];
-	const nodes = (verdict as Record<string, unknown>).node_judgments;
-	return Array.isArray(nodes)
-		? nodes.filter(
-				(node): node is NodeJudgment =>
-					Boolean(node && typeof node === 'object' && !Array.isArray(node))
-			)
-		: [];
-}
-
-function buildPermissibilityIndex(behaviors: Behavior[]): Map<string, boolean> {
-	const index = new Map<string, boolean>();
-	for (const behavior of behaviors) {
-		if (!behavior || typeof behavior.name !== 'string') continue;
-		index.set(behavior.name, behavior.permissible === true);
-	}
-	return index;
-}
-
 export function computePolicyViolationByPermissibility(
 	records: EventScoredRecord[],
 	behaviors: Behavior[]
@@ -148,35 +131,15 @@ export function computePolicyViolationByPermissibility(
 	const notPermissible = emptyDimensionAggregate();
 
 	for (const record of records) {
-		let hasRelevantPermissible = false;
-		let hasRelevantNotPermissible = false;
-		let violatedPermissible = false;
-		let violatedNotPermissible = false;
-
-		for (const node of readNodeJudgments(record.verdict)) {
-			// Normalized judgments carry an explicit relevance flag. Sparse legacy
-			// judgments omit it and contain only nodes the judge considered relevant.
-			if ('relevant' in node && node.relevant !== true) continue;
-			if (!isBooleanFlag(node.violated)) continue;
-			const name = typeof node.node_name === 'string' ? node.node_name.trim() : '';
-			if (!name || !permissibilityIndex.has(name)) continue;
-			if (permissibilityIndex.get(name)) {
-				hasRelevantPermissible = true;
-				violatedPermissible ||= node.violated;
-			} else {
-				hasRelevantNotPermissible = true;
-				violatedNotPermissible ||= node.violated;
-			}
-		}
-
 		// Each conversation contributes at most one Boolean to each bucket:
 		// whether any relevant behavior of that permissibility was violated.
 		// Conversations with no relevant behavior in a bucket are not applicable
 		// and therefore do not dilute that bucket's rate.
-		if (hasRelevantPermissible) addFlag(permissible, violatedPermissible);
-		else permissible.not_applicable_count += 1;
-		if (hasRelevantNotPermissible) addFlag(notPermissible, violatedNotPermissible);
-		else notPermissible.not_applicable_count += 1;
+		const split = derivePermissibilitySplit(record.verdict, permissibilityIndex);
+		if (split.permissible === null) permissible.not_applicable_count += 1;
+		else addFlag(permissible, split.permissible);
+		if (split.not_permissible === null) notPermissible.not_applicable_count += 1;
+		else addFlag(notPermissible, split.not_permissible);
 	}
 
 	return {
@@ -264,10 +227,6 @@ function addDimensionValue(aggregate: EventDimensionAggregate, value: unknown): 
 	}
 }
 
-function dimensionRate(dimensions: Record<string, DimensionMetrics>, name: string): number | null {
-	return dimensions[name]?.rate ?? null;
-}
-
 export function computeAuditRunMetrics(
 	scores: AuditScore[],
 	behaviors: Behavior[] = []
@@ -275,15 +234,15 @@ export function computeAuditRunMetrics(
 	if (scores.length === 0) return null;
 
 	const requiredBaseMetrics = getRequiredBaseMetricNames(loadDimensions());
-	const scoredScores = scores.filter((score) => isSuccessfulJudgment(score, requiredBaseMetrics));
+	const permissibilityIndex = buildPermissibilityIndex(behaviors);
+	// Project the permissibility split onto each row before aggregating so it flows
+	// through the generic dimension pipeline exactly like a judge-scored dimension.
+	const scoredScores = scores
+		.filter((score) => isSuccessfulJudgment(score, requiredBaseMetrics))
+		.map((score) => withPermissibilitySplit(score, permissibilityIndex));
 	const dimensionNames = collectDimensionNames(scoredScores);
 	const dimensionAggregates = initDimensionAggregates(dimensionNames, scoredScores);
-	const counts = emptyScoreCounts();
-
 	for (const score of scoredScores) {
-		const policyViolation = getRecordFlag(score, 'policy_violation');
-		if (policyViolation !== null) counts[policyViolation ? 1 : 0] += 1;
-
 		for (const dimensionName of dimensionNames) {
 			const dimensionValue = getRecordMetricValue(score, dimensionName);
 			if (dimensionValue === null) {
@@ -306,9 +265,6 @@ export function computeAuditRunMetrics(
 		scored_total: scoredTotal,
 		judge_failures: total - scoredTotal,
 		judge_failure_rate: total > 0 ? (total - scoredTotal) / total : 0,
-		counts,
-		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
-		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		policy_violation_on_permissible: permissibilitySplit.permissible,
 		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		dimensions,
@@ -325,15 +281,15 @@ export function computeRunMetrics(
 	if (samples.length === 0) return null;
 
 	const requiredBaseMetrics = getRequiredBaseMetricNames(loadDimensions());
-	const scoredSamples = samples.filter((sample) => isSuccessfulJudgment(sample, requiredBaseMetrics));
+	const permissibilityIndex = buildPermissibilityIndex(behaviors);
+	// Project the permissibility split onto each row before aggregating so it flows
+	// through the generic dimension pipeline exactly like a judge-scored dimension.
+	const scoredSamples = samples
+		.filter((sample) => isSuccessfulJudgment(sample, requiredBaseMetrics))
+		.map((sample) => withPermissibilitySplit(sample, permissibilityIndex));
 	const dimensionNames = collectDimensionNames(scoredSamples);
 	const dimensionAggregates = initDimensionAggregates(dimensionNames, scoredSamples);
-	const counts = emptyScoreCounts();
-
 	for (const sample of scoredSamples) {
-		const policyViolation = getRecordFlag(sample, 'policy_violation');
-		if (policyViolation !== null) counts[policyViolation ? 1 : 0] += 1;
-
 		for (const dimensionName of dimensionNames) {
 			const dimensionValue = getRecordMetricValue(sample, dimensionName);
 			if (dimensionValue === null) {
@@ -355,9 +311,6 @@ export function computeRunMetrics(
 		judge_failures: samples.length - scoredSamples.length,
 		judge_failure_rate:
 			samples.length > 0 ? (samples.length - scoredSamples.length) / samples.length : 0,
-		counts,
-		policy_violation_rate: dimensionRate(dimensions, 'policy_violation'),
-		overrefusal_rate: dimensionRate(dimensions, 'overrefusal'),
 		policy_violation_on_permissible: permissibilitySplit.permissible,
 		policy_violation_on_not_permissible: permissibilitySplit.not_permissible,
 		target: samples[0]?.target ?? '—',
