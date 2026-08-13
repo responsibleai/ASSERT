@@ -178,7 +178,7 @@ Fill from the candidate behavior (real schema field names):
 > conversation. The split is derived from stored judgments, so it needs no config
 > change and works on existing runs. In the viewer the same pair appears as the
 > dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
-> labelled **Harm (non-permissible)** / **Permissible behavior violated**. When the
+> labelled **Impermissible behavior violated** / **Permissible behavior violated**. When the
 > split is present the viewer now **hides** `policy_violation` / `overrefusal` as
 > superseded — they are still judged, aggregated, and written to artifacts.
 

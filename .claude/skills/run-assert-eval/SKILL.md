@@ -284,7 +284,8 @@ bulk trace trawling is not.
    ACS A/B — harm should drop while permissible stays flat (see
    `workflows/govern-and-remeasure.md`). The viewer exposes the same pair as the
    dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
-   rendered on screen as **Harm (non-permissible)** / **Permissible behavior violated**.
+   rendered on screen as **Impermissible behavior violated** /
+   **Permissible behavior violated**.
 
 2. **Top failing cases**: read `scores.jsonl` from `artifacts/results/<suite>/<run>/`.
    For each dimension with failures, pull 3-5 representative cases with:
@@ -334,9 +335,9 @@ CLI). It requires a **callable** target whose high-risk tools can be wrapped
 wrappable. Follow `workflows/govern-and-remeasure.md` for the full loop
 (baseline → `acs generate` → `acs validate` → governed run → delta from two
 `results status --json` calls → export each run to standalone HTML → close the
-loop in Clarity). Note `results compare --metric` **cannot** take either half of
-the permissibility split — the split is written as a sibling of `dimensions`, so
-difference the two `status --json` values instead.
+loop in Clarity). `results compare --metric policy_violation_not_permissible`
+and `--metric policy_violation_permissible` compare either half directly; use
+the two `status --json` rate fields when you need machine-readable counts.
 **Classify the failure before generating the policy** (Step 1a): read the baseline's
 `verdict.dimension_justifications` to decide semantic (`output` annotator) vs
 structural (tool gate), and confirm the harm actually routes through the tool you
@@ -360,7 +361,7 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
 Present a short summary with this structure:
 
 **Headline metrics**:
-- Harm — non-permissible violation rate: X% (N/M cases) [`not_permissible_policy_violation_rate`]
+- Impermissible behavior violated: X% (N/M cases) [`not_permissible_policy_violation_rate`]
 - Permissible behavior violated: X% (N/M cases) [`permissible_policy_violation_rate`]
 - Overrefusal rate: X% (N/M cases) — the separate availability check
 
@@ -401,16 +402,17 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 - **Clarity is the required risk source** — for Run mode, risks come from Clarity (existing `.clarity-protocol/` or a fresh discovery run via the `run_clarity` MCP tool). Never substitute a plain-language guess or imitate Clarity's questioning from your own head; if the MCP tools can't be made available, stop and help fix it (`SETUP-CHECKLIST.md`).
 - **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
 - **Close the loop** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives, so Clarity's staleness tracking stays aware of it.
-- **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
+- **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), review it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`workflows/govern-and-remeasure.md`). Generated policies, guarded targets, and governed configs are local run output by default. Commit them only in the user's own product repo when the user wants a reviewed policy deployed; do not automatically add them to ASSERT's worked examples. Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
 - **Organize by domain across runs** — prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`), so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not collide. Treat `.clarity-protocol/` as uncommitted single-domain scratch; preserve it outside `examples/` only when the user asks.
 - **Per-example package** — every worked example must be a small, self-contained folder under `examples/<domain>/` containing only what a customer needs to understand and reproduce the ASSERT run:
-  - `agent.py` (+ any real runtime deps it imports, e.g. `tools.py` / `mock_tools.py`) — the shared baseline.
-  - `agent_guarded*.py` — the governed target(s); each **imports** the baseline from `agent.py` and adds only the ACS enforcement, so the A/B differs by nothing but the gate.
+  - `agent.py` (+ any real runtime deps it imports, e.g. `tools.py` / `mock_tools.py`) — the runnable baseline.
   - `README.md` — scenario, setup, atomic behaviors, run commands, and result paths.
-  - `evals/<atomic_behavior>.yaml` + `evals/<atomic_behavior>_governed.yaml` — one baseline/governed pair per behavior (governed is a byte-identical copy differing only in `run:` and `target.callable`).
-  - `acs/<risk>/manifest.yaml` + `acs/<risk>/policy/*.rego` — the reviewed, committed policy the governed agent enforces.
-  Do not commit generated taxonomies, test sets, result artifacts, discovery
-  mailboxes, snapshots, or protocol archives.
+  - `evals/<atomic_behavior>.yaml` — one independently runnable baseline config per behavior.
+  A deliberately curated ACS demonstration may additionally keep the smallest
+  reviewed policy, guarded target, and governed config needed to reproduce its
+  claim, but ordinary worked examples must not accumulate generated governance
+  output. Do not commit generated taxonomies, test sets, result artifacts,
+  discovery mailboxes, snapshots, protocol archives, or automatic skill output.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Triage before running** — never auto-generate an eval for every Clarity failure mode; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.

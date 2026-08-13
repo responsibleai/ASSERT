@@ -9,10 +9,10 @@ when the governed run produced a **wrong delta**:
 
 > **Metric keys** (the prose below uses the display wording; these are the literal
 > identifiers to read and grep). From `assert-ai results status <suite> <run> --json`:
-> `not_permissible_policy_violation_rate` — rendered on screen as **Harm
-> (non-permissible)** — and `permissible_policy_violation_rate` — **Permissible
+> `not_permissible_policy_violation_rate` — rendered on screen as **Impermissible
+> behavior violated** — and `permissible_policy_violation_rate` — **Permissible
 > behavior violated**. Note every identifier is `not_permissible`; only the
-> human-facing label says "non-permissible". The viewer's dimension keys are
+> human-facing label says "Impermissible". The viewer's dimension keys are
 > `policy_violation_not_permissible` / `policy_violation_permissible`.
 
 > **Try not to need this file.** Most rules below are *preventable*, not

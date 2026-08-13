@@ -105,13 +105,13 @@ Note the `suite` and `run` (e.g. `baseline`). Report the headline pair and
 > |---|---|---|
 > | `results status --json` | `not_permissible_policy_violation_rate` | `permissible_policy_violation_rate` |
 > | viewer dimension key | `policy_violation_not_permissible` | `policy_violation_permissible` |
-> | viewer on-screen label | **Harm (non-permissible)** | **Permissible behavior violated** |
+> | viewer on-screen label | **Impermissible behavior violated** | **Permissible behavior violated** |
 >
 > The viewer renders every metric through `metricTitleLabel`
 > (`viewer/src/lib/labels.ts`), so the raw keys never appear in the UI — when
 > reporting from a screenshot or an exported HTML, quote the on-screen label and
 > map it back to the `--json` key yourself. Note the display label says
-> "non-permissible" while every identifier says `not_permissible`; don't
+> "Impermissible" while every identifier says `not_permissible`; don't
 > cross-contaminate them.
 >
 > `permissible` is a **required** taxonomy field (`stages/systematize.py`), and the
@@ -538,13 +538,18 @@ eval spec:
 assert-ai run --config evals/<atomic_behavior>_governed.yaml
 ```
 
+For an ASSERT worked example this governed config is temporary local measurement
+output: keep it uncommitted and remove it after recording the delta. In a user's
+product repo, commit it only when they choose to keep the policy as a deployed or
+standing regression control.
+
 **How the governed agent finds its policy.** The agent's tool wrapper needs two
 things: *which manifest* to load and *which tools* to route through
 `control.protect_tool`. Make both **resolvable per run** (an env var or config
 value with a sensible default) so ONE governed agent can serve multiple suites,
 and so the guarded set is scoped to only the tools a given failure needs
 (guarding unrelated tools inflates `overrefusal`). The billing worked example
-uses `BILLING_ACS_MANIFEST` (defaulting to its committed manifest) and
+uses `BILLING_ACS_MANIFEST` (pointing at its reviewed local manifest) and
 `BILLING_ACS_GUARDED_TOOLS` (defaulting to its high-risk write
 tools); your governed agent should expose the equivalent knobs. Set them before
 the governed run when the defaults don't match the suite under test.
@@ -593,14 +598,13 @@ assert-ai results status <suite> acs-governed  --json
 The **ACS Delta** is `baseline non-permissible % − governed non-permissible %`.
 A drop bought by a rise in either check row is over-gating, not governance.
 
-> **`results compare --metric` cannot take the split.** `--metric` resolves
-> against `metrics["dimensions"]` (judge-scored dimensions only), but the split is
-> written as a *sibling* of `dimensions` — so neither
-> `not_permissible_policy_violation_rate` nor the viewer's
-> `policy_violation_not_permissible` is a valid `--metric` value. Difference the
-> `--json` fields as above for the headline delta. `results compare` is still worth
-> running for its per-behavior-category delta table, which carries a **Permissible**
-> column so you can see which side of the split each category moved.
+> **`results compare --metric` accepts either split dimension.** Use
+> `policy_violation_not_permissible` for the harm delta or
+> `policy_violation_permissible` for the over-gating delta. The
+> `not_permissible_policy_violation_rate` and
+> `permissible_policy_violation_rate` names are the corresponding `status --json`
+> fields, not valid `--metric` values. The comparison also retains its
+> per-behavior-category delta table with a **Permissible** column.
 
 ## Step 5a — If the delta is wrong, diagnose then iterate (don't guess)
 
@@ -656,15 +660,19 @@ exported HTML — it is per-run output.)
 ## Step 7 — Close the loop in Clarity
 
 Offer to write the outcome back into `.clarity-protocol/` via the Clarity MCP
-tool `record_suggestion` (or `record_decision`): the failure mode is now governed
-by the **committed** ACS policy (`<example-dir>/acs/<slug>/`, not the gitignored
-`artifacts/` copy), baseline `X%` dropped to `Y%`.
+tool `record_suggestion` (or `record_decision`): the failure mode was measured
+against the reviewed ACS policy under `artifacts/acs/<suite>/`, and baseline `X%`
+dropped to `Y%`. If the user chose to deploy and commit that policy in their own
+product repo, record that service-owned path as well. Do not copy generated policy
+output into ASSERT's worked examples merely to close the loop.
 
 **Optional — a cheap recurring regression check.** Once the delta is proven, you
-can generate a small standing config that re-checks the committed policy:
+can generate a small standing config that re-checks the reviewed policy. Keep it
+local for an ASSERT example; in a user's product repo, commit it only when they
+choose to maintain that policy as an ongoing control:
 
 ```
-assert-ai acs eval-config --manifest <example-dir>/acs/<slug>/manifest.yaml \
+assert-ai acs eval-config --manifest artifacts/acs/<suite>/manifest.yaml \
   --target-callable <governed-callable> --out <eval-dir>/eval_config.regression.yaml
 ```
 
@@ -692,9 +700,10 @@ assert-ai acs eval-config --manifest <example-dir>/acs/<slug>/manifest.yaml \
 ## Worked example (billing identity-gate bypass)
 
 > A previous end-to-end run of this workflow against `examples/billing_support_agent/`.
-> The eval configs, the committed policy, and `agent_guarded.py` below are artifacts
-> **that run produced** — only `agent.py` is checked in. Treat the paths as the
-> layout to recreate, not as files to open.
+> The governed config, reviewed policy, and `agent_guarded.py` below were local
+> outputs of that run — only the baseline example is checked in. Treat these as a
+> temporary layout to recreate under ignored run output, not files to add back to
+> the public example.
 
 1. Baseline: `assert-ai run --config
    examples/billing_support_agent/evals/unverified_high_risk_action.yaml` →
@@ -705,18 +714,20 @@ assert-ai acs eval-config --manifest <example-dir>/acs/<slug>/manifest.yaml \
    --run baseline --out artifacts/acs/billing-unverified-high-risk-action` → emits a
    deterministic draft conditioning on `input.policy_target.value.verified`.
    Review it (Step 2): scope to the four high-risk write tools (the generator
-   over-/under-covers the tool set), harden `== false` → `not …verified`, then
-   commit it as `examples/billing_support_agent/acs/identity-gate-bypass/`.
-3. Enforce the committed policy: the governed agent (`agent_guarded.py`) surfaces
+   over-/under-covers the tool set), harden `== false` → `not …verified`, and keep
+   the reviewed draft under the ignored run output for this measurement. In a
+   user's product repo, commit it only when they choose to deploy it.
+3. Enforce the reviewed policy: the local governed agent (`agent_guarded.py`) surfaces
    the trusted session `verified` flag into the tool-call policy_target, so the
    generated `input.policy_target.value.verified` rule actually fires. (Offline
    `assert-ai acs validate` can't populate that injected field — verify at the
    guarded remeasure below, not via `validate`.)
-4. Governed: `assert-ai run --config
+4. Governed: create the temporary adjacent config and run `assert-ai run --config
    examples/billing_support_agent/evals/unverified_high_risk_action_governed.yaml`
-   → run `acs-governed` (the governed config points at the manifest committed in
+   → run `acs-governed` (the local governed config points at the manifest reviewed in
    step 2 and the tools guarded in step 3),
-   `not_permissible_policy_violation_rate` drops materially.
+   `not_permissible_policy_violation_rate` drops materially. Do not commit this
+   generated config to the public example; remove it after recording the delta.
 5. Delta: difference `not_permissible_policy_violation_rate` between
    `assert-ai results status billing-unverified-high-risk-action baseline --json`
    and the same for `acs-governed` → the non-permissible rate drops
