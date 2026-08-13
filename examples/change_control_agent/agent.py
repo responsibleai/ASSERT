@@ -339,16 +339,59 @@ def _call_tool(registry: dict[str, Callable[..., dict[str, Any]]], name: str, ar
         return result
 
 
-def chat(message: str) -> str:
-    """One change-control agent turn. Callable target for ASSERT."""
+def _seed_messages(message: str, history: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    """Build the model message list, replaying multi-turn history when present.
+
+    ASSERT invokes a callable target once per turn. For a multi-turn *scenario* it
+    passes ``history`` (prior user/assistant turns, current turn at ``history[-1]``);
+    for a single-turn *prompt* case ``history`` is empty and only ``message`` is
+    meaningful. Seeding from the full history is what lets state established in an
+    earlier turn (e.g. a completed create_change_request) persist within this call.
+    """
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    turns = [
+        {"role": str(turn.get("role")), "content": str(turn.get("content") or "")}
+        for turn in (history or [])
+        if turn.get("role") in ("user", "assistant")
+    ]
+    if turns:
+        messages.extend(turns)
+    else:
+        messages.append({"role": "user", "content": message})
+    return messages
+
+
+def _default_execute_tool(
+    registry: dict[str, Callable[..., dict[str, Any]]],
+    name: str,
+    args: dict[str, Any],
+    call_id: str,
+) -> dict[str, Any]:
+    """Baseline tool executor: run the tool directly, unguarded.
+
+    Kept as an injectable step rather than inlined into ``_run_loop`` so tool
+    execution can be swapped without touching loop shape or turn accounting.
+    """
+    return _call_tool(registry, name, args)
+
+
+def _run_loop(
+    message: str,
+    history: list[dict[str, str]] | None,
+    execute_tool: Callable[[dict[str, Callable[..., dict[str, Any]]], str, dict[str, Any], str], dict[str, Any]],
+) -> str:
+    """Shared change-control tool loop; ``execute_tool`` performs each tool call.
+
+    Single source of truth for the agent's control flow. ``chat`` (baseline) passes
+    ``_default_execute_tool``; the governed target passes an ACS-enforcing executor.
+    Everything else — model, system prompt, tool schemas, step/tool-call budgets,
+    message shaping — is identical for both.
+    """
     import litellm
 
     tools = Tools({"description": message})
     registry = _tool_registry(tools)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": message},
-    ]
+    messages: list[dict[str, Any]] = _seed_messages(message, history)
 
     with _tracer.start_as_current_span("agent.chat") as span:
         span.set_attribute("openinference.span.kind", "AGENT")
@@ -377,7 +420,7 @@ def chat(message: str) -> str:
                 if tool_call_count >= MAX_TOOL_CALLS:
                     result = {"status": "error", "error": f"tool call limit reached: max_tool_calls={MAX_TOOL_CALLS}"}
                 else:
-                    result = _call_tool(registry, name, args)
+                    result = execute_tool(registry, name, args, call_id)
                     tool_call_count += 1
                 messages.append(
                     {
@@ -404,6 +447,11 @@ def chat(message: str) -> str:
     final = "[agent: step budget exhausted]"
     span.set_attribute("output.value", final)
     return final
+
+
+def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
+    """One change-control agent turn (ungoverned baseline). Callable target for ASSERT."""
+    return _run_loop(message, history, _default_execute_tool)
 
 
 if __name__ == "__main__":

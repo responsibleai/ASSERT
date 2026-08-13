@@ -46,14 +46,14 @@ bash (macOS / Linux):
 
 ```bash
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 PowerShell (Windows):
 
 ```powershell
 phoenix serve  # optional: trace UI on http://localhost:6006
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 Check run status:
@@ -92,7 +92,7 @@ python -m pip install -e ".[otel,langgraph]"
 Copy-Item .env.example .env
 
 phoenix serve  # optional
-assert-ai run --config examples/travel_planner_langgraph/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 assert-ai results status travel-planner-langgraph-v1 demo-1
 ```
 
@@ -124,7 +124,7 @@ assert-ai init --model azure/gpt-5.4
 # or skip the first question:
 assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order-lookup and refund tools"
 # or edit/extend an existing config:
-assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/eval_config.yaml
+assert-ai init --model azure/gpt-5.4 --from examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```
 
 See [CLI Commands](cli/commands.md) for the full option reference.

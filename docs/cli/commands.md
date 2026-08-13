@@ -37,6 +37,8 @@ Options:
 
 - `-o, --output <path>` optional, default `eval_config.yaml`
 - `--describe <text>` optional
+- `--describe-file <path>` optional, mutually exclusive with `--describe`; use for
+  generated or multi-line text so shell quoting cannot mangle it
 - `--from <path>` optional
 - `--behavior <name>` optional
 - `--judge-preset <name>` optional

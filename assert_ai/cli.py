@@ -333,6 +333,14 @@ def _print_acs_validation_totals(report: Any) -> None:
         f"(reacted, incl. warn); strongly blocked {report.strong_blocked}/{report.total} "
         f"(deny/escalate); handled_rate {_fmt_percent(report.handled_rate)}"
     )
+    if getattr(report, "annotator_dependent", False) and report.not_blocked > 0:
+        click.echo(
+            "  Note: this policy conditions on LLM annotators (input.annotations.*), "
+            "which offline validation does not populate — annotator rules cannot fire "
+            "here, so an unblocked/0-handled result for them is EXPECTED, not a policy "
+            "defect. Verify these gates via a guarded remeasure run (assert-ai run with "
+            "the governed config and check the violation-rate drop), not offline validate."
+        )
 
 
 def _enforce_acs_validation_gate(report: Any, *, fail_on_allow: bool, require_block: bool) -> None:
@@ -1644,6 +1652,18 @@ def acs():
 
     Runtime guarding is available from Python via the ``guard_target(...)`` API.
     """
+    # `acs generate` makes provider LLM calls for policy authoring, but the ACS
+    # subcommands do not import the runner, so the project `.env` is never
+    # loaded and Azure credentials go unresolved (the `run` pipeline loads them
+    # in runner.py). Load `.env` walking up from cwd and resolve the Azure auth
+    # mode here so `assert-ai acs …` picks up credentials exactly like
+    # `assert-ai run`, with no manual environment export.
+    from dotenv import find_dotenv, load_dotenv
+
+    from assert_ai.core.azure_auth import refresh_azure_auth_mode
+
+    load_dotenv(find_dotenv(usecwd=True))
+    refresh_azure_auth_mode(force=True)
 
 
 @acs.command("generate", short_help="Generate a deployable ACS policy from an ASSERT run")
@@ -1928,7 +1948,7 @@ def library():
 @library.command("list", short_help="List available presets")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Filter by preset kind.",
 )
@@ -1963,7 +1983,7 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.argument("name")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Preset kind (auto-detected if omitted).",
 )

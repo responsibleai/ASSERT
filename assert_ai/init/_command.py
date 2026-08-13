@@ -26,6 +26,17 @@ log = logging.getLogger(__name__)
     help="One-line description of the system to evaluate (skips initial question).",
 )
 @click.option(
+    "--describe-file",
+    "describe_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Read the description from a file instead of the command line. Prefer "
+        "this for generated or multi-line text, so quotes and backticks cannot "
+        "break or inject into the shell."
+    ),
+)
+@click.option(
     "--from", "seed_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
@@ -107,6 +118,7 @@ log = logging.getLogger(__name__)
 def init(
     output: Path,
     describe: str | None,
+    describe_file: Path | None,
     seed_path: Path | None,
     behavior_preset: str | None,
     judge_preset: str | None,
@@ -152,8 +164,18 @@ def init(
     if not sys.stdin.isatty():
         non_interactive = True
 
+    if describe is not None and describe_file is not None:
+        _error("--describe and --describe-file are mutually exclusive")
+    if describe_file is not None:
+        try:
+            describe = describe_file.read_text(encoding="utf-8").strip()
+        except UnicodeDecodeError:
+            _error(f"{describe_file} is not valid UTF-8 text")
+        if not describe:
+            _error(f"{describe_file} is empty")
+
     if non_interactive and not describe and not seed_path:
-        _error("--non-interactive requires --describe or --from")
+        _error("--non-interactive requires --describe, --describe-file, or --from")
 
     if not dry_run and output.exists() and not force:
         _error(f"{output} already exists. Use --force to overwrite.")
