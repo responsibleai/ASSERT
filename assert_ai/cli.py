@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import sys
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1992,7 +1993,29 @@ def library_show(name: str, kind: str | None, as_json: bool):
         _echo_json(data)
         return
 
-    click.echo(dump_yaml(data).rstrip())
+    _write_stdout_utf8(dump_yaml(data))
+
+
+def _write_stdout_utf8(payload: str) -> None:
+    """Write ``payload`` to stdout as UTF-8 bytes.
+
+    ``click.echo`` re-encodes the payload with ``sys.stdout.encoding``, which
+    on Windows defaults to the ANSI code page (usually cp1252) for redirected
+    stdout. Non-ASCII characters like ``日本語`` then raise
+    ``UnicodeEncodeError``. Writing bytes directly through ``sys.stdout.buffer``
+    bypasses that re-encoding so a preset's on-disk YAML matches what
+    ``assert-ai init`` writes on any platform.
+
+    Falls back to ``click.echo`` when ``sys.stdout`` has no ``buffer`` (for
+    example under ``pytest``'s ``capsys`` fixture, which wraps stdout in a
+    ``TextIO`` without a binary layer).
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        click.echo(payload, nl=False)
+        return
+    buffer.write(payload.encode("utf-8"))
+    buffer.flush()
 
 
 if __name__ == "__main__":
