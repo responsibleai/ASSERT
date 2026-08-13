@@ -73,3 +73,25 @@ def test_nested_mapping_uses_block_style() -> None:
     assert "behavior:" in out
     assert "  description: |" in out
     assert "{" not in out
+
+
+def test_line_break_control_chars_round_trip() -> None:
+    """U+0085, U+2028, U+2029 fold to a space under plain/single-quoted YAML
+    with ``allow_unicode=True``; forcing double-quoted style preserves them."""
+    for ch in ("\u0085", "\u2028", "\u2029"):
+        # Single-line: string is only the control char surrounded by ASCII.
+        single = {"x": f"a{ch}b"}
+        assert yaml.safe_load(dump_yaml(single)) == single, (
+            f"single-line round trip failed for U+{ord(ch):04X}"
+        )
+        # Multi-line: control char sits inside an already-multi-line scalar.
+        multi = {"x": f"line one\nl{ch}ne two"}
+        assert yaml.safe_load(dump_yaml(multi)) == multi, (
+            f"multi-line round trip failed for U+{ord(ch):04X}"
+        )
+
+
+def test_line_break_control_chars_use_double_quoted_style() -> None:
+    """Sanity check: the guard picks double-quoted, not block scalar."""
+    out = dump_yaml({"x": "a\u0085b"})
+    assert 'x: "a\\Nb"' in out
