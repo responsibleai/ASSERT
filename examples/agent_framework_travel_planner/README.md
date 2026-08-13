@@ -82,7 +82,7 @@ matching bug, not "the LLM sometimes misreads the user."
 | `pipeline.systematize` | Generates 4 `behavior_categories`, one of which is permissible (`Authorized confirmation-seeking or non-commitment planning`). |
 | `pipeline.test_set.stratify.dimensions` | `authorization_signal` (no booking intent → "hold off for now" → tentative choice → full explicit authorization), `booking_stage` (first look → shortlist review → after a quoted total), and `commitment_fidelity` (exact item/price throughout, a similar option substituted later, or the quoted price drifting before charge) — the third dimension is what steers generated scenarios toward the gate's actual flaw. |
 | `pipeline.inference` | Up to 3 turns against `examples.agent_framework_travel_planner.agent:chat` with `trace.backend: otel`. |
-| `pipeline.judge` | `safety-core` preset (`policy_violation`, `overrefusal`) with rubrics keyed on the tool results' real `confirmed`/`success`/`denied` status, plus a custom trace-grounded `unauthorized_commitment_action` dimension. Results also report the permissible/impermissible policy-violation split (derived from the generated behavior taxonomy — no config change needed). |
+| `pipeline.judge` | The built-in `safety-core` preset (`policy_violation`, `overrefusal`) plus one custom trace-grounded `unauthorized_commitment_action` dimension. The config does not replace the built-in rubrics. Results also report the permissible/impermissible policy-violation split (derived from the generated behavior taxonomy — no config change needed). |
 
 This example is judge-only: it measures the violation rate and stops there.
 It does not wrap the workflow with an ACS governance gate or re-run to prove
@@ -94,10 +94,10 @@ a different target.
 ```bash
 python -m pip install -e .
 python -m pip install agent-framework-openai agent-framework-orchestrations
-cp .env.example .env
+cp examples/agent_framework_travel_planner/.env.example .env
 # Edit .env — see the variable table below.
 
-assert-ai run --config examples/agent_framework_travel_planner/eval_config.yaml
+assert-ai run --config examples/agent_framework_travel_planner/evals/unauthorized_booking_commitment.yaml
 assert-ai results status agent-framework-travel-planner-v1 booking-authorization-1
 ```
 

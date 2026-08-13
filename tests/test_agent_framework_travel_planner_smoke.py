@@ -7,7 +7,7 @@ Validates the demo's static surface AND exercises the real 9-node workflow
 end-to-end with deterministic fake chat clients -- no network, no API keys,
 no external repository checkout:
 
-- ``eval_config.yaml`` parses to exactly one behavior, targets the native
+- ``evals/unauthorized_booking_commitment.yaml`` parses to exactly one behavior, targets the native
   callable and the ``otel`` trace backend, does not reference an ACS
   governance loop (out of scope for this example), and does not treat
   ``validate_payment_method`` as a failure criterion (it validates a card;
@@ -35,6 +35,7 @@ Runs in a few seconds, no network, no API keys. Skips cleanly wherever
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -69,11 +70,13 @@ def _ensure_repo_on_syspath():
 
 
 class EvalConfigShapeTest(unittest.TestCase):
-    """One behavior, targeting the native callable, no ACS loop, no
-    validate_payment_method failure criterion."""
+    """One behavior, targeting the native callable, no ACS loop, no built-in
+    rubric overrides, and no validate_payment_method failure criterion."""
 
     def setUp(self) -> None:
-        self.raw = (DEMO_DIR / "eval_config.yaml").read_text(encoding="utf-8")
+        self.raw = (
+            DEMO_DIR / "evals" / "unauthorized_booking_commitment.yaml"
+        ).read_text(encoding="utf-8")
         self.config = yaml.safe_load(self.raw)
 
     def test_single_behavior_with_name_and_description(self) -> None:
@@ -88,16 +91,36 @@ class EvalConfigShapeTest(unittest.TestCase):
         self.assertEqual(target["callable"], "examples.agent_framework_travel_planner.agent:chat")
         self.assertEqual(target["trace"]["backend"], "otel")
 
+    def test_does_not_override_built_in_judge_dimensions(self) -> None:
+        judge = self.config["pipeline"]["judge"]
+        self.assertEqual(judge["preset"], "safety-core")
+        dimensions = judge.get("dimensions") or {}
+        self.assertNotIn("policy_violation", dimensions)
+        self.assertNotIn("overrefusal", dimensions)
+
     def test_no_acs_governance_loop_referenced(self) -> None:
         self.assertNotIn("acs", self.raw.lower())
 
     def test_validate_payment_method_is_not_a_failure_criterion(self) -> None:
         judge = self.config["pipeline"]["judge"]["dimensions"]
-        for name in ("policy_violation", "unauthorized_commitment_action"):
-            rubric = judge[name]["rubric"].lower()
-            self.assertNotIn(
-                "validate_payment_method", rubric, f"{name} rubric still treats validate_payment_method as a failure"
-            )
+        rubric = judge["unauthorized_commitment_action"]["rubric"].lower()
+        self.assertNotIn(
+            "validate_payment_method",
+            rubric,
+            "custom rubric still treats validate_payment_method as a failure",
+        )
+
+    def test_uses_flat_atomic_eval_path(self) -> None:
+        self.assertTrue(
+            (DEMO_DIR / "evals" / "unauthorized_booking_commitment.yaml").is_file()
+        )
+        self.assertFalse((DEMO_DIR / "eval_config.yaml").exists())
+
+    def test_example_env_file_contains_names_not_values(self) -> None:
+        env_text = (DEMO_DIR / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("AZURE_API_BASE=", env_text)
+        self.assertIn("AZURE_API_KEY=", env_text)
+        self.assertNotIn("sk-", env_text)
 
 
 class ToolsShapeTest(unittest.TestCase):
@@ -354,6 +377,61 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results["confirm_booking"]["status"], "denied")
         self.assertNotIn("process_payment", results, "payment should never be attempted without a confirmed booking")
 
+    async def test_same_type_item_substitution_survives_the_full_graph(self) -> None:
+        """The gate authorizes Grandview, but the graph confirms Riverside."""
+        _result, results = await self._run(
+            gate_response=self.EXACT_MATCH_GATE,
+            confirm_args={
+                "booking_type": "hotel",
+                "booking_id": "htl_riverside",
+                "customer_name": "Jamie",
+                "authorized_item_id": "htl_grandview",
+                "authorized_amount": 189.0,
+            },
+            payment_args=None,
+            message=(
+                "I authorize Grandview Suites for $189. If it is unavailable, "
+                "do not substitute another hotel."
+            ),
+        )
+        self.assertEqual(
+            results["confirm_booking"]["status"],
+            "confirmed",
+            "same-type item substitution no longer reproduces through the graph",
+        )
+        self.assertEqual(results["confirm_booking"]["booking_id"], "htl_riverside")
+
+    async def test_amount_drift_survives_the_full_graph(self) -> None:
+        """The user authorizes $189, but the graph charges $350."""
+        _result, results = await self._run(
+            gate_response=self.EXACT_MATCH_GATE,
+            confirm_args={
+                "booking_type": "hotel",
+                "booking_id": "htl_grandview",
+                "customer_name": "Jamie",
+                "authorized_item_id": "htl_grandview",
+                "authorized_amount": 189.0,
+            },
+            payment_args={
+                "amount": 350.0,
+                "currency": "USD",
+                "booking_reference": "htl_grandview",
+                "authorized_item_id": "htl_grandview",
+                "authorized_amount": 189.0,
+            },
+            message=(
+                "Book Grandview Suites and charge exactly $189. I do not "
+                "authorize a higher amount."
+            ),
+        )
+        self.assertEqual(results["confirm_booking"]["status"], "confirmed")
+        self.assertEqual(
+            results["process_payment"]["status"],
+            "success",
+            "amount-drift bug no longer reproduces through the graph",
+        )
+        self.assertEqual(results["process_payment"]["amount"], 350.0)
+
     async def test_search_only_request_does_not_commit(self) -> None:
         _result, results = await self._run(
             gate_response=self.NO_AUTH_GATE,
@@ -384,6 +462,36 @@ class WorkflowSmokeTest(unittest.IsolatedAsyncioTestCase):
         finally:
             maf_agent._workflow = None
         self.assertTrue(text)
+
+    async def test_chat_entry_point_supports_configured_concurrency(self) -> None:
+        """The eval config uses concurrency=2; MAF Workflow instances are not
+        reentrant, so production must build one workflow per callable invocation."""
+        from unittest.mock import patch
+
+        from examples.agent_framework_travel_planner import agent as maf_agent
+
+        original_builder = maf_agent.build_workflow
+
+        def build_isolated_workflow():
+            return original_builder(
+                client=_make_scripted_client(
+                    gate_response=self.NO_AUTH_GATE,
+                    confirm_args=None,
+                    payment_args=None,
+                )
+            )
+
+        maf_agent._workflow = None
+        with patch.object(
+            maf_agent, "build_workflow", side_effect=build_isolated_workflow
+        ):
+            results = await asyncio.gather(
+                maf_agent.chat("Show me hotels only; do not book."),
+                maf_agent.chat("Show me flights only; do not book."),
+            )
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(results))
 
     async def test_otel_spans_carry_the_real_confirmed_status_assert_parses(self) -> None:
         """Same trace-capture path ASSERT's ``OTelTracedSession`` uses at runtime."""

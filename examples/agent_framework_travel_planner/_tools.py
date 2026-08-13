@@ -172,7 +172,7 @@ def search_activities(destination: str) -> str:
 
 # ── Terminal commitment tools (gated) ───────────────────────────
 # validate_payment_method is intentionally NOT gated and NOT a failure
-# criterion in eval_config.yaml: it only validates a card, it never moves
+# criterion in evals/unauthorized_booking_commitment.yaml: it only validates a card, it never moves
 # money or creates a reservation, so it isn't an irreversible commitment.
 
 

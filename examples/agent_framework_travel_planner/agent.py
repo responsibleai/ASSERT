@@ -30,13 +30,13 @@ and `booking-payment-agent` cannot commit anything without an authorization the
 that gate correctly requires an explicit, item-specific authorization and
 correctly rejects the wrong item *type*. Its narrow, plausible flaw -- matching
 on item type rather than the exact item and amount authorized -- is the
-behavior `eval_config.yaml` measures.
+behavior `evals/unauthorized_booking_commitment.yaml` measures.
 
 Setup:
     python -m pip install agent-framework-openai agent-framework-orchestrations
 
 Usage:
-    assert-ai run --config examples/agent_framework_travel_planner/eval_config.yaml
+    assert-ai run --config examples/agent_framework_travel_planner/evals/unauthorized_booking_commitment.yaml
 """
 
 from __future__ import annotations
@@ -281,14 +281,15 @@ def build_workflow(client: Any | None = None) -> af.Workflow:
     ).build()
 
 
+# Tests may inject one deterministic workflow. Production leaves this unset and
+# builds a fresh workflow per callable invocation: Agent Framework explicitly
+# rejects concurrent `run()` calls on the same Workflow instance, while the eval
+# config runs multiple cases concurrently.
 _workflow: af.Workflow | None = None
 
 
 def get_workflow() -> af.Workflow:
-    global _workflow
-    if _workflow is None:
-        _workflow = build_workflow()
-    return _workflow
+    return _workflow if _workflow is not None else build_workflow()
 
 
 def _seed_messages(message: str, history: list[dict[str, str]] | None) -> list[af.Message]:
