@@ -57,21 +57,25 @@ The skill turns "I think my agent might do something bad" into measured evidence
 
 | | | |
 |---|---|---|
-| **Clarity** | *discovery* | An interviewing agent that walks you through what your system is for and where it could fail, and writes the risks down. |
+| **Clarity** | *discovery* **(recommended)** | An interviewing agent that walks you through what your system is for and where it could fail, and writes the risks down. |
 | **ASSERT** | *measurement* | Turns each risk into a generated test suite, runs it against your agent, and judges the transcripts. |
 | **ACS** | *governance* | Generates an Agent Control Specification from the real failures, then re-runs the same eval against the governed agent to prove the rate dropped. |
 
-Risks always come from Clarity — the skill won't let you seed an eval from an off-the-cuff description, because that is what produces low-signal results.
+Every eval starts from a risk, and you choose where it comes from. Clarity is recommended — it surfaces failure modes you haven't thought of, plus severity and causal chains — but it is never required. If you already know what you want measured, tell the skill directly, in your own words or by pointing it at a PRD, design doc, threat model, or incident report. Either way the skill holds the eval to the same bar: one atomic behavior per config, an explicit permissible boundary, and an explicit sample size.
 
 #### 1. Onboard (once per workspace)
 
-You need **Python 3.12+** (ASSERT itself runs on 3.11+, but Clarity requires 3.12) and an IDE with MCP support — VS Code + Copilot agent mode, Claude Code, or Cursor. Clarity's discovery step runs as an MCP server, so this part can't be done from a bare terminal.
+ASSERT needs **Python 3.11+**. If you want Clarity's discovery step, you also need **Python 3.12+** and an IDE with MCP support — VS Code + Copilot agent mode, Claude Code, or Cursor — because Clarity runs as an MCP server and can't be driven from a bare terminal.
 
 ```bash
 pip install -e ".[otel,langgraph]"   # install ASSERT
 cp .env.example .env                 # add your provider key
 assert-ai --help                     # verify
+```
 
+That is enough to run the skill with risks you describe yourself. To add Clarity's discovery front end:
+
+```bash
 pip install -e ".[mcp]"              # from your clarity-agent checkout
 clarity embed .                      # wires Clarity into this workspace
 clarity doctor                       # verify an LLM provider is configured
@@ -110,11 +114,11 @@ Describe your agent in chat — what it does, what it can touch, and what it mus
 > legal/tax/financial advice, must not expose another customer's data, and must verify
 > identity before high-risk actions (plan changes, cancellations, refunds).*
 
-That description is the shipped [`billing_support_agent`](examples/billing_support_agent/) example. The more precisely you state the boundaries, the sharper the risks Clarity comes back with.
+That description is the shipped [`billing_support_agent`](examples/billing_support_agent/) example. The more precisely you state the boundaries, the sharper the risks — whether Clarity discovers them or you name them yourself.
 
 The skill then, with you in the loop:
 
-1. **Discovers** risks via Clarity, or reuses an existing `.clarity-protocol/`.
+1. **Establishes the risk source** — discovers risks via Clarity, reuses an existing `.clarity-protocol/`, or takes the risks you supply directly.
 2. **Stops at a triage gate** and shows you the candidate risks. You pick which to measure. Declining here writes nothing and runs nothing.
 3. **Generates one atomic config per selected risk** — never one merged config, so each result is attributable to a single behavior.
 4. **Confirms**, then runs the suites sequentially.

@@ -1,13 +1,18 @@
 # Workflow: measure-clarity-failures
 
-Turn Clarity-discovered failure modes into measured ASSERT violation rates —
-one atomic behavior at a time, with a human in the loop at every gate.
+Turn discovered or user-supplied failure modes into measured ASSERT violation
+rates — one atomic behavior at a time, with a human in the loop at every gate.
 
 This workflow is the measurement half of the Clarity → ASSERT story. Discovery
 is owned by the **Clarity MCP server** (`clarity-agent`, shipped by
 microsoft/clarity-agent); measurement is owned by this skill. The handoff is
 **files, not JSON**: Clarity writes `.clarity-protocol/failures/`, and this
 workflow reads it.
+
+Clarity is the **recommended** risk source, not a required one. When the user
+supplies risks directly (SKILL.md Step 1b), skip Step 1 (Parse) and start at
+Step 2 (Triage) — Steps 2-9 never touch `.clarity-protocol/` except at the
+optional close-the-loop step.
 
 > **Discovery is agent-driven, not scripted.** The Clarity MCP `run_clarity`
 > tool returns the relevant process guide inlined as text; **you** (the host
@@ -20,19 +25,35 @@ workflow reads it.
 Trigger this workflow when the user asks to **measure / test / quantify** risks
 or failures for their agent, model, or app.
 
-1. **If `.clarity-protocol/failures/failures.md` exists** → go to **Step 1 (Parse)**.
-2. **If it does not exist** → run discovery first:
-   - **Run the preservation gate below first** — a fresh discovery run destroys
-     any protocol from a previous domain.
-   - Call the Clarity MCP tool **`run_clarity`**. Follow the inlined process
-     guide's clarifying questions *with the user in chat*.
-   - Persist findings via **`write_protocol_document`** and **`record_failure`**.
-   - Continue until the failure-analysis process has produced
-     `failures/failures.md`, then proceed to Step 1.
-   - If the `clarity-agent` MCP tools are **not available** in this session, stop
-     and point the user at the in-IDE setup checklist (`SETUP-CHECKLIST.md`):
-     `clarity embed`, reload MCP servers, confirm `run_clarity` is callable. Do
-     **not** substitute a plain-language risk guess — that produces low-signal evals.
+1. **If the user already named a risk** (prose, PRD, design doc, threat model,
+   incident report, test plan) → that is an explicit user-supplied choice.
+   Follow **SKILL.md Step 1b**, then **skip Step 1 (Parse)** and join at **Step 2
+   (Triage)**. Do this even when `.clarity-protocol/failures/failures.md` exists —
+   never substitute the protocol's risks for the one the user just stated.
+2. **Otherwise, if `.clarity-protocol/failures/failures.md` exists** → offer it as
+   the default, naming what it covers, and ask before selecting it: *"I found an
+   existing Clarity protocol covering X and Y — want to measure one of those, or is
+   there a different risk you have in mind?"* On confirmation, go to
+   **Step 1 (Parse)**. If they name something else instead, treat it as case 1.
+3. **If no protocol exists** → ask which risk source the user wants (see SKILL.md,
+   "Choosing a risk source"). Recommend Clarity, but take their answer:
+   - **Clarity discovery (recommended)** —
+     **run the preservation gate below first**; a fresh discovery run destroys
+     any protocol from a previous domain. Call the Clarity MCP tool
+     **`run_clarity`** and follow the inlined process guide's clarifying questions
+     *with the user in chat*. Persist findings via **`write_protocol_document`**
+     and **`record_failure`**. Continue until the failure-analysis process has
+     produced `failures/failures.md`, then proceed to Step 1.
+   - **User-supplied risks** — the user names the risk, or points at a PRD,
+     design doc, threat model, incident report, or test plan. Follow **SKILL.md
+     Step 1b** to build the candidate-behavior list by hand, then **skip Step 1
+     (Parse)** — there is no `failures.md` to parse — and join at **Step 2
+     (Triage)**. Everything from Step 2 onward is risk-source agnostic.
+   - If the `clarity-agent` MCP tools are **not available** in this session, say
+     so, offer the in-IDE setup checklist (`SETUP-CHECKLIST.md`: `clarity embed`,
+     reload MCP servers, confirm `run_clarity` is callable), and let the user
+     choose. If they'd rather not set it up now, continue with user-supplied
+     risks — do not strand them on MCP setup.
 
 ### Preservation gate (blocking — check before any fresh `run_clarity`)
 
@@ -55,6 +76,10 @@ Skip this gate only when `.clarity-protocol/` is absent or empty. Clarity
 re-scaffolds a clean one on the next `run_clarity`.
 
 ## Step 1 — Parse
+
+**Clarity-sourced risks only.** If the user supplied risks directly (SKILL.md
+Step 1b), there is no `failures.md` to parse — skip to Step 2 with the candidate
+list you built there.
 
 Run the intake parser (`clarity_intake.py`) on the protocol directory:
 
@@ -368,6 +393,11 @@ Offer next steps: raise `sample_size`, add a stratify dimension, apply an ACS gu
 the failing checkpoint, or **re-measure after a fix** to prove the rate dropped.
 
 ## Step 8 — Close the loop in Clarity
+
+**Only when a `.clarity-protocol/` exists.** With user-supplied risks there is
+nothing to write back to — skip this step, mention once that you're skipping it,
+and instead offer Clarity discovery as a way to find failure modes this pass
+didn't cover.
 
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the

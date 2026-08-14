@@ -166,7 +166,7 @@ These skills are for end users running evaluations, not for repository maintenan
 
 | Skill | Claude Code | GitHub Copilot | Cursor | What it does |
 |---|---|---|---|---|
-| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Discover risks via the Clarity MCP tools (`run_clarity`) in-IDE, then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
+| `run-assert-eval` | `.claude/skills/run-assert-eval/SKILL.md` | `.github/prompts/run-assert-eval.prompt.md` | `.cursor/rules/assert.mdc` | Establish a risk source — discover risks via the Clarity MCP tools (`run_clarity`) in-IDE (recommended), or take risks the user supplies directly as prose or a PRD / design doc / threat model — then follow `workflows/measure-clarity-failures.md`: triage, split selected risks into one atomic config per behavior, run the pipeline, summarize results with cited failures. Reports policy violation and overrefusal separately. To fix and prove a failure, `workflows/govern-and-remeasure.md` generates an ACS policy from the findings and re-runs the same eval against the governed agent to measure the failure-rate delta. |
 
 ## Output style for coding agents
 
