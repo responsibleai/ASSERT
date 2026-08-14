@@ -117,9 +117,28 @@ def _message_from_edit(edit: Any) -> Optional["Message"]:
     return None
 
 
-def _format_tool_call_content(tool_name: str, tool_args: Dict[str, Any], tool_result: str) -> str:
+def _format_tool_result(tool_result: Any) -> str:
+    """Pretty-print JSON tool results while preserving ordinary text exactly."""
+    if not isinstance(tool_result, str):
+        return json.dumps(tool_result, ensure_ascii=False, indent=2, sort_keys=True)
+    stripped = tool_result.strip()
+    if not stripped:
+        return ""
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return tool_result
+    if isinstance(parsed, (dict, list)):
+        return json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True)
+    return tool_result
+
+
+def _format_tool_call_content(tool_name: str, tool_args: Dict[str, Any], tool_result: Any) -> str:
     """Render tool-call content consistently across judge and viewer paths."""
-    return f"[Tool call: {tool_name}({json.dumps(tool_args, ensure_ascii=False)}) → {tool_result}]"
+    return (
+        f"[Tool call: {tool_name}({json.dumps(tool_args, ensure_ascii=False)}) → "
+        f"{_format_tool_result(tool_result)}]"
+    )
 
 
 def _tool_call_id_from_raw(raw: Any, tool_name: str, tool_args: Dict[str, Any]) -> str | None:
