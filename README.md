@@ -48,16 +48,16 @@ From the natural language specification, the ASSERT pipeline derives behavior ca
 
 ASSERT has two front doors:
 
-- **[Guided — the `run-assert-eval` skill](#guided-the-run-assert-eval-skill)** *(recommended)* — describe your agent in chat. Your coding assistant discovers the risks with you, writes the eval configs, runs the pipeline, reports the failures, and can then generate a policy to fix them and prove the fix worked. No YAML by hand.
+- **[Guided — the `run-assert-eval` skill](#guided-the-run-assert-eval-skill)** *(recommended)* — describe your agent in chat. Your coding assistant starts from the risks you bring, or discovers them with you, then writes the eval configs, runs the pipeline, reports the failures, and can then generate a policy to fix them and prove the fix worked. No YAML by hand.
 - **[Manual — the CLI](#manual-the-cli)** — write an `eval_config.yaml` yourself and run it.
 
 ### Guided: the `run-assert-eval` skill
 
-The skill turns "I think my agent might do something bad" into measured evidence, and then into a deployable control. It chains three pieces:
+The skill turns "I think my agent might do something bad" into measured evidence, and then into a deployable control. It chains three pieces — where the risks come from is a choice you make, not a step you have to clear:
 
 | | | |
 |---|---|---|
-| **Clarity** | *discovery* **(recommended)** | An interviewing agent that walks you through what your system is for and where it could fail, and writes the risks down. |
+| **Clarity** | *discovery* — **optional, recommended** | An interviewing agent that walks you through what your system is for and where it could fail, and writes the risks down. Use it when you want risks surfaced for you; skip it entirely and name your own when you already know what to measure. |
 | **ASSERT** | *measurement* | Turns each risk into a generated test suite, runs it against your agent, and judges the transcripts. |
 | **ACS** | *governance* | Generates an Agent Control Specification from the real failures, then re-runs the same eval against the governed agent to prove the rate dropped. |
 
@@ -116,9 +116,16 @@ Describe your agent in chat — what it does, what it can touch, and what it mus
 
 That description is the shipped [`billing_support_agent`](examples/billing_support_agent/) example. The more precisely you state the boundaries, the sharper the risks — whether Clarity discovers them or you name them yourself.
 
+If you already know the risk, name it in the same breath and that *is* your answer — the skill takes it and goes to triage, with no discovery step in between:
+
+> *Help me evaluate my billing support agent for cross-customer data exposure — it must never
+> reveal another customer's invoices or PII, even when the user insists the account is theirs.*
+
+Both openings start the same workflow. A PRD, design doc, threat model, incident report, or test plan works in place of the sentence.
+
 The skill then, with you in the loop:
 
-1. **Establishes the risk source** — discovers risks via Clarity, reuses an existing `.clarity-protocol/`, or takes the risks you supply directly.
+1. **Asks where the risks should come from** — it presents Clarity discovery and supplying your own side by side, then waits for your answer. Naming a risk yourself is enough to start the workflow; Clarity is never a prerequisite. An existing `.clarity-protocol/` is offered as the default, never selected for you.
 2. **Stops at a triage gate** and shows you the candidate risks. You pick which to measure. Declining here writes nothing and runs nothing.
 3. **Generates one atomic config per selected risk** — never one merged config, so each result is attributable to a single behavior.
 4. **Confirms**, then runs the suites sequentially.
@@ -159,7 +166,7 @@ The same skill ships for three assistants, plus the workflows it follows:
 | [`.claude/skills/run-assert-eval/`](.claude/skills/run-assert-eval/) | Claude Code — `SKILL.md` is the canonical definition |
 | [`.github/prompts/run-assert-eval.prompt.md`](.github/prompts/run-assert-eval.prompt.md) | GitHub Copilot |
 | [`.cursor/rules/assert.mdc`](.cursor/rules/assert.mdc) | Cursor |
-| [`workflows/measure-clarity-failures.md`](.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md) | Discovery → measurement loop |
+| [`workflows/measure-clarity-failures.md`](.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md) | Risk source (Clarity **or** your own) → measurement loop |
 | [`workflows/govern-and-remeasure.md`](.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md) | ACS generation → governed re-run → delta |
 | [`workflows/diagnose-acs-delta.md`](.claude/skills/run-assert-eval/workflows/diagnose-acs-delta.md) | What to do when the delta comes out wrong |
 
