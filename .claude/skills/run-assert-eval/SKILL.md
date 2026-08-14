@@ -37,7 +37,7 @@ This skill has two entry modes:
 Every eval starts from a risk. There are two supported sources, and **the user
 chooses** — never decide for them and never block on Clarity.
 
-**Path A — Clarity discovery (recommended, offer first).** Use an existing
+**Path A — Clarity discovery (recommended — present it first, but never alone).** Use an existing
 `.clarity-protocol/` or a fresh run via the Clarity MCP `run_clarity` tool.
 Clarity's value is finding failure modes the user has *not* thought of, along
 with severity and causal chains. Recommend it whenever the user is unsure what
@@ -47,15 +47,26 @@ to measure, is new to the agent, or wants coverage rather than one known bug.
 or by pointing at a PRD, design doc, threat model, incident report, or test
 plan. This is the right path when they already know what they want measured.
 
-When no `.clarity-protocol/` exists, **offer the choice**:
+**Whenever you need a new risk to measure**, and the user has not already named
+one, **offer the choice**:
 
 > I can discover risks with Clarity — it interviews you and surfaces failure
 > modes you may not have considered (recommended if you're not sure what to
 > measure) — or you can tell me the risk directly, in your own words or by
 > pointing me at a PRD or design doc. Which do you prefer?
 
+An existing `.clarity-protocol/` changes the **default**, never the **choice**.
+Offer it as the recommended option ("I found an existing Clarity protocol with
+these risks — measure one of those, or is there a different risk you have in
+mind?"), then take the user's answer.
+
 Rules that hold on both paths:
 
+- **An explicit user-supplied risk always wins.** If the user names a risk — in
+  prose, or by pointing at a document — measure *that*, whether or not a
+  `.clarity-protocol/` exists. Never substitute the protocol's risks for one the
+  user just stated. If you think the protocol covers the same ground, say so and
+  let them decide; do not decide for them.
 - **Never silently pick a path**, and never stall the user on Clarity setup. If
   the Clarity MCP tools are missing and the user wants Path A, offer
   `SETUP-CHECKLIST.md` — but if they'd rather not set it up now, take Path B.
@@ -123,16 +134,28 @@ runs*, or *watch a live run*.
 ### 1. Establish the risk source
 
 Ask which path the user wants (see "Choosing a risk source" above), then follow
-**1a** or **1b**. If a `.clarity-protocol/` already exists, default to it and say
-so — no need to ask.
+**1a** or **1b**.
+
+- **The user already named a risk** (prose, PRD, design doc, threat model,
+  incident report, test plan) → that is an explicit Path B choice. Go to **1b**,
+  even if a `.clarity-protocol/` exists. Do not silently switch to the
+  protocol's risks.
+- **Intent is ambiguous and a `.clarity-protocol/` exists** → offer it as the
+  default and say what's in it, but still ask before selecting it: *"I found an
+  existing Clarity protocol covering X and Y — want to measure one of those, or
+  is there a different risk you have in mind?"*
+- **Intent is ambiguous and no protocol exists** → offer the choice as written
+  above.
 
 #### 1a. Clarity discovery (recommended)
 
 Risks come from Clarity's real engine, driven through the **Clarity MCP server** —
 never by imitating Clarity's interview from your own head.
 
-- **If a `.clarity-protocol/` directory already exists** in the workspace, use it
-  directly as the risk source — skip straight to reading its output below.
+- **If a `.clarity-protocol/` directory already exists** in the workspace, and the
+  user has chosen Path A for this risk, use it directly as the risk source — skip
+  straight to reading its output below. (Selecting Path A is the user's decision,
+  made in Step 1; the protocol's presence alone does not make it.)
 - **Otherwise run discovery via the Clarity MCP tools:**
   1. Call **`run_clarity`**. It returns Clarity's real process guide inlined as text.
   2. Follow that guide to ask the user the clarifying questions **in chat** — this
@@ -486,12 +509,16 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 
 ## Guardrails
 
-- **Clarity is the recommended risk source, not a gate** — offer Clarity first
-  (existing `.clarity-protocol/` or a fresh `run_clarity` discovery run), because
-  it surfaces failure modes the user hasn't considered. If they'd rather name the
-  risk themselves, or the MCP tools aren't available, take the user-supplied path
-  (Step 1b) and hold it to the same bar: atomic behaviors, an explicit permissible
-  boundary, variant-derived dimensions. Never block a measurement on Clarity setup.
+- **Clarity is the recommended risk source, not a gate** — present **both**
+  options together whenever the user needs a new risk: Clarity discovery
+  (existing `.clarity-protocol/` or a fresh `run_clarity` run) *and* risks they
+  supply themselves. Recommend Clarity, because it surfaces failure modes they
+  haven't considered — but never present it as the only route. Any menu, list, or
+  question you offer that includes a Clarity option must carry the user-supplied
+  option beside it; a user who doesn't know Path B exists cannot ask for it. Hold
+  the user-supplied path (Step 1b) to the same bar: atomic behaviors, an explicit
+  permissible boundary, variant-derived dimensions. Never block a measurement on
+  Clarity setup.
 - **Never imitate Clarity's interview from your own head** — if the user chose
   Clarity, drive the real MCP tools (`run_clarity` returns its genuine process
   guide inlined). Step 1b is a distinct structured intake, not a hand-rolled

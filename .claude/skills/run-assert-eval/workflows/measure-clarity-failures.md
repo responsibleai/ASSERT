@@ -25,8 +25,17 @@ optional close-the-loop step.
 Trigger this workflow when the user asks to **measure / test / quantify** risks
 or failures for their agent, model, or app.
 
-1. **If `.clarity-protocol/failures/failures.md` exists** → go to **Step 1 (Parse)**.
-2. **If it does not exist** → ask which risk source the user wants (see SKILL.md,
+1. **If the user already named a risk** (prose, PRD, design doc, threat model,
+   incident report, test plan) → that is an explicit user-supplied choice.
+   Follow **SKILL.md Step 1b**, then **skip Step 1 (Parse)** and join at **Step 2
+   (Triage)**. Do this even when `.clarity-protocol/failures/failures.md` exists —
+   never substitute the protocol's risks for the one the user just stated.
+2. **Otherwise, if `.clarity-protocol/failures/failures.md` exists** → offer it as
+   the default, naming what it covers, and ask before selecting it: *"I found an
+   existing Clarity protocol covering X and Y — want to measure one of those, or is
+   there a different risk you have in mind?"* On confirmation, go to
+   **Step 1 (Parse)**. If they name something else instead, treat it as case 1.
+3. **If no protocol exists** → ask which risk source the user wants (see SKILL.md,
    "Choosing a risk source"). Recommend Clarity, but take their answer:
    - **Clarity discovery (recommended)** —
      **run the preservation gate below first**; a fresh discovery run destroys
