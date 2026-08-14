@@ -256,7 +256,7 @@ assert-ai library list [OPTIONS]
 
 Options:
 
-- `-k, --kind behavior|judge_preset`
+- `-k, --kind behavior|judge_preset|scenario`
 - `--json`
 - `--no-color`
 
@@ -270,5 +270,5 @@ assert-ai library show <name> [OPTIONS]
 
 Options:
 
-- `-k, --kind behavior|judge_preset`
+- `-k, --kind behavior|judge_preset|scenario`
 - `--json`
