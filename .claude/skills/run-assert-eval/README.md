@@ -2,8 +2,9 @@
 
 Take a developer from **"I don't know my risks"** to a **measured violation rate
 per risk** — without leaving the coding assistant. Risk discovery is owned by
-**Clarity** (microsoft/clarity-agent); measurement is owned by **ASSERT**
-(responsibleai/ASSERT). This skill wires the two together.
+**Clarity** (microsoft/clarity-agent) when the user wants it; measurement is owned
+by **ASSERT** (responsibleai/ASSERT). This skill wires the two together, and also
+measures risks the user names directly when discovery isn't what they need.
 
 ## Files
 
@@ -24,11 +25,14 @@ methodologically aligned when changing the flow.
 
 ## Architecture
 
-1. **Discovery (Clarity, shipped):** the Clarity **MCP server** exposes tools —
+1. **Discovery (Clarity, shipped — recommended, not required):** the Clarity **MCP server** exposes tools —
    `run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`,
    and others. `run_clarity` returns Clarity's real process guide inlined; the host
    agent conducts the clarifying conversation and persists findings. See
-   `SETUP-CHECKLIST.md` to wire it up.
+   `SETUP-CHECKLIST.md` to wire it up. When the user would rather name the risk
+   themselves — or Clarity isn't set up — the skill takes a user-supplied risk
+   (prose, PRD, design doc, threat model) through a structured intake instead
+   (`SKILL.md` Step 1b) and everything downstream is identical.
 2. **Handoff (files, not JSON):** Clarity writes `.clarity-protocol/`. The
    measurement side reads `failures/failures.md` (index) and `failure-NN-*.md`
    (individual docs). Those files are the **source of truth**; the parser's JSON is
@@ -102,6 +106,9 @@ silently degrades multi-turn to single-turn), and module resolution falls back
 - The triage gate and the pre-run confirmation are **human** decisions; declining
   writes nothing and runs nothing.
 - `.clarity-protocol/` files are authoritative; derived JSON is a cache.
-- Discovery goes through Clarity's real MCP tools — no plain-language fallback, no
-  shelling out to a `clarity cli` process, no separate app.
+- Clarity discovery is **recommended, never a gate** — the user picks the risk
+  source, and a missing `.clarity-protocol/` never blocks a measurement.
+- When the user chooses Clarity, discovery goes through its real MCP tools — never
+  an imitation of Clarity's interview, no shelling out to a `clarity cli` process,
+  no separate app.
 - Never read/print/commit `.env`, credential values, or `artifacts/`.

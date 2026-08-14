@@ -1,8 +1,14 @@
 # Setup checklist — Clarity MCP ⇄ ASSERT (in-IDE only)
 
+**Optional.** Clarity is the *recommended* risk source for `run-assert-eval`, not a
+prerequisite for it. The skill runs fine without any of this — the user can supply
+risks directly as prose or a PRD / design doc / threat model (SKILL.md Step 1b).
+Work through this checklist when you want Clarity's discovery to surface failure
+modes you haven't thought of.
+
 These steps require a real IDE with MCP support (VS Code + Copilot agent mode,
 Claude Code, or Cursor) and cannot be completed from a headless terminal. Do them
-once per workspace, then the `run-assert-eval` skill's discovery front door
+once per workspace, then the `run-assert-eval` skill's recommended discovery path
 (`run_clarity`) becomes callable.
 
 ## Phase 1 — Environment setup
@@ -39,9 +45,14 @@ once per workspace, then the `run-assert-eval` skill's discovery front door
 
 ## Phase 2 — End-to-end verification (definition of done)
 
-- [ ] **Fresh discovery**: with no `.clarity-protocol/failures/failures.md`, call
+- [ ] **Fresh discovery** (Path A): with no `.clarity-protocol/failures/failures.md`, call
       `run_clarity`, conduct a short clarifying conversation, and confirm
       `failures.md` gets written.
+- [ ] **User-supplied risks work without Clarity** (Path B): with the Clarity MCP
+      tools unavailable *or* declined, describe one risk in plain language and
+      confirm the skill offers the choice, does **not** stop on the missing
+      protocol, and still produces a single atomic config with an explicit
+      permissible boundary and a variants-derived dimension.
 - [ ] **Parser**: `python .claude/skills/run-assert-eval/clarity_intake.py .clarity-protocol`
       emits candidate behaviors; run the unit tests:
       ```

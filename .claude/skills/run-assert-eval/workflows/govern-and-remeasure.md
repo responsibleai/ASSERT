@@ -5,11 +5,12 @@ Specification) policy, then re-run the same eval against the governed agent to
 **prove the failure rate dropped** — the ACS delta.
 
 This is the governance half of the story and picks up where
-`measure-clarity-failures.md` leaves off: Clarity discovered the risk,
-ASSERT measured a baseline violation rate, and now ACS governs the failure at
-runtime. It uses ASSERT's **native** ASSERT to ACS adapter (`assert-ai acs …`),
-which derives the policy straight from the run's findings — no external `acs`
-CLI and no separate checkout of the agent-governance-toolkit are needed.
+`measure-clarity-failures.md` leaves off: a risk was established (via Clarity or
+supplied by the user), ASSERT measured a baseline violation rate, and now ACS
+governs the failure at runtime. It uses ASSERT's **native** ASSERT to ACS adapter
+(`assert-ai acs …`), which derives the policy straight from the run's findings —
+no external `acs` CLI and no separate checkout of the agent-governance-toolkit are
+needed.
 
 > **Everything stays in-IDE.** ACS has no MCP server; the `assert-ai acs`
 > subcommands are the in-IDE surface, driven the same way ASSERT already drives
@@ -658,6 +659,10 @@ portable artifact the user can archive or share however they choose. (Do not com
 exported HTML — it is per-run output.)
 
 ## Step 7 — Close the loop in Clarity
+
+**Only when a `.clarity-protocol/` exists.** If the risk came from the user rather
+than Clarity, skip this step — mention once that you're skipping it, and go
+straight to the regression-check offer below.
 
 Offer to write the outcome back into `.clarity-protocol/` via the Clarity MCP
 tool `record_suggestion` (or `record_decision`): the failure mode was measured

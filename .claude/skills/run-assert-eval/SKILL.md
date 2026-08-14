@@ -1,13 +1,15 @@
 ---
 name: run-assert-eval
 description: >
-  Run an ASSERT evaluation starting from Clarity-discovered risks. Use when the
-  user wants to evaluate, test, or check an AI agent, LLM app, or model against
+  Run an ASSERT evaluation against a described risk. Use when the user wants to
+  evaluate, test, or check an AI agent, LLM app, or model against
   requirements/policies (e.g. "evaluate my agent for budget violations", "test
-  that the support bot never gives legal advice"). Drives the real Clarity MCP
-  tools (run_clarity) in-IDE to discover risks, then generates one flat
-  evals/<atomic_behavior>.yaml per selected risk, runs the pipeline, and reports
-  pass/violation rates with trace-cited failure examples.
+  that the support bot never gives legal advice"). Risks come either from
+  Clarity — recommended, driving the real Clarity MCP tools (run_clarity) in-IDE
+  to discover failure modes the user has not considered — or directly from the
+  user as a description, PRD, design doc, threat model, or test plan. Then
+  generates one flat evals/<atomic_behavior>.yaml per selected risk, runs the
+  pipeline, and reports pass/violation rates with trace-cited failure examples.
 ---
 
 # Run an ASSERT evaluation
@@ -19,26 +21,58 @@ fixing the agent — this skill finds and reports failures.
 
 This skill has two entry modes:
 
-- **Run mode** — no usable results exist yet. Risks come from **Clarity** (Steps 1-2):
-  either an existing `.clarity-protocol/` directory or a fresh discovery run driven
-  through the **Clarity MCP server** (`run_clarity`), in-IDE. Then turn each selected
-  risk into an atomic config, run the pipeline (Steps 3-5), and report (Step 6).
+- **Run mode** — no usable results exist yet. Establish a **risk source** (Steps 1-2):
+  **Clarity** (recommended) — an existing `.clarity-protocol/` directory or a fresh
+  discovery run driven through the **Clarity MCP server** (`run_clarity`), in-IDE —
+  **or risks the user supplies directly**. Then turn each selected risk into an
+  atomic config, run the pipeline (Steps 3-5), and report (Step 6).
 - **Results Q&A mode** — judged artifacts already exist under
   `artifacts/results/<suite>/<run>/` and the user asks a *question* about them
   ("what are the highlights?", "top 3 examples of the worst failure mode?", "why
   did case X fail?"). Skip to Step 6 and answer THAT question from the artifacts —
   do not re-run, and do not fall back to the full canned report unless asked.
 
-### Clarity is required for Run mode — no non-Clarity fallback
+### Choosing a risk source (Clarity recommended, never required)
 
-Risks that seed an eval MUST come from Clarity (an existing `.clarity-protocol/`
-or a fresh discovery run via the Clarity MCP `run_clarity` tool). Do **not**
-substitute a plain-language description, and do **not** imitate Clarity's
-questioning from your own head — instead, `run_clarity` returns Clarity's real
-process guide inlined, and you follow *that* to conduct the clarifying loop. An
-eval spec that skips Clarity's captured risks produces inaccurate, low-signal
-results. If the Clarity MCP tools are not available, STOP and help the user set
-them up (see `SETUP-CHECKLIST.md`) rather than proceeding.
+Every eval starts from a risk. There are two supported sources, and **the user
+chooses** — never decide for them and never block on Clarity.
+
+**Path A — Clarity discovery (recommended, offer first).** Use an existing
+`.clarity-protocol/` or a fresh run via the Clarity MCP `run_clarity` tool.
+Clarity's value is finding failure modes the user has *not* thought of, along
+with severity and causal chains. Recommend it whenever the user is unsure what
+to measure, is new to the agent, or wants coverage rather than one known bug.
+
+**Path B — user-supplied risks.** The user names the risk themselves, as prose
+or by pointing at a PRD, design doc, threat model, incident report, or test
+plan. This is the right path when they already know what they want measured.
+
+When no `.clarity-protocol/` exists, **offer the choice**:
+
+> I can discover risks with Clarity — it interviews you and surfaces failure
+> modes you may not have considered (recommended if you're not sure what to
+> measure) — or you can tell me the risk directly, in your own words or by
+> pointing me at a PRD or design doc. Which do you prefer?
+
+Rules that hold on both paths:
+
+- **Never silently pick a path**, and never stall the user on Clarity setup. If
+  the Clarity MCP tools are missing and the user wants Path A, offer
+  `SETUP-CHECKLIST.md` — but if they'd rather not set it up now, take Path B.
+- **Do not imitate Clarity's interview from your own head.** This is the real
+  prohibition: if the user picked Path A, drive the actual `run_clarity` tool,
+  which returns Clarity's genuine process guide inlined. Path B is not a
+  degraded impression of Clarity — it is a distinct, structured intake (Step 1b).
+- **Path B meets the same quality bar.** One atomic behavior per config,
+  variant-derived stratify dimensions, pinned systematize/judge models, an
+  explicit `sample_size`. Steps 3-6 are risk-source agnostic; nothing about the
+  config, run, or report changes.
+- **Offer Clarity again later.** Declining once is not a permanent opt-out —
+  after a run, it's a natural next step for finding what they *didn't* think to
+  measure.
+- **Clarity write-backs degrade to no-ops.** `record_failure` /
+  `record_suggestion` apply only when a protocol exists. On Path B, skip them and
+  say so once; never treat their absence as an error.
 
 ### Copilot vs. the local viewer
 
@@ -64,18 +98,20 @@ runs*, or *watch a live run*.
    clone of the ASSERT repo itself; inside a customer repo it installs the wrong
    package.
 
-2. **Clarity MCP server available** (required for Run mode): the `clarity-agent`
+2. **Clarity MCP server available** (needed only for Path A): the `clarity-agent`
    MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`,
    `record_suggestion`, …) are callable in this session. Clarity is the
    risk-discovery engine — the skill drives its real MCP tools, it does not
-   reimplement it. If the tools are missing, the server is not wired up yet: guide
-   the user through `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]`
-   extra, run `clarity embed .` to generate `.vscode/mcp.json`, reload MCP servers)
-   and confirm the LLM provider is configured (`clarity doctor` — Clarity supports
+   reimplement it. If the tools are missing, the server is not wired up yet: offer
+   `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]` extra, run
+   `clarity embed .` to generate `.vscode/mcp.json`, reload MCP servers) and
+   confirm the LLM provider is configured (`clarity doctor` — Clarity supports
    GitHub Copilot, Anthropic, OpenAI, Azure AI, and Gemini).
 
-   If the Clarity MCP tools cannot be made available, STOP and help the user
-   resolve it. Do not proceed with a non-Clarity path.
+   **This is not a blocker.** If the tools can't be made available, or the user
+   would rather not set them up now, say so plainly and continue on Path B
+   (Step 1b). Never strand the user on MCP setup when they came to measure
+   something.
 
 3. **Provider creds exist** in `.env`. NEVER read or print `.env`. If a run fails
    with an auth error, tell the user which variable NAMES are required
@@ -84,10 +120,16 @@ runs*, or *watch a live run*.
 
 ## Steps
 
-### 1. Discover risks with Clarity (required front door)
+### 1. Establish the risk source
+
+Ask which path the user wants (see "Choosing a risk source" above), then follow
+**1a** or **1b**. If a `.clarity-protocol/` already exists, default to it and say
+so — no need to ask.
+
+#### 1a. Clarity discovery (recommended)
 
 Risks come from Clarity's real engine, driven through the **Clarity MCP server** —
-never from a plain-language guess and never by imitating Clarity from your own head.
+never by imitating Clarity's interview from your own head.
 
 - **If a `.clarity-protocol/` directory already exists** in the workspace, use it
   directly as the risk source — skip straight to reading its output below.
@@ -125,12 +167,56 @@ Clarity records severity/management-plan signal (the parser maps Critical→P1,
 High→P2, Medium→P3, ranges→max). Order and annotate by what Clarity actually
 captured; do not fabricate priorities.
 
+#### 1b. User-supplied risks
+
+The user already knows what to measure. Your job is to turn their input into the
+**same candidate-behavior shape** `clarity_intake.py` produces on Path A —
+`{name, description, severity, priority, source_doc, candidate_dimensions,
+multi_behavior, suggested_splits}` — so Steps 2-6 are identical either way.
+
+1. **Take the input as given.** If they point at a PRD, design doc, threat model,
+   incident report, or test plan, read it and extract candidate risks from it.
+   Quote what you extracted so they can correct you. If they describe it in prose,
+   start from their words — do not paraphrase the risk into something broader.
+2. **Ask only what the config actually needs**, in one batch, and skip anything
+   already answered by their input or the repo:
+   - *What does the agent do, and who uses it?* → `context`
+   - *What must it never do?* → `behavior.name` + `behavior.description`
+   - *What is it explicitly allowed to do that looks similar?* → the permissible
+     boundary. **Do not skip this**: without it the judge cannot separate real harm
+     from over-refusal, and both rates become uninterpretable.
+   - *How would a user trigger this — innocently, and deliberately?* →
+     the `elicitation_variant` stratify dimension, the highest-value one
+   - *How bad is it when it happens?* → severity → `priority`
+3. **Enforce atomicity now.** If their description bundles several independently
+   testable behaviors ("it leaks data and hallucinates prices"), say so and propose
+   the split — one config each. This is the `multi_behavior` / `suggested_splits`
+   check, applied by hand.
+4. **Play it back for confirmation** as an explicit candidate list before
+   generating anything, exactly as triage does on Path A.
+
+Set `source_doc` to the file you read, or `user-described` when it came from chat.
+Record severity as the user rated it; do not invent a priority they didn't give.
+
+**For the full measurement path** — triage → one atomic config per selected risk →
+sequential runs → report → curate the example — follow
+`workflows/measure-clarity-failures.md`, the same workflow Path A uses. **Skip its
+Step 1 (Parse)**: there is no `failures.md` to parse, so join at Step 2 with the
+candidate list you just built. Skip its Step 8 (close the loop in Clarity) too,
+unless a `.clarity-protocol/` exists.
+
+Then continue to Step 2. Everything downstream is unchanged.
+
 ### 2. Triage — choose which risks to measure now
 
 Clarity intentionally over-produces (whole-lifecycle threat modeling). Do NOT
 auto-generate an eval for every failure mode. Surface the enumerated list (ordered
-by Clarity's severity signal) and ask the user which to measure now (e.g.
+by severity signal) and ask the user which to measure now (e.g.
 "top-severity only?", or named picks). Carry only the selected risks forward.
+
+On Path B the list is usually short and already chosen — still play it back and
+confirm scope before generating configs, rather than assuming every risk they
+mentioned should be measured in this pass.
 
 ### 3. Turn each selected risk into an atomic config
 
@@ -142,7 +228,7 @@ hides per-behavior signal.
 - **N selected risks** → generate N flat `evals/<atomic_behavior>.yaml` files
   and run them sequentially, one per behavior.
 
-For each selected risk, map the Clarity failure mode → `behavior.name` +
+For each selected risk, map the failure mode → `behavior.name` +
 `behavior.description`, and use its context for `context`:
 
 ```
@@ -150,8 +236,9 @@ assert-ai init --default-model <litellm-model> --describe-file <path> --non-inte
 ```
 
 - **Write the description to a file and pass `--describe-file`.** The text is
-  Clarity-derived prose you did not author, so it can contain quotes, backticks,
-  or `$(...)`. Interpolating it into `--describe "<text>"` would break the
+  prose you did not author — Clarity output on Path A, the user's own words or a
+  PRD excerpt on Path B — so it can contain quotes, backticks, or `$(...)`.
+  Interpolating it into `--describe "<text>"` would break the
   command or inject into the user's shell. `--describe` stays available for
   short text you typed yourself; the two are mutually exclusive.
 - `--default-model` seeds the generated config's `pipeline.default_model` — the
@@ -399,9 +486,18 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 
 ## Guardrails
 
-- **Clarity is the required risk source** — for Run mode, risks come from Clarity (existing `.clarity-protocol/` or a fresh discovery run via the `run_clarity` MCP tool). Never substitute a plain-language guess or imitate Clarity's questioning from your own head; if the MCP tools can't be made available, stop and help fix it (`SETUP-CHECKLIST.md`).
+- **Clarity is the recommended risk source, not a gate** — offer Clarity first
+  (existing `.clarity-protocol/` or a fresh `run_clarity` discovery run), because
+  it surfaces failure modes the user hasn't considered. If they'd rather name the
+  risk themselves, or the MCP tools aren't available, take the user-supplied path
+  (Step 1b) and hold it to the same bar: atomic behaviors, an explicit permissible
+  boundary, variant-derived dimensions. Never block a measurement on Clarity setup.
+- **Never imitate Clarity's interview from your own head** — if the user chose
+  Clarity, drive the real MCP tools (`run_clarity` returns its genuine process
+  guide inlined). Step 1b is a distinct structured intake, not a hand-rolled
+  impression of Clarity.
 - **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
-- **Close the loop** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives, so Clarity's staleness tracking stays aware of it.
+- **Close the loop when a protocol exists** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives, so Clarity's staleness tracking stays aware of it. With no protocol, skip it silently — and consider offering Clarity as a next step for finding risks this pass didn't cover.
 - **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), review it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`workflows/govern-and-remeasure.md`). Generated policies, guarded targets, and governed configs are local run output by default. Commit them only in the user's own product repo when the user wants a reviewed policy deployed; do not automatically add them to ASSERT's worked examples. Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
 - **Organize by domain across runs** — prefix every eval **suite name** with a domain slug (`<domain>-<risk>`, e.g. `billing-cross-customer-data-exposure`, `science-<risk>`), so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not collide. Treat `.clarity-protocol/` as uncommitted single-domain scratch; preserve it outside `examples/` only when the user asks.
 - **Per-example package** — every worked example must be a small, self-contained folder under `examples/<domain>/` containing only what a customer needs to understand and reproduce the ASSERT run:
@@ -414,7 +510,7 @@ when they disagree with this skill on *product behavior*, they win; this skill o
   output. Do not commit generated taxonomies, test sets, result artifacts,
   discovery mailboxes, snapshots, protocol archives, or automatic skill output.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
-- **Triage before running** — never auto-generate an eval for every Clarity failure mode; ask which to measure now.
+- **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.
 - **Don't trawl raw traces to answer questions** — answer from `results status`, `scores.jsonl`, and `metrics.json`; hand off to the viewer for visual trace/transcript exploration.
 - **Hand off, don't reimplement the viewer** — for visual drill-down, baseline compare, or live monitoring, point to the local viewer rather than reproducing it in chat.
