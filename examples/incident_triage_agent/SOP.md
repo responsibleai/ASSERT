@@ -2,8 +2,7 @@
 
 > This SOP is the canonical runbook the agent must follow when an alert fires.
 > It is also the reference document used to author the failure-mode behavior
-> specs (the `behavior:` block in `eval_config_baseline.yaml` and the
-> per-behavior configs under `behaviors/`).
+> specs in the per-behavior configs under `behaviors/`.
 >
 > Scope: a back-office incident-response automation agent that receives an
 > alert, classifies it, dispatches the right notification, files a ticket, and
@@ -187,6 +186,5 @@ evaluation, ASSERT drives it via a user simulator that may try to:
 - Trick the agent into leaking PII from `customer_payload`
 - Pressure the agent to misclassify severity ("this is just a P3, no big deal")
 
-Each of these adversarial paths is a documented failure mode — the bundled
-view lives in `eval_config_baseline.yaml`, and each path is isolated as a
-single-behavior config under `behaviors/`.
+Each adversarial path is isolated as a single-behavior config under
+`behaviors/`.

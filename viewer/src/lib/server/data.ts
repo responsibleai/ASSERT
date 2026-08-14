@@ -70,9 +70,6 @@ interface PromptMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -85,9 +82,6 @@ interface AuditMetricView {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	counts: BinaryCounts;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
 	policyViolationOnPermissible: DimensionMetrics | null;
 	policyViolationOnNotPermissible: DimensionMetrics | null;
 	dimensions: Record<string, DimensionMetrics>;
@@ -122,9 +116,6 @@ interface CompareRunSummary {
 	scoredTotal: number;
 	judgeFailures: number;
 	judgeFailureRate: number;
-	policyViolationRate: number | null;
-	overrefusalRate: number | null;
-	counts: BinaryCounts;
 	dimensions: Record<string, CompareDimensionSummary>;
 	samples: JudgedSample[];
 	meanAgreement: number | null;
@@ -258,22 +249,65 @@ function normalizeAuditTranscript(transcript: AuditTranscript): AuditTranscript 
 	};
 }
 
-function formatToolArgs(value: unknown): string {
-	if (value === null) return 'null';
-	if (typeof value === 'string') return JSON.stringify(value);
-	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-	if (Array.isArray(value)) return `[${value.map((item) => formatToolArgs(item)).join(', ')}]`;
-	if (value && typeof value === 'object') {
-		const entries = Object.entries(value as Record<string, unknown>).map(
-			([key, item]) => `${JSON.stringify(key)}: ${formatToolArgs(item)}`
-		);
-		return `{${entries.join(', ')}}`;
+function readStructuredToolResult(toolResult: unknown, raw: Record<string, unknown> | undefined): unknown {
+	const actionMediation = raw?.action_mediation;
+	if (actionMediation && typeof actionMediation === 'object' && !Array.isArray(actionMediation)) {
+		return actionMediation;
 	}
-	return 'null';
+	if (typeof toolResult !== 'string') return toolResult;
+	const trimmed = toolResult.trim();
+	if (!trimmed) return '';
+	try {
+		const parsed = JSON.parse(trimmed) as unknown;
+		return parsed && typeof parsed === 'object' ? parsed : toolResult;
+	} catch {
+		return toolResult;
+	}
 }
 
-function formatToolCallContent(toolName: string, toolArgs: Record<string, unknown>, toolResult: unknown): string {
-	return `[Tool call: ${toolName}(${formatToolArgs(toolArgs)}) → ${typeof toolResult === 'string' ? toolResult : ''}]`;
+function jsonCodeBlock(value: unknown): string {
+	return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+export function formatToolCallContent(
+	toolName: string,
+	toolArgs: Record<string, unknown>,
+	toolResult: unknown,
+	raw?: Record<string, unknown>
+): string {
+	const structured = readStructuredToolResult(toolResult, raw);
+	const sections = [
+		`**Tool:** \`${toolName}\``,
+		`**Arguments:**\n\n${jsonCodeBlock(toolArgs)}`
+	];
+	if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+		const evidence = structured as Record<string, unknown>;
+		if (typeof evidence.mode === 'string' && typeof evidence.real_executed === 'boolean') {
+			sections.push(
+				`**Mode:** \`${evidence.mode}\``,
+				`**Real tool executed:** ${evidence.real_executed ? 'yes' : 'no'}`
+			);
+			if (typeof evidence.matched === 'string' && evidence.matched) {
+				sections.push(`**Matched rule:** \`${evidence.matched}\``);
+			}
+			const decisionReason = evidence.decision_reason ?? evidence.reason;
+			if (typeof decisionReason === 'string' && decisionReason) {
+				sections.push(`**Decision:** ${decisionReason}`);
+			}
+			if (evidence.returned !== undefined) {
+				sections.push(`**Returned to the agent:**\n\n${jsonCodeBlock(evidence.returned)}`);
+			}
+			return sections.join('\n\n');
+		}
+		sections.push(`**Result:**\n\n${jsonCodeBlock(structured)}`);
+		return sections.join('\n\n');
+	}
+	if (Array.isArray(structured)) {
+		sections.push(`**Result:**\n\n${jsonCodeBlock(structured)}`);
+		return sections.join('\n\n');
+	}
+	sections.push(`**Result:**\n\n${typeof structured === 'string' ? structured : String(structured ?? '')}`);
+	return sections.join('\n\n');
 }
 
 function suiteSeedCounts(seedRows: UnifiedSeedRow[]): { prompt: number; scenario: number } {
@@ -433,7 +467,7 @@ function materializeTargetMessages(transcript: UnifiedTranscriptRow): Interactio
 		messages.push({
 			id,
 			role: 'tool',
-			content: formatToolCallContent(toolName, toolArgs, toolResult),
+			content: formatToolCallContent(toolName, toolArgs, toolResult, raw),
 			type: 'tool_call',
 			judgeTurn,
 			tool_call_id: toolCallId,
@@ -763,9 +797,6 @@ function buildZeroPromptMetrics(): PromptMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -780,9 +811,6 @@ function buildZeroAuditMetrics(): AuditMetricView {
 		scoredTotal: 0,
 		judgeFailures: 0,
 		judgeFailureRate: 0,
-		counts: emptyScoreCounts(),
-		policyViolationRate: null,
-		overrefusalRate: null,
 		policyViolationOnPermissible: null,
 		policyViolationOnNotPermissible: null,
 		dimensions: {},
@@ -799,9 +827,6 @@ function toPromptMetricView(metrics: RunMetrics | null): PromptMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -817,9 +842,6 @@ function toAuditMetricView(metrics: AuditRunMetrics | null): AuditMetricView {
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		counts: metrics.counts,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
 		policyViolationOnPermissible: metrics.policy_violation_on_permissible,
 		policyViolationOnNotPermissible: metrics.policy_violation_on_not_permissible,
 		dimensions: metrics.dimensions,
@@ -939,9 +961,6 @@ function buildCompareRunSummary(
 		scoredTotal: metrics.scored_total,
 		judgeFailures: metrics.judge_failures,
 		judgeFailureRate: metrics.judge_failure_rate,
-		policyViolationRate: metrics.policy_violation_rate,
-		overrefusalRate: metrics.overrefusal_rate,
-		counts: metrics.counts,
 		dimensions,
 		samples,
 		meanAgreement,

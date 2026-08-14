@@ -416,20 +416,6 @@
 		expandedRunIds = next;
 	}
 
-	function aggregateRunViolationRate(run: CombinedRunEntry): number | null {
-		const promptTotal = run.prompt?.metrics?.total ?? 0;
-		const auditTotal = run.audit?.metrics?.total ?? 0;
-		const total = promptTotal + auditTotal;
-		if (total === 0) return null;
-		const promptRate = run.prompt?.metrics?.policy_violation_rate;
-		const auditRate = run.audit?.metrics?.policy_violation_rate;
-		const applicableTotal = (promptRate == null ? 0 : promptTotal) + (auditRate == null ? 0 : auditTotal);
-		if (applicableTotal === 0) return null;
-		const promptViolations = promptRate == null ? 0 : promptTotal * promptRate;
-		const auditViolations = auditRate == null ? 0 : auditTotal * auditRate;
-		return (promptViolations + auditViolations) / applicableTotal;
-	}
-
 	function aggregateRunDimensionRate(run: CombinedRunEntry, dimension: string): number | null {
 		const promptDim = run.prompt?.metrics?.dimensions?.[dimension];
 		const auditDim = run.audit?.metrics?.dimensions?.[dimension];

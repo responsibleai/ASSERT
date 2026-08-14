@@ -1,5 +1,5 @@
 ---
-description: ASSERT repo orientation pointer plus the self-contained run-assert-eval evaluation workflow.
+description: ASSERT repo orientation pointer plus the Clarity-driven run-assert-eval evaluation workflow.
 globs:
 alwaysApply: true
 ---
@@ -12,48 +12,100 @@ tasks. For orientation, do not copy AGENTS.md content here — read it there so 
 
 Never read, print, commit, summarize, or infer values from `.env` or other local environment files.
 Reference env variable NAMES only (AZURE_API_KEY, AZURE_API_BASE, azure_ad_token,
-azure_ad_token_provider) — never their values.
+azure_ad_token_provider, GITHUB_TOKEN, ANTHROPIC_API_KEY) — never their values.
 
 ## Run an ASSERT evaluation
 
-When the user describes a behavior they want their agent or model to follow or avoid and wants
-evidence of how it actually behaves, run an end-to-end evaluation. Orchestrate existing `assert-ai`
-CLI commands — do not reimplement pipeline logic. This finds and reports failures; it is not for
-fixing the agent.
+When the user wants evidence of how their agent or model actually behaves, run an end-to-end
+evaluation whose risks are discovered with Clarity. Drive the existing Clarity **MCP tools** and
+`assert-ai` CLI — do not reimplement Clarity's questioning or any pipeline logic. This finds and reports
+failures; it is not for fixing the agent.
 
 Two entry modes:
 
-- **Run mode** — no usable results exist yet: generate or reuse a config, run the pipeline
-  (Steps 1-3), then report (Step 4).
+- **Run mode** — no usable results exist yet. Risks come from **Clarity** (Steps 1-2): an existing
+  `.clarity-protocol/` directory or a fresh discovery run via the Clarity MCP `run_clarity` tool, driven
+  in-IDE. Then turn each selected risk into an atomic config, run the pipeline (Steps 3-5), then report
+  (Step 6).
 - **Results Q&A mode** — judged artifacts already exist under `artifacts/results/<suite>/<run>/` and
   the user asks a *question* about them ("what are the highlights?", "top 3 examples of the worst
-  failure mode?", "why did case X fail?"). Skip to Step 4 and answer THAT question from the artifacts
+  failure mode?", "why did case X fail?"). Skip to Step 6 and answer THAT question from the artifacts
   — do not re-run, and do not emit the full canned report unless asked.
 
-**Copilot vs. the local viewer**: Copilot is for *answering questions* and *synthesis* (direct
+**Clarity is required for Run mode — no non-Clarity fallback.** Risks that seed an eval MUST come from
+Clarity (an existing `.clarity-protocol/` or a fresh discovery run via the Clarity MCP `run_clarity`
+tool). Do not substitute a plain-language description, and do not imitate Clarity's questioning from
+your own head — `run_clarity` returns Clarity's real process guide inlined, and you follow *that* to
+conduct the clarifying loop. Skipping Clarity's captured risks produces inaccurate, low-signal results.
+If the Clarity MCP tools are not available, STOP and help the user set them up (`SETUP-CHECKLIST.md`)
+rather than proceeding.
+
+**Cursor vs. the local viewer**: Cursor is for *answering questions* and *synthesis* (direct
 answers, failure-mode clustering, cited examples, next actions — no clicking). The bundled local
 viewer is for *visual exploration* (forest plots, baseline compare, facet grouping, transcript
 stepping with citations highlighted). Answer in chat for "what / why / which"; hand off to the viewer
-(Step 5) when the user wants to *see*, *read a full transcript*, *compare runs*, or *watch a live run*.
+(Step 7) when the user wants to *see*, *read a full transcript*, *compare runs*, or *watch a live run*.
 
 ### Preconditions (check, don't assume)
 
 1. **ASSERT installed**: verify `assert-ai --help` succeeds. If not, guide install:
    `python -m pip install -e ".[otel,langgraph]"`.
-2. **Provider creds exist** in `.env`. NEVER read or print `.env`. On an auth error, tell the user
-   which variable NAMES are required (AZURE_API_KEY, AZURE_API_BASE, OPENAI_API_KEY, etc.) — never values.
+2. **Clarity MCP server available** (required for Run mode): the `clarity-agent` MCP tools
+   (`run_clarity`, `write_protocol_document`, `record_failure`, `record_suggestion`, …) are callable.
+   Clarity is the risk-discovery engine — the skill drives its real MCP tools, it does not reimplement
+   it. If the tools are missing, the server is not wired up yet: guide the user through
+   `SETUP-CHECKLIST.md` (install `clarity-agent` with the `[mcp]` extra, run `clarity embed .` to
+   generate `.vscode/mcp.json`, reload MCP servers) and confirm the LLM provider is configured
+   (`clarity doctor`). If the MCP tools cannot be made available, STOP and help resolve it — do not
+   proceed with a non-Clarity path.
+3. **Provider creds exist** in `.env`. NEVER read or print `.env`. On an auth error, tell the user
+   which variable NAMES are required (AZURE_API_KEY, AZURE_API_BASE, OPENAI_API_KEY, GITHUB_TOKEN,
+   ANTHROPIC_API_KEY, etc.) — never values.
 
-### 1. Get or make a config
+### 1. Discover risks with Clarity (required front door)
 
-- **Existing config** — extend it:
-  `assert-ai init --from <path> --model <litellm-model> --non-interactive -o eval_config.yaml`
-- **Plain-language requirement** — generate from scratch:
-  `assert-ai init --model <litellm-model> --describe "<requirement + target context>" --non-interactive -o eval_config.yaml`
-- **If the spec is vague**, ask ONE clarifying question first — vague specs produce vague test sets.
-- After generation, show the user the generated `behavior.description`, `context`, and
-  `pipeline.judge` dimensions. Confirm before running.
+Risks come from Clarity's real engine, driven through the **Clarity MCP server** — never from a
+plain-language guess and never by imitating Clarity from your own head.
 
-### 2. Identify the target shape
+- **Existing `.clarity-protocol/`** — use it directly as the risk source.
+- **Otherwise run discovery via the Clarity MCP tools:** call `run_clarity` (it returns Clarity's real
+  process guide inlined as text), follow that guide to ask the user the clarifying questions in chat,
+  and persist findings with `write_protocol_document` and `record_failure` until
+  `.clarity-protocol/failures/failures.md` is written.
+
+Read Clarity's output: `.clarity-protocol/failures/failures.md` enumerates failure modes (each = one
+candidate ASSERT behavior); `summary.md`, `goal/requirements.md`, and `solution/architecture.md` give
+target/context. For the full measurement path (parse → triage → one atomic config per selected failure
+→ sequential runs → report → close the loop → curate the example), follow
+`../../.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` and use the intake parser
+(`clarity_intake.py`) to turn `failures.md` into candidate behaviors (Critical→P1, High→P2, Medium→P3,
+ranges→max; variant-derived stratify dimensions). Order by what Clarity captured; do not fabricate
+priorities. **Before a fresh discovery run, check the preservation gate:** `.clarity-protocol/` is gitignored,
+single-domain scratch and `run_clarity` **overwrites** it, destroying the prior domain's `failures/`,
+`goal/`, and `solution/` with no git recovery. If another domain's protocol is present, STOP and let the
+user export it to a user-owned location or explicitly discard it. Never commit it into `examples/`.
+
+### 2. Triage — choose which risks to measure now
+
+Clarity intentionally over-produces. Do NOT auto-generate an eval for every failure mode. Surface the
+list (ordered by Clarity's severity signal) and ask the user which to measure now (e.g. "top-severity
+only?", or named picks). Carry only the selected risks forward.
+
+### 3. Turn each selected risk into an atomic config
+
+ASSERT performs best with **one atomic behavior per eval**. Never bundle multiple risks into one config
+— bundling makes `policy_violation` a fuzzy logical-OR and hides per-behavior signal.
+
+- **1 selected risk** → one config, run once.
+- **N selected risks** → N flat `evals/<atomic_behavior>.yaml` files, run sequentially, one per behavior.
+
+Map each Clarity failure mode → `behavior.name` + `behavior.description`, use its context for `context`:
+`assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o evals/<atomic_behavior>.yaml`. Write the failure-mode text (failure mode + how it arises + target context) to a file and pass `--describe-file` rather than interpolating Clarity-derived prose into `--describe "<text>"`, where a quote, backtick, or `$(...)` would break the command or inject into the shell. `--default-model` seeds the generated config's `pipeline.default_model` (the model the **eval** runs against); `--model` is only the init assistant's own conversation model (default `azure/gpt-5.4-mini`) and does not affect the eval. **Then pin the two ground-truth stages to the strong model by hand** — `init` has no `--systematize-model` / `--judge-model` flag, so everything inherits `default_model` unless you edit the config: keep `default_model.name: azure/gpt-5.4-mini` for target/test-set/tester, but set `pipeline.systematize.model: azure/gpt-5.4` and `pipeline.judge.model: azure/gpt-5.4` (the convention in the repo's own `examples/` configs). `systematize` authors the behavior tree and the permissible / non-permissible split every metric is computed against, and `judge` decides applicability *and* violation per row on a single sample (`judge.n` defaults to `1`, temperature unpinned) — a weak model there moves the target rather than adding noise around it, and inflates run-to-run applicability drift. Verify via `assert-ai results status <suite> <run> --json` → `prompt_metrics.judge_model`.
+To extend an existing config, use `--from <path>`. **Check the built-in presets first** — `assert-ai library list` shows bundled behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …) and `assert-ai library show <name>` prints one; if one matches the risk, seed with `--behavior <name>` / `--judge-preset <name>` rather than generating from scratch. **Ask the user for the `sample_size` — do not pick it silently:** each rate is `violations / sample_size`, so at `10` one flipped case = ±10pp of noise, and inference is non-deterministic (agent temperature 1.0; gpt-5 can't be pinned lower) so two runs of the same config drift by chance. Before generating, ask e.g. *"How many cases per behavior? `10` = fast/noisy, `25` = stable (recommended), `50`+ = tightest — same size for prompt and scenario."* Recommend `25`, and **`≥25` for any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size — see `govern-and-remeasure.md`); default to `25` if the user has no preference. After generation, show the user the generated
+`behavior.description`, `context`, and `pipeline.judge` settings, plus the resolved `systematize` / `judge` models. Confirm before running.
+**Do not author judge `dimensions`:** `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled, so no `dimensions` block is needed. Config dimensions merge over the built-ins **by name**, so declaring one with a built-in name silently replaces that built-in's rubric. Add one only for a genuinely new metric, never reusing a built-in name.
+
+### 4. Identify the target shape
 
 - **Framework agent** (LangGraph, CrewAI, etc.) with a Python entry function: `target.callable`
   WITH `target.trace` so the judge can cite tool calls and routing.
@@ -65,15 +117,25 @@ stepping with citations highlighted). Answer in chat for "what / why / which"; h
   (requires `aiohttp`). Only write a thin `target.callable` shim if the service's request/response
   shape differs. Either way the judge sees only final text, so this is a fallback, not the
   recommended path.
+- **Callable contract** — full signature/return rules in `docs/targets/callable.md`; two silent
+  traps that doc omits: (a) `history` is detected by parameter **name**, so naming it `messages`
+  or `conversation` silently degrades every scenario to single-turn — no warning, and the baseline
+  plus any ACS delta measured against it are invalid; (b) module resolution falls back `sys.path` →
+  config dir → cwd → direct file load, so prefer a domain-unique module name over a bare `agent`.
+- **Why `target.trace` is mandatory** — judge visibility is 1/8 signals from a plain `str` return,
+  4/8 from a LiteLLM-style response, 8/8 with OTel traces; only OTel exposes *intermediate* tool
+  calls and routing/sub-agent decisions. Use ASSERT's OTel auto-instrumentation (33 frameworks,
+  one helper call at the top of the callable module) rather than hand-writing spans.
 
-### 3. Run the pipeline
+### 5. Run the pipeline
 
-`assert-ai run --config eval_config.yaml --output json`
+`assert-ai run --config evals/<atomic_behavior>.yaml --output json`
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status as each stage
-completes. Re-run from a stage with `--force-stage <stage>`. Note the `suite` and `run` names for Step 4.
+completes. For N configs, run them sequentially and track each `suite`/`run`. Re-run from a stage with
+`--force-stage <stage>`. Note the `suite` and `run` names for Step 6.
 
-### 4. Report results — never collapse to one number
+### 6. Report results — never collapse to one number
 
 **Read only structured artifacts.** Aggregate from the pre-computed, schema'd files — never trawl raw
 Phoenix/OpenTelemetry traces to reconstruct an answer (that bulk, unguided trace-reading is what the
@@ -81,8 +143,15 @@ viewer's evidence drawer is for). Reading the `inference_set.jsonl` row for a *s
 already cited* is fine; bulk trace trawling is not.
 
 1. **Headline rates**: `assert-ai results status <suite> <run>` for per-dimension flagged rates
-   (split into prompt and scenario). Report `policy_violation` and `overrefusal` SEPARATELY — they
-   are two different problems.
+   (split into prompt and scenario). Report the violation dimension and `overrefusal` SEPARATELY —
+   they are two different problems. The built-in `policy_violation` ORs over ALL violated taxonomy
+   nodes (permissible included), so it couples with `overrefusal`. The headline pair is the
+   permissibility split: add `--json` and read `not_permissible_policy_violation_rate` (real harm
+   got through) and `permissible_policy_violation_rate` (the agent broke a behavior it was allowed
+   to do), each one vote per conversation. Headline both in an ACS A/B — harm should drop while
+   permissible stays flat (see `govern-and-remeasure.md`). The viewer exposes the same pair as the
+   dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`, rendered on
+   screen as **Harm (non-permissible)** / **Permissible behavior violated**.
 2. **Top failing cases**: read `scores.jsonl` from `artifacts/results/<suite>/<run>/`. For each
    failing dimension, pull 3-5 representative cases with the test case description,
    `verdict.dimensions`, `verdict.dimension_justifications` (judge rationale + cited evidence), and
@@ -94,19 +163,31 @@ For **Results Q&A mode**, answer the user's specific question from these same ar
 dimensions by flagged rate for "top failure mode", then quote `dimension_justifications` for the
 cited examples). Don't emit the full template unless asked.
 
-### 5. Hand off to the local viewer
+### 7. Hand off to the local viewer
 
 After reporting, point the user to the bundled viewer for anything visual or self-directed — it went
 through extensive design iteration and owns the exploration surface Copilot should not replicate:
 `cd viewer && npm install && npm run dev` then open `http://localhost:5174`. Select the suite and run
 for forest plots, per-dimension breakdowns, facet grouping, the permissible vs. not-permissible
-policy-violation split (viewer-only), and a transcript drawer with the judge's `[N]` citations
+policy-violation split (also available from `assert-ai results status --json` and rendered by
+`results compare`), and a transcript drawer with the judge's `[N]` citations
 highlighted. Suggest it when the user wants to **read a full transcript / see the trace** (evidence
 drawer), **compare against a baseline** (viewer compare view, or `assert-ai results compare <suite>
 <runA> <runB>`), or **watch a run in progress** (live run monitor). See
 `docs/guides/use-local-viewer.md` for the layout.
 
-### 6. Hand off to CI
+### 8. Govern the failure and re-measure (ACS)
+
+When a run surfaces `policy_violation` failures and the user wants to **fix and prove it**, generate a
+deployable **ACS** (Agent Control Specification) policy from the findings and re-run the same eval
+against the governed agent to show the failure rate dropped — the ACS delta. Uses ASSERT's native
+`assert-ai acs generate` / `validate` adapter (no external `acs` CLI). Requires a **callable** target
+whose high-risk tools can be wrapped (`control.protect_tool`); a hosted-model Prompt Agent target has
+nothing wrappable. Follow `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`
+(baseline → `acs generate` → `acs validate` → governed run → delta from two `results status --json` calls → export each run to standalone HTML →
+close the loop in Clarity). **Classify the failure before generating the policy** (Step 1a): read the baseline's `verdict.dimension_justifications` to decide semantic (`output` annotator) vs structural (tool gate), and confirm the harm actually routes through the tool you plan to gate — getting that wrong is the main cause of a gate that fires ~0 times. Always regenerate-and-re-gate on a deny (never a flat-refusal fallback, which is scored as overrefusal). If the delta still comes out wrong, `../../.claude/skills/run-assert-eval/workflows/diagnose-acs-delta.md` is the symptom-indexed diagnostic manual (cap ~4 attempts). Reference: `examples/billing_support_agent/agent.py` (baseline callable shape; the governed entrypoint is a workflow output, not checked in).
+
+### 9. Hand off to CI
 
 Once the eval is passing locally and the user wants it enforced on PRs, hand off to the `wire-assert-ci` skill. Do not author CI wiring here; direct the user or agent to the action bootstrap:
 
@@ -116,20 +197,37 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
 
 ### Output format
 
-- **Headline metrics** (per dimension): policy violation rate X% (N/M), overrefusal rate X% (N/M),
-  plus any custom dimensions.
+  - **Headline metrics**: harm — non-permissible violation rate X% (N/M) [`not_permissible_policy_violation_rate`]
+  and permissible behavior violated X% (N/M) [`permissible_policy_violation_rate`], from `results status --json`;
+  overrefusal rate X% (N/M) alongside as the separate availability check. The raw `policy_violation` rate ORs
+  over all violated nodes and couples the two — quote it only as context, never as the headline.
 - **Top failing cases** (3-5 per dimension): requirement cited (behavior category from taxonomy),
   action cited (specific turn or tool call from judge rationale), judge rationale (verbatim from
   `dimension_justifications`).
-- **Suggested next step**: one concrete action (tighten the system prompt around X, add a dimension
-  for Y, apply an ACS guardrail at the failing checkpoint).
+- **Suggested next step**: one concrete action (tighten the system prompt around X, add a stratify
+  dimension for Y, or govern the failure with ACS and re-measure to prove the rate dropped — see Step 8 and
+  `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
+
+### Authoritative references
+
+Team-maintained docs on `main` — prefer them over restating product behavior here.
+`create-evaluation.md` + `config/schema.md` (step 3), `targets/callable.md` +
+`targets/model-and-tools.md` (step 4), `guides/troubleshooting.md` (step 5),
+`guides/results.md` (step 6), `guides/use-local-viewer.md` (step 7),
+`guides/securing-agents-with-acs.md` (step 8). This skill owns the methodology; those own
+product behavior.
 
 ### Guardrails
 
+- **Clarity is the required risk source** — for Run mode, risks come from Clarity (existing `.clarity-protocol/` or a fresh discovery run via the `run_clarity` MCP tool). Never substitute a plain-language guess or imitate Clarity's questioning from your own head; if the MCP tools can't be made available, stop and help fix it (`SETUP-CHECKLIST.md`).
+- **Drive the real Clarity MCP tools in-IDE** — use `run_clarity` / `write_protocol_document` / `record_failure` for discovery and `record_suggestion` to close the loop; never hand the user off to a separate Clarity app and never shell out to a `clarity cli` process.
+- **Close the loop** — after a run, offer `record_suggestion` (or `record_decision`) back into `.clarity-protocol/` noting the failure mode now has a measured baseline and where the eval lives.
+- **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
+- **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
+- **Triage before running** — never auto-generate an eval for every Clarity failure mode; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.
 - **Don't trawl raw traces to answer questions** — answer from `results status`, `scores.jsonl`, and `metrics.json`; hand off to the viewer for visual trace/transcript exploration.
 - **Hand off, don't reimplement the viewer** — for visual drill-down, baseline compare, or live monitoring, point to the local viewer rather than reproducing it in chat.
 - **Don't read, print, or commit** `.env`, credential values, `artifacts/`, traces, `.venv`, or logs.
-- **If the spec is vague**, ask one clarifying question FIRST.
-- **Reference env variable NAMES only** (AZURE_API_KEY, AZURE_API_BASE, azure_ad_token) — never values.
+- **Reference env variable NAMES only** (AZURE_API_KEY, AZURE_API_BASE, azure_ad_token, GITHUB_TOKEN, ANTHROPIC_API_KEY) — never values.
 - **Don't commit artifacts** to the repository.

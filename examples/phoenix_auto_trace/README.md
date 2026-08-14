@@ -98,6 +98,20 @@ assert-ai run --config examples/phoenix_auto_trace/eval_openai.yaml
 
 Set provider credentials for the SDK you choose; for the OpenAI/Azure-compatible starter path, use `AZURE_API_BASE`, `AZURE_API_KEY`, and optionally `ASSERT_AZURE_DEPLOYMENT` (or the OpenAI SDK's standard variables).
 
+### Atomic LangGraph evals
+
+The `evals/` folder contains exactly two independently runnable behavior configs
+for the auto-instrumented LangGraph target:
+
+```bash
+assert-ai run --config examples/phoenix_auto_trace/evals/fabricated_travel_details.yaml
+assert-ai run --config examples/phoenix_auto_trace/evals/budget_overrun.yaml
+```
+
+Each config targets `examples.phoenix_auto_trace.travel_langgraph:chat` and uses
+`target.trace.backend: phoenix`, preserving the gallery's Phoenix/OpenTelemetry
+auto-trace path.
+
 ## Phoenix and external-service prerequisites
 
 | Area | Requirement |

@@ -19,15 +19,20 @@ class GuardrailPrompt:
 
 
 # Steer the generator's LLM toward blocking the general class of each failing
-# behavior instead of overfitting to the specific representative example. The
-# ACS generator can declare classifier/llm annotators and condition rules on
-# ``input.annotations.<annotator>``, which generalizes far better than literal
-# keyword matches on ``input.policy_target.value``.
+# behavior instead of overfitting to the specific representative example, and to
+# pick the rule STYLE that matches the finding. Structural gates (decidable from
+# tool arguments or session state) should be DETERMINISTIC Rego over
+# ``input.policy_target.value`` — those enforce without a per-step model call and
+# are exercised by offline ``assert-ai acs validate``. Semantic gates (judging the
+# meaning of free-form content) should use a classifier/LLM annotator and condition
+# on ``input.annotations.<annotator>``; those deliberately do not fire under offline
+# ``validate`` (which does not run annotators), which is expected, not a defect.
 _GENERALIZATION_GUIDANCE = (
     "Generalization guidance:",
     "- Each rule must block the general CLASS of behavior described by the category definition, not one specific phrasing.",
-    "- Do not hardcode literal wording, names, or numbers; the rule must catch paraphrases and novel instances of the same class.",
-    "- Prefer a semantic classifier or LLM annotator bound to the intervention point and condition on `input.annotations.<annotator>`; fall back to a literal `input.policy_target.value` check only when no semantic signal is available.",
+    "- Choose the rule STYLE by what the violation conditions on:",
+    "  - STRUCTURAL gate (decidable from tool arguments or session state — e.g. account/tenant scoping, numeric caps, a required verification flag): author DETERMINISTIC Rego that conditions on `input.policy_target.value` (the tool args at `pre_tool_call`, the tool result at `post_tool_call`) and `input.tool.name`. Generalize the comparison (e.g. requested account != the caller's account), but do not hardcode the specific representative values. Deterministic rules enforce without a per-step model call and ARE exercised by offline `assert-ai acs validate`.",
+    "  - SEMANTIC gate (requires judging the meaning of free-form content — e.g. toxicity, PII disclosure, jailbreak phrasing, unsafe advice): declare a classifier or LLM annotator bound to the intervention point and condition on `input.annotations.<annotator>`. Do not hardcode literal wording; the rule must catch paraphrases and novel instances of the same class. (Annotator rules do not fire under offline `validate`, which does not run annotators — that is expected, not a policy defect.)",
     "- Keep each rule tight enough to avoid denying permissible content. The goal is to block the violation class, not every related topic.",
 )
 
@@ -130,6 +135,10 @@ def _behavior_instruction_lines(
         lines.append(
             f"  Gate the tool(s) {gated} by matching `input.tool.name`, and declare them in the manifest tools."
         )
+        if point in ("pre_tool_call", "post_tool_call"):
+            lines.append(
+                "  If this violation is decidable from the tool's arguments or session state, author a DETERMINISTIC rule over `input.policy_target.value` rather than an annotator, so it enforces without a per-step model call and is exercised by offline `assert-ai acs validate`."
+            )
     # The prompt deliberately carries only structured findings signal: the violated
     # node definition, permissibility, rate, intervention point, and the violated
     # node name and tool names. Note the node name (a judge classification label) and

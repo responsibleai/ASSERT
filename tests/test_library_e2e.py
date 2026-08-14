@@ -49,6 +49,7 @@ ALL_SCENARIO_NAMES = sorted(
 
 BEHAVIOR_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description"}
 JUDGE_REQUIRED_KEYS = {"kind", "name", "version", "tags", "description", "dimensions"}
+SCENARIO_REQUIRED_KEYS = {"kind", "name", "version", "tags", "context", "behaviors"}
 
 
 def _base_config(**overrides):
@@ -174,6 +175,37 @@ class JudgeYamlSchemaTest(unittest.TestCase):
                 self.assertIsInstance(data["tags"], list)
                 for tag in data["tags"]:
                     self.assertIsInstance(tag, str)
+
+
+class ScenarioYamlSchemaTest(unittest.TestCase):
+    """Validate scenario YAML files stay context-only and behavior-linked."""
+
+    def test_all_scenario_files_have_required_keys(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                for key in SCENARIO_REQUIRED_KEYS:
+                    self.assertIn(key, data, f"scenario {name!r} missing key {key!r}")
+
+    def test_scenarios_are_context_not_behavior_specs(self):
+        for name in ALL_SCENARIO_NAMES:
+            with self.subTest(scenario=name):
+                data = load_preset("scenario", name)
+                self.assertEqual(data["kind"], "scenario")
+                self.assertNotIn("description", data)
+                self.assertIsInstance(data["context"], str)
+                self.assertGreater(len(data["context"].strip()), 0)
+
+    def test_scenario_behavior_references_exist(self):
+        behavior_names = set(ALL_BEHAVIOR_NAMES)
+        for name in ALL_SCENARIO_NAMES:
+            data = load_preset("scenario", name)
+            self.assertIsInstance(data["behaviors"], list)
+            self.assertGreater(len(data["behaviors"]), 0)
+            for behavior in data["behaviors"]:
+                with self.subTest(scenario=name, behavior=behavior):
+                    self.assertIsInstance(behavior, str)
+                    self.assertIn(behavior, behavior_names)
 
 
 # ===================================================================
@@ -637,9 +669,13 @@ class ExampleConfigTest(unittest.TestCase):
     """The example eval_config.yaml that uses presets loads correctly."""
 
     def test_example_travel_planner_config_loads(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)
@@ -650,9 +686,13 @@ class ExampleConfigTest(unittest.TestCase):
         self.assertIn("overrefusal", dim_names)
 
     def test_example_config_inline_overrides_preset(self):
-        config_path = Path("examples/travel_planner_langgraph/eval_config.yaml")
-        if not config_path.is_file():
-            self.skipTest("Example config not found")
+        config_path = Path("examples/langgraph-foundry-hosted/eval_config.yaml")
+        self.assertTrue(
+            config_path.is_file(),
+            f"{config_path} is missing. This test guards judge-preset merging against a "
+            "shipped example; repoint it at another config that sets judge.preset rather "
+            "than letting it skip.",
+        )
         with open(config_path) as f:
             raw = yaml.safe_load(f)
         ctx = load_runtime_context(raw, config_path, stage_modules=STAGES)

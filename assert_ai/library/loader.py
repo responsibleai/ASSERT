@@ -68,7 +68,27 @@ def load_preset(kind: str, name: str) -> dict[str, Any]:
         raise ValueError(
             f"Preset {name!r} has kind={file_kind!r}, expected {kind!r}"
         )
+    if kind == "behavior" and file_kind == "scenario" and not data.get("description"):
+        data = {**data, "description": _legacy_scenario_description(data)}
     return data
+
+
+def _legacy_scenario_description(data: dict[str, Any]) -> str:
+    """Build a deprecated behavior description for configs using behavior.preset."""
+    title = str(data.get("summary") or data.get("name") or "Application scenario")
+    context = str(data.get("context") or "").strip()
+    behaviors = data.get("behaviors") or []
+    lines = [
+        f"# {data.get('name', 'scenario')}",
+        "",
+        title,
+    ]
+    if context:
+        lines.extend(["", context])
+    if behaviors:
+        lines.extend(["", "Applicable atomic behavior presets:"])
+        lines.extend(f"- {behavior}" for behavior in behaviors)
+    return "\n".join(lines).strip() + "\n"
 
 
 def discover(kind: str | None = None) -> list[dict[str, Any]]:
