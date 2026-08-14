@@ -251,9 +251,10 @@ Avoid overly broad categories like:
 > one mechanism, one judge verdict. Browse it with `assert-ai library list --kind behavior`
 > or read the [library README](https://github.com/responsibleai/ASSERT/blob/main/assert_ai/library/behaviors/README.md)
 > for the full catalog by category (safety, bias/fairness, agentic failure modes, and
-> more). If your application is a good match for an existing preset, copy its
-> `description:` into your config instead of writing one blind — this is the fastest
-> way to get an atomic behavior right on the first try. Application context (the role,
+> more). If your application is a good match for an existing preset, set
+> `behavior.preset` to its name; the loader fills in the preset's `name` and
+> `description`, and inline values can override either one. This is the fastest way
+> to get an atomic behavior right on the first try. Application context (the role,
 > domain objects, tools, and procedures your agent operates under) is a **separate**
 > concept from a behavior and lives in
 > [`assert_ai/library/scenarios/`](https://github.com/responsibleai/ASSERT/tree/main/assert_ai/library/scenarios) —

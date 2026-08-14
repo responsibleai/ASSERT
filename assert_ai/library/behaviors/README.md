@@ -6,13 +6,14 @@ referenced by name or copied and customized.
 
 ## How to use
 
-Reference a preset by name in your `eval_config.yaml`:
+Reference an atomic preset by name in your `eval_config.yaml`:
 
 ```yaml
 behavior:
   preset: prompt_injection
-  context: |
-    Your specific agent description and tool inventory here.
+
+context: |
+  Your specific agent description and tool inventory here.
 ```
 
 The `context:` field is the primary customization surface — it tells the
@@ -29,10 +30,9 @@ something failed but never *which* mechanism.
 Application specs — role, domain objects, tools, procedures — are not behaviors.
 They live in [`../scenarios/`](../scenarios/) and belong in `context:`.
 
-> **Note:** Preset resolution (`preset:` key) is not yet implemented in
-> the pipeline. Today, copy the `description:` content into your
-> `eval_config.yaml`'s `behavior.description` field. These files serve
-> as a curated reference library.
+`behavior.preset` fills any missing `behavior.name` and
+`behavior.description` from the library. Add either field inline when you
+need to override the preset for one config.
 
 ## Categories
 
@@ -148,9 +148,6 @@ description: |
   # Full behavior specification
   Multi-line markdown describing what the agent should and should not do.
 
-# Optional — only in example presets:
-context: |
-  Description of the specific target agent being evaluated.
 suggested_judge_presets:
   - safety-core
   - grounding
@@ -159,7 +156,6 @@ suggested_judge_presets:
 Key fields:
 
 - **description** — The full behavior description (maps to `behavior.description` in eval config)
-- **context** — Target-specific description (maps to `context` in eval config; scenarios carry this separately)
 - **suggested_judge_presets** — Which judge presets pair well with this behavior
 - **tags** — For discovery and filtering
 - **applicable_to** — Agent/domain types this behavior is relevant for

@@ -91,6 +91,16 @@ class ValidationReport:
     strong_blocked: int
     cases: tuple[ValidationCase, ...]
     uncovered_behaviors: tuple[str, ...] = ()
+    annotator_dependent: bool = False
+    """True when the effective policy conditions on LLM annotators.
+
+    Rules of the form ``input.annotations.<name>`` cannot fire under offline
+    ``validate`` (which wires no annotator dispatcher, so annotations are never
+    populated). When this is set, an unblocked/low ``handled`` count for those
+    rules is expected offline and must be confirmed via a guarded remeasure run,
+    not treated as a policy defect. It never changes the handled/blocked math or
+    the gate result — it is an advisory signal only.
+    """
 
     @property
     def failed(self) -> int:
@@ -169,6 +179,8 @@ async def validate_policy_async(
     if not resolved.is_file():
         raise FileNotFoundError(f"ACS manifest not found: {resolved}")
 
+    annotator_dependent = _policy_references_annotators(resolved)
+
     examples = list(findings.failing_examples)
     if max_cases is not None:
         examples = examples[:max_cases]
@@ -193,6 +205,7 @@ async def validate_policy_async(
             strong_blocked=0,
             cases=(),
             uncovered_behaviors=uncovered_behaviors,
+            annotator_dependent=annotator_dependent,
         )
 
     client = NativeRuntimeClient.from_path(str(resolved))
@@ -216,7 +229,37 @@ async def validate_policy_async(
         strong_blocked=strong,
         cases=tuple(cases),
         uncovered_behaviors=uncovered_behaviors,
+        annotator_dependent=annotator_dependent,
     )
+
+
+def _policy_references_annotators(manifest_path: Path) -> bool:
+    """Best-effort: does the effective policy condition on LLM annotators?
+
+    A rule of the form ``input.annotations.<name>`` cannot fire under offline
+    ``validate``: no annotator dispatcher is wired (see ``validate_policy_async``),
+    so ``input.annotations`` is never populated. Detect such rules by scanning the
+    Rego reachable from the manifest so the caller can explain a resulting 0/N
+    rather than mistaking it for a policy defect.
+
+    Heuristic and advisory only: scans ``*.rego`` under the manifest's directory
+    (which covers the generator's ``policy/`` output). An ``extends`` chain that
+    points outside that tree is not followed. This signal never changes the
+    handled/blocked math or the validation gate.
+    """
+    root = manifest_path.parent
+    try:
+        rego_files = list(root.rglob("*.rego"))
+    except OSError:
+        return False
+    for rego in rego_files:
+        try:
+            text = rego.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "input.annotations" in text:
+            return True
+    return False
 
 
 def _build_case(example: FailingExample, result: Any) -> ValidationCase:

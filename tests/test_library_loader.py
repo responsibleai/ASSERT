@@ -31,15 +31,19 @@ class ResolvePresetTest(unittest.TestCase):
         self.assertEqual(path.name, "travel_planner.yaml")
         self.assertEqual(path.parent.name, "scenarios")
 
-    def test_resolve_moved_scenario_as_behavior_warns(self) -> None:
-        # Existing configs say `behavior: {preset: travel_planner}`. Keep them
-        # working, but tell the author it has been reclassified. FutureWarning,
-        # not DeprecationWarning: the latter is suppressed by default outside
-        # pytest/-W, and config authors running `assert-ai run` directly need
-        # to actually see this.
-        with self.assertWarns(FutureWarning):
-            path = resolve_preset("behavior", "travel_planner")
-        self.assertEqual(path.parent.name, "scenarios")
+    def test_resolve_moved_scenarios_as_behavior_warns(self) -> None:
+        # Existing configs use these names as behavior presets. Keep those
+        # historical aliases working, but make the reclassification visible.
+        # FutureWarning, not DeprecationWarning: the latter is suppressed by
+        # default outside pytest/-W.
+        for name in (
+            "telecom_customer_service",
+            "travel_planner",
+            "travel_planner_benchmark",
+        ):
+            with self.subTest(name=name), self.assertWarns(FutureWarning):
+                path = resolve_preset("behavior", name)
+            self.assertEqual(path.parent.name, "scenarios")
 
     def test_resolve_unknown_kind_raises(self) -> None:
         with self.assertRaises(ValueError, msg="Unknown preset kind"):
@@ -69,6 +73,13 @@ class LoadPresetTest(unittest.TestCase):
         self.assertEqual(data["kind"], "scenario")
         self.assertEqual(data["name"], "travel_planner")
         self.assertIn("context", data)
+
+    def test_load_moved_scenario_as_behavior_builds_legacy_description(self) -> None:
+        with self.assertWarns(FutureWarning):
+            data = load_preset("behavior", "travel_planner")
+        self.assertEqual(data["kind"], "scenario")
+        self.assertIn("description", data)
+        self.assertIn(data["context"].strip(), data["description"])
 
     def test_load_kind_mismatch_raises(self) -> None:
         # safety-core is a judge_preset, not a behavior

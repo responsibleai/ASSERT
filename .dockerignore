@@ -1,0 +1,14 @@
+# The stock sandbox example builds from the repository root so it can install the
+# checked-out ASSERT package. Send only the files that image actually needs; do
+# not send .git, local environments, artifacts, logs, or credentials to Docker.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!assert_ai/
+!assert_ai/**
+!examples/
+!examples/sandbox_action_mediation/
+!examples/sandbox_action_mediation/stock_agent/
+!examples/sandbox_action_mediation/stock_agent/server.py
+!examples/sandbox_action_mediation/stock_agent/Dockerfile

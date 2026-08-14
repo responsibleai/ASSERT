@@ -37,6 +37,8 @@ Options:
 
 - `-o, --output <path>` optional, default `eval_config.yaml`
 - `--describe <text>` optional
+- `--describe-file <path>` optional, mutually exclusive with `--describe`; use for
+  generated or multi-line text so shell quoting cannot mangle it
 - `--from <path>` optional
 - `--behavior <name>` optional
 - `--judge-preset <name>` optional
@@ -117,7 +119,7 @@ assert-ai results compare <suite1>/<run1> <suite2>/<run2> [suite3/run3 ...] [OPT
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional, default `policy_violation`
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
 - `--limit <int>` optional, default `8`
 - `--json` optional flag
 - `--no-color` optional flag
@@ -133,7 +135,7 @@ assert-ai results compare-suites <suite1>/<run1> <suite2>/<run2> [OPTIONS]
 Options:
 
 - `--results-dir <path>` optional
-- `--metric <dimension>` optional
+- `--metric <dimension>` optional; defaults to `policy_violation_not_permissible` when every compared run has permissibility-split data, otherwise `policy_violation`
 - `--json` optional flag
 - `--no-color` optional flag
 
@@ -254,7 +256,7 @@ assert-ai library list [OPTIONS]
 
 Options:
 
-- `-k, --kind behavior|judge_preset`
+- `-k, --kind behavior|judge_preset|scenario`
 - `--json`
 - `--no-color`
 
@@ -268,5 +270,5 @@ assert-ai library show <name> [OPTIONS]
 
 Options:
 
-- `-k, --kind behavior|judge_preset`
+- `-k, --kind behavior|judge_preset|scenario`
 - `--json`

@@ -31,7 +31,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
                 {"pipeline": {"inference": {"target": {"model": {"name": "azure/gpt-5.4"}, "simulator": "azure/gpt-5.4"}}}},
             )
 
-        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"):
+        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', 'endpoint', or 'sandbox'"):
             parse_pipeline_config({"pipeline": {"inference": {"target": {}}}})
 
         with self.assertRaisesRegex(ValueError, "pipeline.inference has unsupported field\\(s\\): environment"):
@@ -93,7 +93,7 @@ class ConfigAndHandlerFoundationTest(unittest.TestCase):
             )
 
     def test_parse_pipeline_config_rejects_conflicting_target_modes(self) -> None:
-        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', or 'endpoint'"):
+        with self.assertRaisesRegex(ValueError, "target requires exactly one of 'model', 'connector', 'callable', 'endpoint', or 'sandbox'"):
             parse_pipeline_config(
                 {
                     "pipeline": {

@@ -18,6 +18,7 @@ can parse them into transcript events for the judge.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import uuid
@@ -46,6 +47,12 @@ if not isinstance(_existing, TracerProvider):
 _tracer = trace.get_tracer("travel_planner_neurosan")
 
 _MODEL = os.environ.get("ASSERT_TARGET_MODEL", "azure/gpt-4o-mini")
+
+# Per-call log of raw (untransformed) tool results. `run_pipeline` sets it so a
+# governed variant can ground its output-annotator gate against exactly the tool
+# outputs the agent saw. It stays None in normal use, so `_tool_call` is a no-op
+# for logging unless a pipeline run is active.
+_tool_log: contextvars.ContextVar = contextvars.ContextVar("neurosan_tool_log", default=None)
 
 
 # ── Agent functions (each manually instrumented) ──────────────
@@ -83,7 +90,30 @@ def _tool_call(tool_name: str, args: dict[str, Any]) -> str:
         span.set_attribute("input.value", json.dumps(args))
         result = simulate_tool(tool_name, args)
         span.set_attribute("output.value", result)
+        log = _tool_log.get()
+        if log is not None:
+            log.append({"tool": tool_name, "args": args, "result": result})
         return result
+
+
+def _as_number(value: Any, default: float) -> float:
+    """Coerce a parsed intent field to a number, falling back to a default.
+
+    The intent LLM may return a numeric field as null (JSON null -> None) or as a
+    string ("3000", "$3,000"); validate_budget does numeric comparisons, so an
+    un-coerced None/str would raise mid-conversation.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        cleaned = value.replace("$", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
 
 
 def classify_intent(message: str) -> dict[str, Any]:
@@ -103,6 +133,10 @@ def classify_intent(message: str) -> dict[str, Any]:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             parsed = {"destination": "Tokyo", "region": "Japan", "days": 7, "budget": 3000}
+        # Normalize numeric fields: the LLM may emit null (JSON null -> None) or a
+        # string, and downstream tools (validate_budget) do numeric comparisons.
+        parsed["days"] = _as_number(parsed.get("days"), 7)
+        parsed["budget"] = _as_number(parsed.get("budget"), 3000)
         span.set_attribute("output.value", json.dumps(parsed))
         return parsed
 
@@ -177,13 +211,34 @@ def optimize_itinerary(
 
 # ── Coordinator ───────────────────────────────────────────────
 
-def chat(message: str) -> str:
-    """Main entry point — orchestrates all agents with manual OTel spans."""
+def _compose(message: str, history: list[dict[str, str]] | None) -> str:
+    """Fold multi-turn history into a single prompt for the coordinator.
+
+    ASSERT invokes the callable once per turn. For a multi-turn scenario it passes
+    ``history`` (prior user/assistant turns, current turn last); for a single-turn
+    prompt case ``history`` is empty and only ``message`` matters. Rendering the
+    full history lets context stated earlier (e.g. the budget) persist within this
+    call instead of being dropped.
+    """
+    turns: list[str] = []
+    for turn in history or []:
+        role = turn.get("role")
+        content = str(turn.get("content") or "")
+        if role in ("user", "assistant"):
+            turns.append(f"{role.upper()}: {content}")
+    if not turns:
+        return message
+    return "\n".join(turns)
+
+
+def _orchestrate(message: str, history: list[dict[str, str]] | None = None) -> str:
+    """Run the five-agent pipeline under a coordinator span."""
     with _tracer.start_as_current_span("coordinator") as span:
         span.set_attribute("openinference.span.kind", "CHAIN")
-        span.set_attribute("input.value", message)
+        composed = _compose(message, history)
+        span.set_attribute("input.value", composed)
 
-        intent = classify_intent(message)
+        intent = classify_intent(composed)
         dest = intent.get("destination", "Tokyo")
         region = intent.get("region", "Japan")
         budget = intent.get("budget", 3000)
@@ -191,10 +246,33 @@ def chat(message: str) -> str:
         flights = search_flights(dest)
         hotels = search_hotels(dest)
         safety = check_safety(dest, region)
-        result = optimize_itinerary(message, flights, hotels, safety, budget)
+        result = optimize_itinerary(composed, flights, hotels, safety, budget)
 
         span.set_attribute("output.value", result)
         return result
+
+
+def run_pipeline(
+    message: str, history: list[dict[str, str]] | None = None
+) -> tuple[str, list[dict[str, Any]]]:
+    """Orchestrate and return ``(final_itinerary, raw_tool_results)``.
+
+    The tool-result log lets a governed variant ground its output gate against the
+    exact tool outputs this run produced. The baseline ``chat`` discards the log.
+    """
+    log: list[dict[str, Any]] = []
+    token = _tool_log.set(log)
+    try:
+        result = _orchestrate(message, history)
+    finally:
+        _tool_log.reset(token)
+    return result, log
+
+
+def chat(message: str, history: list[dict[str, str]] | None = None) -> str:
+    """Main entry point — orchestrates all agents with manual OTel spans."""
+    result, _ = run_pipeline(message, history)
+    return result
 
 
 if __name__ == "__main__":

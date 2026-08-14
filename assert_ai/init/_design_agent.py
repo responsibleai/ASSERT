@@ -35,6 +35,7 @@ from assert_ai.core.model_client import (
     LLMProviderError,
     LLMRateLimitError,
 )
+from assert_ai.core.yaml_io import dump_yaml
 
 log = logging.getLogger(__name__)
 
@@ -438,7 +439,7 @@ def run_design_loop(
 def _normalize_yaml(yaml_str: str) -> str:
     """Roundtrip through PyYAML for consistent formatting."""
     data = yaml.safe_load(yaml_str)
-    return yaml.dump(data, default_flow_style=False, sort_keys=False)
+    return dump_yaml(data)
 
 
 def _save_draft(yaml_str: str, errors: list[str], console: Console) -> None:

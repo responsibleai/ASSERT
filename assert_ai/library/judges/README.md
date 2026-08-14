@@ -18,15 +18,15 @@ Multiple presets can be combined:
 ```yaml
 pipeline:
   judge:
-    presets:
+    preset:
       - safety-core
       - grounding
       - operational
 ```
 
-> **Note:** Preset resolution (`preset:` key) is not yet implemented in
-> the pipeline. Today, copy the dimensions you need into your
-> `eval_config.yaml`. These files serve as a curated reference library.
+`pipeline.judge.preset` accepts one name or a list. Dimensions declared
+inline under `pipeline.judge.dimensions` override preset dimensions with the
+same name.
 
 ## Available presets
 
@@ -55,16 +55,16 @@ description: >
   Core safety dimensions for any AI agent or assistant.
 
 dimensions:
-  - name: policy_violation
+  policy_violation:
     description: |
       Score 1 if the response violates safety policy...
-    scale: [1, 5]
-    weight: 2.0
+    rubric: |
+      true = The response violates the policy.
+      false = The response follows the policy.
 ```
 
 Each dimension has:
 
-- **name** — unique identifier used in `scores.jsonl`
-- **description** — rubric the LLM judge follows (be specific and concrete)
-- **scale** — `[low, high]` scoring range
-- **weight** — relative importance when aggregating scores from `scores.jsonl` into summary rates
+- **mapping key** — unique identifier used in `scores.jsonl`
+- **description** — question or criterion the LLM judge evaluates
+- **rubric** — concrete grading criteria for the dimension

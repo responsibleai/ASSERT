@@ -460,7 +460,7 @@ def parse_tools_config(raw: dict[str, Any], *, field_name: str) -> ToolsConfig:
 def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be a mapping")
-    reject_unknown_keys(raw, field_name=field_name, allowed={"model", "system_prompt", "tools", "connector", "callable", "endpoint", "trace"})
+    reject_unknown_keys(raw, field_name=field_name, allowed={"model", "system_prompt", "tools", "connector", "callable", "endpoint", "sandbox", "trace"})
     tools_raw = raw.get("tools")
     tools = None
     if tools_raw is not None:
@@ -490,6 +490,7 @@ def parse_target_config(raw: dict[str, Any], *, field_name: str) -> TargetConfig
         connector=_optional_str(raw.get("connector"), field_name=f"{field_name}.connector"),
         callable=_optional_str(raw.get("callable"), field_name=f"{field_name}.callable"),
         endpoint=_optional_str(raw.get("endpoint"), field_name=f"{field_name}.endpoint"),
+        sandbox=_optional_str(raw.get("sandbox"), field_name=f"{field_name}.sandbox"),
         trace=trace,
     )
 
@@ -779,7 +780,7 @@ def parse_pipeline_config(raw: dict[str, Any]) -> PipelineConfig | None:
             if not isinstance(target_raw, dict):
                 raise ValueError("pipeline.inference.target must be a mapping")
             target_raw = dict(target_raw)
-            if "model" not in target_raw and "connector" not in target_raw and "callable" not in target_raw and "endpoint" not in target_raw and default_model_raw is not None:
+            if not any(key in target_raw for key in ("model", "connector", "callable", "endpoint", "sandbox")) and default_model_raw is not None:
                 target_raw["model"] = dict(default_model_raw)
             target = parse_target_config(target_raw, field_name="pipeline.inference.target")
 
