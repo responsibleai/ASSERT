@@ -1,0 +1,18 @@
+version: 1
+
+target:
+  kind: container
+  image: assert-sandbox-stock-agent:local
+  port: 8080
+  health_path: /health
+  endpoint_path: /chat
+  startup_timeout_s: 30
+  memory: 256m
+  cpus: 0.5
+  pids_limit: 64
+  egress:
+    allow_hosts: []
+
+policy: ./policy.yaml
+mocks: ./mocks.yaml
+cassettes: ./cassettes
