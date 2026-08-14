@@ -32,6 +32,15 @@ Design notes
 * The output path may not land inside the suite root. Writing there could
   overwrite the published ``test_set.jsonl`` and corrupt the cache the smoke run
   exists to protect.
+* ``--suite`` is a suite *identifier*, not a path. It is joined onto
+  ``results_dir`` and interpolated into the default output filename, so it is
+  validated against the same slug rule ASSERT uses and the resolved suite root
+  is required to stay under ``results_dir``.
+* ``resolve_results_dir`` mirrors ``assert_ai.config._resolve_path``, including
+  its artifact-root prefix stripping, so ``--config`` points at the same tree
+  ASSERT would use. It is mirrored rather than imported because
+  ``assert_ai.config`` pulls in PyYAML at module scope, which would break the
+  stdlib-only ``--suite`` path below.
 * Stdlib only, except for an optional PyYAML import used when ``--config`` is
   passed. ``--suite`` needs no third-party package at all.
 """
@@ -40,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -49,12 +59,39 @@ LATEST_FILE = "latest.json"
 ARTIFACTS_DIR = "artifacts"
 TEST_SET_FILE = "test_set.jsonl"
 
+# Mirrors assert_ai.config._SAFE_ID_RE, which itself must match the viewer's
+# SAFE_ID_RE in artifacts.ts: /^[a-z0-9][a-z0-9._-]*$/i
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
 KINDS = ("prompt", "scenario")
 DEFAULT_COUNT = 3
 
 
 class SmokeSliceError(Exception):
     """Raised for user-correctable problems, reported without a traceback."""
+
+
+def validate_suite_id(value: str) -> str:
+    """Reject suite ids that are not safe slugs.
+
+    Mirrors ``assert_ai.config._validate_identifier``. ``suite`` is an
+    identifier, never a path: it is joined onto ``results_dir``, and it also
+    feeds the default output filename. Without this, an absolute path or a
+    ``..`` segment would read from — and write to — an arbitrary location.
+    """
+
+    if not value:
+        raise SmokeSliceError("suite must not be empty")
+    if len(value) > 255:
+        raise SmokeSliceError("suite exceeds maximum length of 255 characters")
+    if ".." in value:
+        raise SmokeSliceError("suite must not contain '..'")
+    if not _SAFE_ID_RE.match(value):
+        raise SmokeSliceError(
+            "suite must start with an alphanumeric character and contain only "
+            f"alphanumerics, dots, hyphens, or underscores; got: {value!r}"
+        )
+    return value
 
 
 def _repo_root() -> Path:
@@ -83,22 +120,62 @@ def load_config(config_path: str | Path) -> dict:
     return raw
 
 
+def _strip_artifact_root_prefix(path: Path, artifacts_root: Path) -> Path | None:
+    """Return the artifact-relative suffix for paths starting with an artifacts root.
+
+    Mirrors ``assert_ai.config._strip_artifact_root_prefix``.
+    """
+
+    parts = path.parts
+    if not parts:
+        return None
+    if parts[0] not in {ARTIFACTS_DIR, artifacts_root.name}:
+        return None
+    if len(parts) == 1:
+        return Path()
+    return Path(*parts[1:])
+
+
 def resolve_results_dir(raw: dict, *, root: Path | None = None) -> Path:
-    """Resolve ``results_dir`` the way assert_ai.config does."""
+    """Resolve ``results_dir`` the way assert_ai.config does.
+
+    Mirrors ``assert_ai.config._resolve_path(..., use_artifacts_root=True)``,
+    including its artifact-root prefix stripping. That stripping is what keeps
+    a config like ``artifacts_root: artifacts`` plus ``results_dir:
+    artifacts/custom`` resolving to ``<root>/artifacts/custom`` rather than
+    ``<root>/artifacts/artifacts/custom`` — the latter would send ``--config``
+    looking in a tree ASSERT never writes to.
+    """
 
     root = root or _repo_root()
     artifacts_root = Path(str(raw.get("artifacts_root") or ARTIFACTS_DIR)).expanduser()
     if not artifacts_root.is_absolute():
         artifacts_root = (root / artifacts_root).resolve()
+    else:
+        artifacts_root = artifacts_root.resolve()
 
     results_dir_raw = raw.get("results_dir")
     if not results_dir_raw:
         return (artifacts_root / "results").resolve()
 
-    results_dir = Path(str(results_dir_raw)).expanduser()
-    if results_dir.is_absolute():
-        return results_dir.resolve()
-    return (artifacts_root / results_dir).resolve()
+    candidate = Path(str(results_dir_raw)).expanduser()
+    if candidate.is_absolute():
+        # Absolute paths are explicitly specified by the user; allow them, as
+        # assert_ai.config does. The suite-id validation and the suite_root
+        # containment check still bound everything opened underneath.
+        return candidate.resolve()
+
+    artifact_relative = _strip_artifact_root_prefix(candidate, artifacts_root)
+    resolved = (
+        artifacts_root / artifact_relative
+        if artifact_relative is not None
+        else artifacts_root / candidate
+    ).resolve()
+    if not _is_within(resolved, artifacts_root):
+        raise SmokeSliceError(
+            f"results_dir escapes its artifacts root ({artifacts_root}): {results_dir_raw!r}"
+        )
+    return resolved
 
 
 def resolve_test_set(suite_root: Path) -> tuple[Path, str]:
@@ -194,7 +271,17 @@ def build_slice(
     if count < 1:
         raise SmokeSliceError(f"count must be at least 1; got {count}")
 
+    # `suite` is an identifier, not a path. Validate before it is joined onto
+    # results_dir or interpolated into the default output filename.
+    suite = validate_suite_id(str(suite))
+
+    results_dir = Path(results_dir).expanduser().resolve()
     suite_root = (results_dir / suite).resolve()
+    if not _is_within(suite_root, results_dir):
+        raise SmokeSliceError(
+            f"suite_root escapes its expected root directory ({results_dir}): {suite_root}"
+        )
+
     source, resolved_via = resolve_test_set(suite_root)
 
     lines = source.read_text(encoding="utf-8").splitlines()

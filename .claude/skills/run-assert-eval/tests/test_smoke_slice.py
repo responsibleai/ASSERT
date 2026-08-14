@@ -283,6 +283,84 @@ def test_unknown_kind_is_rejected(tmp_path):
         ss.build_slice(suite="demo-suite", results_dir=results_dir, kind="promt")
 
 
+# --- suite is an identifier, not a path -------------------------------------
+
+
+def _plant_outside_suite(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a readable test set outside results_dir, plus an empty results_dir."""
+
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
+    (outside / ss.TEST_SET_FILE).write_text(
+        json.dumps({"type": "prompt", "test_case_id": "leaked_001"}) + "\n",
+        encoding="utf-8",
+    )
+    results_dir = tmp_path / "artifacts" / "results"
+    results_dir.mkdir(parents=True)
+    return results_dir, outside
+
+
+def test_absolute_path_as_suite_is_rejected(tmp_path):
+    """An absolute --suite must not be read as a suite root outside results_dir."""
+
+    results_dir, outside = _plant_outside_suite(tmp_path)
+
+    with pytest.raises(ss.SmokeSliceError) as exc:
+        ss.build_slice(
+            suite=str(outside),
+            results_dir=results_dir,
+            out_path=tmp_path / "smoke" / "x.jsonl",
+        )
+
+    assert "suite must" in str(exc.value)
+    assert not (tmp_path / "smoke" / "x.jsonl").exists()
+
+
+def test_traversal_in_suite_is_rejected(tmp_path):
+    """`..` must not walk out of results_dir."""
+
+    results_dir, _ = _plant_outside_suite(tmp_path)
+
+    with pytest.raises(ss.SmokeSliceError) as exc:
+        ss.build_slice(
+            suite="../../outside",
+            results_dir=results_dir,
+            out_path=tmp_path / "smoke" / "y.jsonl",
+        )
+
+    assert "'..'" in str(exc.value)
+    assert not (tmp_path / "smoke" / "y.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    "suite",
+    ["", "-leading-hyphen", "has space", "has/slash", "has\\backslash", "a" * 256],
+)
+def test_unsafe_suite_ids_are_rejected(tmp_path, suite):
+    results_dir, _ = _plant_outside_suite(tmp_path)
+
+    # Match the validation message specifically: a plain SmokeSliceError would
+    # also be raised further downstream ("suite root not found"), which would
+    # let this pass without any identifier validation at all.
+    with pytest.raises(ss.SmokeSliceError, match=r"suite (must|exceeds)"):
+        ss.build_slice(
+            suite=suite,
+            results_dir=results_dir,
+            out_path=tmp_path / "smoke" / "z.jsonl",
+        )
+
+
+def test_suite_id_validation_runs_before_any_read(tmp_path):
+    """A rejected suite must not leave a default output file behind either."""
+
+    results_dir, _ = _plant_outside_suite(tmp_path)
+
+    with pytest.raises(ss.SmokeSliceError, match=r"suite must not contain"):
+        ss.build_slice(suite="../escape", results_dir=results_dir)
+
+    assert not (tmp_path / ss.ARTIFACTS_DIR / "smoke").exists()
+
+
 # --- resolve_results_dir ----------------------------------------------------
 
 
@@ -305,6 +383,40 @@ def test_absolute_results_dir_is_used_as_is(tmp_path):
     absolute = (tmp_path / "elsewhere").resolve()
     resolved = ss.resolve_results_dir({"results_dir": str(absolute)}, root=tmp_path)
     assert resolved == absolute
+
+
+def test_results_dir_with_artifacts_prefix_is_not_double_nested(tmp_path):
+    """Matches assert_ai.config: `artifacts/custom` resolves under artifacts_root once.
+
+    ASSERT strips a leading artifacts-root segment before joining, so this config
+    resolves to <root>/artifacts/custom. Double-nesting it to
+    <root>/artifacts/artifacts/custom would send --config looking in a tree
+    ASSERT never writes to.
+    """
+
+    resolved = ss.resolve_results_dir(
+        {"artifacts_root": "artifacts", "results_dir": "artifacts/custom"}, root=tmp_path
+    )
+
+    assert resolved == (tmp_path / "artifacts" / "custom").resolve()
+    assert resolved != (tmp_path / "artifacts" / "artifacts" / "custom").resolve()
+
+
+def test_results_dir_prefix_matches_a_renamed_artifacts_root(tmp_path):
+    """The stripped segment may be the artifacts_root's own name, not just 'artifacts'."""
+
+    resolved = ss.resolve_results_dir(
+        {"artifacts_root": "out", "results_dir": "out/custom"}, root=tmp_path
+    )
+
+    assert resolved == (tmp_path / "out" / "custom").resolve()
+
+
+def test_results_dir_escaping_artifacts_root_is_rejected(tmp_path):
+    with pytest.raises(ss.SmokeSliceError) as exc:
+        ss.resolve_results_dir({"results_dir": "../../etc"}, root=tmp_path)
+
+    assert "escapes" in str(exc.value)
 
 
 # --- CLI --------------------------------------------------------------------
