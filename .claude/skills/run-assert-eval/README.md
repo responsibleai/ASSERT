@@ -16,7 +16,8 @@ per risk** — without leaving the coding assistant. Risk discovery is owned by
 | `workflows/govern-and-remeasure.md` | The ACS governance workflow: turn a measured failure into a deployable ACS policy (`assert-ai acs generate`), wrap the agent, and re-run the same eval to prove the failure rate dropped. |
 | `workflows/diagnose-acs-delta.md` | Fallback reference manual for when a governed run's delta comes out wrong (no drop, or over-gating rose) — symptom-indexed, 15 rules. Most are prevented by the pre-flight classification in `govern-and-remeasure.md` Step 1a. |
 | `clarity_intake.py` | Dependency-free parser: Clarity failure docs → ASSERT candidate behaviors. |
-| `tests/` | Pytest suite + real Clarity fixtures for the parser. |
+| `smoke_slice.py` | Slices N real rows out of a generated test set so a config can be validated before the full suite. |
+| `tests/` | Pytest suite + real Clarity fixtures for the parser and the slicer. |
 | `SETUP-CHECKLIST.md` | One-time in-IDE MCP setup + end-to-end verification. |
 
 Keep the three skill surfaces (`SKILL.md`, the Copilot prompt, the Cursor rule)
@@ -74,6 +75,37 @@ Run the tests:
 
 ```
 python -m pytest .claude/skills/run-assert-eval/tests/test_clarity_intake.py
+```
+
+## The smoke slicer (`smoke_slice.py`)
+
+```
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>.yaml --count 3
+```
+
+Carves the first N rows of a given kind out of a suite's **already generated**
+test set and writes them to `artifacts/smoke/<suite>-<kind>-<n>.jsonl`, so
+`pipeline.inference.test_set_path` can point at a handful of real cases. Emits a
+JSON summary (`source`, `resolved_via`, `out`, `written`, `available`,
+`test_case_ids`). Use `--suite` instead of `--config` to skip the PyYAML import.
+
+- **Resolves through `latest.json`**, the pointer ASSERT itself maintains.
+  Version dirs (`v0001`, `v0002`, …) are allocated fresh on every cache miss, so
+  they are never assumed; a stale published copy is only a fallback.
+- **Copies raw lines**, so the slice is byte-identical to the source rows —
+  the smoke run scores cases the full run will also score.
+- **Refuses to write inside the suite root**, which could clobber the published
+  `test_set.jsonl` and invalidate the cache the smoke run exists to protect.
+- **Why not just lower `sample_size`**: that block feeds the test_set stage's
+  `config_hash`, so changing it invalidates the cached test set and cascades
+  downstream — and under `pairwise` sampling it yields a different design, not a
+  subset. See `workflows/measure-clarity-failures.md` Step 5a.
+
+Run the tests:
+
+```
+python -m pytest .claude/skills/run-assert-eval/tests/test_smoke_slice.py
 ```
 
 ## Worked example

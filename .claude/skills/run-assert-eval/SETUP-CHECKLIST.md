@@ -47,6 +47,15 @@ once per workspace, then the `run-assert-eval` skill's discovery front door
       ```
       python -m pytest .claude/skills/run-assert-eval/tests/test_clarity_intake.py
       ```
+- [ ] **Smoke slicer**: after any run that generated a test set,
+      `python .claude/skills/run-assert-eval/smoke_slice.py --suite <suite> --count 3`
+      writes a 3-row slice and reports `resolved_via: latest.json`; run the unit tests:
+      ```
+      python -m pytest .claude/skills/run-assert-eval/tests/test_smoke_slice.py
+      ```
+- [ ] **Smoke gate**: the workflow offers a smoke run before the full suite, and a
+      deliberately broken `target.callable` fails at the smoke step rather than
+      after a full 25+25 run.
 - [ ] **Single-P1 run**: from an existing `failures.md`, the workflow presents
       triage, you pick one P1, **exactly one** config is generated with a
       variants-derived dimension, `assert-ai run` completes, and the results table

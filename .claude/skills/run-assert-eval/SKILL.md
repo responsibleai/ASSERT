@@ -254,13 +254,39 @@ single helper call at the top of the callable module — see `docs/targets/calla
 
 ### 5. Run the pipeline
 
+**Offer a smoke run first.** A suite is 25 prompt + 25 scenario cases, and
+plumbing errors (wrong `callable`, missing credentials, a callable that raises
+on its first tool call, tool-schema mismatch, undeployed judge model) surface
+only once inference starts. Validate on 3 real cases first:
+
+```
+# 1. artifacts only, no inference cost
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override inference.enabled=false --override judge.enabled=false
+
+# 2. slice 3 real rows out of the generated test set
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>.yaml --count 3
+
+# 3. inference + judge on those rows only
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override run=<run>-smoke \
+  --override inference.test_set_path=<out path from step 2>
+```
+
+If it fails, stop and report — do not start the full run. Three cases is not a
+measurement, so never report a rate from a smoke run. Never lower
+`test_set.sample_size` instead: it invalidates the cached test set and does not
+produce a subset. Full detail in `workflows/measure-clarity-failures.md`
+Step 5a.
+
 ```
 assert-ai run --config evals/<atomic_behavior>.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status
 to the user as each stage completes. For N configs, run them sequentially and track
-each `suite`/`run`.
+each `suite`/`run`. After a smoke run the first two stages report CACHED.
 
 - To re-run from a specific stage: `--force-stage <stage>`
 - Note the `suite` and `run` names from the config for Step 6.

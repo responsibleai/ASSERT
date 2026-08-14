@@ -538,6 +538,26 @@ eval spec:
 assert-ai run --config evals/<atomic_behavior>_governed.yaml
 ```
 
+**Smoke the governed callable first.** This is the single most likely place for a
+wrong `target.callable`, an unimportable `agent_guarded` module, or a manifest
+path that doesn't resolve — and the governed run is the second half of an A/B, so
+a failure here wastes the whole comparison. The baseline already generated the
+test set, so a smoke run costs three cases:
+
+```
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>_governed.yaml --count 3
+
+assert-ai run --config evals/<atomic_behavior>_governed.yaml \
+  --override run=acs-governed-smoke \
+  --override inference.test_set_path=<out path>
+```
+
+Confirm the smoke run logs `systematize` and `test_set` as CACHED — if either
+regenerates, the two configs have already drifted and the A/B is broken before
+the full governed run starts. Do not read rates off three cases; this only proves
+the governed target executes. See `measure-clarity-failures.md` Step 5a.
+
 For an ASSERT worked example this governed config is temporary local measurement
 output: keep it uncommitted and remove it after recording the delta. In a user's
 product repo, commit it only when they choose to keep the policy as a deployed or

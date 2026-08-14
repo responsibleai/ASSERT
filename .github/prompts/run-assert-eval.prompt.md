@@ -102,11 +102,24 @@ Help the user set the right target in the config:
 
 ### 5. Run the pipeline
 
+**Offer a smoke run first.** Plumbing errors (wrong `callable`, missing credentials, a callable that raises on its first tool call, tool-schema mismatch, undeployed judge model) surface only once inference starts, after the upstream stages have already run. Validate on 3 real cases:
+
+```
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override inference.enabled=false --override judge.enabled=false
+python .claude/skills/run-assert-eval/smoke_slice.py \
+  --config evals/<atomic_behavior>.yaml --count 3
+assert-ai run --config evals/<atomic_behavior>.yaml \
+  --override run=<run>-smoke --override inference.test_set_path=<out path>
+```
+
+If it fails, stop and report — do not start the full run. Three cases is not a measurement, so never report a rate from it. Never lower `test_set.sample_size` instead: that invalidates the cached test set and does not produce a subset. Detail in `.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` Step 5a.
+
 ```
 assert-ai run --config evals/<atomic_behavior>.yaml --output json
 ```
 
-This is long-running (systematize -> test_set -> inference -> judge). Stream status to the user as each stage completes. For N configs, run them sequentially and track each `suite`/`run`. Re-run from a stage with `--force-stage <stage>`. Note the `suite` and `run` names from the config for Step 6.
+This is long-running (systematize -> test_set -> inference -> judge). Stream status to the user as each stage completes. For N configs, run them sequentially and track each `suite`/`run`. After a smoke run the first two stages report CACHED. Re-run from a stage with `--force-stage <stage>`. Note the `suite` and `run` names from the config for Step 6.
 
 ### 6. Report results — never collapse to one number
 
