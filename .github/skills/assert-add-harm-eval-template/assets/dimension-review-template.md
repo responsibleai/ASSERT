@@ -5,6 +5,10 @@ schema_version: 1
 harm_name: "<harm_name>"
 n: 1
 active_cycle: cycle-1
+evaluation_intent:
+  decision: null
+  purposes: []
+  population: null
 references:
   "[1]":
     title: "<source title>"
@@ -23,6 +27,7 @@ cycles:
     passes:
       - number: 1
         complete: true
+        intent_fields_applied: []
         search_branches:
           - "<query family, source path, or citation-snowball branch>"
         breadth_audit_complete: true
@@ -59,6 +64,7 @@ cycles:
             source_passes: [1]
             citation_tags: ["[1]"]
             rationale: "Retained as a distinct category."
+            intent_alignment: null
         test_dimensions:
           - id: test-1
             name: "<canonical test-set dimension>"
@@ -71,6 +77,7 @@ cycles:
             source_passes: [1]
             citation_tags: ["[1]", "[2]"]
             rationale: "Retained as a distinct test-set dimension."
+            intent_alignment: null
         judge_dimensions:
           - id: judge-1
             name: "<canonical judge dimension>"
@@ -83,6 +90,7 @@ cycles:
             source_passes: [1]
             citation_tags: ["[1]", "[2]"]
             rationale: "Retained as a distinct judge dimension."
+            intent_alignment: null
       rejections: []
 approval:
   status: pending
@@ -99,23 +107,31 @@ approval:
 Fill the YAML frontmatter, then run the validator's `render` command. It will
 replace this body with review tables generated from the active cycle.
 
+## Evaluation Intent
+
+| Field | Answer |
+|---|---|
+| Decision supported | not provided; default workflow used |
+| Purpose(s) | not provided; default workflow used |
+| System users/affected groups | not provided; default workflow used |
+
 ## Behavior Categories
 
-| Name | Purpose | Levels or mode | Observability | Executable | Sources | Passes |
-|---|---|---|---|---|---|---|
-| <canonical name> | <purpose> | <levels or mode> | <timescale> | yes | [1] | 1 |
+| Name | Purpose | Intent alignment | Levels or mode | Observability | Executable | Sources | Passes |
+|---|---|---|---|---|---|---|---|
+| <canonical name> | <purpose> | none | <levels or mode> | <timescale> | yes | [1] | 1 |
 
 ## Test-Set Dimensions
 
-| Name | Purpose | Levels or mode | Observability | Executable | Sources | Passes |
-|---|---|---|---|---|---|---|
-| <canonical name> | <purpose> | <levels or mode> | <timescale> | yes | [1], [2] | 1 |
+| Name | Purpose | Intent alignment | Levels or mode | Observability | Executable | Sources | Passes |
+|---|---|---|---|---|---|---|---|
+| <canonical name> | <purpose> | none | <levels or mode> | <timescale> | yes | [1], [2] | 1 |
 
 ## Judge Dimensions
 
-| Name | Purpose | Levels or mode | Observability | Executable | Sources | Passes |
-|---|---|---|---|---|---|---|
-| <canonical name> | <purpose> | rubric-scored | <timescale> | yes | [1], [2] | 1 |
+| Name | Purpose | Intent alignment | Levels or mode | Observability | Executable | Sources | Passes |
+|---|---|---|---|---|---|---|---|
+| <canonical name> | <purpose> | none | rubric-scored | <timescale> | yes | [1], [2] | 1 |
 
 ## Approval
 

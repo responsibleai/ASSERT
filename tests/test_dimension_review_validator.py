@@ -52,6 +52,7 @@ def _canonical(
         "source_passes": [1, 2],
         "citation_tags": tags,
         "rationale": "Merged interchangeable findings from both passes.",
+        "intent_alignment": "Supports the stated decision and served population.",
     }
 
 
@@ -62,6 +63,7 @@ def _valid_review(*, approved: bool = False) -> dict:
             {
                 "number": number,
                 "complete": True,
+                "intent_fields_applied": ["decision", "purposes", "population"],
                 "search_branches": [f"source branch {number}"],
                 "breadth_audit_complete": True,
                 "no_new_dimension_passes": 2,
@@ -90,6 +92,11 @@ def _valid_review(*, approved: bool = False) -> dict:
         "harm_name": "example_harm",
         "n": 2,
         "active_cycle": "cycle-1",
+        "evaluation_intent": {
+            "decision": "Choose whether the system is ready to launch",
+            "purposes": ["product_readiness", "red_team_discovery"],
+            "population": "Adults using the public service",
+        },
         "references": {
             "[1]": {
                 "title": "Primary source",
@@ -156,6 +163,46 @@ def _write_review(path: Path, data: dict) -> None:
 
 
 class DimensionReviewValidatorTest(unittest.TestCase):
+    def test_evaluation_intent_is_rendered_and_optional(self) -> None:
+        data = _valid_review()
+
+        VALIDATOR.validate_review(data)
+        body = VALIDATOR.render_review_body(data)
+        self.assertIn("Choose whether the system is ready to launch", body)
+        self.assertIn("product_readiness", body)
+        self.assertIn("Supports the stated decision", body)
+
+        no_intent = deepcopy(data)
+        no_intent.pop("evaluation_intent")
+        for generation_pass in no_intent["cycles"][0]["passes"]:
+            generation_pass.pop("intent_fields_applied")
+        for namespace in VALIDATOR.NAMESPACES:
+            for item in no_intent["cycles"][0]["deduplication"]["namespaces"][namespace]:
+                item.pop("intent_alignment")
+
+        VALIDATOR.validate_review(no_intent)
+        self.assertIn(
+            "not provided; default workflow used",
+            VALIDATOR.render_review_body(no_intent),
+        )
+
+    def test_rejects_unapplied_or_unsupported_evaluation_intent(self) -> None:
+        unapplied = _valid_review()
+        unapplied["cycles"][0]["passes"][0]["intent_fields_applied"].remove(
+            "population"
+        )
+        with self.assertRaisesRegex(
+            VALIDATOR.ReviewValidationError, "must match answered evaluation intent"
+        ):
+            VALIDATOR.validate_review(unapplied)
+
+        unsupported = _valid_review()
+        unsupported["evaluation_intent"]["purposes"] = ["benchmarking"]
+        with self.assertRaisesRegex(
+            VALIDATOR.ReviewValidationError, "unsupported values"
+        ):
+            VALIDATOR.validate_review(unsupported)
+
     def test_pending_review_validates_but_cannot_open_write_gate(self) -> None:
         data = _valid_review()
 

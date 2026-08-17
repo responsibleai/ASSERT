@@ -14,6 +14,10 @@ Stop if the user chooses exit. Otherwise record its selected
 `system_run_directory` and do not read or reuse any YAML under an earlier
 matching system directory.
 
+Follow the [optional evaluation-intent intake](./evaluation-intent-workflow.md).
+Use any answered decision, purpose, and population fields throughout S1-S6; if
+the user skips them, continue this workflow unchanged.
+
 Then establish the system description and purpose,
 in-scope tasks and decisions, user and affected populations, input/output data,
 knowledge sources, components and model/agent/RAG topology, tools and external
@@ -27,7 +31,9 @@ assumption.
 
 Use internal knowledge to seed search terms and candidate harms, never as the
 sole evidence for retaining one. Perform deep online research and retrieve and
-read authoritative primary sources in the current session. Research in two
+read authoritative primary sources in the current session. Apply answered
+evaluation intent to queries, source selection, and harm prioritization without
+lowering the retention gates. Research in two
 passes:
 
 1. **System and domain pass** - official documentation for the system type and
@@ -118,6 +124,7 @@ target_shape: <the system target shape from S1>
 model_values: <the shared or stage-specific values supplied by the user>
 N: <positive integer supplied by the user>
 dimension_criteria: <global criteria plus any harm-specific criteria>
+evaluation_intent: <answered system fields, with any harm-specific override>
 output_path: examples/<system_run_directory>/<harm_name>/eval_config.yaml
 ```
 
@@ -145,4 +152,5 @@ the retained/merged/rejected harm ledger with source tags, each harm description
 the path and generated/validated status of every child config, unresolved evidence
 or target gaps, the `N` value and criteria version used by each child, its
 deduplication and approval status, and the consolidated reference list.
-Distinguish discovered harms from configs successfully generated and validated.
+Distinguish discovered harms from configs successfully generated and validated,
+and user-supplied evaluation intent from assumptions or unanswered fields.

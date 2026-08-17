@@ -61,6 +61,7 @@ mapping each tag to its title and URL.
 | Eval type | Yes | Exactly `system` or `harm` (case-insensitive; normalize to lowercase). Never infer it when the request is ambiguous. |
 | System or harm name | Yes | For `harm`, e.g. `child_safety` or `violence`, and it becomes `behavior.name`. For `system`, use a stable system slug for child output paths. |
 | Generation runs (`N`) | Yes | Positive integer specifying how many complete harm dimension-generation passes to run before deduplication. Ask when it is missing or invalid; do not silently default it. In system mode, `N` applies independently to every retained-harm child, not to system-level harm discovery. |
+| Evaluation intent | No | Ask what decision the eval supports, its purpose(s), and the system users or affected groups it should serve. Apply answered fields to research and dimensions; skip unanswered fields without blocking or changing the default flow. |
 | Dimension criteria | Interactive | Before generation, ask for edits or criteria every pass should honor, such as clustering related dimensions, reducing granularity, limiting fictional scenarios, or prioritizing particular settings or populations. Treat the answer as cumulative criteria; `none` is valid. |
 | Description | No | For `harm`, the spec for `behavior.description`. For `system`, its purpose, architecture, tasks, users, data, tools/integrations, deployment, and constraints. Source or draft missing details and flag consequential assumptions. |
 | Context | No | Target tasks, population, domain, runtime, deployment, and system boundaries. If omitted, use a neutral placeholder and flag it. System mode propagates the system context to every harm child run. |
@@ -96,7 +97,9 @@ generated/validated status.
 
 Ask the user for the harm name if not already given. Confirm whether they want to
 provide a `behavior.description` and `context`, or have you source/draft them.
-Validate `N` as a positive integer. Before any dimension research, always ask
+Validate `N` as a positive integer. Follow the optional [evaluation-intent
+intake](./references/evaluation-intent-workflow.md); skipped answers preserve the
+default flow. Before any dimension research, always ask
 whether the user wants a specific edit or criterion applied during generation;
 offer examples such as clustering related axes, reducing granularity, reducing
 reliance on fictional scenarios, or emphasizing real deployment settings. Record
@@ -142,7 +145,7 @@ design: only materialize an axis when it is relevant, variable, observable, and
 executable in the target. Pull category and dimension structure only — never
 operational harmful detail. This section is one complete generation pass. Run
 all of Steps 3a–3e from a fresh per-pass ledger each time Step 4 invokes it, while
-honoring the current dimension criteria.
+honoring the current dimension criteria and answered evaluation intent.
 
 #### 3a. Classify the harm and its observability
 

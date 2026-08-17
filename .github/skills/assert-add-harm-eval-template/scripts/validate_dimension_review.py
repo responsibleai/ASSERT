@@ -24,6 +24,14 @@ NAMESPACE_HEADINGS = {
 CITATION_TAG = re.compile(r"^\[[1-9][0-9]*\]$")
 CYCLE_STATUSES = {"pending_review", "superseded", "approved"}
 CANDIDATE_DISPOSITIONS = {"keep", "merge", "reject"}
+EVALUATION_PURPOSES = {
+    "model_comparison",
+    "product_readiness",
+    "mitigation_validation",
+    "regression_testing",
+    "red_team_discovery",
+}
+EVALUATION_INTENT_FIELDS = {"decision", "purposes", "population"}
 
 
 class ReviewValidationError(ValueError):
@@ -49,6 +57,12 @@ def _text(value: Any, label: str) -> str:
     if text.startswith("<") and text.endswith(">"):
         raise ReviewValidationError(f"{label} still contains a placeholder")
     return text
+
+
+def _optional_text(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    return _text(value, label)
 
 
 def _string_list(value: Any, label: str, *, minimum: int = 0) -> list[str]:
@@ -118,11 +132,48 @@ def _validate_references(data: dict[str, Any]) -> dict[str, Any]:
     return references
 
 
+def _validate_evaluation_intent(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], set[str]]:
+    raw_intent = data.get("evaluation_intent")
+    if raw_intent is None:
+        return {"decision": None, "purposes": [], "population": None}, set()
+
+    intent = _mapping(raw_intent, "evaluation_intent")
+    decision = _optional_text(intent.get("decision"), "evaluation_intent.decision")
+    purposes = _string_list(
+        intent.get("purposes", []), "evaluation_intent.purposes"
+    )
+    if len(purposes) != len(set(purposes)):
+        raise ReviewValidationError("evaluation_intent.purposes contains duplicates")
+    unknown_purposes = set(purposes) - EVALUATION_PURPOSES
+    if unknown_purposes:
+        raise ReviewValidationError(
+            "evaluation_intent.purposes contains unsupported values: "
+            f"{sorted(unknown_purposes)}"
+        )
+    population = _optional_text(
+        intent.get("population"), "evaluation_intent.population"
+    )
+    normalized = {
+        "decision": decision,
+        "purposes": purposes,
+        "population": population,
+    }
+    answered_fields = {
+        field
+        for field, value in normalized.items()
+        if value not in (None, [], "")
+    }
+    return normalized, answered_fields
+
+
 def _validate_cycle(
     cycle: dict[str, Any],
     *,
     n: int,
     references: dict[str, Any],
+    intent_fields: set[str],
     label: str,
 ) -> None:
     _text(cycle.get("id"), f"{label}.id")
@@ -147,6 +198,23 @@ def _validate_cycle(
         pass_numbers.append(number)
         if generation_pass.get("complete") is not True:
             raise ReviewValidationError(f"{pass_label}.complete must be true")
+        applied_intent = set(
+            _string_list(
+                generation_pass.get("intent_fields_applied", []),
+                f"{pass_label}.intent_fields_applied",
+            )
+        )
+        unsupported_intent = applied_intent - EVALUATION_INTENT_FIELDS
+        if unsupported_intent:
+            raise ReviewValidationError(
+                f"{pass_label}.intent_fields_applied contains unsupported fields: "
+                f"{sorted(unsupported_intent)}"
+            )
+        if applied_intent != intent_fields:
+            raise ReviewValidationError(
+                f"{pass_label}.intent_fields_applied must match answered evaluation intent "
+                f"fields {sorted(intent_fields)}"
+            )
         _string_list(
             generation_pass.get("search_branches"),
             f"{pass_label}.search_branches",
@@ -258,6 +326,10 @@ def _validate_cycle(
                 )
             )
             _text(item.get("rationale"), f"{item_label}.rationale")
+            if intent_fields:
+                _text(item.get("intent_alignment"), f"{item_label}.intent_alignment")
+            elif item.get("intent_alignment") is not None:
+                _text(item.get("intent_alignment"), f"{item_label}.intent_alignment")
 
             derived_passes: set[int] = set()
             source_tags: set[str] = set()
@@ -384,6 +456,7 @@ def validate_review(data: dict[str, Any], *, require_approval: bool = False) -> 
     _text(data.get("harm_name"), "harm_name")
     n = _positive_int(data.get("n"), "n")
     active_cycle_id = _text(data.get("active_cycle"), "active_cycle")
+    _, intent_fields = _validate_evaluation_intent(data)
     references = _validate_references(data)
     cycles = _list(data.get("cycles"), "cycles")
     if not cycles:
@@ -393,7 +466,13 @@ def validate_review(data: dict[str, Any], *, require_approval: bool = False) -> 
     for cycle_index, raw_cycle in enumerate(cycles):
         label = f"cycles[{cycle_index}]"
         cycle = _mapping(raw_cycle, label)
-        _validate_cycle(cycle, n=n, references=references, label=label)
+        _validate_cycle(
+            cycle,
+            n=n,
+            references=references,
+            intent_fields=intent_fields,
+            label=label,
+        )
         cycle_id = cycle["id"]
         if cycle_id in cycle_by_id:
             raise ReviewValidationError(f"cycles contains duplicate id {cycle_id!r}")
@@ -420,12 +499,27 @@ def _cell(value: Any) -> str:
     return str(value).replace("\n", "<br>").replace("|", "\\|")
 
 
+def _intent_cell(value: Any) -> str:
+    if value in (None, "", []):
+        return "not provided; default workflow used"
+    return _cell(value)
+
+
 def render_review_body(data: dict[str, Any]) -> str:
     cycle = next(item for item in data["cycles"] if item["id"] == data["active_cycle"])
     deduplication = cycle["deduplication"]
+    evaluation_intent, _ = _validate_evaluation_intent(data)
     lines = [
         "<!-- Generated from YAML frontmatter by validate_dimension_review.py. -->",
         f"# Dimension Review: {_cell(data['harm_name'])}",
+        "",
+        "## Evaluation Intent",
+        "",
+        "| Field | Answer |",
+        "|---|---|",
+        f"| Decision supported | {_intent_cell(evaluation_intent['decision'])} |",
+        f"| Purpose(s) | {_intent_cell(evaluation_intent['purposes'])} |",
+        f"| System users/affected groups | {_intent_cell(evaluation_intent['population'])} |",
         "",
         f"**Active cycle:** `{_cell(cycle['id'])}`  ",
         f"**Criteria version:** `{_cell(cycle['criteria_version'])}`  ",
@@ -440,8 +534,8 @@ def render_review_body(data: dict[str, Any]) -> str:
             [
                 f"## {NAMESPACE_HEADINGS[namespace]}",
                 "",
-                "| Name | Purpose | Levels or mode | Observability | Executable | Sources | Passes |",
-                "|---|---|---|---|---|---|---|",
+                "| Name | Purpose | Intent alignment | Levels or mode | Observability | Executable | Sources | Passes |",
+                "|---|---|---|---|---|---|---|---|",
             ]
         )
         items = deduplication["namespaces"][namespace]
@@ -453,6 +547,7 @@ def render_review_body(data: dict[str, Any]) -> str:
                         [
                             _cell(item["name"]),
                             _cell(item["purpose"]),
+                            _cell(item.get("intent_alignment")),
                             _cell(item["levels_or_mode"]),
                             _cell(item["observability"]),
                             "yes" if item["executable"] else "no",
@@ -463,7 +558,7 @@ def render_review_body(data: dict[str, Any]) -> str:
                     + " |"
                 )
         else:
-            lines.append("| _None retained_ |  |  |  |  |  |  |")
+            lines.append("| _None retained_ |  |  |  |  |  |  |  |")
         lines.append("")
 
     candidate_names = {

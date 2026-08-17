@@ -12,15 +12,17 @@ source of truth; never hand-edit the rendered body.
 ## I1. Initialize the cycle
 
 Validate `N` as an integer greater than zero. Freeze the harm description,
-target boundary, and current cumulative dimension criteria for this cycle. Give
+target boundary, answered evaluation intent, and current cumulative dimension
+criteria for this cycle. Give
 the cycle a stable identifier so a later criteria change can supersede it without
 losing its audit trail.
 
 Instantiate the template at an ignored working path such as
 `artifacts/dimension-reviews/<generation_run_path>/dimension-review.md`. Keep its generated
 approval stamp beside it and do not recommend committing either artifact. Fill
-`harm_name`, `n`, references, the active cycle, and approval fields as the
-workflow advances. Replace every angle-bracket placeholder before validation.
+`harm_name`, `n`, `evaluation_intent`, references, the active cycle, and approval
+fields as the workflow advances. Use null/empty intent values when all optional
+questions were skipped. Replace every angle-bracket placeholder before validation.
 
 Keep three independent namespaces throughout the cycle:
 
@@ -37,7 +39,8 @@ For each pass from `1` through `N`, execute all of SKILL.md Steps 3a–3e from a
 fresh ledger. Every pass must:
 
 1. Honor the same frozen criteria while independently searching the relevant
-   disciplines, primary sources, adjacent constructs, and target constraints.
+   disciplines, primary sources, adjacent constructs, evaluation intent, and
+   target constraints. Record which answered intent fields shaped the pass.
 2. Use materially varied query formulations, source paths, or snowball branches
    to seek missed constructs rather than paraphrasing an earlier result.
 3. Apply the full relevance, independent-evidence, executability, observability,
@@ -48,7 +51,9 @@ fresh ledger. Every pass must:
 
 Add every pass to the active cycle's frontmatter. Candidate IDs must be unique
 within the cycle and stable through deduplication so every retained, merged, or
-rejected candidate can be accounted for deterministically.
+rejected candidate can be accounted for deterministically. Set each pass's
+`intent_fields_applied` to exactly the answered intent fields (`decision`,
+`purposes`, and/or `population`); use an empty list when none were answered.
 
 Do not stop the cycle when an earlier pass saturates. `N` controls the number of
 complete passes, not the number of candidate dimensions or searches.
@@ -81,7 +86,10 @@ name matching alone:
 Write canonical items to `deduplication.namespaces` and rejected candidates to
 `deduplication.rejections`. Every pass candidate must appear exactly once as a
 canonical item's `source_items` entry or as a rejection. Set `completed` and
-`duplicate_audit_complete` only after those checks are genuinely complete.
+`duplicate_audit_complete` only after those checks are genuinely complete. When
+evaluation intent was answered, give every retained canonical item a concise
+`intent_alignment` explaining how it supports that intent or why a relevant,
+evidence-backed item remains intentionally neutral.
 
 Keep uncited or invalid candidates in the ledger only. Never place them in the
 review set or config.
@@ -91,7 +99,8 @@ review set or config.
 Show a compact table for each namespace with the canonical name, purpose,
 levels or generation mode, observability timescale, target executability,
 citations, and originating pass numbers. Summarize important merges and
-rejections separately, along with the criteria used for the cycle.
+rejections separately, along with the criteria and evaluation intent used for
+the cycle.
 
 Render and structurally validate the report before presenting its tables:
 
