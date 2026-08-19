@@ -1,0 +1,24 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "career-health-robustness-failure"
+
+# Semantic OUTPUT gate (no tools). agent_guarded.py runs an LLM annotator over
+# the (source, reply) pair and injects the boolean as snapshot.violation_detected;
+# this policy turns that signal into an auditable deny. Robustness is inherently
+# a paired property, so this grounding-proxy gate yields only a partial delta.
+
+policies:
+  career_health_robustness_failure:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.career_health_robustness_failure.verdict
+
+intervention_points:
+  output:
+    policy_target: "$.output"
+    policy_target_kind: agent_output
+    policy:
+      id: career_health_robustness_failure
+      query: data.agent_control_specification.career_health_robustness_failure.output_verdict
+
+tools: {}

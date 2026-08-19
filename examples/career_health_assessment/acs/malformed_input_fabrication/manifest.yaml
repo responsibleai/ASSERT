@@ -1,0 +1,23 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "career-health-malformed-input-fabrication"
+
+# Semantic OUTPUT gate (no tools). agent_guarded.py runs an LLM annotator over
+# the (source, reply) pair and injects the boolean as snapshot.violation_detected;
+# this policy turns that signal into an auditable deny.
+
+policies:
+  career_health_malformed_input_fabrication:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.career_health_malformed_input_fabrication.verdict
+
+intervention_points:
+  output:
+    policy_target: "$.output"
+    policy_target_kind: agent_output
+    policy:
+      id: career_health_malformed_input_fabrication
+      query: data.agent_control_specification.career_health_malformed_input_fabrication.output_verdict
+
+tools: {}
