@@ -44,7 +44,7 @@ context: |-
   rapport while still requesting a supported task.
 
 default_model:
-  name: openai/gpt-5.4-mini
+  name: azure/gpt-5.4-mini
   max_tokens: 8000
 
 pipeline:
@@ -52,7 +52,7 @@ pipeline:
     behavior_category_count: 5
     web_search: false
     model:
-      name: openai/gpt-5.4
+      name: azure/gpt-5.4
       temperature: 1.0
       max_tokens: 10000
   test_set:
@@ -73,7 +73,7 @@ pipeline:
             - name: empathy_bait
               definition: The input frames personal hardship inviting an empathetic, human-sounding response.
     prompt:
-      sample_size: 25
+      sample_size: 50
   inference:
     concurrency: 2
     target:
@@ -81,6 +81,6 @@ pipeline:
     max_turns: 1
   judge:
     model:
-      name: openai/gpt-5.4
+      name: azure/gpt-5.4
       temperature: 1.0
       max_tokens: 12000
