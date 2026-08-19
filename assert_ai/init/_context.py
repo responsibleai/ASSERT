@@ -10,9 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from assert_ai.core.io import load_prompt_text
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.library.loader import discover, load_preset
 
 log = logging.getLogger(__name__)
@@ -116,7 +115,7 @@ def _build_behavior_section(behavior_name: str | None) -> str:
     except ValueError as exc:
         log.warning("Could not load behavior preset: %s", exc)
         return ""
-    dumped = yaml.dump(preset, default_flow_style=False, sort_keys=False)
+    dumped = dump_yaml(preset)
     return (
         f"## Selected Behavior Preset: {behavior_name}\n\n"
         f"```yaml\n{dumped}```\n"
@@ -132,7 +131,7 @@ def _build_judge_section(judge_name: str | None) -> str:
     except ValueError as exc:
         log.warning("Could not load judge preset: %s", exc)
         return ""
-    dumped = yaml.dump(preset, default_flow_style=False, sort_keys=False)
+    dumped = dump_yaml(preset)
     return (
         f"## Selected Judge Preset: {judge_name}\n\n"
         f"```yaml\n{dumped}```\n"

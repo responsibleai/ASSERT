@@ -11,10 +11,30 @@ on:
       - 'assert_ai/**'
       - 'prompts/**'
       - 'scripts/regression_*.py'
-      - 'tests/regression/**'
+      # The job runs the whole `tests/` tree, not just tests/regression/, so
+      # scoping the filter to the subdirectory let edits to top-level suites
+      # (e.g. tests/test_init_command.py, tests/test_library_e2e.py) reach the
+      # merge queue untested whenever no assert_ai/ file changed alongside them.
+      - 'tests/**'
+      # The run-assert-eval skill ships clarity_intake.py plus its own tests
+      # under .claude/. Without this, edits to the skill or its fixtures never
+      # trigger the workflow that runs them.
+      - '.claude/skills/**'
+      - 'pytest.ini'
+      # Dependency metadata decides what CI installs. Keep the workflow itself
+      # in scope so dependency-resolution fixes can verify their own change.
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/regression.yml'
+      # Example dirs the unit tests genuinely load from disk (verified by
+      # removing each and watching the suite fail):
+      #   tests/test_library_e2e.py         reads langgraph-foundry-hosted/eval_config.yaml
+      #   tests/test_tool_module_sandbox.py imports examples.agents.health_assistant
       # Joint AgentShield + ASSERT demo: gate doc + example changes that
       # claim measured eval-fix-loop numbers (see PR #43 / case study).
       - 'examples/incident_triage_agent/**'
+      - 'examples/langgraph-foundry-hosted/**'
+      - 'examples/agents/**'
       - 'docs/case-study-*.md'
 
 concurrency:
@@ -49,6 +69,12 @@ jobs:
         run: |
           python -m pip install -e ".[dev,otel]"
 
+      - name: Check the behavior library
+        # Guards two things the reference library cannot enforce by itself:
+        # that presets stay atomic (best-practices 8.D), and that
+        # examples/behavior_specs/*.md never drifts from the shipped YAML.
+        run: python scripts/check_behavior_library.py
+
       - name: Install viewer npm dependencies
         # tests/test_viewer_*.py shell out to `node` against viewer TypeScript
         # sources that import npm packages (e.g. `yaml` in artifacts.ts).
@@ -57,4 +83,6 @@ jobs:
         run: npm ci --prefix viewer
 
       - name: Run unit tests
-        run: pytest tests/ -x -q
+        # Both paths are required: `pytest tests/` would override the testpaths
+        # in pytest.ini and silently skip the skill's own suite.
+        run: pytest tests/ .claude/skills/run-assert-eval/tests/ -x -q

@@ -14,6 +14,17 @@ This demo proves the general case: if your code emits OpenTelemetry spans follow
 [OpenInference conventions](https://arize-ai.github.io/openinference/), ASSERT can
 evaluate it — no adapter, no framework lock-in.
 
+## What's in this directory
+
+| Path | What it is |
+|---|---|
+| `agent.py` | The agent itself — the custom orchestrator and its manual OTel spans. Exposes `chat`, the callable ASSERT evaluates. |
+| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
+| `README.md` | This file. |
+
+Mock tools are imported from `examples.phoenix_auto_trace._tools`, so this example
+ships no tool module of its own.
+
 ## Architecture
 
 The target is a custom multi-agent travel planner exposed through `target.callable`: `examples.travel_planner_neurosan.agent:chat`.
@@ -30,14 +41,24 @@ User request -> coordinator (CHAIN)
 Each node is a Python function wrapped in a manual OTel span. The code records OpenInference-style span kinds (`CHAIN`, `AGENT`, `LLM`, `TOOL`), inputs, outputs, tool arguments/results, and token counts when available.
 The mock tools come from `examples.phoenix_auto_trace._tools`, so this example does not call live flight, hotel, weather, or advisory APIs.
 
+## The two measured risks
+
+| Risk | Failure mode |
+|---|---|
+| `fabricated_budget_verification.yaml` | Claims the budget was checked or that an itinerary fits, without the validation actually supporting it |
+| `wrong_destination_entry_requirements.yaml` | States visa, passport, or entry requirements that do not hold for the traveller's destination and nationality |
+
+Each risk gets its own suite under `evals/`, so the two are measured independently.
+
 ## Scenario
 
 The eval targets a travel-planning assistant that must use tools, respect explicit user constraints, and produce grounded itineraries.
-It generates six `behavior_categories`, stratifies by `traveler_type` and `trip_type`, then executes single-turn prompts and multi-turn scenarios through the callable target.
+It generates behavior categories, stratifies by traveller and trip attributes, then executes single-turn prompts and multi-turn scenarios through the callable target.
 
 - `target.callable`: `examples.travel_planner_neurosan.agent:chat`
-- `target.trace`: Phoenix trace capture grouped by `session.id`
-- `max_turns`: 6, so scenario tests can probe follow-up behavior
+- `target.trace`: OTel trace capture grouped by `session.id`
+- `max_turns`: 10, so scenario tests can probe follow-up behavior
+- 25 single-turn prompts and 25 multi-turn scenarios per risk
 
 ## Value-add
 
@@ -60,33 +81,42 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[otel]"
 cp .env.example .env   # set AZURE_API_BASE and AZURE_API_KEY
 phoenix serve           # optional: browse traces while the run executes
-assert-ai run --config examples/travel_planner_neurosan/eval_config.yaml
+
+assert-ai run --config examples/travel_planner_neurosan/evals/fabricated_budget_verification.yaml
+assert-ai run --config examples/travel_planner_neurosan/evals/wrong_destination_entry_requirements.yaml
 ```
 
 There is no separate NeurOSan extra in `pyproject.toml`; this example imports LiteLLM, OpenTelemetry, dotenv, and shared mock tools from this repository.
-Required env vars are `AZURE_API_BASE` and `AZURE_API_KEY`; set `ASSERT_TARGET_MODEL` only if the target agent should use a different LiteLLM model than `azure/gpt-4o-mini`.
+
+## Environment Variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `AZURE_API_BASE`, `AZURE_API_KEY` | Yes | Azure OpenAI credentials for the agent, the generator, and the judge. |
+| `ASSERT_TARGET_MODEL` | No | Model used by the orchestrator in `agent.py` (default `azure/gpt-4o-mini`). |
+
+Swap the generator and judge models in the files under `evals/` for any other
+[LiteLLM provider](https://docs.litellm.ai/docs/providers).
 
 ## How to use
 
 After a run, inspect the suite and run artifacts:
 
 ```bash
-assert-ai results status travel-planner-neurosan-v1 custom-otel
+assert-ai results status neurosan-fabricated-budget-verification baseline
 cd viewer
 npm install
 npm run dev
-# Open http://localhost:5174 and select travel-planner-neurosan-v1 / custom-otel.
+# Open http://localhost:5174 and select the suite / baseline.
 ```
 
-Key files:
+Key files, per suite (`neurosan-fabricated-budget-verification`,
+`neurosan-wrong-destination-entry-requirements`):
 
-- `artifacts/results/travel-planner-neurosan-v1/taxonomy.json` — generated behavior categories
-- `artifacts/results/travel-planner-neurosan-v1/test_set.jsonl` — generated test cases
-- `artifacts/results/travel-planner-neurosan-v1/custom-otel/inference_set.jsonl` — responses and trace references
-- `artifacts/results/travel-planner-neurosan-v1/custom-otel/scores.jsonl` — per-test-case judge verdicts
-- `artifacts/results/travel-planner-neurosan-v1/custom-otel/metrics.json` — behavior violation rates
+- `artifacts/results/<suite>/taxonomy.json` — generated behavior categories
+- `artifacts/results/<suite>/test_set.jsonl` — generated test cases
+- `artifacts/results/<suite>/baseline/inference_set.jsonl` — responses and trace references
+- `artifacts/results/<suite>/baseline/scores.jsonl` — per-test-case judge verdicts
+- `artifacts/results/<suite>/baseline/metrics.json` — behavior violation rates
 
-## Behavior violation rate results
-
-This README does not include a measured n=10 behavior violation rate yet. Run the eval, check `metrics.json`, and report the model, sample size, and run ID alongside any rate.
-Do not compare this variant to LangGraph until both have the same config, model settings, and sample size.
+`artifacts/` is gitignored, so runs stay local and are never committed.

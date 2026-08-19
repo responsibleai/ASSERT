@@ -59,6 +59,77 @@ class InitCommandTest(unittest.TestCase):
 
     @patch("assert_ai.init._design_agent.chat_completion")
     @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
+    def test_describe_file_carries_shell_hostile_text(self, _mock_sys, mock_llm) -> None:
+        """Generated prose reaches the design agent without shell quoting."""
+        mock_llm.return_value = _done_response()
+        description = 'The "agent" runs `whoami`; it $(exits) with \'quotes\'.\nSecond line.'
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("describe.txt").write_text(description, encoding="utf-8")
+            result = runner.invoke(cli, [
+                "init",
+                "--describe-file", "describe.txt",
+                "--non-interactive",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue(Path("eval_config.yaml").exists())
+        user_message = next(
+            m for m in mock_llm.call_args.kwargs["messages"] if m["role"] == "user"
+        )
+        self.assertIn(description, user_message["content"])
+
+    def test_describe_and_describe_file_are_mutually_exclusive(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("describe.txt").write_text("A chatbot", encoding="utf-8")
+            result = runner.invoke(cli, [
+                "init",
+                "--describe", "A chatbot",
+                "--describe-file", "describe.txt",
+                "--non-interactive",
+            ])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("mutually exclusive", result.output)
+
+    def test_empty_describe_file_fails(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("describe.txt").write_text("   \n", encoding="utf-8")
+            result = runner.invoke(cli, [
+                "init",
+                "--describe-file", "describe.txt",
+                "--non-interactive",
+            ])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("empty", result.output)
+
+    def test_missing_describe_file_fails(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, [
+                "init",
+                "--describe-file", "nope.txt",
+                "--non-interactive",
+            ])
+            self.assertNotEqual(result.exit_code, 0)
+
+    def test_non_utf8_describe_file_fails_cleanly(self) -> None:
+        """A non-UTF-8 file exits via _error, not an UnicodeDecodeError traceback."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            # UTF-16 bytes are not decodable as UTF-8.
+            Path("describe.txt").write_bytes("a measurable behavior".encode("utf-16"))
+            result = runner.invoke(cli, [
+                "init",
+                "--describe-file", "describe.txt",
+                "--non-interactive",
+            ])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertNotIsInstance(result.exception, UnicodeDecodeError)
+            self.assertIn("not valid UTF-8", result.output)
+
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_dry_run_does_not_write(self, _mock_sys, mock_llm) -> None:
         mock_llm.return_value = _done_response()
         runner = CliRunner()
