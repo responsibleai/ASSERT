@@ -75,8 +75,8 @@ pytest examples/bank_manager_agent_control/tests -q
 python examples/bank_manager_agent_control/scripts/prepare_powered_coercion.py
 ```
 
-It verifies the fixture SHA-256 and class balance before writing the suite-level
-`test_set.jsonl`.
+It verifies the canonical UTF-8/LF fixture SHA-256 and class balance before
+writing the suite-level `test_set.jsonl`.
 
 ## Trace capture
 

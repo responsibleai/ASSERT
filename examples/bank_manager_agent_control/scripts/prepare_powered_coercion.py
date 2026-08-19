@@ -19,13 +19,16 @@ REPO = Path(__file__).resolve().parents[3]
 EXAMPLE = Path(__file__).resolve().parents[1]
 FIXTURE = EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
 LABELS = EXAMPLE / "fixtures" / "coercion_powered_120_labels.json"
-EXPECTED_SHA256 = "1f314b96e5ea372787e9b0481990a33ce45c920f74f63eb9cf70238d773260d3"
+EXPECTED_SHA256 = "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71"
 SUITE = REPO / "artifacts" / "results" / "bank-manager-coercion-powered-120"
 TARGET = SUITE / "test_set.jsonl"
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def text_sha256(path: Path) -> str:
+    # Universal-newline decoding normalizes only line endings, keeping evidence
+    # identity stable across Git checkouts.
+    content = path.read_text(encoding="utf-8").encode("utf-8")
+    return hashlib.sha256(content).hexdigest()
 
 
 def main() -> int:
@@ -37,7 +40,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    fixture_hash = sha256(FIXTURE)
+    fixture_hash = text_sha256(FIXTURE)
     if fixture_hash != EXPECTED_SHA256:
         raise SystemExit(
             f"fixture hash mismatch: expected {EXPECTED_SHA256}, got {fixture_hash}"
@@ -54,7 +57,7 @@ def main() -> int:
         raise SystemExit(f"label balance mismatch: {dict(counts)}")
 
     if TARGET.exists():
-        target_hash = sha256(TARGET)
+        target_hash = text_sha256(TARGET)
         if target_hash == fixture_hash:
             print(f"already installed: {TARGET}")
             return 0
@@ -70,7 +73,7 @@ def main() -> int:
         "labels: coercive=60, legitimate-with-evidence=30, "
         "legitimate-routine=30"
     )
-    print(f"sha256: {fixture_hash}")
+    print(f"sha256 (utf8-lf): {fixture_hash}")
     return 0
 
 

@@ -13,12 +13,17 @@ FIXTURE = EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
 LABELS = EXAMPLE / "fixtures" / "coercion_powered_120_labels.json"
 RESULTS = EXAMPLE / "fixtures" / "coercion_powered_120_results.json"
 OUTCOMES = EXAMPLE / "fixtures" / "coercion_powered_120_arm_outcomes.json"
-EXPECTED_SHA256 = "1f314b96e5ea372787e9b0481990a33ce45c920f74f63eb9cf70238d773260d3"
+EXPECTED_SHA256 = "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71"
 CONFIG = EXAMPLE / "eval_coercion_authority.yaml"
 
 
+def _text_sha256(path: Path) -> str:
+    content = path.read_text(encoding="utf-8").encode("utf-8")
+    return hashlib.sha256(content).hexdigest()
+
+
 def test_powered_fixture_hash_and_balance() -> None:
-    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == EXPECTED_SHA256
+    assert _text_sha256(FIXTURE) == EXPECTED_SHA256
     rows = [
         json.loads(line)
         for line in FIXTURE.read_text(encoding="utf-8").splitlines()
@@ -73,6 +78,8 @@ def test_published_result_summary_matches_blog_claims() -> None:
     assert results["design"]["n_total"] == 120
     assert results["design"]["n_coercive"] == 60
     assert results["design"]["n_legitimate"] == 60
+    assert results["design"]["execution_dataset_sha256"] == EXPECTED_SHA256
+    assert results["design"]["execution_dataset_hash_normalization"] == "utf8-lf"
     assert results["design"]["per_case_outcomes"] == OUTCOMES.name
 
     expected = {
@@ -105,7 +112,8 @@ def test_published_result_summary_matches_blog_claims() -> None:
 def test_per_case_outcomes_recompute_published_statistics() -> None:
     payload = json.loads(OUTCOMES.read_text(encoding="utf-8"))
     assert payload["dataset_sha256"] == EXPECTED_SHA256
-    assert payload["labels_sha256"] == hashlib.sha256(LABELS.read_bytes()).hexdigest()
+    assert payload["fixture_hash_normalization"] == "utf8-lf"
+    assert payload["labels_sha256"] == _text_sha256(LABELS)
     rows = payload["rows"]
     assert len(rows) == 120
     assert len({row["test_case_id"] for row in rows}) == 120
