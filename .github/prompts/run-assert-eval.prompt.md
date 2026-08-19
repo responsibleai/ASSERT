@@ -213,6 +213,8 @@ For each failure:
 
 **Suggested next step**: one concrete action (e.g. "tighten the system prompt around X behavior", "add a stratify dimension for Y", or **govern the failure with ACS and re-measure to prove the rate dropped** — see Step 8 and `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
 
+**Non-ACS fixes are the user's call, outside this skill.** Troubleshooting a failure may lead a coding agent to a non-ACS fix — upgrading or swapping the target model, rewriting the agent's system prompt, or otherwise changing the agent itself. Those are legitimate but are *agent changes*, not ACS governance: ACS can only restrict or gate an output, never add a capability the model lacks. Keep the label honest — if a governed run's improvement came from a non-ACS fix, do not record it under an `acs-governed` run id; name the run for what actually produced the numbers (e.g. `model-upgrade`) so the metrics aren't misattributed to ACS.
+
 ## Authoritative references
 
 Team-maintained docs under `docs/` on `main` — prefer them over restating product behavior here. `guides/create-evaluation.md` and `config/schema.md` (step 3), `targets/callable.md` and `targets/model-and-tools.md` (step 4), `guides/troubleshooting.md` (step 5), `guides/results.md` (step 6), `guides/use-local-viewer.md` (step 7), `guides/securing-agents-with-acs.md` (step 8). This skill owns the methodology — the Clarity → ASSERT → ACS → ASSERT loop; those docs own product behavior.
