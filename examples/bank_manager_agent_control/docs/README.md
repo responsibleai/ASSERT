@@ -4,6 +4,12 @@ Start with the [example README](../README.md) for the two behaviors, measured
 results, and runnable commands. This page documents setup and the policy
 enforcement mechanics.
 
+> If you arrived through an older pinned-commit or short link, use these current
+> relative entry points: [example overview](../README.md),
+> [AIEWF talk index](../../../talks/README.md), and
+> [current deck](../../../talks/aiewf-18min/aiewf-2026-deck.pdf).
+> Relative links avoid pinning future readers to a stale commit.
+
 ## Safety and credentials
 
 - Never read, print, or commit `.env`.
@@ -23,7 +29,7 @@ enforcement mechanics.
 | Target | `agent_tier_authz.py` | `coercion_agent.py` |
 | Control | `tier_authorization.rego` | classifier annotator + `bank_manager_coercion.rego` |
 | Test data | Generated once, reused across arms | Reviewed 120-prompt fixture |
-| Evidence | `target.callable` + OTel trace | Full inference transcript and gate audit |
+| Evidence | `target.callable` + OTel trace | OTel tool spans plus trace-visible `acs_policy` decisions |
 
 ## Install
 
@@ -112,16 +118,22 @@ The required platform contract is explicit: every domain must emit the
 normalized sensitivity property. Rego cannot repair forged or missing source
 data.
 
-### Behavior 2: classifier annotator
+### Behavior 2: typed artifact verification + classifier annotator
 
-No typed field identifies coercion. The host invokes the classifier annotator
-on the request and tool context, then places the score in the ACS snapshot.
-Rego maps the score into allow, escalate, or deny bands.
+The host first verifies any cited AUTH-/CB-/OPS-/CRD-/DA- reference against
+bank-owned state and confirms that it applies to the action. A reference-shaped
+string alone never creates an allow. The host then invokes the classifier
+annotator on the remaining semantic signal and places both results in the ACS
+annotation. Rego maps invalid evidence or classifier uncertainty to escalation,
+and clear coercion to deny.
 
 The published arm uses the calibrated scorer from the measured run. The
 held-out diagnostic shows the raw scorer generalized better than the Platt
 calibration; production deployment should recalibrate on representative data
 and monitor drift.
+
+Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span,
+so ASSERT's judge can cite the decision alongside the bank tool call.
 
 ## Run references
 

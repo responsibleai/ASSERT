@@ -35,6 +35,9 @@ on:
       - 'examples/incident_triage_agent/**'
       - 'examples/langgraph-foundry-hosted/**'
       - 'examples/agents/**'
+      - 'examples/bank_manager_agent_control/**'
+      - 'talks/aiewf-18min/**'
+      - 'talks/README.md'
       - 'docs/case-study-*.md'
 
 concurrency:
@@ -45,7 +48,7 @@ jobs:
   tier1-unit:
     name: "Tier 1: Unit Tests"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -63,11 +66,18 @@ jobs:
         # The `otel` extra is required because tests/test_incident_triage_smoke.py
         # imports examples/incident_triage_agent/agent.py, which imports
         # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface, so the
-        # CI install set has to include the demo's optional extras even though
-        # core ASSERT doesn't need them.
+        # examples like that one ship as part of the unit-test surface. The bank
+        # support regressions additionally exercise ACS and example-only agent
+        # dependencies, so CI installs those extras explicitly.
         run: |
-          python -m pip install -e ".[dev,otel]"
+          python -m pip install -e ".[dev,otel,examples,acs,langgraph]"
+
+      - name: Install Open Policy Agent
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/v0.70.0/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          opa version
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:
@@ -86,3 +96,6 @@ jobs:
         # Both paths are required: `pytest tests/` would override the testpaths
         # in pytest.ini and silently skip the skill's own suite.
         run: pytest tests/ .claude/skills/run-assert-eval/tests/ -x -q
+
+      - name: Run bank support example regressions
+        run: pytest examples/bank_manager_agent_control/tests -q

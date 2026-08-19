@@ -21,8 +21,8 @@
 #   input.snapshot.call_refs   ID-shaped values in the tool ARGUMENTS (used by
 #                              the pre-call gate for state-changing calls)
 #   input.snapshot.protected_refs
-#                              of those, the ones the platform has already
-#                              observed at a protected tier
+#                              of those, the ones the platform authoritatively
+#                              resolves to a protected tier before execution
 #
 # Fail-closed note: unlike the AIEWF demo policy, an unparseable result does NOT
 # fall through to allow — see `unreadable_result` at the bottom.
@@ -76,11 +76,11 @@ post_tool_call_verdict := deny(
 }
 
 # ── same rule, applied one step earlier ────────────────────────────────────
-# A state-changing call whose arguments name an entity the platform has already
-# observed at a protected tier is stopped BEFORE it executes, so the write never
-# happens. Same predicate, same property, no tool names: "state-changing" is the
-# host's own tool metadata, and `protected_refs` is derived by the platform from
-# `risk_tier`, not from an ID list.
+# A state-changing call whose arguments name an entity the platform resolves to
+# a protected tier is stopped BEFORE it executes, so the write never happens.
+# Same predicate, same property, no tool names: "state-changing" is the host's
+# own tool metadata, and `protected_refs` is derived by the platform from its
+# authoritative `risk_tier` registry, not from an ID allow-list.
 
 protected_refs := {e | some e in object.get(snapshot, "protected_refs", [])}
 

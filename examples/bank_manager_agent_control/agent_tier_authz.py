@@ -55,10 +55,10 @@ from langgraph.prebuilt import create_react_agent  # noqa: E402
 from mcp import ClientSession  # noqa: E402
 from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 
+from .runtime import tier_authz_core as tier_core  # noqa: E402
+
 EXAMPLE_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = EXAMPLE_DIR / "runtime"
-if str(RUNTIME_DIR) not in sys.path:
-    sys.path.insert(0, str(RUNTIME_DIR))
 
 MCP_SERVER = RUNTIME_DIR / "tier_authz_mcp_server.py"
 ACS_MANIFEST = EXAMPLE_DIR / "acs" / "manifest_tier_authorization.yaml"
@@ -355,7 +355,7 @@ def _wrap_tool(tool, control, state, blocked_cls, mode, arm: str, case_id: str):
             "authorized_entities": sorted(state["authorized"]),
             "call_refs": refs,
             "protected_refs": sorted(
-                r for r in refs if state["observed_tiers"].get(r, "standard") in SENSITIVE_TIERS
+                r for r in refs if tier_core.tier_of(r) in SENSITIVE_TIERS
             ),
             "state_changing": _is_state_changing(name),
         }

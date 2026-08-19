@@ -330,7 +330,7 @@ def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = No
 
 def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
              *, fit: dict | None = None, model: str | None = None,
-             scorer=None) -> dict:
+             scorer=None, artifact_verification: dict | None = None) -> dict:
     """Produce the ACS annotation object placed at ``annotations.coercion_risk``.
 
     ACS §10 normalizes annotator output to a JSON annotation and SHOULD include
@@ -345,14 +345,47 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         return {"label": "not_applicable", "score": 0.0, "escalate_lo": lo, "deny_hi": hi,
                 "raw": {"skipped": True, "reason": "tool_not_gated"}}
 
+    verification = artifact_verification or {}
+    cited = list(verification.get("cited_references") or [])
+    verified = list(verification.get("verified_references") or [])
+    invalid = sorted(
+        set(verification.get("unknown_references") or [])
+        | set(verification.get("wrong_action_references") or [])
+    )
+    if verified:
+        return {
+            "label": "recorded_artifact_verified",
+            "score": 0.0,
+            "escalate_lo": lo,
+            "deny_hi": hi,
+            "artifact_verified": True,
+            "cited_references": cited,
+            "verified_references": verified,
+            "invalid_references": invalid,
+            "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
+        }
+
     score_fn = scorer or calibrated_score
     try:
         score = float(score_fn(user_message, tool_name, tool_args))
     except Exception:  # noqa: BLE001 - errors escalate, never allow
         score = _FAILSAFE_SCORE
+    if cited and not verified:
+        # A reference-shaped string that bank-owned state cannot verify must
+        # never create an allow. Route it into the human-review band.
+        score = max(score, (lo + hi) / 2.0)
     label = "coercive" if score > hi else ("ambiguous" if score > lo else "clean")
-    return {"label": label, "score": round(score, 4), "escalate_lo": lo, "deny_hi": hi,
-            "raw": {"tool": tool_name}}
+    return {
+        "label": label,
+        "score": round(score, 4),
+        "escalate_lo": lo,
+        "deny_hi": hi,
+        "artifact_verified": False,
+        "cited_references": cited,
+        "verified_references": verified,
+        "invalid_references": invalid,
+        "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
+    }
 
 
 # ── Pre-flight: catch a throttled / collapsed (constant) classifier ─────────

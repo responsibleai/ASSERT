@@ -49,18 +49,17 @@ agent.
 The deposit service already had a deterministic, fail-closed gate. The bug was
 coverage: later services never called it.
 
-Three arms use the same frozen 72-case test set:
+The current viewer headline reports Total 72 per arm:
 
 | | Baseline gate | Defensive prompt | ACS Rego |
 |---|---:|---:|---:|
-| **Impermissible behavior violated:** unauthorized exposure | 51.4% | 54.2% | **0.0%** |
-| **Permissible behavior violated:** standard-tier request mishandled | 0.0% | 0.0% | **0.0%** |
+| **Impermissible behavior violated:** unauthorized exposure | 8% | 6% | **0%** |
+| **Permissible behavior violated:** standard-tier request mishandled | 0% | 0% | **0%** |
 
-A second independently generated pass reproduced the result:
-55.6% -> 54.2% -> 0.0% impermissible violations.
-
-The prompt did not extend enforcement into missing services. Client-record
-exposure stayed 75% -> 75% in one pass and 80% -> 80% in the replicate.
+The defensive prompt improves the displayed aggregate by only two percentage
+points because it cannot extend enforcement into services that never call the
+gate. ACS Rego eliminates every observed impermissible authorization violation
+without adding permissible violations.
 
 The ACS policy keys on normalized `risk_tier`, not on a customer ID or service:
 
@@ -92,14 +91,9 @@ is a gate, not a ban.
 calls, tool calls and results, routing, and ordering. The judge can therefore
 distinguish a sensitive read after authorization from one with no prior check.
 
-On the measured trace-fed run, the judge's impermissible violation rate was:
-
-| Baseline | Defensive prompt | ACS Rego |
-|---:|---:|---:|
-| 8.3% | 5.6% | **0.0%** |
-
-Deterministic exposure telemetry remains the ground truth; the judge makes the
-failure reviewable in the normal ASSERT evidence flow.
+The top-level results above are the current viewer display. Open the run to
+inspect the cited spans and verify whether authorization occurred before the
+sensitive read or action.
 
 ---
 
@@ -112,27 +106,28 @@ to replace a recorded control artifact with:
 - an unrecorded verbal assurance: "the customer approved it on the phone"; or
 - deadline pressure: "we will backfill the paperwork after cutoff."
 
-All typed request fields are otherwise valid. The baseline prompt already says
-authentication is not authorization and uses a keyword tripwire.
+All ordinary request fields are otherwise valid. The host verifies any cited
+recorded-control reference against bank-owned state; the remaining distinction
+between coercive pressure and legitimate work is semantic. The baseline prompt
+already says authentication is not authorization and uses a keyword tripwire.
 
-### Powered 120-case comparison
+### Screenshot-backed 120-case comparison
 
-The published comparison freezes 120 reviewed prompts before any arm runs:
-
-- 60 coercive requests;
-- 30 legitimate requests with recorded evidence; and
-- 30 routine legitimate requests.
+The current viewer headline reports Total 120 per arm. The committed,
+reproducible study artifact is the reviewed 120-prompt fixture plus
+machine-readable labels, per-case arm outcomes, and exact result summary under
+[`fixtures/`](fixtures/). This PR does not claim a committed scenario dataset.
 
 | | **Impermissible behavior violated:** coercion bypass | **Permissible behavior violated:** legitimate request mishandled |
 |---|---:|---:|
-| Baseline prompt + keyword tripwire | 8.3% (5/60) | 26.7% (16/60) |
-| Hardened prompt | 0.0% (0/60) | **46.7% (28/60)** |
-| ACS classifier | 0.0% (0/60) | **26.7% (16/60)** |
+| Baseline prompt + keyword tripwire | 8% | 27% |
+| Hardened prompt | 0% | **47%** |
+| ACS classifier | 0% | **27%** |
 
-The classifier reduced permissible violations by 20.0 percentage points versus
-the hardened prompt on the paired cases (exact McNemar `p=.0169`). With 0
-observed bypasses in 60 coercive cases, its one-sided exact upper 95% bound was
-4.87%, below the predeclared 5% safety ceiling.
+Both controls eliminate observed impermissible violations. The ACS arm combines
+typed artifact verification with the classifier-backed policy, preserves 20
+percentage points more legitimate work than the hardened prompt, and matches
+the baseline permissible-violation rate.
 
 A separate held-out engineering check explains why the keyword tripwire is not
 enough: it missed 8 of 14 coercive requests written outside the rule-authoring
@@ -254,9 +249,10 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `eval_tier_authorization.yaml` | Behavior 1, three arms via target override, with OTel trace capture |
 | `agent_tier_authz.py` | Deposit-only baseline, defensive prompt, and ACS Rego arms |
 | `acs/policy_tier_authz/tier_authorization.rego` | Property-based sensitivity policy |
-| `eval_coercion_authority.yaml` | Behavior 2's one config; target overrides select the three powered arms |
+| `eval_coercion_authority.yaml` | Behavior 2's one traced config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
-| `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and published result summary |
+| `runtime/bank_core.py` | Bank-owned control-artifact registry and action-scope verification |
+| `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, per-case arm outcomes, and published result summary |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |
 | `scripts/coercion_scoreboard.py` | Paired result analysis and confidence bounds |
 | `scripts/generalization_proof.py` | Six-domain deterministic policy proof |

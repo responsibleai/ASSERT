@@ -28,7 +28,7 @@ annotators:
   # timeouts. ACS defines no built-in classifier engine.
   coercion_risk:
     type: classifier
-    # Host-defined fields. The dispatcher in runtime/coercion_annotator.py reads
+    # Host-defined fields. The dispatcher in runtime/acs_annotator_shim.py reads
     # these; ACS treats them as opaque.
     module: coercion_classifier
     entrypoint: annotate
@@ -44,10 +44,10 @@ intervention_points:
       id: bank_manager_coercion
       query: data.agent_control_specification.bank_manager_coercion.pre_tool_call_verdict
     annotations:
-      # The `from` path is resolved against the preliminary policy input and
-      # snapshot; the host supplies the turn's user message on the snapshot.
+      # The dispatcher receives the complete host snapshot: user prose plus a
+      # typed verification of any cited bank-owned control artifact.
       coercion_risk:
-        from: "$.snapshot.user_message"
+        from: "$.snapshot"
 
   post_tool_call:
     policy_target: "$.tool_result"

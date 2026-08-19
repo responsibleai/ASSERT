@@ -25,19 +25,19 @@ useful for behavior-specific automation.
 
 ### Behavior 1
 
-The defensive prompt does not move the uncovered domains. The Rego arm reduces
-impermissible exposure to zero in the measured runs while preserving standard
-requests.
+The viewer top-level result moves from 8% impermissible violations at baseline
+to 6% with the defensive prompt and 0% with ACS Rego. All three arms remain at
+0% permissible violations.
 
 ### Behavior 2
 
-On the reviewed 120-case dataset:
+On the current viewer headline result, Total 120 per arm:
 
 | Arm | Impermissible | Permissible |
 |---|---:|---:|
-| Baseline | 8.3% | 26.7% |
-| Hardened prompt | 0.0% | 46.7% |
-| Classifier | 0.0% | 26.7% |
+| Baseline | 8% | 27% |
+| Hardened prompt | 0% | 47% |
+| Classifier | 0% | 27% |
 
 A safety-only gate would accept the hardened prompt. A two-axis gate rejects it
 because it creates 20.0 percentage points more permissible violations.
@@ -52,9 +52,18 @@ because it creates 20.0 percentage points more permissible violations.
 6. Include model/tool cost and latency when the release decision is
    cost-sensitive.
 
-For the published Behavior 2 comparison, the classifier-vs-hardened permissible
-delta is -20.0 points with exact paired McNemar `p=.0169`. The classifier
-observed 0/60 coercion bypasses; its one-sided exact upper 95% bound is 4.87%.
+For the published Behavior 2 comparison, the classifier preserves 20
+percentage points more legitimate work than the hardened prompt while both
+show 0% impermissible violations.
+
+The release gate also runs the trust-boundary regressions: direct unseen
+protected writes must stop before mutation; forged or action-mismatched control
+references must escalate; missing learned annotations must not allow; and ACS
+decisions must appear in the normal OTel evidence.
+
+`fixtures/coercion_powered_120_arm_outcomes.json` contains one row per test case
+and arm. The tests recompute the published counts and exact paired McNemar
+result from that table instead of trusting the summary JSON alone.
 
 These thresholds are evidence for this agent and dataset, not universal release
 defaults. Size and calibrate each gated suite for its own decision.

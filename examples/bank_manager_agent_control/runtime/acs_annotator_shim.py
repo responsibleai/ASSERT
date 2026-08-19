@@ -24,20 +24,19 @@ annotation that lands in the escalate band rather than a missing annotation
 
 from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
-
 import yaml  # noqa: E402
+from opentelemetry import trace  # noqa: E402
 
-from acs_shim import AgentControl as _BaseAgentControl  # noqa: E402
-from acs_shim import AgentControlBlocked, EnforcementMode, Verdict, _Result, _Value  # noqa: E402,F401
-from acs_shim import mcp_text as _mcp_text  # noqa: E402
+from .acs_shim import AgentControl as _BaseAgentControl  # noqa: E402
+from .acs_shim import AgentControlBlocked, EnforcementMode, Verdict, _Result, _Value  # noqa: E402,F401
+from .acs_shim import mcp_text as _mcp_text  # noqa: E402
 
-import coercion_classifier as cc  # noqa: E402
+from . import coercion_classifier as cc  # noqa: E402
+
+_TRACER = trace.get_tracer("assert.bank_manager.acs")
 
 
 def _resolve(path: str, doc: dict):
@@ -111,9 +110,20 @@ class AnnotatingAgentControl(_BaseAgentControl):
             raise ValueError(f"unsupported annotator type {decl.get('type')!r}")
         tool_name = (doc.get("tool") or {}).get("name", "")
         tool_args = (doc.get("policy_target") or {}).get("value")
-        user_message = resolved if isinstance(resolved, str) else str(resolved or "")
+        if isinstance(resolved, dict):
+            user_message = str(resolved.get("user_message") or "")
+            artifact_verification = resolved.get("control_artifact_verification") or {}
+        else:
+            user_message = resolved if isinstance(resolved, str) else str(resolved or "")
+            artifact_verification = {}
         try:
-            return cc.annotate(user_message, tool_name, tool_args, scorer=self.scorer)
+            return cc.annotate(
+                user_message,
+                tool_name,
+                tool_args,
+                scorer=self.scorer,
+                artifact_verification=artifact_verification,
+            )
         except Exception:  # noqa: BLE001 - fail closed into the escalate band
             fit = cc.load_fit()
             return {"label": "annotator_error", "score": cc._FAILSAFE_SCORE,
@@ -121,7 +131,32 @@ class AnnotatingAgentControl(_BaseAgentControl):
                     "raw": {"error": "annotation_failed"}}
 
     def _eval(self, ip: str, doc: dict) -> Verdict:  # type: ignore[override]
-        verdict = super()._eval(ip, self._annotate(ip, doc))
+        annotated = self._annotate(ip, doc)
+        tool_name = (doc.get("tool") or {}).get("name", "")
+        with _TRACER.start_as_current_span(f"acs_policy.{ip}") as span:
+            span.set_attribute("openinference.span.kind", "TOOL")
+            span.set_attribute("tool.name", "acs_policy")
+            span.set_attribute(
+                "input.value",
+                json.dumps({
+                    "intervention_point": ip,
+                    "tool_name": tool_name,
+                    "annotations": annotated.get("annotations", {}),
+                }, sort_keys=True),
+            )
+            verdict = super()._eval(ip, annotated)
+            span.set_attribute(
+                "output.value",
+                json.dumps({
+                    "decision": verdict.decision,
+                    "reason": verdict.reason,
+                    "tool_name": tool_name,
+                }, sort_keys=True),
+            )
+            span.set_attribute("acs.intervention_point", ip)
+            span.set_attribute("acs.decision", verdict.decision)
+            if verdict.reason:
+                span.set_attribute("acs.reason", verdict.reason)
         if self.trace and self.trace[-1].get("intervention_point") == ip:
             self.trace[-1]["decision"] = verdict.decision
             self.trace[-1]["reason"] = verdict.reason

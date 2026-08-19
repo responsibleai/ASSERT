@@ -59,17 +59,15 @@ from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 from langchain_core.tools import ToolException  # noqa: E402
 from langgraph.prebuilt import create_react_agent  # noqa: E402
 
+from .runtime import bank_core  # noqa: E402
+
 _TRACE_LOCK = __import__("threading").Lock()
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-RUNTIME_DIR = EXAMPLE_DIR / "runtime"
-for _p in (str(EXAMPLE_DIR), str(RUNTIME_DIR)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
-from bank_agent_common import _build_llm, _extract_text, _open_two_servers  # type: ignore[import-not-found] # noqa: E402
+from .bank_agent_common import _build_llm, _extract_text, _open_two_servers  # noqa: E402
 
-import coercion_classifier as cc  # noqa: E402
+from .runtime import coercion_classifier as cc  # noqa: E402
 
 ACS_MANIFEST_COERCION = EXAMPLE_DIR / "acs" / "manifest_coercion.yaml"
 
@@ -177,15 +175,16 @@ async def _run_prompt_arm(message: str, prompt: str, *, heuristic: bool) -> str:
 
 def _load_control(scorer):
     """Build the annotating ACS decision point from the coercion manifest."""
-    from bank_agent_common import _acs_manifest_with_absolute_bundle
-    import acs_annotator_shim as shim
+    from .bank_agent_common import _acs_manifest_with_absolute_bundle
+    from .runtime import acs_annotator_shim as shim
+
     return shim.AnnotatingAgentControl.from_path(
         str(_acs_manifest_with_absolute_bundle(ACS_MANIFEST_COERCION)), scorer=scorer), shim
 
 
 def _wrap_tool(tool, control, state, shim):
     """Wrap an MCP tool so every call passes through the ACS intervention points."""
-    import feature_policy as fpol
+    from .runtime import feature_policy as fpol
 
     original = tool.coroutine
     tool_name = tool.name
@@ -200,6 +199,9 @@ def _wrap_tool(tool, control, state, shim):
             # The `from: $.snapshot.user_message` path in the manifest resolves
             # against this. ACS is stateless; the host supplies turn context.
             "user_message": state["user_message"],
+            "control_artifact_verification": bank_core.verify_control_artifacts(
+                state["user_message"], tool_name
+            ),
         }
         try:
             result = await control.run_tool(tool_name, args, execute, snapshot=snapshot)
@@ -219,7 +221,7 @@ def _wrap_tool(tool, control, state, shim):
 
 async def _run_acs_arm(message: str, *, scorer=None) -> str:
     from contextlib import AsyncExitStack
-    import feature_policy as fpol
+    from .runtime import feature_policy as fpol
 
     control, shim = _load_control(scorer)
     state = fpol.new_feature_state(message)
@@ -242,10 +244,9 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
 def _write_gate_trace(message: str, control, scorer) -> None:
     """Append this turn's annotator + policy decisions to an audit log.
 
-    ASSERT's inference_set.jsonl records only the final assistant message, so
-    without this there is no evidence of whether the ACS gate actually fired or
-    whether the agent declined on its own. Reporting "the gate blocked N cases"
-    without it would be an assumption, not a measurement.
+    The normal ASSERT trace now carries each ACS decision as an `acs_policy`
+    OpenTelemetry tool span. This JSONL remains a local debug mirror for quickly
+    auditing classifier scores and verdicts outside the viewer.
     """
     import threading
     path = EXAMPLE_DIR / "artifacts" / (

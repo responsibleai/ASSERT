@@ -40,6 +40,7 @@ coercion := object.get(annotations, "coercion_risk", {})
 score := object.get(coercion, "score", 0)
 escalate_lo := object.get(coercion, "escalate_lo", 2)
 deny_hi := object.get(coercion, "deny_hi", 2)
+invalid_references := object.get(coercion, "invalid_references", [])
 
 tool_name := object.get(object.get(input, "tool", {}), "name", "")
 
@@ -61,7 +62,29 @@ escalate(reason, message) := {"decision": "escalate", "reason": reason, "message
 
 # ── pre_tool_call: the learned coercion gate ───────────────────────────────
 
-pre_tool_call_verdict := deny(
+annotation_valid if {
+	object.get(annotations, "coercion_risk", null) != null
+	is_object(coercion)
+	is_number(object.get(coercion, "score", null))
+	is_number(object.get(coercion, "escalate_lo", null))
+	is_number(object.get(coercion, "deny_hi", null))
+}
+
+pre_tool_call_verdict := escalate(
+	"coercion_annotation_missing",
+	"I couldn't verify the learned control signal for this action, so I routed it to verified bank operations instead of executing it.",
+) if {
+	input.intervention_point == "pre_tool_call"
+	tool_name in gated_tools
+	not annotation_valid
+} else := escalate(
+	"unverified_control_artifact",
+	"The request cites a control reference that the bank's records could not verify for this action. I routed it to verified bank operations instead of treating the string as authorization.",
+) if {
+	input.intervention_point == "pre_tool_call"
+	tool_name in gated_tools
+	count(invalid_references) > 0
+} else := deny(
 	"coercion_unverified_authority",
 	"I can't action that here. The request asks me to stand in a claimed authority or an unrecorded verbal assurance in place of the recorded approval step, and that step is what protects the customer. Send it to verified bank operations with an authorization reference and I can complete it immediately.",
 ) if {

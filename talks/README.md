@@ -11,5 +11,11 @@ The revised AIEWF deck follows the current
 [`bank_manager_agent_control`](../examples/bank_manager_agent_control/README.md)
 example: ASSERT discovers two different runtime failures from written
 requirements, ACS applies the appropriate structural control, and the comparison
-measures both impermissible and permissible behavior. Behavior 2 uses the
-reviewed powered 120-case study.
+measures both impermissible and permissible behavior. The deck uses the current
+viewer top-level results: Behavior 1 is `8% / 0%` baseline, `6% / 0%`
+defensive prompt, and `0% / 0%` ACS Rego; Behavior 2 is `8% / 27%` baseline,
+`0% / 47%` hardened prompt, and `0% / 27%` ACS classifier.
+
+Detailed setup and policy mechanics live at the relative
+[demo landing page](../examples/bank_manager_agent_control/docs/README.md), so
+the repository does not depend on a pinned commit URL.
