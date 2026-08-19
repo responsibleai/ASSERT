@@ -67,10 +67,10 @@ jobs:
         # imports examples/incident_triage_agent/agent.py, which imports
         # opentelemetry at module load time (target.trace.backend: otel). Demo
         # examples like that one ship as part of the unit-test surface. The bank
-        # support regressions additionally exercise ACS and example-only agent
-        # dependencies, so CI installs those extras explicitly.
+        # support regressions use the checked-in OPA-backed ACS shim, so they need
+        # the example/agent dependencies but not the optional ACS generator SDK.
         run: |
-          python -m pip install -e ".[dev,otel,examples,acs,langgraph]"
+          python -m pip install -e ".[dev,otel,examples,langgraph]"
 
       - name: Install Open Policy Agent
         run: |
