@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import sys
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from rich.table import Table
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
 from assert_ai.results import (
@@ -333,6 +335,14 @@ def _print_acs_validation_totals(report: Any) -> None:
         f"(reacted, incl. warn); strongly blocked {report.strong_blocked}/{report.total} "
         f"(deny/escalate); handled_rate {_fmt_percent(report.handled_rate)}"
     )
+    if getattr(report, "annotator_dependent", False) and report.not_blocked > 0:
+        click.echo(
+            "  Note: this policy conditions on LLM annotators (input.annotations.*), "
+            "which offline validation does not populate — annotator rules cannot fire "
+            "here, so an unblocked/0-handled result for them is EXPECTED, not a policy "
+            "defect. Verify these gates via a guarded remeasure run (assert-ai run with "
+            "the governed config and check the violation-rate drop), not offline validate."
+        )
 
 
 def _enforce_acs_validation_gate(report: Any, *, fail_on_allow: bool, require_block: bool) -> None:
@@ -1644,6 +1654,18 @@ def acs():
 
     Runtime guarding is available from Python via the ``guard_target(...)`` API.
     """
+    # `acs generate` makes provider LLM calls for policy authoring, but the ACS
+    # subcommands do not import the runner, so the project `.env` is never
+    # loaded and Azure credentials go unresolved (the `run` pipeline loads them
+    # in runner.py). Load `.env` walking up from cwd and resolve the Azure auth
+    # mode here so `assert-ai acs …` picks up credentials exactly like
+    # `assert-ai run`, with no manual environment export.
+    from dotenv import find_dotenv, load_dotenv
+
+    from assert_ai.core.azure_auth import refresh_azure_auth_mode
+
+    load_dotenv(find_dotenv(usecwd=True))
+    refresh_azure_auth_mode(force=True)
 
 
 @acs.command("generate", short_help="Generate a deployable ACS policy from an ASSERT run")
@@ -1928,7 +1950,7 @@ def library():
 @library.command("list", short_help="List available presets")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Filter by preset kind.",
 )
@@ -1963,7 +1985,7 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.argument("name")
 @click.option(
     "--kind", "-k",
-    type=click.Choice(["behavior", "judge_preset"], case_sensitive=False),
+    type=click.Choice(["behavior", "judge_preset", "scenario"], case_sensitive=False),
     default=None,
     help="Preset kind (auto-detected if omitted).",
 )
@@ -1991,7 +2013,29 @@ def library_show(name: str, kind: str | None, as_json: bool):
         _echo_json(data)
         return
 
-    click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+    _write_stdout_utf8(dump_yaml(data))
+
+
+def _write_stdout_utf8(payload: str) -> None:
+    """Write ``payload`` to stdout as UTF-8 bytes.
+
+    ``click.echo`` re-encodes the payload with ``sys.stdout.encoding``, which
+    on Windows defaults to the ANSI code page (usually cp1252) for redirected
+    stdout. Non-ASCII characters like ``日本語`` then raise
+    ``UnicodeEncodeError``. Writing bytes directly through ``sys.stdout.buffer``
+    bypasses that re-encoding so a preset's on-disk YAML matches what
+    ``assert-ai init`` writes on any platform.
+
+    Falls back to ``click.echo`` when ``sys.stdout`` has no ``buffer`` (for
+    example under ``pytest``'s ``capsys`` fixture, which wraps stdout in a
+    ``TextIO`` without a binary layer).
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        click.echo(payload, nl=False)
+        return
+    buffer.write(payload.encode("utf-8"))
+    buffer.flush()
 
 
 if __name__ == "__main__":
