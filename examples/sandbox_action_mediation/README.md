@@ -31,7 +31,8 @@ The stock container path applies:
   proxy-aware requests as `network_egress` evidence;
 - an automatically managed trusted relay that exposes only target ingress,
   audited egress, and optional model-proxy traffic to that private network;
-- read-only policy and mock mounts plus a separate writable output mount;
+- read-only policy and mock mounts, a writable target-output mount, and a
+  host-owned network-evidence ledger that is never mounted into the target;
 - optional host-side model credential routing. The container receives a random
   short-lived proxy token, never the provider credential.
 
