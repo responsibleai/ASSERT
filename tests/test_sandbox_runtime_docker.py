@@ -103,7 +103,9 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
             assert handle.egress_log.read_text(encoding="utf-8") == host_egress_before
             assert not handle.egress_log.is_relative_to(handle.output_dir)
             assert not any(
-                Path(mount["Source"]).resolve() == handle.egress_log.parent.resolve()
+                handle.egress_log.resolve().is_relative_to(
+                    Path(mount["Source"]).resolve()
+                )
                 for mount in inspect["Mounts"]
             )
             policy_write = subprocess.run(
