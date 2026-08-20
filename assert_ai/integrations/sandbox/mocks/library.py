@@ -76,7 +76,7 @@ class MockRule:
 
     @property
     def specificity(self) -> int:
-        return specificity(self.when) + (1 if self.case_id else 0)
+        return specificity(self.when)
 
 
 def _require_mapping(value: Any, what: str) -> dict[str, Any]:
@@ -100,7 +100,14 @@ class MockLibrary:
         backends: Mapping[str, MockBackend] | None = None,
         cassette_dir: str | Path | None = None,
     ) -> None:
-        self.rules = sorted(rules, key=lambda r: (-r.specificity, r.order))
+        # An explicit case binding is stronger than any generic argument rule:
+        # it exists specifically so otherwise-identical calls can take different
+        # branches in different ASSERT cases. Within each group, preserve the
+        # existing argument-specificity and file-order semantics.
+        self.rules = sorted(
+            rules,
+            key=lambda r: (0 if r.case_id else 1, -r.specificity, r.order),
+        )
         self.backends: dict[str, MockBackend] = dict(backends or default_backends(cassette_dir))
         self.cassette_dir = Path(cassette_dir) if cassette_dir else None
         self._validate_backends()
@@ -196,7 +203,7 @@ class MockLibrary:
             if not match_args(rule.when, call.args):
                 continue
             if rule.backend == "scenario" and isinstance(scenario_backend, ScenarioBackend):
-                if not scenario_backend.matches_state(rule.raw, call):
+                if not scenario_backend.matches_state_for_call(rule.raw, call):
                     continue
             return rule
         return None

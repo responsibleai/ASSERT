@@ -136,6 +136,31 @@ def test_case_id_selector_must_be_a_non_empty_string():
         MockLibrary.from_dict({"mocks": [{"tool": "charge_card", "case_id": 7}]})
 
 
+def test_case_specific_rule_beats_a_more_argument_specific_generic_rule():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "when": {"amount": 25, "card": "same-token"},
+                "response": {"picked": "generic-args"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-failure",
+                "response": {"picked": "case"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall(
+        "charge_card",
+        {"amount": 25, "card": "same-token"},
+        case_id="case-failure",
+    ))
+
+    assert resolved is not None and resolved.value == {"picked": "case"}
+
+
 @pytest.mark.parametrize(
     "matcher,value,expected",
     [
@@ -285,6 +310,49 @@ def test_scenario_state_is_partitioned_by_case_id():
     assert first_a is not None and first_a.value == {"code": "TIMEOUT"}
     assert second_a is not None and second_a.value == {"status": "paid"}
     assert first_b is not None and first_b.value == {"code": "TIMEOUT"}
+
+
+def test_scenario_state_transitions_are_partitioned_by_case_id():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "payment_status",
+                "scenario": "payment",
+                "when_state": "paid",
+                "response": {"status": "paid"},
+            },
+            {"tool": "payment_status", "response": {"status": "pending"}},
+            {
+                "tool": "authorize_payment",
+                "scenario": "payment",
+                "response": {"status": "authorized"},
+                "sets_state": "paid",
+            },
+        ]
+    })
+
+    authorized = library.resolve(MockCall("authorize_payment", {}, case_id="case-a"))
+    status_a = library.resolve(MockCall("payment_status", {}, case_id="case-a"))
+    status_b = library.resolve(MockCall("payment_status", {}, case_id="case-b"))
+
+    assert authorized is not None and authorized.value == {"status": "authorized"}
+    assert status_a is not None and status_a.value == {"status": "paid"}
+    assert status_b is not None and status_b.value == {"status": "pending"}
+
+
+def test_legacy_scenario_backend_state_match_override_still_works():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def matches_state(self, rule):
+            return True
+
+    library = MockLibrary.from_dict(
+        {"mocks": [{"tool": "lookup", "scenario": "legacy", "response": {"ok": True}}]},
+        backends={"scenario": LegacyScenarioBackend()},
+    )
+
+    resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
+
+    assert resolved is not None and resolved.value == {"ok": True}
 
 
 def test_scenario_sequence_advances_then_holds():
