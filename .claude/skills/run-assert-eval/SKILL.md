@@ -7,9 +7,10 @@ description: >
   that the support bot never gives legal advice"). Risks come either from
   Clarity — recommended, driving the real Clarity MCP tools (run_clarity) in-IDE
   to discover failure modes the user has not considered — or directly from the
-  user as a description, PRD, design doc, threat model, or test plan. Then
-  generates one flat evals/<atomic_behavior>.yaml per selected risk, runs the
-  pipeline, and reports pass/violation rates with trace-cited failure examples.
+  user as a description, PRD, design doc, threat model, or test plan — or from a
+  whole-system harm inventory. Then researches an evidence-backed, cited config
+  per selected risk at examples/<slug>/eval_config.yaml, gets it approved, runs
+  the pipeline, and reports pass/violation rates with trace-cited failure examples.
 ---
 
 # Run an ASSERT evaluation
@@ -46,6 +47,18 @@ to measure, is new to the agent, or wants coverage rather than one known bug.
 **Path B — user-supplied risks.** The user names the risk themselves, as prose
 or by pointing at a PRD, design doc, threat model, incident report, or test
 plan. This is the right path when they already know what they want measured.
+
+**Path C — system-derived harm inventory.** The user doesn't have a specific risk
+*or* a Clarity protocol — they have a **system**, and want to know what it should be
+evaluated for at all ("what should I even be testing my RAG assistant for?"). Research
+the harms the system's type, domain, architecture, tasks, and populations actually expose,
+gate them on evidence, and produce a retained/merged/rejected harm ledger. Follow
+[`workflows/system-eval-workflow.md`](workflows/system-eval-workflow.md).
+
+Path C produces the **same candidate shape** as Paths A and B, so it feeds the *same*
+triage gate in Step 2 — it does not get its own. It intentionally over-produces, exactly
+like Clarity, so triage matters more here, not less. Each retained harm then becomes one
+`eval_type: harm` child run in Step 3, one level of fan-out only.
 
 **Whenever you need a new risk to measure**, and the user has not already named
 one, **offer the choice**:
@@ -241,6 +254,10 @@ On Path B the list is usually short and already chosen — still play it back an
 confirm scope before generating configs, rather than assuming every risk they
 mentioned should be measured in this pass.
 
+On Path C the list is long by construction — a system-wide harm inventory over-produces
+the same way Clarity does. Surface the retained harms with their evidence and ask which to
+measure now; never fan out a child run for every harm in the ledger.
+
 ### 3. Turn each selected risk into an atomic config
 
 ASSERT performs best with **one atomic behavior per eval**. Never bundle multiple
@@ -248,70 +265,73 @@ risks into one config — bundling makes `policy_violation` a fuzzy logical-OR a
 hides per-behavior signal.
 
 - **1 selected risk** → generate one config and run once.
-- **N selected risks** → generate N flat `evals/<atomic_behavior>.yaml` files
-  and run them sequentially, one per behavior.
+- **N selected risks** → generate N configs and run them sequentially, one per behavior.
 
-For each selected risk, map the failure mode → `behavior.name` +
-`behavior.description`, and use its context for `context`:
+Configs are **researched, cited, and user-approved** — not scaffolded and hoped for.
+Follow [`workflows/research-eval-dimensions.md`](workflows/research-eval-dimensions.md) for
+each selected risk. That workflow owns the whole of config generation; do not hand-roll a
+config here and do not skip its gates.
 
-```
-assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o evals/<atomic_behavior>.yaml
-```
+Collect two inputs before entering it, and **never silently default either**:
 
-- **Write the description to a file and pass `--describe-file`.** The text is
-  prose you did not author — Clarity output on Path A, the user's own words or a
-  PRD excerpt on Path B — so it can contain quotes, backticks, or `$(...)`.
-  Interpolating it into `--describe "<text>"` would break the
-  command or inject into the user's shell. `--describe` stays available for
-  short text you typed yourself; the two are mutually exclusive.
-- `--default-model` seeds the generated config's `pipeline.default_model` — the
-  model the **eval** runs against. Do **not** use `--model` for this: that is the
-  model driving the init assistant's own conversation (default
-  `azure/gpt-5.4-mini`) and it has no effect on the eval. Note `--default-model`
-  is a prompt-level hint the design agent is asked to *confirm*, not a
-  deterministic write — verify the value actually landed in the generated YAML.
-- **Pin `systematize` and `judge` to the strong model by hand after init.**
-  `init` has no `--systematize-model` / `--judge-model` flag, so everything
-  inherits `default_model` unless you edit the config. Run the eval on the
-  cheap model and the two stages that define and apply ground truth on the
-  strong one:
+| Input | Rule |
+|---|---|
+| `eval_type` | `harm` (one named risk) or `system` (discover a harm portfolio for a whole system, then fan out one child run per retained harm). Normalize to lowercase; accept nothing else. A risk selected in Step 2 is `harm`. |
+| `N` | Positive integer — how many complete dimension-generation passes to run before deduplication. Ask for it when missing or invalid rather than inferring one. |
 
-  ```yaml
-  default_model:
-    name: azure/gpt-5.4-mini      # target, test-set generation, tester
-  pipeline:
-    systematize:
-      model: azure/gpt-5.4        # authors the taxonomy
-    judge:
-      model: azure/gpt-5.4        # renders every verdict
-  ```
+What that workflow does, in order:
 
-  This is the convention in the repo's own examples (`benchmark`,
-  `change_control_agent`, `incident_triage_agent`, `phoenix_auto_trace`,
-  `science_research_agent`). These two stages are not ordinary stages:
-  `systematize` authors the behavior tree and the permissible /
-  non-permissible split that **every** metric is computed against, and
-  `judge` decides both applicability and violation for every row — with no
-  redundancy, since `judge.n` defaults to `1` and judge temperature is not
-  pinned. A weak model here does not add noise around a fixed target, it
-  moves the target, and it inflates run-to-run drift in applicability and
-  in small deltas. Skipping this silently downgrades both.
-- **Check the built-in presets first** — `assert-ai library list` shows bundled
-  behavior and judge presets (`prompt_injection`, `doxxing`, `stereotyping`,
-  `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`, …);
-  `assert-ai library show <name>` prints one. If one matches the risk, seed with
-  `--behavior <name>` / `--judge-preset <name>` instead of generating from scratch.
-- **If the user has an existing config** to extend, use `--from <path>` instead of
-  generating from scratch.
-- After generation, show the user the generated `behavior.description`, `context`,
-  and `pipeline.judge` settings, plus the resolved `systematize` / `judge`
-  models. Confirm before running.
-- **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
-  `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless
-  explicitly disabled, so no `dimensions` block is needed. Config dimensions are
-  merged over the built-ins **by name**, so declaring one with a built-in name
-  silently replaces that built-in's rubric. Add one only for a genuinely new
-  metric the built-ins don't cover, and never reuse a built-in name.
+1. **Isolation preflight** ([`generation-isolation-workflow.md`](workflows/generation-isolation-workflow.md))
+   — detects prior generations for the same slug **by path only**, and asks before using a
+   new dated directory. It never reads a prior generated YAML.
+2. **Reuse a repo spec first** — `assert-ai library list` / `show <name>`; prefer
+   `behavior.preset` or a copy-in spec from `examples/behavior_specs/` over reinventing a
+   description.
+3. **Research the dimension model** — classify the harm's observability, build a dimension
+   ledger, and gate each dimension on at least two independent authoritative sources (or
+   one plus the repo spec). Behavior categories, stratify dimensions, and judge dimensions
+   are researched as three separate namespaces.
+4. **Run `N` passes and deduplicate** ([`iterative-dimension-workflow.md`](workflows/iterative-dimension-workflow.md))
+   — `N` complete passes, then semantic deduplication within each namespace.
+5. **Review and approve** — a compact table per namespace, and an explicit user approval.
+   **Silence is not approval**, and the pre-write gate enforces this mechanically.
+6. **Write the cited config** to `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml`, with
+   inline `# sources:` citations and a consolidated `# References` block.
+
+Outputs land at `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml` — one directory per
+generation, never overwritten. Prefix the eval **suite name** with a domain slug
+(`<domain>-<risk>`) so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not
+collide across domains.
+
+Two things that workflow will ask you to decide, and that matter downstream:
+
+- **`sample_size` is a question for the user, not a default.** Each rate is
+  `violations / sample_size`, so at `10` one flipped case moves the number 10 percentage
+  points. Recommend `25`; require **`≥25`** whenever the run will become an ACS A/B
+  baseline.
+- **`max_turns` has a floor of `10`** (the ASSERT default) unless the harm is genuinely
+  single-turn, and must be **identical in the baseline and governed configs** or the
+  "only ACS differs" comparison breaks.
+
+**Judge dimensions are authored** from the research, on top of a judge preset
+(`safety-core`, plus `safety-extended` for nuanced harms) — but **never reuse a built-in
+name**. `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`
+(`assert_ai/core/judge.py`) and are always judged unless explicitly disabled. Config
+dimensions merge over the built-ins **by name** into the same dict, so a researched
+dimension called `policy_violation` silently replaces the built-in rubric — and since the
+headline `not_permissible_policy_violation_rate` / `permissible_policy_violation_rate`
+split is derived from stored `policy_violation` judgments, that quietly redefines the
+headline metric and any ACS baseline compared against it. The pre-write gate rejects it.
+
+**If live source retrieval is unavailable**, say so and stop at the ledger. The evidence
+gate cannot be met without it, and a config with remembered or invented citations is worse
+than no config. `assert-ai init --describe-file …` remains available as an explicitly
+unvalidated scaffold for a throwaway look — never for a measurement you intend to report
+or govern against.
+
+After generation, show the user the resolved `behavior.description`, `context`,
+`pipeline.judge` settings, the `systematize` / `judge` models, and the reference list.
+Confirm before running.
 
 ### 4. Identify the target shape
 
@@ -371,15 +391,15 @@ only once inference starts. Validate on 3 real cases first:
 
 ```
 # 1. artifacts only, no inference cost
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<slug>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 
 # 2. slice 3 real rows out of the generated test set
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config evals/<atomic_behavior>.yaml --count 3
+  --config examples/<slug>/eval_config.yaml --count 3
 
 # 3. inference + judge on those rows only
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<slug>/eval_config.yaml \
   --override run=<run>-smoke \
   --override inference.test_set_path=<out path from step 2>
 ```
@@ -391,7 +411,7 @@ produce a subset. Full detail in `workflows/measure-clarity-failures.md`
 Step 5a.
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml --output json
+assert-ai run --config examples/<slug>/eval_config.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status
@@ -423,14 +443,22 @@ bulk trace trawling is not.
    rendered on screen as **Impermissible behavior violated** /
    **Permissible behavior violated**.
 
-2. **Top failing cases**: read `scores.jsonl` from `artifacts/results/<suite>/<run>/`.
+2. **Researched judge dimensions**: configs generated by
+   `workflows/research-eval-dimensions.md` carry harm-specific judge dimensions on top of
+   the built-ins (e.g. `harm_actionability`, `severe_harm_escalation`,
+   `longitudinal_harm_pattern`). Report each one's flagged rate **alongside** the
+   permissibility split, never folded into it — they answer different questions
+   ("did harm get through?" vs "how bad was it when it did?"). Name each dimension as the
+   config defines it, and quote its `rubric` when the rate needs interpreting.
+
+3. **Top failing cases**: read `scores.jsonl` from `artifacts/results/<suite>/<run>/`.
    For each dimension with failures, pull 3-5 representative cases with:
    - The test case description (what was tested)
    - `verdict.dimensions` — which dimensions failed
    - `verdict.dimension_justifications` — the judge's rationale with cited evidence
    - `verdict.node_judgments` — which behavior categories were violated, with reasoning
 
-3. **Cost and timing**: read `metrics.json` for token usage and elapsed time per stage.
+4. **Cost and timing**: read `metrics.json` for token usage and elapsed time per stage.
    This file contains cost metadata only, not score roll-ups.
 
 For **Results Q&A mode**, answer the user's specific question from these same artifacts
@@ -505,6 +533,13 @@ Report the permissibility split as the headline pair (from `results status --jso
 the raw `policy_violation` rate ORs over all violated nodes and couples the two, so
 quote it only as context, never as the headline.
 
+**Researched judge dimensions** (when the config declares them), each on its own line
+with its flagged rate — reported beside the headline pair, never merged into it:
+- `<dimension_name>`: X% (N/M cases) — one-line gloss of what its rubric scores
+
+**Evidence base**: the config's `# References` list (tag → title → URL), so the
+provenance of the dimensions being reported is visible alongside the numbers.
+
 **Top failing cases** (3-5 per dimension):
 For each failure:
 - Requirement cited: [behavior category from taxonomy]
@@ -533,6 +568,24 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 | `docs/guides/use-local-viewer.md` | Viewer layout and drill-down | 7 |
 | `docs/guides/securing-agents-with-acs.md` | The ACS generate → validate → guard → re-run path | 8 |
 
+## Bundled workflows
+
+| Workflow | Owns |
+|---|---|
+| `workflows/measure-clarity-failures.md` | The full measurement path: parse → triage → config → run → report → close the loop |
+| `workflows/research-eval-dimensions.md` | **Config generation** — evidence-gated dimension research, `N` passes, approval, cited write |
+| `workflows/iterative-dimension-workflow.md` | The `N`-pass cycle, semantic deduplication, and the approval gate |
+| `workflows/generation-isolation-workflow.md` | Path-only prior-generation preflight and isolated output directories |
+| `workflows/evaluation-intent-workflow.md` | Optional intake: what decision the eval supports, and for whom |
+| `workflows/system-eval-workflow.md` | Path C — whole-system harm inventory, then one harm child run per retained harm |
+| `workflows/govern-and-remeasure.md` | The ACS baseline → generate → governed run → delta loop |
+| `workflows/diagnose-acs-delta.md` | Symptom-indexed diagnostics when the ACS delta comes out wrong |
+
+Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
+`smoke_slice.py` (slice N real rows for a smoke run), `plan_generation_path.py`
+(path-only isolation preflight), `validate_dimension_review.py`
+(render / validate / pre-write / post-write gates).
+
 ## Guardrails
 
 - **Clarity is the recommended risk source, not a gate** — present **both**
@@ -556,13 +609,21 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 - **Per-example package** — every worked example must be a small, self-contained folder under `examples/<domain>/` containing only what a customer needs to understand and reproduce the ASSERT run:
   - `agent.py` (+ any real runtime deps it imports, e.g. `tools.py` / `mock_tools.py`) — the runnable baseline.
   - `README.md` — scenario, setup, atomic behaviors, run commands, and result paths.
-  - `evals/<atomic_behavior>.yaml` — one independently runnable baseline config per behavior.
+  - `eval_config.yaml` — one independently runnable baseline config per behavior, written by
+    `workflows/research-eval-dimensions.md` into its own isolated
+    `examples/<slug>[_YYYY-MM-DD]/` directory and never overwritten.
+  Do not commit the dimension-review ledger or its approval stamp — those are working
+  artifacts under `artifacts/dimension-reviews/`.
   A deliberately curated ACS demonstration may additionally keep the smallest
   reviewed policy, guarded target, and governed config needed to reproduce its
   claim, but ordinary worked examples must not accumulate generated governance
   output. Do not commit generated taxonomies, test sets, result artifacts,
   discovery mailboxes, snapshots, protocol archives, or automatic skill output.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
+- **Generate configs through the research workflow, not by hand** — `workflows/research-eval-dimensions.md` owns config generation. Every dimension must pass its evidence gate, `N` passes must complete, and the user must explicitly approve the dimension set before any YAML is written. **Silence is not approval.** `assert-ai init` remains available as an explicitly unvalidated scaffold for a throwaway look, never for a measurement you intend to report or govern against.
+- **Never emit an uncited config** — cite only pages actually retrieved this session; never fabricate or guess a URL, title, or author. Keep unsourced candidates in the ledger as `uncited — needs review`. If live retrieval is unavailable, stop at the ledger and say so.
+- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric and corrupts the headline split and any ACS delta derived from it. The pre-write gate rejects this.
+- **Never read a prior generated config** — the isolation preflight discovers prior generations **by path only**. Do not `cat`, parse, grep, hash, `git show`, or otherwise inspect a matching prior YAML, and do not infer its contents from size, timestamps, or commit history.
 - **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.
 - **Don't trawl raw traces to answer questions** — answer from `results status`, `scores.jsonl`, and `metrics.json`; hand off to the viewer for visual trace/transcript exploration.

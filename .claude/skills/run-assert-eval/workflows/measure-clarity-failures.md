@@ -123,40 +123,38 @@ runs**.
 
 ## Step 3 — Confirm scope, then generate one config per selected behavior
 
-For **each** selected behavior, produce its **own** flat config:
-`evals/<atomic_behavior>.yaml`. Use a clear snake_case filename. Never bundle.
+For **each** selected behavior, produce its **own** config in its own isolated
+directory: `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml`. Use a clear snake_case
+slug. Never bundle.
 
-Config generation, in order of preference:
+**Config generation is owned by
+[`research-eval-dimensions.md`](research-eval-dimensions.md).** Follow it per selected
+behavior; do not hand-roll a config here and do not skip its gates. It runs the path-only
+isolation preflight, reuses a repo behavior preset where one matches, researches the
+dimension model against primary sources, runs `N` complete passes, deduplicates, blocks on
+explicit user approval, and writes a cited config.
 
-1. **Built-in preset first.** `assert-ai library list` shows the bundled behavior
-   and judge presets (e.g. `prompt_injection`, `doxxing`, `stereotyping`,
-   `sycophancy`, `harmful_medical_advice`, `tool_orchestration_errors`);
-   `assert-ai library show <name>` prints one. If a preset matches the risk, seed
-   from it: `assert-ai init --behavior <name>` and/or `--judge-preset <name>`.
-2. **Domain template next.** Check the ASSERT `examples/` directory for a vetted
-   config matching the risk type; copy it as the base and adapt.
-3. **Otherwise** generate from the schema:
-   `assert-ai init --default-model <litellm-model> --describe-file <text-path> --non-interactive -o <path>`.
-   Write the failure-mode text (failure mode + how it arises + target context) to
-   a file first. It is Clarity-derived prose you did not author, so a quote,
-   backtick, or `$(...)` in it would break or inject into the shell if
-   interpolated into `--describe "<text>"`.
+Collect `eval_type` (`harm` for a triaged risk) and `N` (positive integer) first, and
+never silently default either.
 
 Fill from the candidate behavior (real schema field names):
 
 | Config field | Source |
 | --- | --- |
-| `behavior.name` | candidate `name` (short, specific) |
-| `behavior.description` | candidate `description` (the doc **Summary**, tightened to a *testable* statement) |
+| `behavior.name` | candidate `name` (short, specific), or a matching library preset via `behavior.preset` |
+| `behavior.description` | candidate `description` (the doc **Summary**, tightened to a *testable* statement), or the preset's curated description |
 | `context` | Clarity `summary.md` / `goal/requirements.md` / `solution/architecture.md` |
 | `default_model.name` | the cheap model — drives the target, test-set generation, and tester (e.g. `azure/gpt-5.4-mini`) |
-| `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`). `init` has no flag for these, so they inherit `default_model` unless you edit the config by hand — see the ground-truth note below |
-| `pipeline.test_set.stratify.dimensions` | `candidate_dimensions` — **include the `elicitation_variant` dimension** derived from the doc's Variants |
+| `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`) — see the ground-truth note below |
+| `pipeline.systematize.behavior_category_count` | the supported categories found before research saturation; do not impose a generic maximum |
+| `pipeline.systematize.web_search` | `true`, so systematization can expand categories with current context |
+| `pipeline.test_set.stratify.dimensions` | the **approved, deduplicated** dimension set — with explicit `levels` where the literature supports them. `candidate_dimensions` from the parser (notably `elicitation_variant`) are *seeds* for research, not the final set |
 | `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
-| `pipeline.inference.max_turns` | **set to `10`** (the ASSERT default). Do **not** leave it low (e.g. `2`) — see the multi-turn note below. Use the **same** value in the baseline and governed configs. |
-| `pipeline.judge.preset` | leave `dimensions` **unset** — `policy_violation` and `overrefusal` are built in and always judged (see the built-in note below) |
+| `pipeline.inference.max_turns` | **`10` floor** (the ASSERT default), raised when the harm's evidence-backed observability horizon is longer. Use the **same** value in the baseline and governed configs. |
+| `pipeline.judge.preset` | `safety-core` (add `safety-extended` for nuanced harms); reuse the library preset's `suggested_judge_presets` |
+| `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
 > **Run the eval cheap, but judge and systematize with the strong model.**
 > `assert-ai init` has no `--systematize-model` / `--judge-model` flag, so every
@@ -183,13 +181,17 @@ Fill from the candidate behavior (real schema field names):
 > `assert-ai results status <suite> <run> --json` — the model actually used is
 > echoed at `prompt_metrics.judge_model` / `scenario_metrics.judge_model`.
 
-> **Do not author judge `dimensions`.** `policy_violation` and `overrefusal` are
-> `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are **always judged**
-> unless explicitly disabled — you get both for free with no `dimensions` block.
-> Config dimensions are merged over the built-ins **by name**, so declaring one
-> called `policy_violation` or `overrefusal` silently **replaces the built-in
-> rubric** with a hand-written one. Only add a dimension for a genuinely new
-> metric the built-ins don't cover, and never reuse a built-in name.
+> **Author researched judge `dimensions`, but never reuse a built-in name.**
+> `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`
+> (`assert_ai/core/judge.py`) and are **always judged** unless explicitly disabled —
+> you get both for free. The researched harm-specific dimensions from
+> `research-eval-dimensions.md` (e.g. `harm_actionability`, `severe_harm_escalation`,
+> `longitudinal_harm_pattern`) are **added on top** of them. Config dimensions are
+> merged over the built-ins **by name** into the same dict, so declaring one called
+> `policy_violation` or `overrefusal` silently **replaces the built-in rubric** with a
+> hand-written one — and because the headline permissibility split is derived from
+> stored `policy_violation` judgments, that quietly redefines the headline metric and
+> any ACS baseline compared against it. The validator's pre-write gate rejects it.
 
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated
@@ -238,9 +240,15 @@ Fill from the candidate behavior (real schema field names):
 > Only lower it (`4`–`6`) if the risk is genuinely single-turn (a one-shot disclosure
 > or a structural tool-arg failure) *and* the user wants a cheaper run.
 
-> `stratify.dimensions` entries are `{name, description}`. Fold the parser's
-> `values` list into each dimension's `description` (e.g. "Values: variant A;
-> variant B; …") so the stratifier samples across the elicitation routes.
+> **`stratify.dimensions` come from the approved research**, not straight from the
+> parser. `research-eval-dimensions.md` uses the parser's `candidate_dimensions`
+> (notably `elicitation_variant`, folded from the doc's **Variants**) as research
+> *seeds*, then gates, expands, and deduplicates them. Entries may be explicit
+> (`{name, description, levels[]}`) when the literature supports specific levels, or
+> generated (`{name, description}`) otherwise — but a config must use **one mode
+> throughout**, not a mix. When using generated mode, fold the parser's `values` list
+> into the dimension's `description` (e.g. "Values: variant A; variant B; …") so the
+> stratifier samples across the elicitation routes.
 
 **Target shape:**
 - Framework agent (LangGraph, CrewAI, …) with a Python entry function →
@@ -290,7 +298,7 @@ Skip the offer only when the user has asked to run everything unattended.
 **1. Produce the artifacts without paying for inference.**
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<slug>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 ```
 
@@ -301,7 +309,7 @@ Runs systematize and test_set only, producing the **full** taxonomy and the
 
 ```
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config evals/<atomic_behavior>.yaml --count 3
+  --config examples/<slug>/eval_config.yaml --count 3
 ```
 
 Prints a JSON summary and writes `artifacts/smoke/<suite>-prompt-3.jsonl`. Take
@@ -311,7 +319,7 @@ risk is inherently multi-turn; scenario cases cost far more per case.
 **3. Run inference and judge on the slice only.**
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml \
+assert-ai run --config examples/<slug>/eval_config.yaml \
   --override run=<run>-smoke \
   --override inference.test_set_path=<out path from step 2>
 ```
@@ -368,7 +376,7 @@ supplied with its taxonomy from context, so no `taxonomy_path` wiring is needed.
 ## Step 6 — Run sequentially
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml
+assert-ai run --config examples/<slug>/eval_config.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
@@ -402,7 +410,7 @@ didn't cover.
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
-(`evals/<atomic_behavior>.yaml`). This keeps Clarity's staleness tracking aware of the eval.
+(`examples/<slug>/eval_config.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
 ## Step 9 — Curate the example and handle discovery scratch
 

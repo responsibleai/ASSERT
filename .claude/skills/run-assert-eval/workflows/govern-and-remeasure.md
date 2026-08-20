@@ -75,7 +75,7 @@ create the governed half in Step 3.
 Run the ungoverned callable target to establish the **ASSERT Baseline %**:
 
 ```
-assert-ai run --config evals/<atomic_behavior>.yaml
+assert-ai run --config examples/<slug>/eval_config.yaml
 ```
 
 Note the `suite` and `run` (e.g. `baseline`). Report the headline pair and
@@ -536,7 +536,7 @@ Point the ACS-governed callable at the vetted manifest and re-run the **same**
 eval spec:
 
 ```
-assert-ai run --config evals/<atomic_behavior>_governed.yaml
+assert-ai run --config examples/<slug>/eval_config_governed.yaml
 ```
 
 **Smoke the governed callable first.** This is the single most likely place for a
@@ -547,9 +547,9 @@ test set, so a smoke run costs three cases:
 
 ```
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config evals/<atomic_behavior>_governed.yaml --count 3
+  --config examples/<slug>/eval_config_governed.yaml --count 3
 
-assert-ai run --config evals/<atomic_behavior>_governed.yaml \
+assert-ai run --config examples/<slug>/eval_config_governed.yaml \
   --override run=acs-governed-smoke \
   --override inference.test_set_path=<out path>
 ```
@@ -575,8 +575,8 @@ uses `BILLING_ACS_MANIFEST` (pointing at its reviewed local manifest) and
 tools); your governed agent should expose the equivalent knobs. Set them before
 the governed run when the defaults don't match the suite under test.
 
-**Create `evals/<atomic_behavior>_governed.yaml` by COPYING
-`evals/<atomic_behavior>.yaml` and
+**Create `examples/<slug>/eval_config_governed.yaml` by COPYING
+`examples/<slug>/eval_config.yaml` and
 changing ONLY two lines** — `run:` (e.g. `acs-governed`) and
 `target.callable` (the governed entrypoint). Do **not** re-author it from a
 template or edit any other field. The `systematize` and `test_set` stages are
@@ -591,7 +591,7 @@ aggregate-only.
 **Verify the reuse before trusting the delta.** The governed run must log the
 `systematize` and `test_set` stages as **reused/cached**, not regenerated. If it
 regenerated, the two configs drifted — diff them (`git diff --no-index
-evals/<atomic_behavior>.yaml evals/<atomic_behavior>_governed.yaml` should show only the `run`
+examples/<slug>/eval_config.yaml examples/<slug>/eval_config_governed.yaml` should show only the `run`
 and `target.callable` lines), fix, and rerun. **Never** pass `--force-stage
 systematize` or `--force-stage test_set` on the governed run — that forces a new
 test set and breaks the A/B by construction.

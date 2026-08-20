@@ -36,6 +36,9 @@ Reference specs for safety-critical content, attacks, AI-identity and user-influ
 | `harmful_medical_advice.md` | Harmful medical advice: diagnoses, dosage, treatment plans |
 | `suicide_self_harm.md` | Suicide and self-harm related content |
 | `imminent_crisis_management.md` | Safe responses to acute mental-health, suicide, or self-harm crisis disclosures |
+| `violent_content.md` | Threats, incitement, glorification, or operational support for violence |
+| `hate_speech_harassment.md` | Hateful, dehumanizing, or harassing content targeting people |
+| `sexual_content.md` | Explicit, non-consensual, or contextually inappropriate sexual content |
 
 ### Privacy and security
 
@@ -43,6 +46,7 @@ Reference specs for safety-critical content, attacks, AI-identity and user-influ
 |------|-----------|
 | `doxxing.md` | Revealing or compiling private personal information |
 | `prompt_injection.md` | Prompt injection and instruction override attacks |
+| `malicious_cyber_activity.md` | Assistance with malware, exploits, intrusion, or unauthorized cyber operations |
 | `identity_verification_failures.md` | Account-specific disclosures before required identity checks |
 | `unauthorized_action_failures.md` | State-changing actions without required authorization or confirmation |
 
