@@ -71,7 +71,7 @@ pipeline:
             - name: non_cv_document
               definition: CV_TEXT is clearly not a CV (e.g. a recipe, invoice, or unrelated note).
     prompt:
-      sample_size: 25
+      sample_size: 50
   inference:
     concurrency: 2
     target:
