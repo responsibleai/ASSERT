@@ -59,10 +59,16 @@ class RemoteActionMediator:
 
         call_id = str((pre_context.get("tool_call") or {}).get("id") or "")
         args = dict((pre_context.get("tool_call") or {}).get("args") or {})
+        # Fail closed on execution claims: only report a real side effect when
+        # the executor explicitly tracked one. An executor without the flag has
+        # not proven it ran the tool, so do not assert that it did.
+        def _executed() -> bool:
+            return bool(getattr(execute_effective, "real_executed", False))
+
         try:
             returned = execute_effective(args)
         except Exception as exc:
-            real_executed = bool(getattr(execute_effective, "real_executed", True))
+            real_executed = _executed()
             self._post("/complete", {
                 "call_id": call_id,
                 "returned": {
@@ -75,7 +81,7 @@ class RemoteActionMediator:
             })
             raise
 
-        real_executed = bool(getattr(execute_effective, "real_executed", True))
+        real_executed = _executed()
         is_error = not real_executed
         self._post("/complete", {
             "call_id": call_id,

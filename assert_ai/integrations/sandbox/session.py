@@ -57,6 +57,7 @@ class SandboxedEndpointSession:
         self._endpoint: HTTPEndpointSession | None = None
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
         self._buffered_interaction_messages: list[dict[str, Any]] = []
+        self._drained_host_action_rows = 0
 
     async def open(self) -> None:
         target = self.setup.target
@@ -169,13 +170,12 @@ class SandboxedEndpointSession:
         ]
         additions = await self.drain_pending_interaction_messages()
         if host_mediated:
-            host_action_seen = any(
-                isinstance(message.get("raw"), dict)
-                and isinstance(message["raw"].get("action_mediation"), dict)
-                and message["raw"]["action_mediation"].get("evidence_source")
-                == "host_mediator"
-                for message in additions
-            )
+            # Trust the structural fact that the trusted host ledger produced
+            # rows this turn, rather than re-deriving it from a field value on
+            # a message. Evidence provenance is already known at drain time;
+            # string-matching it back out here would silently weaken the gate
+            # if the evidence shape ever changes.
+            host_action_seen = self._drained_host_action_rows > 0
             if target_tool_events and not host_action_seen:
                 self._buffered_interaction_messages.extend(additions)
                 raise RuntimeError(
@@ -226,6 +226,7 @@ class SandboxedEndpointSession:
                 await asyncio.to_thread(new_action_rows),
             )
         egress_rows = await asyncio.to_thread(self._handle.new_egress_rows)
+        self._drained_host_action_rows = len(action_rows)
         events = [host_action_event(row) for row in action_rows]
         events.extend(egress_event(row, case_id=self.case_id) for row in egress_rows)
         additions: list[dict[str, Any]] = []
