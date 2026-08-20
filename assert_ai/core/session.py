@@ -10,8 +10,6 @@ import contextlib
 import inspect
 import json
 import logging
-import re
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -21,7 +19,6 @@ from assert_ai.core.model_client import (
     GenerateOptions,
     Message,
     ModelResponse,
-    ToolCall,
     _classify_llm_error,
     build_llm_call_trace,
     generate,
@@ -29,56 +26,23 @@ from assert_ai.core.model_client import (
     normalize_response,
     summarize_response,
 )
+from assert_ai.core.sanitization import (
+    sanitize_untrusted_text,
+    sanitize_untrusted_value,
+)
 from assert_ai.core.tool_backend import load_tool_module
 from assert_ai.core.tools import build_target_tools
 
 log = logging.getLogger(__name__)
 
-# Regex patterns for common credential formats in plain text
-_CREDENTIAL_PATTERNS = re.compile(
-    r"("
-    # Bearer/Basic tokens
-    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
-    r"|Basic\s+[A-Za-z0-9+/]+=*"
-    # Common API key formats (sk-..., key-..., etc.)
-    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
-    # Generic long hex/base64 secrets following key-like prefixes
-    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
-    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
-    r")",
-    re.IGNORECASE,
-)
-
-_RESPONSE_REDACTED = "[REDACTED]"
-
-
 def _sanitize_response_text(text: str) -> str:
-    """Redact credential-like patterns from response text before persisting."""
-    if not text:
-        return text
-    sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
-    if sanitized != text:
-        log.warning(
-            "Credential-like patterns detected and redacted from HTTP endpoint response"
-        )
-    return sanitized
+    """Compatibility wrapper for callers of the former private helper."""
+    return sanitize_untrusted_text(text)
 
 
 def _sanitize_endpoint_value(value: Any) -> Any:
-    """Recursively redact credential-like strings in endpoint-supplied data.
-
-    Endpoint events are attacker-adjacent: the agent under test can influence
-    tool arguments and tool results, and every one of those strings is persisted
-    into run artifacts. Sanitizing only the final response text would leave the
-    event channel as an unredacted path for the same credential patterns.
-    """
-    if isinstance(value, str):
-        return _sanitize_response_text(value)
-    if isinstance(value, list):
-        return [_sanitize_endpoint_value(item) for item in value]
-    if isinstance(value, Mapping):
-        return {key: _sanitize_endpoint_value(item) for key, item in value.items()}
-    return value
+    """Compatibility wrapper for callers of the former private helper."""
+    return sanitize_untrusted_value(value)
 
 
 # ── Adapter types and helpers ──────────────────────────────────

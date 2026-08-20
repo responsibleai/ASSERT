@@ -201,6 +201,7 @@ def test_container_setup_parses_stock_sandbox_options(tmp_path):
         """version: 1
 target:
   kind: container
+  host_action_mediation: true
   image: example/agent:latest
   port: 8080
   command: [python, /app/server.py]
@@ -221,6 +222,7 @@ mocks: ./mocks.yaml
     assert loaded.target.port == 8080
     assert loaded.target.health_path == "/ready"
     assert loaded.target.egress_allow_hosts == ("example.com",)
+    assert loaded.target.host_action_mediation is True
     assert loaded.target.memory == "512m"
     assert loaded.policy_path == tmp_path / "policy.yaml"
     assert loaded.mocks_path == tmp_path / "mocks.yaml"
@@ -530,6 +532,8 @@ def test_secret_like_container_env_is_rejected_before_docker(tmp_path, monkeypat
         "ACTION_MEDIATION_MOCKS",
         "ACTION_MEDIATION_CASSETTES",
         "ACTION_MEDIATION_LEDGER",
+        "ACTION_MEDIATION_HOST_URL",
+        "ACTION_MEDIATION_HOST_TOKEN",
         "ASSERT_SANDBOX_CASE_ID",
         "ASSERT_SANDBOX_OUTPUT",
         "HTTP_PROXY",
@@ -616,6 +620,13 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         def shutdown(self): pass
         def server_close(self): pass
 
+    class Ledger:
+        registered = True
+
+        def drain(self): return []
+
+    ledger = Ledger()
+
     monkeypatch.setattr(
         sandbox_runtime,
         "_start_egress_proxy",
@@ -625,6 +636,11 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         sandbox_runtime,
         "_start_model_proxy",
         lambda spec, **kwargs: (Server(), SimpleNamespace(), 9200),
+    )
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "start_host_mediator",
+        lambda **kwargs: (Server(), SimpleNamespace(), 9300, ledger),
     )
     monkeypatch.setattr(sandbox_runtime, "_wait_http", lambda *args, **kwargs: None)
 
@@ -645,6 +661,7 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
             image="example",
             container_port=8080,
             case_id="prompt-case-007",
+            host_action_mediation=True,
             model_proxy=ModelProxySpec(
                 upstream_url="https://provider.invalid/chat",
                 credential_env="PRIVATE_PROVIDER_KEY",
@@ -671,10 +688,14 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
     assert "--user" in target_run and "65534:65534" in target_run
     assert "--cap-drop" in target_run and "ALL" in target_run
     assert "no-new-privileges" in target_run
-    assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" in target_run
+    assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" not in target_run
+    assert "ACTION_MEDIATION_HOST_URL=http://assert-sandbox-relay:18083" in target_run
+    assert "ACTION_MEDIATION_HOST_TOKEN=deadbeef" in target_run
     assert "ASSERT_SANDBOX_CASE_ID=prompt-case-007" in target_run
     assert "ACTION_MEDIATION_CASSETTES=/sandbox/cassettes" in target_run
     assert f"{cassettes.resolve()}:/sandbox/cassettes:ro" in target_run
+    assert '"listen_port":18083' in relay_command
+    assert handle.action_ledger is ledger
     network_commands = " ".join(" ".join(call) for call in calls if call[:2] == ("network", "create"))
     assert "--internal" in network_commands
     assert "bridge.inhibit_ipv4=true" in network_commands
@@ -688,6 +709,59 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         assert "super-secret-real-value" not in command
     assert "assert-sandbox-deadbeef" in target_command
     assert handle.endpoint_url == "http://127.0.0.1:49152/chat"
+
+
+def test_host_action_mediation_fails_startup_without_target_registration(
+    tmp_path, monkeypatch
+):
+    policy, mocks, _ = _files(tmp_path)
+    monkeypatch.setattr(sandbox_runtime, "docker_available", lambda: True)
+    calls: list[tuple[str, ...]] = []
+
+    class Server:
+        def shutdown(self): pass
+        def server_close(self): pass
+
+    class Ledger:
+        registered = False
+
+        def drain(self): return []
+
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "_start_egress_proxy",
+        lambda **kwargs: (Server(), SimpleNamespace(), 9100),
+    )
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "start_host_mediator",
+        lambda **kwargs: (Server(), SimpleNamespace(), 9300, Ledger()),
+    )
+    monkeypatch.setattr(sandbox_runtime, "_wait_http", lambda *args, **kwargs: None)
+
+    def fake_docker(*args: str, check: bool = True):
+        calls.append(args)
+        if args and args[0] == "port":
+            return SimpleNamespace(stdout="127.0.0.1:49152\n", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(sandbox_runtime, "_docker", fake_docker)
+
+    with pytest.raises(SandboxRuntimeError, match="did not register"):
+        sandbox_runtime.start_container(
+            ContainerSpec(
+                image="example",
+                container_port=8080,
+                case_id="case-1",
+                host_action_mediation=True,
+            ),
+            policy_path=policy,
+            mocks_path=mocks,
+            output_dir=tmp_path / "out",
+        )
+
+    assert any(call[:2] == ("rm", "-f") for call in calls)
+    assert any(call[:2] == ("network", "rm") for call in calls)
 
 
 def test_start_failure_cleans_target_relay_networks_and_host_proxy(tmp_path, monkeypatch):
@@ -1011,8 +1085,8 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
     assert "prompt-case-007" in json.dumps(result.interaction_messages)
 
 
-def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
-    """A timed-out target still produces a target_error row with egress evidence."""
+def test_failed_sandbox_prompt_preserves_host_action_and_egress_evidence(monkeypatch):
+    """A timed-out target still produces a target_error row with host evidence."""
     class Runtime:
         preserve_error_transcript = True
 
@@ -1028,6 +1102,26 @@ def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
         async def drain_pending_interaction_messages(self):
             args = {"host": "bad.example", "port": 443, "method": "CONNECT", "path": ""}
             return [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "action-1",
+                        "function": "send_message",
+                        "arguments": {"recipient": "555-000-9999"},
+                    }],
+                },
+                {
+                    "role": "tool",
+                    "content": json.dumps({
+                        "mode": "mock",
+                        "decision_source": "host_mediator",
+                        "completion_status": "complete",
+                    }),
+                    "function": "send_message",
+                    "arguments": {"recipient": "555-000-9999"},
+                    "tool_call_id": "action-1",
+                },
                 {
                     "role": "assistant",
                     "content": "",
@@ -1069,6 +1163,8 @@ def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
     assert transcript.stop_reason == "target_error"
     assert "bad.example" in payload
     assert "network_egress" in payload
+    assert "send_message" in payload
+    assert "host_mediator" in payload
 
 
 def test_sandbox_startup_failure_propagates_instead_of_becoming_target_error(monkeypatch):
