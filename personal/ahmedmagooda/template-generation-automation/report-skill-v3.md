@@ -27,25 +27,25 @@
   <tbody>
     <tr>
       <td rowspan="1">violent_content</td>
-      <td>18.1%</td>
-      <td>6.7%</td>
-      <td>14.5%</td>
-      <td>2.7%</td>
-      <td>3.6%</td>
-      <td>0.7%</td>
-      <td>8.4%</td>
-      <td>1.3%</td>
+      <td>25</td>
+      <td>20</td>
+      <td>11</td>
+      <td>4</td>
+      <td>7</td>
+      <td>2</td>
+      <td>10</td>
+      <td>2</td>
     </tr>
     <tr>
       <td rowspan="1">relationship-entanglement</td>
-      <td>10.9%</td>
-      <td>43.1%</td>
-      <td>44.8%</td>
-      <td>36.7%</td>
-      <td>17.2%</td>
-      <td>24.1%</td>
-      <td>40.9%</td>
-      <td>22.9%</td>
+      <td>25</td>
+      <td>128</td>
+      <td>113</td>
+      <td>104</td>
+      <td>21</td>
+      <td>49</td>
+      <td>95</td>
+      <td>66</td>
     </tr>
   </tbody>
 </table>
