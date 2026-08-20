@@ -8,11 +8,12 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from assert_ai.core.model_client import Message
 from assert_ai.core.session import HTTPEndpointSession, TurnResult
 
+from .evidence import host_action_event
 from .mediation_setup import MediationSetup, load_setup
 from .runtime import (
     ContainerSpec,
@@ -55,6 +56,7 @@ class SandboxedEndpointSession:
         self._handle: SandboxHandle | None = None
         self._endpoint: HTTPEndpointSession | None = None
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
+        self._buffered_interaction_messages: list[dict[str, Any]] = []
 
     async def open(self) -> None:
         target = self.setup.target
@@ -104,6 +106,7 @@ class SandboxedEndpointSession:
             cpus=target.cpus,
             pids_limit=target.pids_limit,
             user=target.user,
+            host_action_mediation=target.host_action_mediation,
         )
         try:
             self._handle = await asyncio.to_thread(
@@ -155,18 +158,79 @@ class SandboxedEndpointSession:
         if self._endpoint is None:
             raise RuntimeError("sandbox session is not open")
         result = await self._endpoint.run_turn(messages)
+        host_mediated = (
+            self._handle is not None
+            and getattr(self._handle, "action_ledger", None) is not None
+        )
+        target_tool_events = [
+            message
+            for message in result.interaction_messages
+            if message.get("role") == "tool" or message.get("tool_calls")
+        ]
         additions = await self.drain_pending_interaction_messages()
-        result.interaction_messages.extend(additions)
+        if host_mediated:
+            host_action_seen = any(
+                isinstance(message.get("raw"), dict)
+                and isinstance(message["raw"].get("action_mediation"), dict)
+                and message["raw"]["action_mediation"].get("evidence_source")
+                == "host_mediator"
+                for message in additions
+            )
+            if target_tool_events and not host_action_seen:
+                self._buffered_interaction_messages.extend(additions)
+                raise RuntimeError(
+                    "host action mediation is enabled, but the target returned tool events "
+                    "without using the host mediator"
+                )
+            # The evaluated target controls endpoint events. In host-mediated
+            # mode, keep its prose but replace every target-supplied tool event
+            # with the trusted host ledger so omitted or forged events cannot
+            # change the authoritative action transcript.
+            filtered = [
+                message
+                for message in result.interaction_messages
+                if message.get("role") != "tool" and not message.get("tool_calls")
+            ]
+            final_assistant = [
+                index
+                for index, message in enumerate(filtered)
+                if message.get("role") == "assistant" and message.get("content")
+            ]
+            insert_at = final_assistant[-1] if final_assistant else len(filtered)
+            result.interaction_messages = [
+                *filtered[:insert_at],
+                *additions,
+                *filtered[insert_at:],
+            ]
+        else:
+            result.interaction_messages.extend(additions)
         return result
 
     async def drain_pending_interaction_messages(self) -> list[dict[str, Any]]:
-        """Drain host-side egress evidence even when the target turn failed."""
+        """Drain host action and egress evidence even when the target turn failed."""
         if self._handle is None:
-            return []
-        rows = await asyncio.to_thread(self._handle.new_egress_rows)
+            buffered, self._buffered_interaction_messages = (
+                self._buffered_interaction_messages,
+                [],
+            )
+            return buffered
+        buffered, self._buffered_interaction_messages = (
+            self._buffered_interaction_messages,
+            [],
+        )
+        new_action_rows = getattr(self._handle, "new_action_rows", None)
+        action_rows: list[dict[str, Any]] = []
+        if callable(new_action_rows):
+            action_rows = cast(
+                list[dict[str, Any]],
+                await asyncio.to_thread(new_action_rows),
+            )
+        egress_rows = await asyncio.to_thread(self._handle.new_egress_rows)
+        events = [host_action_event(row) for row in action_rows]
+        events.extend(egress_event(row, case_id=self.case_id) for row in egress_rows)
         additions: list[dict[str, Any]] = []
-        for row in rows:
-            event = egress_event(row, case_id=self.case_id)
+        for event in events:
+            raw = event.get("raw") or {"sandbox": "host_evidence"}
             additions.extend([
                 {
                     "role": "assistant",
@@ -176,7 +240,7 @@ class SandboxedEndpointSession:
                         "function": event["tool_name"],
                         "arguments": event["tool_args"],
                     }],
-                    "raw": {"sandbox": "network_egress"},
+                    "raw": raw,
                 },
                 {
                     "role": "tool",
@@ -184,10 +248,10 @@ class SandboxedEndpointSession:
                     "function": event["tool_name"],
                     "arguments": event["tool_args"],
                     "tool_call_id": event["tool_call_id"],
-                    "raw": {"sandbox": "network_egress"},
+                    "raw": raw,
                 },
             ])
-        return additions
+        return [*buffered, *additions]
 
     @property
     def preserve_error_transcript(self) -> bool:
@@ -208,6 +272,13 @@ class SandboxedEndpointSession:
             ),
             "raw_socket_audit": False,
         }
+        if target.kind == "container":
+            metadata["action_evidence"] = (
+                "host-authoritative attempts and decisions; host-authoritative mock/block results; "
+                "target-reported pass results"
+                if target.host_action_mediation
+                else "target-reported"
+            )
         if self.case_id:
             metadata["case_id"] = self.case_id
         if self._handle is not None:

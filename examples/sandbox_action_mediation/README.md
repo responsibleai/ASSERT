@@ -2,7 +2,9 @@
 
 Evaluate a configured agent's actions without allowing irreversible side effects
 to reach the outside world. ASSERT records what the agent attempted, what policy
-decided, and what actually executed as normal judge evidence.
+decided, and what actually executed as normal judge evidence. On the stock
+container path, the policy decision and ledger live on the ASSERT host rather
+than inside the evaluated target.
 
 Two files answer separate questions:
 
@@ -35,7 +37,11 @@ The stock container path applies:
 - an authenticated, deny-by-default HTTP(S) proxy that records allowed and denied
   proxy-aware requests as `network_egress` evidence;
 - an automatically managed trusted relay that exposes only target ingress,
-  audited egress, and optional model-proxy traffic to that private network;
+  audited egress, host action mediation, and optional model-proxy traffic to that
+  private network;
+- optional `host_action_mediation: true`, which moves pass/mock/block decisions,
+  mock responses, and the authoritative action ledger outside the target. The
+  target cannot remove or rewrite those rows;
 - read-only policy and mock mounts plus a separate writable output mount;
 - optional host-side model credential routing. The container receives a random
   short-lived proxy token, never the provider credential.
@@ -104,11 +110,13 @@ limits appropriate for the configured image.
 [`stock_agent/server.py`](stock_agent/server.py) is the smallest complete user
 path:
 
-1. Load `MediationPolicy` and `MockLibrary` from the files ASSERT mounted.
+1. Use `RemoteActionMediator` when ASSERT supplies
+   `ACTION_MEDIATION_HOST_URL` and `ACTION_MEDIATION_HOST_TOKEN`; otherwise use
+   the local `ActionMediator` compatibility path.
 2. Register the real tool implementations with `AgentHooksToolHost`.
 3. Call every tool through `host.call_tool(...)`, never directly.
-4. Return new `MediationRecord` values through `assert_tool_event(...)` in the
-   endpoint's top-level `events` list.
+4. Return the normal endpoint response. The stock path replaces target-supplied
+   tool events with rows drained from the host ledger.
 
 The example's `lookup_customer` implementation executes because policy selects
 `pass`. Its `send_message` implementation raises `CONTAINMENT FAILURE` if it is
@@ -123,17 +131,32 @@ your agent's tools, and preserve the mediated call boundary plus the
 adapter, or another HTTP router instead; `AgentHooksToolHost` is the
 framework-neutral boundary they call.
 
+The trust claim is deliberately split. For calls routed through
+`RemoteActionMediator`, tool attempts and pass/mock/block decisions are
+host-authoritative, and mocked and blocked results are host-generated. A passed
+tool still runs inside the disposable target, so its result is labeled
+`target_reported`; the host does not claim to have independently executed or
+observed that function. This boundary does not instrument arbitrary function
+calls that target code makes without using the mediator. Container isolation,
+deny-by-default egress, and keeping real credentials on the host remain the
+backstop against those calls reaching consequential outside systems. Moving
+consequential real tools and credentials behind a host-side tool adapter is a
+separate extension, not part of this compatibility fix.
+
 A configured image must:
 
 1. listen on the declared `target.port`;
 2. expose the declared health and chat paths;
 3. accept `{"message": "...", "history": [...]}`;
 4. return `{"response": "...", "events": [...]}`;
-5. read `ACTION_MEDIATION_POLICY` and `ACTION_MEDIATION_MOCKS` or otherwise apply
-   the same policy before it executes tools.
+5. when `host_action_mediation: true`, route tool calls through
+   `RemoteActionMediator` using the injected host URL and token before executing
+   passed tools.
 
-Top-level `events` become tool/action evidence in `inference_set.jsonl`. Proxy-aware
-egress attempts become `network_egress` events in the same transcript.
+For the compatibility endpoint path, top-level `events` become target-reported
+tool/action evidence. For the stock host-mediated path, ASSERT ignores competing
+target tool events and uses the host ledger instead. Proxy-aware egress attempts
+become `network_egress` events in the same transcript.
 
 ## Host-side model credentials
 

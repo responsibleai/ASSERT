@@ -4,8 +4,9 @@
 """Tiny trusted TCP relay used by the stock sandbox runtime.
 
 The untrusted target is attached only to a Docker network with no host gateway.
-This process is the narrow bridge for the three connections the runtime already
-owns: target ingress, audited HTTP(S) egress, and optional model proxy traffic.
+This process is the narrow bridge for the connections the runtime owns: target
+ingress, audited HTTP(S) egress, optional host action mediation, and optional
+model proxy traffic.
 It intentionally contains no policy or credential logic; authenticated host
 proxies remain the enforcement points.
 """
