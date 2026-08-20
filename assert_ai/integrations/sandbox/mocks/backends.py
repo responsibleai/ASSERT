@@ -131,13 +131,16 @@ class ScenarioBackend:
         self._state.clear()
         self._cursor.clear()
 
-    def matches_state(self, rule: Mapping[str, Any], call: MockCall) -> bool:
-        """Whether a rule's `when_state` guard holds right now."""
+    def matches_state(
+        self, rule: Mapping[str, Any], call: MockCall | None = None
+    ) -> bool:
+        """Whether a rule's `when_state` guard holds for this case."""
         want = rule.get("when_state")
         if want is None:
             return True
         scenario = str(rule.get("scenario") or "")
-        return self.current_state(scenario, call.case_id) == str(want)
+        case_id = call.case_id if call is not None else None
+        return self.current_state(scenario, case_id) == str(want)
 
     def resolve(self, rule: Mapping[str, Any], call: MockCall) -> Resolution:
         scenario = str(rule.get("scenario") or "")
