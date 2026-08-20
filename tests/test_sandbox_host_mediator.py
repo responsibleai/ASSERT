@@ -345,13 +345,12 @@ def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
     assert "bad.example" in json.dumps(buffered)
 
 
-def test_remote_mediator_does_not_claim_execution_it_cannot_verify(tmp_path: Path):
-    """An executor that never proved it ran must not be reported as a real side effect.
+def test_remote_mediator_rejects_untracked_executor_before_execution(tmp_path: Path):
+    """An untracked executor must not run behind a false not-executed claim.
 
-    `real_executed` drives `execution_status` in the trusted ledger, which is
-    what a reviewer reads to decide whether a consequential action actually
-    happened. Defaulting an unknown executor to "executed" would overstate the
-    strongest claim in the evidence contract.
+    Defaulting an unknown executor to either execution outcome is unsafe: true
+    can overstate execution, while false can hide a side effect that actually
+    happened. Reject it before invocation instead.
     """
     policy = tmp_path / "policy.yaml"
     mocks = tmp_path / "mocks.yaml"
@@ -374,20 +373,28 @@ def test_remote_mediator_does_not_claim_execution_it_cannot_verify(tmp_path: Pat
             f"http://127.0.0.1:{port}", "token", case_id="case-1"
         )
 
-        # A bare callable with no execution tracking: the host cannot verify
-        # that the real tool ran, so it must not record that it did.
-        client.mediate(
-            _context(call_id="untracked", tool="lookup"),
-            lambda args: {"claimed": "result"},
-        )
+        invoked = False
+
+        def untracked_executor(args):
+            nonlocal invoked
+            invoked = True
+            return {"claimed": "result"}
+
+        with pytest.raises(RuntimeError, match="requires an executor that tracks"):
+            client.mediate(
+                _context(call_id="untracked", tool="lookup"),
+                untracked_executor,
+            )
     finally:
         server.shutdown()
         server.server_close()
 
+    assert invoked is False
     rows = ledger.drain()
     assert len(rows) == 1
     assert rows[0]["real_executed"] is False
     assert rows[0]["execution_status"] == "not_executed"
+    assert rows[0]["returned"]["error_type"] == "UntrackedExecutor"
 
 
 def test_fail_closed_gate_survives_evidence_format_change(tmp_path: Path):

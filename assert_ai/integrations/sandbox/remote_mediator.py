@@ -59,11 +59,27 @@ class RemoteActionMediator:
 
         call_id = str((pre_context.get("tool_call") or {}).get("id") or "")
         args = dict((pre_context.get("tool_call") or {}).get("args") or {})
+        if not hasattr(execute_effective, "real_executed"):
+            message = (
+                "host-authoritative pass execution requires an executor that tracks "
+                "real_executed"
+            )
+            self._post("/complete", {
+                "call_id": call_id,
+                "returned": {
+                    "status": "error",
+                    "error_type": "UntrackedExecutor",
+                    "message": message,
+                },
+                "is_error": True,
+                "real_executed": False,
+            })
+            raise RuntimeError(message)
+
         # Fail closed on execution claims: only report a real side effect when
-        # the executor explicitly tracked one. An executor without the flag has
-        # not proven it ran the tool, so do not assert that it did.
+        # the executor explicitly tracked one.
         def _executed() -> bool:
-            return bool(getattr(execute_effective, "real_executed", False))
+            return bool(execute_effective.real_executed)
 
         try:
             returned = execute_effective(args)
