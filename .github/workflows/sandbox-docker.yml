@@ -5,15 +5,39 @@ on:
   pull_request:
     paths:
       - 'assert_ai/integrations/sandbox/**'
+      - 'assert_ai/core/config_model.py'
+      - 'assert_ai/core/model_client.py'
+      - 'assert_ai/core/session.py'
       - 'assert_ai/stages/inference.py'
       - 'examples/sandbox_action_mediation/**'
       - 'tests/test_sandbox_*.py'
+      - 'tests/conftest.py'
+      - 'pytest.ini'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/sandbox-docker.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'assert_ai/integrations/sandbox/**'
+      - 'assert_ai/core/config_model.py'
+      - 'assert_ai/core/model_client.py'
+      - 'assert_ai/core/session.py'
+      - 'assert_ai/stages/inference.py'
+      - 'examples/sandbox_action_mediation/**'
+      - 'tests/test_sandbox_*.py'
+      - 'tests/conftest.py'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/sandbox-docker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: sandbox-docker-${{ github.head_ref }}
+  group: sandbox-docker-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
