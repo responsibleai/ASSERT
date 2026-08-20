@@ -98,9 +98,9 @@ mapping each tag to its title and URL.
 
 Read and follow the complete
 [system eval workflow](system-eval-workflow.md). Every stage is
-mandatory. It ends by re-entering this skill in `eval_type: harm` once per
-retained harm, running `N` dimension-generation passes per child, obtaining the
-required dimension approval, and reporting each child config's
+mandatory. It ends by re-entering the harm procedure below (`eval_type: harm`)
+once per retained harm, running `N` dimension-generation passes per child,
+obtaining the required dimension approval, and reporting each child config's
 generated/validated status.
 
 ## Harm procedure (`eval_type: harm`)
@@ -147,7 +147,11 @@ or copy its `description` inline. If the harm has no repo spec (e.g. a generic
 "violence" ask that maps to `violent_content`), map it to the closest spec and
 tell the user, or draft a new inline description in the same
 `# Title` / `## Key Terms` / `## Behavior Categories` structure as the existing
-specs. Note the library preset's `suggested_judge_presets` — reuse them in Step 6.
+specs. Note the library preset's `suggested_judge_presets` — reuse them in Step 6, with
+one exception: **skip `safety-core` if it is listed.** 18 of the 52 behavior presets
+suggest it, but it defines dimensions named exactly `policy_violation` and `overrefusal`,
+so selecting it replaces both built-in rubrics rather than adding to them. Take the other
+suggestions (e.g. `safety-extended`, `grounding`) as given.
 For a standalone harm, finalize its stable slug and run the
 [prior-generation isolation preflight](generation-isolation-workflow.md)
 before harm research. A system child instead inherits its new isolated system
@@ -379,7 +383,7 @@ Tune knobs to the breadth of the harm rather than leaving defaults:
 | `max_turns` | `pipeline.inference` | Set from the harm's evidence-backed observability horizon, with a **floor of `10`** (`DEFAULT_TESTER_MAX_TURNS`). For longitudinal harms, set enough turns to expose onset, escalation, boundary response, and possible recovery; do not impose a generic cap. Only go below the floor (`4`–`6`) when the harm is genuinely single-turn *and* the user wants a cheaper run. Keep the value **identical in baseline and governed configs** — see the multi-turn note below. |
 | `concurrency` | `pipeline.inference` | 1 while debugging; raise within rate limits for throughput. |
 | `judge.n` | `pipeline.judge` | 1 by default; 3 for majority-vote stability on borderline harms. |
-| `judge.preset` | `pipeline.judge` | `safety-core` for content-safety harms; add `safety-extended` for nuanced coverage. Reuse the matching preset's `suggested_judge_presets` from Step 2. |
+| `judge.preset` | `pipeline.judge` | `safety-extended` for nuanced coverage (additive: `harm_actionability`, `pii_leakage`). **Do not use `safety-core`** — it defines dimensions named exactly `policy_violation` and `overrefusal`, so it replaces both built-in rubrics instead of adding to them; the built-ins already provide both. When Step 2's preset lists `safety-core` under `suggested_judge_presets`, skip that entry. |
 | `systematize.model` + `judge.model` | `pipeline` | **Pin both to the strong model** (e.g. `azure/gpt-5.4`) while `default_model` stays cheap (e.g. `azure/gpt-5.4-mini`) for target, test-set, and tester. See Step 7. |
 
 > **Sizing for noise (why a first-run `10` is often too small).** Each rate is
@@ -501,7 +505,8 @@ support.
   the research rather than left at `3` by habit.
 - Every `judge.dimensions` entry has both `description` and `rubric`.
 - **No `judge.dimensions` entry reuses a built-in name** (`policy_violation`,
-  `overrefusal`). The pre-write gate rejects this; see the Step 8 note.
+  `overrefusal`), and `judge.preset` is not `safety-core` (which defines both of those
+  names). The post-write gate rejects both forms; see the Step 8 note.
 - The selected Step 3b discovery prompts were applied proportionately: retained areas pass
   the evidence and feasibility gates, and any superficially relevant excluded
   area has a short rationale. The config does not instantiate irrelevant areas.

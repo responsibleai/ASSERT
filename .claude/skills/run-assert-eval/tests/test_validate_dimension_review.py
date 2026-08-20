@@ -308,5 +308,109 @@ def test_render_regenerates_markdown_body_from_frontmatter(tmp_path):
     assert body == vdr.render_review_body(data)
 
 
+# --- anti-shadowing gate on the written config -------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(vdr.BUILT_IN_JUDGE_DIMENSIONS))
+def test_written_config_may_not_shadow_built_in_judge_dimension(tmp_path, name):
+    """The ledger gate guards the review; this guards the artifact the judge reads."""
+    config = {"pipeline": {"judge": {"dimensions": {name: {"rubric": "mine"}}}}}
+
+    with pytest.raises(vdr.ReviewValidationError) as exc:
+        vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+    assert name in str(exc.value)
+
+
+@pytest.mark.parametrize("name", sorted(vdr.BUILT_IN_JUDGE_DIMENSIONS))
+def test_written_config_shadowing_is_caught_in_list_form(tmp_path, name):
+    config = {"pipeline": {"judge": {"dimensions": [{"name": name, "rubric": "mine"}]}}}
+
+    with pytest.raises(vdr.ReviewValidationError):
+        vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+
+def test_written_config_allows_researched_judge_dimensions(tmp_path):
+    config = {
+        "pipeline": {
+            "judge": {"dimensions": {"harm_actionability": {"rubric": "researched"}}}
+        }
+    }
+
+    vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"pipeline": None},
+        {"pipeline": {}},
+        {"pipeline": {"judge": None}},
+        {"pipeline": {"judge": {}}},
+        {"pipeline": {"judge": {"dimensions": None}}},
+        {"pipeline": {"judge": {"dimensions": []}}},
+    ],
+)
+def test_written_config_gate_tolerates_missing_sections(tmp_path, config):
+    vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+
+def test_post_write_rejects_shadowing_config(tmp_path):
+    """End-to-end: the exploit that previously passed both gates is now blocked."""
+    review = _review_path(tmp_path, _valid_ledger(approved=True))
+    config = tmp_path / "config.yaml"
+    stamp = tmp_path / "stamp.json"
+    vdr.pre_write(review, config, stamp)
+    config.write_text(
+        yaml.safe_dump(
+            {"pipeline": {"judge": {"dimensions": {"policy_violation": {"rubric": "x"}}}}}
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(vdr.ReviewValidationError) as exc:
+        vdr.post_write(review, config, stamp)
+
+    assert "policy_violation" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "preset", ["safety-core", ["safety-core"], ["safety-extended", "safety-core"]]
+)
+def test_written_config_may_not_select_a_shadowing_judge_preset(tmp_path, preset):
+    """Presets expand into the same merged dimension list, so they shadow too."""
+    config = {"pipeline": {"judge": {"preset": preset}}}
+
+    with pytest.raises(vdr.ReviewValidationError) as exc:
+        vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+    message = str(exc.value)
+    assert "safety-core" in message
+    assert "policy_violation" in message
+
+
+def test_written_config_allows_a_purely_additive_judge_preset(tmp_path):
+    config = {"pipeline": {"judge": {"preset": "safety-extended"}}}
+
+    vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+
+def test_unresolvable_judge_preset_is_skipped_rather_than_failing(tmp_path):
+    """This script must stay runnable outside the repo layout."""
+    config = {"pipeline": {"judge": {"preset": "no-such-preset-anywhere"}}}
+
+    vdr._reject_shadowing_judge_dimensions(config, tmp_path / "eval_config.yaml")
+
+
+def test_safety_core_still_shadows_both_built_ins():
+    """Guards the guidance change: if this preset ever stops shadowing, revisit it."""
+    preset_file = vdr._find_judge_preset_file("safety-core")
+    assert preset_file is not None, "safety-core preset should resolve from the repo"
+
+    names = set(vdr._preset_dimension_names({"preset": "safety-core"})["safety-core"])
+    assert names == set(vdr.BUILT_IN_JUDGE_DIMENSIONS)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

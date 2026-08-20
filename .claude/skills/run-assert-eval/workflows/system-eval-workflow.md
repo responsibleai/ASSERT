@@ -112,8 +112,9 @@ harm description; each description needs harm-specific evidence.
 
 ## S5. Initialize and execute one harm template run per retained harm
 
-Do not stop after listing harms. For every retained harm, re-enter this skill's
-dispatcher as a separate child run with this explicit payload:
+Do not stop after listing harms. For every retained harm, re-enter the harm
+procedure in [research-eval-dimensions.md](research-eval-dimensions.md) as a
+separate child run with this explicit payload:
 
 ```yaml
 eval_type: harm

@@ -88,7 +88,7 @@ Rules that hold on both paths:
   which returns Clarity's genuine process guide inlined. Path B is not a
   degraded impression of Clarity — it is a distinct, structured intake (Step 1b).
 - **Path B meets the same quality bar.** One atomic behavior per config,
-  variant-derived stratify dimensions, pinned systematize/judge models, an
+  researched and cited stratify dimensions, pinned systematize/judge models, an
   explicit `sample_size`. Steps 3-6 are risk-source agnostic; nothing about the
   config, run, or report changes.
 - **Offer Clarity again later.** Declining once is not a permanent opt-out —
@@ -313,15 +313,27 @@ Two things that workflow will ask you to decide, and that matter downstream:
   single-turn, and must be **identical in the baseline and governed configs** or the
   "only ACS differs" comparison breaks.
 
-**Judge dimensions are authored** from the research, on top of a judge preset
-(`safety-core`, plus `safety-extended` for nuanced harms) — but **never reuse a built-in
-name**. `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`
-(`assert_ai/core/judge.py`) and are always judged unless explicitly disabled. Config
-dimensions merge over the built-ins **by name** into the same dict, so a researched
-dimension called `policy_violation` silently replaces the built-in rubric — and since the
-headline `not_permissible_policy_violation_rate` / `permissible_policy_violation_rate`
-split is derived from stored `policy_violation` judgments, that quietly redefines the
-headline metric and any ACS baseline compared against it. The pre-write gate rejects it.
+**Judge dimensions are authored** from the research, and are added **on top of** the
+built-ins — but **never reuse a built-in name**. `policy_violation` and `overrefusal` are
+`BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly
+disabled. Config dimensions merge over the built-ins **by name** into the same dict, so a
+researched dimension called `policy_violation` silently replaces the built-in rubric — and
+since the headline `not_permissible_policy_violation_rate` /
+`permissible_policy_violation_rate` split is derived from stored `policy_violation`
+judgments, that quietly redefines the headline metric and any ACS baseline compared
+against it.
+
+The same applies to **judge presets**, which expand into that same merged list:
+
+- **Do not set `judge.preset: safety-core`.** It defines dimensions named exactly
+  `policy_violation` and `overrefusal`, so selecting it replaces *both* built-in rubrics.
+  The built-ins already provide both, so it buys nothing and costs the headline metric.
+  `overrefusal` is the more dangerous of the two — unlike `policy_violation` it is **not**
+  recomputed from `node_judgments`, so the substituted rubric *is* the reported number.
+- **`safety-extended` is safe and recommended** for nuanced harms — it defines
+  `harm_actionability` and `pii_leakage`, which collide with nothing.
+
+The post-write gate rejects both the inline and the preset form.
 
 **If live source retrieval is unavailable**, say so and stop at the ledger. The evidence
 gate cannot be met without it, and a config with remembered or invented citations is worse
@@ -596,7 +608,7 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
   question you offer that includes a Clarity option must carry the user-supplied
   option beside it; a user who doesn't know Path B exists cannot ask for it. Hold
   the user-supplied path (Step 1b) to the same bar: atomic behaviors, an explicit
-  permissible boundary, variant-derived dimensions. Never block a measurement on
+  permissible boundary, researched and cited dimensions. Never block a measurement on
   Clarity setup.
 - **Never imitate Clarity's interview from your own head** — if the user chose
   Clarity, drive the real MCP tools (`run_clarity` returns its genuine process
@@ -622,7 +634,7 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Generate configs through the research workflow, not by hand** — `workflows/research-eval-dimensions.md` owns config generation. Every dimension must pass its evidence gate, `N` passes must complete, and the user must explicitly approve the dimension set before any YAML is written. **Silence is not approval.** `assert-ai init` remains available as an explicitly unvalidated scaffold for a throwaway look, never for a measurement you intend to report or govern against.
 - **Never emit an uncited config** — cite only pages actually retrieved this session; never fabricate or guess a URL, title, or author. Keep unsourced candidates in the ledger as `uncited — needs review`. If live retrieval is unavailable, stop at the ledger and say so.
-- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric and corrupts the headline split and any ACS delta derived from it. The pre-write gate rejects this.
+- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric and corrupts the headline split and any ACS delta derived from it. `judge.preset: safety-core` does this too, since presets expand into the same merged list. The pre-write gate rejects a reused name in the review ledger; the post-write gate rejects it in the written config, in both the inline and the preset form.
 - **Never read a prior generated config** — the isolation preflight discovers prior generations **by path only**. Do not `cat`, parse, grep, hash, `git show`, or otherwise inspect a matching prior YAML, and do not infer its contents from size, timestamps, or commit history.
 - **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.

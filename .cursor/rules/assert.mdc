@@ -195,11 +195,13 @@ against. (`--describe-file` over `--describe "<text>"` for prose you did not aut
 would break the command or inject into the shell. `--from <path>` extends an existing config.)
 **Author researched judge `dimensions`, but never reuse a built-in name:** `policy_violation` and `overrefusal` are
 `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled; researched
-harm-specific dimensions are added **on top** of them, over a `safety-core` (+ `safety-extended`) preset. Config
-dimensions merge over the built-ins **by name** into the same dict, so declaring one called `policy_violation` or
-`overrefusal` silently replaces the built-in rubric — and since the headline permissibility split is derived from
-stored `policy_violation` judgments, that quietly redefines the headline metric and any ACS baseline compared against
-it. The pre-write gate rejects it.
+harm-specific dimensions are added **on top** of them. Config dimensions merge over the built-ins **by name** into the
+same dict, so declaring one called `policy_violation` or `overrefusal` silently replaces the built-in rubric — and
+since the headline permissibility split is derived from stored `policy_violation` judgments, that quietly redefines the
+headline metric and any ACS baseline compared against it. **The same applies to `judge.preset`, which expands into that
+same merged list: do not use `safety-core`** — it defines dimensions named exactly `policy_violation` and
+`overrefusal`, so it replaces both built-in rubrics and buys nothing the built-ins do not already provide.
+`safety-extended` is additive (`harm_actionability`, `pii_leakage`) and is safe. The post-write gate rejects both forms.
 
 ### 4. Identify the target shape
 

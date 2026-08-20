@@ -153,7 +153,7 @@ Fill from the candidate behavior (real schema field names):
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
 | `pipeline.inference.max_turns` | **`10` floor** (the ASSERT default), raised when the harm's evidence-backed observability horizon is longer. Use the **same** value in the baseline and governed configs. |
-| `pipeline.judge.preset` | `safety-core` (add `safety-extended` for nuanced harms); reuse the library preset's `suggested_judge_presets` |
+| `pipeline.judge.preset` | `safety-extended` for nuanced harms (additive). **Not `safety-core`** — it replaces both built-in rubrics; skip it if a library preset suggests it |
 | `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
 > **Run the eval cheap, but judge and systematize with the strong model.**
@@ -191,7 +191,11 @@ Fill from the candidate behavior (real schema field names):
 > `policy_violation` or `overrefusal` silently **replaces the built-in rubric** with a
 > hand-written one — and because the headline permissibility split is derived from
 > stored `policy_violation` judgments, that quietly redefines the headline metric and
-> any ACS baseline compared against it. The validator's pre-write gate rejects it.
+> any ACS baseline compared against it. The same applies to `judge.preset`, which
+> expands into that same merged list — do **not** use `safety-core`, which defines
+> dimensions named exactly `policy_violation` and `overrefusal`. The validator's
+> pre-write gate rejects a reused name in the ledger, and its post-write gate rejects
+> it in the written config, in both the inline and the preset form.
 
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated

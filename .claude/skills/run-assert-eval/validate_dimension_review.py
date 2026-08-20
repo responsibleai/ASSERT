@@ -715,6 +715,122 @@ def pre_write(review_path: Path, config_path: Path, stamp_path: Path) -> None:
     _write_json(stamp_path, stamp)
 
 
+def _dimension_names(dimensions: object) -> list[str]:
+    """Extract dimension names from either the mapping or the list YAML form."""
+
+    if isinstance(dimensions, dict):
+        return [str(key).strip() for key in dimensions]
+    if isinstance(dimensions, list):
+        return [
+            str(item.get("name", "")).strip()
+            for item in dimensions
+            if isinstance(item, dict)
+        ]
+    return []
+
+
+def _preset_dimension_names(judge: dict) -> dict[str, list[str]]:
+    """Resolve `pipeline.judge.preset` to the dimension names it contributes.
+
+    Presets expand into the same merged dimension list as inline `dimensions`
+    (assert_ai/config.py), so a preset can shadow a built-in exactly as an inline
+    dimension can. Resolution is best-effort: this script is runnable standalone,
+    so a preset that cannot be located is skipped rather than failing the run.
+    """
+
+    raw = judge.get("preset")
+    if isinstance(raw, str):
+        preset_names = [raw.strip()]
+    elif isinstance(raw, list):
+        preset_names = [str(item).strip() for item in raw if item]
+    else:
+        return {}
+
+    resolved: dict[str, list[str]] = {}
+    for preset_name in preset_names:
+        if not preset_name:
+            continue
+        preset_file = _find_judge_preset_file(preset_name)
+        if preset_file is None:
+            continue
+        try:
+            preset = yaml.safe_load(preset_file.read_text(encoding="utf-8"))
+        except (yaml.YAMLError, OSError):
+            continue
+        if not isinstance(preset, dict):
+            continue
+        names = [name for name in _dimension_names(preset.get("dimensions")) if name]
+        if names:
+            resolved[preset_name] = names
+    return resolved
+
+
+def _find_judge_preset_file(preset_name: str) -> Path | None:
+    """Locate `assert_ai/library/judges/<preset_name>.yaml` by walking up from here."""
+
+    if "/" in preset_name or "\\" in preset_name or preset_name.startswith("."):
+        return None
+    for base in (Path(__file__).resolve(), Path.cwd().resolve() / "_"):
+        for parent in base.parents:
+            candidate = (
+                parent / "assert_ai" / "library" / "judges" / f"{preset_name}.yaml"
+            )
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _reject_shadowing_judge_dimensions(config: dict, config_path: Path) -> None:
+    """Reject a written config whose judge dimensions shadow a built-in name.
+
+    The canonical-item check guards the review ledger, but the config is authored
+    separately. Without this the artifact that actually reaches the judge is
+    unchecked. Covers both inline `dimensions` and `preset`-contributed ones,
+    since both merge over the built-ins by name.
+    """
+
+    pipeline = config.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return
+    judge = pipeline.get("judge")
+    if not isinstance(judge, dict):
+        return
+
+    problems: list[str] = []
+
+    inline = sorted(
+        {
+            name
+            for name in _dimension_names(judge.get("dimensions"))
+            if name in BUILT_IN_JUDGE_DIMENSIONS
+        }
+    )
+    if inline:
+        problems.append(
+            "declares judge dimension(s) "
+            f"{', '.join(repr(name) for name in inline)} that reuse a built-in name"
+        )
+
+    for preset_name, names in sorted(_preset_dimension_names(judge).items()):
+        shadowed = sorted({n for n in names if n in BUILT_IN_JUDGE_DIMENSIONS})
+        if shadowed:
+            problems.append(
+                f"selects judge preset {preset_name!r}, which defines "
+                f"{', '.join(repr(name) for name in shadowed)} - reusing a built-in name"
+            )
+
+    if problems:
+        raise ReviewValidationError(
+            f"config {config_path} "
+            + "; ".join(problems)
+            + ". Judge dimensions from both `dimensions` and `preset` merge over the "
+            "built-ins by name, so this silently replaces the built-in rubric and "
+            "corrupts the policy-violation split every metric and ACS delta is derived "
+            "from. Rename to a distinct researched name, or drop the preset - the "
+            "built-ins already provide these dimensions."
+        )
+
+
 def post_write(review_path: Path, config_path: Path, stamp_path: Path) -> None:
     _validate_review_file(review_path, require_approval=True)
     if not stamp_path.is_file():
@@ -741,6 +857,7 @@ def post_write(review_path: Path, config_path: Path, stamp_path: Path) -> None:
         raise ReviewValidationError(f"config is not valid YAML: {config_path}") from error
     if not isinstance(config, dict):
         raise ReviewValidationError("config YAML must contain a top-level mapping")
+    _reject_shadowing_judge_dimensions(config, config_path)
 
     stamp["config_after_sha256"] = config_hash
     stamp["post_write_verified_at"] = datetime.now(timezone.utc).isoformat()
