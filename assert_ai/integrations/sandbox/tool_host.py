@@ -33,6 +33,7 @@ class AgentHooksToolHost:
         mediator: ActionMediator,
         agent_id: str,
         session_id: str,
+        case_id: str | None = None,
         framework: str = "openclaw-mcp-sandbox",
     ) -> None:
         self._tools = dict(tools)
@@ -41,6 +42,7 @@ class AgentHooksToolHost:
             agent_id=agent_id,
             framework=framework,
             session_id=session_id,
+            case_id=case_id,
         )
         self.records: list[MediationRecord] = []
 

@@ -12,6 +12,11 @@ Two files answer separate questions:
 Mock content cannot change an enforcement decision. It is consulted only after
 policy has selected `mock`.
 
+An optional `case_id:` on a mock rule binds that response to one ASSERT test
+case (prefix/suffix `*` globs are supported). ASSERT propagates the stable test
+case ID into the container, mediation context, scenario state, and evidence, so
+two cases with identical tool arguments can still exercise different outcomes.
+
 ## Target choices
 
 `pipeline.inference.target.sandbox` points to one setup file. The setup supports:

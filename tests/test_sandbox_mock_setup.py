@@ -114,6 +114,28 @@ def test_most_specific_rule_wins_regardless_of_file_order():
     assert on_file is not None and on_file.value["id"] == "fallback"
 
 
+def test_case_id_selects_different_mock_for_identical_tool_arguments():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "charge_card", "case_id": "case-success", "response": {"status": "paid"}},
+            {"tool": "charge_card", "case_id": "case-failure", "error": {"code": "DECLINED"}},
+        ]
+    })
+    args = {"amount": 25, "card": "same-token"}
+
+    success = library.resolve(MockCall("charge_card", args, case_id="case-success"))
+    failure = library.resolve(MockCall("charge_card", args, case_id="case-failure"))
+
+    assert success is not None and success.value == {"status": "paid"}
+    assert failure is not None and failure.value == {"code": "DECLINED"}
+    assert failure.is_error is True
+
+
+def test_case_id_selector_must_be_a_non_empty_string():
+    with pytest.raises(MockConfigError, match="case_id must be a non-empty string"):
+        MockLibrary.from_dict({"mocks": [{"tool": "charge_card", "case_id": 7}]})
+
+
 @pytest.mark.parametrize(
     "matcher,value,expected",
     [
@@ -242,6 +264,27 @@ def test_later_read_reflects_a_mocked_write():
     after = library.resolve(MockCall("get_line_status", {"line_id": "L1002"}))
     assert after is not None
     assert after.value["suspended"] is False, "a read after a mocked write must see the write"
+
+
+def test_scenario_state_is_partitioned_by_case_id():
+    library = MockLibrary.from_dict({
+        "mocks": [{
+            "tool": "retry_payment",
+            "scenario": "payment",
+            "responses": [
+                {"error": {"code": "TIMEOUT"}},
+                {"response": {"status": "paid"}},
+            ],
+        }]
+    })
+
+    first_a = library.resolve(MockCall("retry_payment", {}, case_id="case-a"))
+    second_a = library.resolve(MockCall("retry_payment", {}, case_id="case-a"))
+    first_b = library.resolve(MockCall("retry_payment", {}, case_id="case-b"))
+
+    assert first_a is not None and first_a.value == {"code": "TIMEOUT"}
+    assert second_a is not None and second_a.value == {"status": "paid"}
+    assert first_b is not None and first_b.value == {"code": "TIMEOUT"}
 
 
 def test_scenario_sequence_advances_then_holds():

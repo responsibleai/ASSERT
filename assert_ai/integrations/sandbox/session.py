@@ -40,6 +40,7 @@ class SandboxedEndpointSession:
         self,
         *,
         setup_path: str | Path,
+        case_id: str | None = None,
         config_path: Path | None = None,
         message_timeout_s: float | None = None,
         startup_timeout_s: float | None = None,
@@ -48,6 +49,7 @@ class SandboxedEndpointSession:
         if not path.is_absolute() and config_path is not None:
             path = config_path.parent / path
         self.setup: MediationSetup = load_setup(path.resolve())
+        self.case_id = case_id
         self._message_timeout_s = message_timeout_s
         self._startup_timeout_s = startup_timeout_s
         self._handle: SandboxHandle | None = None
@@ -90,6 +92,7 @@ class SandboxedEndpointSession:
         spec = ContainerSpec(
             image=str(target.image),
             container_port=int(target.port or 0),
+            case_id=self.case_id,
             command=tuple(target.command),
             env=dict(target.env),
             health_path=target.health_path,
@@ -163,7 +166,7 @@ class SandboxedEndpointSession:
         rows = await asyncio.to_thread(self._handle.new_egress_rows)
         additions: list[dict[str, Any]] = []
         for row in rows:
-            event = egress_event(row)
+            event = egress_event(row, case_id=self.case_id)
             additions.extend([
                 {
                     "role": "assistant",
@@ -205,6 +208,8 @@ class SandboxedEndpointSession:
             ),
             "raw_socket_audit": False,
         }
+        if self.case_id:
+            metadata["case_id"] = self.case_id
         if self._handle is not None:
             metadata["endpoint"] = self._handle.endpoint_url
         return metadata

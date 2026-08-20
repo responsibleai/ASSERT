@@ -27,6 +27,7 @@ PORT = int(os.environ.get("PORT", "8080"))
 POLICY_PATH = os.environ.get("ACTION_MEDIATION_POLICY", "/sandbox/policy.json")
 MOCKS_PATH = os.environ.get("ACTION_MEDIATION_MOCKS", "/sandbox/mocks.json")
 CASSETTE_DIR = os.environ.get("ACTION_MEDIATION_CASSETTES")
+CASE_ID = os.environ.get("ASSERT_SANDBOX_CASE_ID")
 
 
 def lookup_customer(args: dict) -> dict:
@@ -62,6 +63,7 @@ TOOL_HOST = AgentHooksToolHost(
     mediator=MEDIATOR,
     agent_id="stock-sandbox-agent",
     session_id="stock-sandbox-case",
+    case_id=CASE_ID,
     framework="assert-stock-http",
 )
 

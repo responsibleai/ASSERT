@@ -27,12 +27,15 @@ class AgentHooksContextBuilder:
         agent_id: str,
         framework: str,
         session_id: str,
+        case_id: str | None = None,
         agent_name: str | None = None,
     ) -> None:
         self._agent = {"id": agent_id, "framework": framework}
         if agent_name:
             self._agent["name"] = agent_name
         self._session = {"id": session_id}
+        if case_id:
+            self._session["case_id"] = case_id
         self._sequence = 0
 
     def _base(self, point: str, target: Any) -> dict[str, Any]:
