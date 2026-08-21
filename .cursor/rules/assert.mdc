@@ -274,6 +274,11 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
 - **Suggested next step**: one concrete action (tighten the system prompt around X, add a stratify
   dimension for Y, or govern the failure with ACS and re-measure to prove the rate dropped — see Step 8 and
   `../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`).
+- **Non-ACS fixes are the user's call, outside this skill**: troubleshooting may lead a coding agent to a
+  non-ACS fix — upgrading or swapping the target model, rewriting the system prompt, or otherwise changing the
+  agent. These are *agent changes*, not ACS governance (ACS can only restrict an output, never add a missing
+  capability). Keep the label honest — don't record such a run under `acs-governed`; name it for what produced
+  the numbers (e.g. `model-upgrade`) so metrics aren't misattributed to ACS.
 
 ### Authoritative references
 
