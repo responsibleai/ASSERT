@@ -207,6 +207,17 @@ class ScenarioYamlSchemaTest(unittest.TestCase):
                     self.assertIsInstance(behavior, str)
                     self.assertIn(behavior, behavior_names)
 
+    def test_benchmark_config_reuses_scenario_context_for_one_behavior(self):
+        config_path = Path("examples/benchmark/eval_config.yaml")
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        scenario = load_preset("scenario", "travel_planner_benchmark")
+
+        self.assertEqual(raw["context"].strip(), scenario["context"].strip())
+        self.assertEqual(
+            raw["behavior"],
+            {"preset": "explicit_constraint_violation_failures"},
+        )
+
 
 # ===================================================================
 # 2. CLI ``library list`` — table & JSON output, kind filtering, counts
