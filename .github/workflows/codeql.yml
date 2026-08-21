@@ -1,0 +1,61 @@
+# CodeQL static analysis.
+#
+# The repository had no SAST: nothing inspected Python or TypeScript for
+# injection, path traversal, unsafe deserialization or similar classes on the
+# way in. scorecard.yml uploads SARIF but performs no code scanning of its own.
+#
+# Runs on pushes and pull requests to main so a finding blocks review rather
+# than surfacing after merge, plus weekly so newly published queries are applied
+# to code that has not changed.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 07:00 UTC, after the Dependabot window.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      security-events: write   # required to upload results to code scanning
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@a2983b8bed1923f44751c5c43237f479442827b3 # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # security-extended adds lower-severity queries that still matter for
+          # a tool that imports user-named modules and renders model output.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@a2983b8bed1923f44751c5c43237f479442827b3 # v3
+        with:
+          category: /language:${{ matrix.language }}
