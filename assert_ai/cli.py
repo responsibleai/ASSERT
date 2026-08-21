@@ -153,6 +153,17 @@ def _fmt_percent(value: Optional[float]) -> str:
 
 
 _PERMISSIBILITY_SPLIT_RATE_KEYS = tuple(_DERIVED_PERMISSIBILITY_RATE_KEYS.values())
+_PERMISSIBILITY_METRIC_ALIASES = {
+    rate_key: metric
+    for metric, rate_key in _DERIVED_PERMISSIBILITY_RATE_KEYS.items()
+}
+
+#: The half of the split the matrix leads with. ``policy_violation`` unions
+#: permissible and impermissible behaviors, so ranking behaviors by it can order
+#: them by the wrong thing entirely -- a behavior can carry a high union rate
+#: made up almost wholly of mishandled *permissible* work while another with a
+#: lower union rate is nearly all genuine impermissible failure.
+_MATRIX_SPLIT_METRIC = _POLICY_VIOLATION_NOT_PERMISSIBLE
 
 
 def _has_permissibility_split(*metric_sets: Any) -> bool:
@@ -704,6 +715,131 @@ def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
         "prompt_rows": prompt_rows,
         "scenario_rows": scenario_rows,
     }
+
+
+def _run_behavior_name(run_dir: Path, suite_id: str) -> str:
+    config_path = run_dir / "config.yaml"
+    config = None
+    if config_path.exists():
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError):
+            pass
+    behavior = config.get("behavior") if isinstance(config, dict) else None
+    if isinstance(behavior, dict) and isinstance(behavior.get("name"), str) and behavior.get("name"):
+        return behavior["name"]
+
+    manifest = load_json(run_dir / "manifest.json")
+    manifest_candidates: list[Any] = []
+    if isinstance(manifest, dict):
+        manifest_behavior = manifest.get("behavior")
+        manifest_candidates.append(manifest.get("behavior_name"))
+        if isinstance(manifest_behavior, dict):
+            manifest_candidates.append(manifest_behavior.get("name"))
+        manifest_config = manifest.get("config")
+        if isinstance(manifest_config, dict):
+            manifest_behavior = manifest_config.get("behavior")
+            if isinstance(manifest_behavior, dict):
+                manifest_candidates.append(manifest_behavior.get("name"))
+    for candidate in manifest_candidates:
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return suite_id
+
+
+def _run_arm_label(run_id: str, suite_id: str) -> str:
+    prefix = f"{suite_id}-"
+    if run_id.startswith(prefix):
+        return run_id[len(prefix):] or run_id
+    return run_id
+
+
+def _ordered_arm_labels(arms: Iterable[str]) -> list[str]:
+    known_order = {"baseline": 0, "prompted": 1, "acs": 2}
+    return sorted(
+        arms,
+        key=lambda arm: (
+            0 if arm.lower() in known_order else 1,
+            known_order.get(arm.lower(), 0),
+            arm.lower(),
+        ),
+    )
+
+
+def _pooled_rate(pairs: Iterable[tuple[int, int]]) -> float | None:
+    """Pool ``(flagged, scored)`` pairs instead of averaging rates."""
+    flagged = scored = 0
+    for hit, total in pairs:
+        flagged += hit
+        scored += total
+    return flagged / scored if scored else None
+
+
+def _binary_counts(summary: Any) -> tuple[int, int] | None:
+    """Return ``(flagged, scored)`` for a binary dimension summary."""
+    if not isinstance(summary, dict) or summary.get("kind") == "ordinal":
+        return None
+    counts = summary.get("counts")
+    if not isinstance(counts, dict):
+        return None
+    flagged = counts.get(1, counts.get("1", 0))
+    passed = counts.get(0, counts.get("0", 0))
+    if not isinstance(flagged, int) or not isinstance(passed, int):
+        return None
+    total = flagged + passed
+    return (flagged, total) if total else None
+
+
+def _run_dimension_rate(run_summary: dict[str, Any], metric: str) -> float | None:
+    """Pool one metric across a run's prompt and scenario rows.
+
+    The permissibility split is derived and stored in top-level bucket summaries,
+    not in ``dimensions``. All rates are recombined from counts when possible.
+    """
+    prompt_metrics = run_summary.get("prompt_metrics") or {}
+    scenario_metrics = run_summary.get("scenario_metrics") or {}
+    halves = [metrics for metrics in (prompt_metrics, scenario_metrics) if isinstance(metrics, dict)]
+
+    canonical_metric = _PERMISSIBILITY_METRIC_ALIASES.get(metric, metric)
+    split_key = _DERIVED_PERMISSIBILITY_RATE_KEYS.get(canonical_metric)
+    if split_key is not None:
+        bucket_key = _DERIVED_PERMISSIBILITY_SUMMARY_KEYS[canonical_metric]
+        pairs = [
+            counts
+            for metrics in halves
+            if (counts := _binary_counts(metrics.get(bucket_key))) is not None
+        ]
+        if pairs:
+            return _pooled_rate(pairs)
+        for metrics in halves:
+            rate = metrics.get(split_key)
+            if isinstance(rate, (int, float)):
+                return float(rate)
+        return None
+
+    pairs = [
+        counts
+        for metrics in halves
+        if isinstance(metrics.get("dimensions"), dict)
+        and (counts := _binary_counts(metrics["dimensions"].get(metric))) is not None
+    ]
+    if pairs:
+        return _pooled_rate(pairs)
+
+    prompt_rate = _dimension_rate(prompt_metrics, metric)
+    if prompt_rate is not None:
+        return prompt_rate
+    return _dimension_rate(scenario_metrics, metric)
+
+
+def _parse_suite_run_arg(suite_run: str) -> tuple[str, str]:
+    parts = suite_run.strip("/").split("/")
+    if len(parts) == 1:
+        return parts[0], "run-1"
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    _error(f"Invalid format: '{suite_run}'. Use SUITE/RUN (e.g., my-suite/run-1).")
+    raise AssertionError("unreachable")
 
 
 def _count_test_case_types(path: Path) -> tuple[int, int]:
@@ -1470,6 +1606,195 @@ def _run_within_suite_compare(
                 _fmt_percent(row["delta"]),
             )
         console.print(delta_table)
+
+
+@results.command("matrix", short_help="Compare behaviors across arms as a matrix")
+@click.argument("suite_runs", nargs=-1)
+@click.option(
+    "--suite",
+    "suites",
+    multiple=True,
+    shell_complete=_complete_suite,
+    help="Suite ID under artifacts/results. May be repeated; expands to all runs with scores.",
+)
+@click.option(
+    "--results-dir",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_RESULTS_DIR,
+    show_default=True,
+    help="Results root to inspect.",
+)
+@click.option(
+    "--metric",
+    default=None,
+    shell_complete=_complete_metric,
+    help=(
+        "Judge dimension to compare. Defaults to the impermissible half of the "
+        "permissibility split when every run reports it, otherwise "
+        f"'{DEFAULT_COMPARE_METRIC}'."
+    ),
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of tables.")
+@click.option("--no-color", is_flag=True, help="Disable colored terminal output.")
+def results_matrix(
+    suite_runs: tuple[str, ...],
+    suites: tuple[str, ...],
+    results_dir: Path,
+    metric: str | None,
+    as_json: bool,
+    no_color: bool,
+):
+    """Render a behavior x arm pivot over multiple runs."""
+    if not suites and len(suite_runs) < 2:
+        _error("Provide at least two SUITE/RUN arguments to compare, or use --suite SUITE.")
+
+    results_root = _resolve_results_dir(results_dir)
+    resolved_suite_runs: list[tuple[str, str]] = []
+    seen_suite_runs: set[tuple[str, str]] = set()
+    for suite_run in suite_runs:
+        parsed = _parse_suite_run_arg(suite_run)
+        if parsed not in seen_suite_runs:
+            resolved_suite_runs.append(parsed)
+            seen_suite_runs.add(parsed)
+    for suite in suites:
+        suite_dir = results_root / suite
+        if not suite_dir.exists():
+            _error(f"Suite not found: {suite}")
+        for child in sorted(suite_dir.iterdir()):
+            if child.is_dir() and (child / "scores.jsonl").exists():
+                parsed = (suite, child.name)
+                if parsed not in seen_suite_runs:
+                    resolved_suite_runs.append(parsed)
+                    seen_suite_runs.add(parsed)
+
+    if len(resolved_suite_runs) < 2:
+        _error("Provide at least two runs with scores to compare.")
+
+    run_summaries: list[dict[str, Any]] = []
+    behaviors: list[str] = []
+    arms: list[str] = []
+    cells: dict[str, dict[str, float | None]] = {}
+    cell_sources: dict[tuple[str, str], str] = {}
+    seen_behaviors: set[str] = set()
+    seen_arms: set[str] = set()
+
+    loaded: list[tuple[str, str, dict[str, Any]]] = []
+    for suite_id, run_id in resolved_suite_runs:
+        run_dir = results_root / suite_id / run_id
+        if not run_dir.exists():
+            _error(f"Not found: {suite_id}/{run_id}")
+        run_summary = _load_run_summary(run_dir)
+        if run_summary is None:
+            _error(f"No scores in {suite_id}/{run_id}")
+        matrix_summary = {
+            "prompt_metrics": run_summary.get("prompt_metrics"),
+            "scenario_metrics": run_summary.get("scenario_metrics"),
+        }
+        run_summaries.append(matrix_summary)
+
+        behavior = _run_behavior_name(run_dir, suite_id)
+        arm = _run_arm_label(run_id, suite_id)
+        source = f"{suite_id}/{run_id}"
+        cell_key = (behavior, arm)
+        if previous_source := cell_sources.get(cell_key):
+            _error(
+                f"Runs '{previous_source}' and '{source}' both resolve to "
+                f"behavior '{behavior}' and arm '{arm}'. Use distinct run IDs "
+                "or select only one run for that cell."
+            )
+        cell_sources[cell_key] = source
+        if behavior not in seen_behaviors:
+            behaviors.append(behavior)
+            seen_behaviors.add(behavior)
+        if arm not in seen_arms:
+            arms.append(arm)
+            seen_arms.add(arm)
+        loaded.append((behavior, arm, matrix_summary))
+
+    split_by_run = [
+        any(
+            _run_dimension_rate(run_summary, split_metric) is not None
+            for split_metric in _DERIVED_PERMISSIBILITY_RATE_KEYS
+        )
+        for run_summary in run_summaries
+    ]
+
+    # Requiring every run to have usable split data keeps the matrix from mixing
+    # an impermissible-only rate with the legacy union. Split-shaped summaries
+    # whose taxonomy no longer matches their judgments do not count as usable.
+    if metric is None:
+        metric = (
+            _MATRIX_SPLIT_METRIC
+            if split_by_run and all(split_by_run)
+            else DEFAULT_COMPARE_METRIC
+        )
+    metric = _PERMISSIBILITY_METRIC_ALIASES.get(metric, metric)
+
+    available_metrics: set[str] = set()
+    for run_summary in run_summaries:
+        prompt_metrics = run_summary.get("prompt_metrics")
+        scenario_metrics = run_summary.get("scenario_metrics")
+        for metrics in (prompt_metrics, scenario_metrics):
+            dimensions = metrics.get("dimensions") if isinstance(metrics, dict) else None
+            if isinstance(dimensions, dict):
+                available_metrics.update(dimensions)
+    if any(split_by_run):
+        available_metrics.update(_DERIVED_PERMISSIBILITY_RATE_KEYS)
+    if metric not in available_metrics:
+        _error(
+            f"Metric '{metric}' was not found in the compared judgments. "
+            f"Available: {sorted(available_metrics)}"
+        )
+
+    for behavior, arm, run_summary in loaded:
+        cells.setdefault(behavior, {})[arm] = _run_dimension_rate(run_summary, metric)
+
+    _reject_ordinal_compare(run_summaries, metric)
+    arms = _ordered_arm_labels(arms)
+
+    if as_json:
+        _echo_json({
+            "metric": metric,
+            "behaviors": behaviors,
+            "arms": arms,
+            "cells": {
+                behavior: {
+                    arm: cells.get(behavior, {}).get(arm)
+                    for arm in arms
+                }
+                for behavior in behaviors
+            },
+        })
+        return
+
+    console = _console(no_color=no_color)
+    table = Table(
+        title=f"Behavior × arm matrix ({_metric_label(metric)})",
+        box=None,
+        show_header=True,
+        show_edge=False,
+        pad_edge=False,
+    )
+    table.add_column("Behavior", style="cyan", no_wrap=True)
+    for arm in arms:
+        table.add_column(arm, style="white", no_wrap=True)
+    for behavior in behaviors:
+        row = [behavior]
+        for arm in arms:
+            row.append(_fmt_percent(cells.get(behavior, {}).get(arm)))
+        table.add_row(*row)
+    console.print(table)
+
+    if metric in _DERIVED_PERMISSIBILITY_RATE_KEYS:
+        # Each half is scored only over the rows where a behavior in that bucket
+        # was relevant, so the two halves have different denominators from each
+        # other and from `policy_violation`. Say so, or a reader will try to add
+        # them and find they do not reconcile to the union.
+        console.print(
+            "[dim]Rate is over rows where a behavior in this bucket was relevant, "
+            "not all scored rows. The two halves of the split therefore have "
+            "different denominators and do not sum to policy_violation.[/dim]"
+        )
 
 
 @results.command("compare-suites", short_help="Compare runs across different suites (e.g., approach A vs B vs C)")
