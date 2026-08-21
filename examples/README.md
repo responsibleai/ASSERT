@@ -68,6 +68,7 @@ scenario, setup, run commands, and artifact paths.
 | [`azure_doc_qa/`](azure_doc_qa/) | Multi-agent RAG callable | Confidential-data boundaries and grounded answers. |
 | [`billing_support_agent/`](billing_support_agent/) | Tool-using callable | Identity verification and account isolation. |
 | [`change_control_agent/`](change_control_agent/) | Workflow callable | Approval sequencing and record integrity. |
+| [`agent_framework_travel_planner/`](agent_framework_travel_planner/) | Microsoft Agent Framework workflow + native OTel traces | Exact-item and exact-amount authorization for booking/payment commitments. |
 | [`science_research_agent/`](science_research_agent/) | Retrieval callable | Sharing classes and retrieved prompt injection. |
 | [`incident_triage_agent/evals/`](incident_triage_agent/evals/) | Tool-using callable | Nine independently runnable SOP behaviors. |
 
