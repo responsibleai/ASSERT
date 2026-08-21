@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 from assert_ai.config import resolve_stage_paths
 from assert_ai.core.io import SCORES_FILE, INFERENCE_SET_FILE, row_factors
-from assert_ai.core.io import append_jsonl_row, load_jsonl, load_prompt_text, resolve_path
+from assert_ai.core.io import append_jsonl_row, archive_artifact, assert_version, load_jsonl, load_prompt_text, resolve_path, write_artifact_schema
 from assert_ai.core.judge import (
     build_judge_contract,
     infer_judge_status,
@@ -364,14 +364,14 @@ async def run_judge(
             # rather than relying on a hash mismatch; regenerated upstream
             # inference rows may produce byte-identical scores under stable
             # judge config, which would otherwise leave the cache intact.
-            scores_path.unlink()
+            archive_artifact(scores_path, reason="stage forced")
         else:
             stored_hash = config_hash_path.read_text(encoding="utf-8").strip() if config_hash_path.exists() else None
             if stored_hash is not None and stored_hash != config_hash:
                 log.warning(
-                    f"Judge config or inference set changed since last run - discarding {scores_path} and starting fresh"
+                    f"Judge config or inference set changed since last run - replacing {scores_path} and starting fresh"
                 )
-                scores_path.unlink()
+                archive_artifact(scores_path, reason="judge config or inference set changed")
             else:
                 for prior in load_jsonl(scores_path):
                     sid = prior.get("test_case_id")
@@ -518,6 +518,17 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
     )
+    scores_out = Path(result["scores_path"])
+    if scores_out.exists():
+        write_artifact_schema(
+            scores_out,
+            artifact="scores",
+            produced_by={
+                "stage": "judge",
+                "assert_version": assert_version(),
+                "run_id": str(ctx.get("run_id") or ""),
+            },
+        )
     return {
         "scores_path": result["scores_path"],
         "_summary": {

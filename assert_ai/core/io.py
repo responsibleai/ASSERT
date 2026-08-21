@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from importlib.resources import files as _resource_files
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -19,6 +21,203 @@ from typing import Any, Dict, Iterable
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+# Version of the primary artifact contracts: taxonomy.json, test_set.jsonl,
+# inference_set.jsonl, scores.jsonl, manifest.json. Bump when a change would
+# make an older reader misinterpret an artifact rather than merely miss a field.
+ARTIFACT_SCHEMA_VERSION = 1
+
+_SCHEMA_SIDECAR_SUFFIX = ".schema.json"
+
+
+def assert_version() -> str:
+    """Return the installed assert-ai version, or 'unknown' if unavailable.
+
+    Read from package metadata rather than hardcoded, so a provenance record
+    cannot claim a version the running code is not.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("assert-ai")
+    except Exception:  # noqa: BLE001 - provenance must never fail a stage
+        return "unknown"
+
+
+def write_artifact_schema(
+    artifact_path: Path,
+    *,
+    artifact: str,
+    version: int = ARTIFACT_SCHEMA_VERSION,
+    produced_by: Dict[str, Any] | None = None,
+) -> Path:
+    """Record schema version and provenance for an artifact in a sidecar file.
+
+    Two problems share one fix.
+
+    Only ``metrics.json`` carried a ``schema_version``; the primary artifacts did
+    not, so one produced by a newer ASSERT is consumed silently by an older
+    viewer or analysis script.
+
+    Separately, stages hand work to each other through files and no stage can
+    tell whether its input came from the previous stage, from a cache hit, or
+    from someone editing the file. Recording which stage and model produced an
+    artifact, together with a digest of its bytes, lets a consumer answer that.
+
+    A sidecar is used rather than a header line inside the JSONL. A header would
+    be read as a data record by any reader that does not know about it -
+    including the previous version of ASSERT - which turns a version stamp into
+    a corrupt first row. A sidecar is ignored harmlessly instead.
+    """
+    payload: Dict[str, Any] = {
+        "artifact": artifact,
+        "schema_version": version,
+    }
+    try:
+        payload["content_sha256"] = file_sha256(artifact_path)
+    except OSError:
+        # A digest is useful, not essential; never fail a stage over it.
+        log.debug("Could not hash %s for its provenance sidecar", artifact_path)
+    if produced_by:
+        payload["produced_by"] = produced_by
+
+    sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
+    write_json(sidecar, payload)
+    return sidecar
+
+
+def file_sha256(path: Path) -> str:
+    """Return the hex sha256 of a file, read in chunks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_artifact_sidecar(artifact_path: Path) -> Dict[str, Any] | None:
+    """Return the parsed provenance sidecar for an artifact, if there is one."""
+    sidecar = artifact_path.with_name(artifact_path.name + _SCHEMA_SIDECAR_SUFFIX)
+    if not sidecar.exists():
+        return None
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def read_artifact_schema_version(artifact_path: Path) -> int | None:
+    """Return the recorded schema version for an artifact, if there is one."""
+    payload = read_artifact_sidecar(artifact_path)
+    if payload is None:
+        return None
+    version = payload.get("schema_version")
+    return version if isinstance(version, int) else None
+
+
+def verify_artifact_provenance(artifact_path: Path) -> bool:
+    """Warn when an artifact's bytes differ from what its producer recorded.
+
+    Returns True when the artifact matches, or when there is nothing to check
+    against - an unstamped artifact predates this and must stay readable.
+    """
+    payload = read_artifact_sidecar(artifact_path)
+    if payload is None:
+        return True
+    recorded = payload.get("content_sha256")
+    if not isinstance(recorded, str):
+        return True
+    try:
+        actual = file_sha256(artifact_path)
+    except OSError:
+        return True
+    if actual == recorded:
+        return True
+    producer = payload.get("produced_by") or {}
+    log.warning(
+        "%s does not match the digest recorded when %s produced it. The file "
+        "changed after it was written; results derived from it describe "
+        "something other than that stage's output.",
+        artifact_path.name,
+        producer.get("stage") or "the producing stage",
+    )
+    return False
+
+
+def check_artifact_schema(artifact_path: Path) -> bool:
+    """Warn when an artifact was written by an incompatible ASSERT version.
+
+    Returns True when the artifact is safe to read. An artifact with no recorded
+    version predates the stamp and is assumed compatible, so existing runs keep
+    working.
+    """
+    version = read_artifact_schema_version(artifact_path)
+    if version is None or version == ARTIFACT_SCHEMA_VERSION:
+        return True
+    if version > ARTIFACT_SCHEMA_VERSION:
+        log.warning(
+            "%s was written with artifact schema v%d but this ASSERT understands "
+            "v%d. Fields may be missing or mean something different; read the "
+            "results with care.",
+            artifact_path.name, version, ARTIFACT_SCHEMA_VERSION,
+        )
+    else:
+        log.warning(
+            "%s uses artifact schema v%d, older than this ASSERT's v%d.",
+            artifact_path.name, version, ARTIFACT_SCHEMA_VERSION,
+        )
+    return False
+
+
+def archive_artifact(path: Path, *, reason: str) -> Path | None:
+    """Move a stale artifact aside instead of deleting it.
+
+    Resume and ``--force-stage`` previously called ``unlink()`` on
+    ``inference_set.jsonl`` and ``scores.jsonl``. Those files are the evaluation
+    evidence - every transcript, every verdict - and a config hash mismatch is
+    not always the operator's intention. Deleting them outright means an
+    accidental edit costs a full re-run, and the fact that anything was
+    destroyed is not recorded anywhere.
+
+    The file is renamed to ``<name>.<UTC timestamp>.bak`` beside the original
+    and the new path is logged. Returns the backup path, or ``None`` when the
+    file did not exist.
+
+    Backups are never pruned automatically, because pruning evidence is the
+    behaviour being fixed. Set ``ASSERT_DISCARD_STALE_ARTIFACTS=1`` to restore
+    the previous delete-outright behaviour.
+    """
+    if not path.exists():
+        return None
+
+    if os.environ.get("ASSERT_DISCARD_STALE_ARTIFACTS", "").lower() in ("1", "true", "yes"):
+        path.unlink()
+        log.info("Discarded %s (%s); ASSERT_DISCARD_STALE_ARTIFACTS is set", path, reason)
+        return None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    backup = path.with_name(f"{path.name}.{stamp}.bak")
+    suffix = 1
+    while backup.exists():
+        backup = path.with_name(f"{path.name}.{stamp}.{suffix}.bak")
+        suffix += 1
+
+    try:
+        path.rename(backup)
+    except OSError as e:
+        # Preserving the file is best-effort. Failing the stage because a backup
+        # could not be written would be worse than proceeding, but the operator
+        # needs to know the evidence is about to go.
+        log.warning(
+            "Could not preserve %s as a backup (%s); removing it instead (%s)",
+            path, e, reason,
+        )
+        path.unlink(missing_ok=True)
+        return None
+
+    log.info("Preserved %s as %s (%s)", path.name, backup.name, reason)
+    return backup
 
 
 def resolve_path(path: str | Path) -> Path:

@@ -34,6 +34,7 @@ from assert_ai.core.io import (
     normalize_test_case_rows,
     resolve_path,
     slugify,
+    write_artifact_schema,
     write_jsonl,
 )
 from assert_ai.core.model_client import (
@@ -1176,6 +1177,7 @@ async def run_test_set(
     errored_count = sum(int(r.get("errored_count", 0)) for r in results)
     all_records = normalize_test_case_rows(all_records)
     write_jsonl(out_path, all_records)
+    write_artifact_schema(out_path, artifact="test_set")
 
     # --- Coverage check -------------------------------------------------------
     # Warn when generated test cases don't cover all taxonomy categories.
