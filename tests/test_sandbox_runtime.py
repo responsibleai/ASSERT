@@ -248,12 +248,14 @@ def test_inference_builds_owned_sandbox_session_relative_to_config(tmp_path):
     session = _build_target_session(
         target=TargetConfig(sandbox="setup.yaml"),
         test_case_payload={},
+        test_case_id="prompt-case-007",
         inference=InferenceConfig(),
         max_tokens=100,
         config_path=config,
     )
     assert isinstance(session, SandboxedEndpointSession)
     assert session.setup.source_path == setup
+    assert session.case_id == "prompt-case-007"
 
 
 def test_policy_or_mock_change_invalidates_inference_cache(tmp_path):
@@ -528,6 +530,7 @@ def test_secret_like_container_env_is_rejected_before_docker(tmp_path, monkeypat
         "ACTION_MEDIATION_MOCKS",
         "ACTION_MEDIATION_CASSETTES",
         "ACTION_MEDIATION_LEDGER",
+        "ASSERT_SANDBOX_CASE_ID",
         "ASSERT_SANDBOX_OUTPUT",
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -641,6 +644,7 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         ContainerSpec(
             image="example",
             container_port=8080,
+            case_id="prompt-case-007",
             model_proxy=ModelProxySpec(
                 upstream_url="https://provider.invalid/chat",
                 credential_env="PRIVATE_PROVIDER_KEY",
@@ -668,6 +672,7 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
     assert "--cap-drop" in target_run and "ALL" in target_run
     assert "no-new-privileges" in target_run
     assert "ACTION_MEDIATION_LEDGER=/sandbox/output/mediation.jsonl" in target_run
+    assert "ASSERT_SANDBOX_CASE_ID=prompt-case-007" in target_run
     assert "ACTION_MEDIATION_CASSETTES=/sandbox/cassettes" in target_run
     assert f"{cassettes.resolve()}:/sandbox/cassettes:ro" in target_run
     network_commands = " ".join(" ".join(call) for call in calls if call[:2] == ("network", "create"))
@@ -977,7 +982,7 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
         "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
         encoding="utf-8",
     )
-    session = SandboxedEndpointSession(setup_path=setup)
+    session = SandboxedEndpointSession(setup_path=setup, case_id="prompt-case-007")
 
     class FakeEndpoint:
         async def run_turn(self, messages):
@@ -1003,6 +1008,7 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
         for message in result.interaction_messages
     )
     assert "bad.example" in json.dumps(result.interaction_messages)
+    assert "prompt-case-007" in json.dumps(result.interaction_messages)
 
 
 def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
