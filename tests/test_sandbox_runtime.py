@@ -613,11 +613,13 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
         def shutdown(self): pass
         def server_close(self): pass
 
-    monkeypatch.setattr(
-        sandbox_runtime,
-        "_start_egress_proxy",
-        lambda **kwargs: (Server(), SimpleNamespace(), 9100),
-    )
+    egress_proxy_args = {}
+
+    def fake_start_egress_proxy(**kwargs):
+        egress_proxy_args.update(kwargs)
+        return Server(), SimpleNamespace(), 9100
+
+    monkeypatch.setattr(sandbox_runtime, "_start_egress_proxy", fake_start_egress_proxy)
     monkeypatch.setattr(
         sandbox_runtime,
         "_start_model_proxy",
@@ -663,6 +665,23 @@ def test_docker_command_enforces_stock_containment_and_omits_real_credential(tmp
     )
     target_command = " ".join(target_run)
     relay_command = " ".join(relay_run)
+    audit_log = egress_proxy_args["audit_log"]
+    assert audit_log == (tmp_path / "audit" / "egress.jsonl").resolve()
+    assert not audit_log.is_relative_to(handle.output_dir)
+    assert str(audit_log) not in target_command
+    # The ledger must sit outside *every* directory handed to the target, not
+    # just outside output_dir. Parse the real -v arguments so a future mount
+    # that happens to contain the audit directory fails here, on the ungated
+    # unit path, rather than only in the ASSERT_RUN_DOCKER_TESTS suite.
+    host_mount_sources = [
+        Path(value.split(":", 1)[0]).resolve()
+        for flag, value in zip(target_run, target_run[1:])
+        if flag == "-v"
+    ]
+    assert host_mount_sources, "expected the target container to receive host mounts"
+    assert not any(audit_log.is_relative_to(source) for source in host_mount_sources), (
+        f"egress ledger {audit_log} is inside a target mount: {host_mount_sources}"
+    )
     assert "--read-only" in target_run
     assert "--user" in target_run and "65534:65534" in target_run
     assert "--cap-drop" in target_run and "ALL" in target_run
