@@ -1,0 +1,35 @@
+agent_control_specification_version: "0.3.0-alpha"
+metadata:
+  name: "bank-manager-tier-authorization"
+
+# Sensitivity-tier authorization. The bundle contains ONE rule
+# (policy_tier_authz/tier_authorization.rego) keyed on the platform-normalized
+# `risk_tier` property.
+#
+# Note there is no `tools:` block. The AIEWF manifest enumerated every tool the
+# agent could call; this one does not need to, because the policy contains no
+# tool-name predicate. That absence is the point: registering a new domain's
+# tools requires no manifest edit and no policy edit.
+
+policies:
+  tier_authorization:
+    type: rego
+    bundle: ./policy_tier_authz
+    query: data.agent_control_specification.tier_authorization.verdict
+
+intervention_points:
+  pre_tool_call:
+    policy_target: "$.tool_call.args"
+    policy_target_kind: tool_args
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: tier_authorization
+      query: data.agent_control_specification.tier_authorization.pre_tool_call_verdict
+
+  post_tool_call:
+    policy_target: "$.tool_result"
+    policy_target_kind: tool_result
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: tier_authorization
+      query: data.agent_control_specification.tier_authorization.post_tool_call_verdict

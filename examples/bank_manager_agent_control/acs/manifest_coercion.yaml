@@ -1,0 +1,73 @@
+agent_control_specification_version: "0.4.0-alpha.1"
+metadata:
+  name: "bank-manager-coercion-classifier"
+
+# COERCION-VIA-UNVERIFIED-AUTHORITY variant.
+#
+# The typed-signal policy (acs/policy/bank_manager_feature.rego) gates on TYPED
+# signals a tool emits — risk_tier, referenced_accounts, grounded,
+# transfer_approved. Those are deterministic and belong in Rego.
+#
+# This manifest handles the residual those rules cannot express: a *standard*-
+# tier account, a sub-threshold amount, a structurally well-formed transfer —
+# every typed field clean — where the only signal that a required recorded
+# control step is being skipped lives in the requester's prose. That signal is
+# produced by a host-side learned annotator, declared ONCE under `annotators`
+# and referenced at the intervention point via `annotations` (ACS §10). The
+# policy never calls a model; it reads `input.annotations.coercion_risk`.
+
+policies:
+  bank_manager_coercion:
+    type: rego
+    bundle: ./policy
+    query: data.agent_control_specification.bank_manager_coercion.verdict
+
+annotators:
+  # Declared once. `type: classifier` tells the host which dispatcher owns the
+  # call; the host dispatcher owns the network request, caching, retries and
+  # timeouts. ACS defines no built-in classifier engine.
+  coercion_risk:
+    type: classifier
+    # Host-defined fields. The dispatcher in runtime/acs_annotator_shim.py reads
+    # these; ACS treats them as opaque.
+    module: coercion_classifier
+    entrypoint: annotate
+    calibration: ./runtime/coercion_calibration.json
+    timeout_ms: 20000
+
+intervention_points:
+  pre_tool_call:
+    policy_target: "$.tool_call.args"
+    policy_target_kind: tool_args
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: bank_manager_coercion
+      query: data.agent_control_specification.bank_manager_coercion.pre_tool_call_verdict
+    annotations:
+      # The dispatcher receives the complete host snapshot: user prose plus a
+      # typed verification of any cited bank-owned control artifact.
+      coercion_risk:
+        from: "$.snapshot"
+
+  post_tool_call:
+    policy_target: "$.tool_result"
+    policy_target_kind: tool_result
+    tool_name_from: "$.tool_call.name"
+    policy:
+      id: bank_manager_coercion
+      query: data.agent_control_specification.bank_manager_coercion.post_tool_call_verdict
+
+tools:
+  read_account: {}
+  read_transaction_history: {}
+  read_client: {}
+  read_loan: {}
+  read_portfolio: {}
+  prepare_transfer: {}
+  request_customer_approval: {}
+  create_transfer: {}
+  prepare_loan_modification: {}
+  place_trade: {}
+  freeze_account: {}
+  enable_admin_mode: {}
+  knowledge_base_retrieve: {}
