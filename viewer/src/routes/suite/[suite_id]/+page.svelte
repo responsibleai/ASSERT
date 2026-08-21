@@ -819,7 +819,7 @@
 				<p class="text-sm text-text-secondary">No evaluation results yet.</p>
 			</div>
 		{:else}
-			<div class="overflow-hidden rounded-lg border border-border">
+			<div class="overflow-x-auto rounded-lg border border-border">
 				<table class="w-full text-left text-sm">
 					<thead>
 						<tr class="border-b border-border bg-surface">
@@ -833,7 +833,7 @@
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run date</th>
 						<th class="px-3 py-2 text-xs font-medium text-text-muted">Run status</th>
 						{#each selectedMetricCols as colDim, colIdx (colIdx)}
-							<th class="w-32 px-3 py-2 text-left text-xs font-medium text-text-muted whitespace-nowrap">
+							<th class="metric-col px-3 py-2 text-left text-xs font-medium text-text-muted">
 								<PrimerDropdown
 									ariaLabel={`Metric column ${colIdx + 1}`}
 									selected={colDim ?? ''}
@@ -887,9 +887,9 @@
 											<svg class="h-3 w-3 transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
 										</button>
 									{/if}
-									<div class="min-w-0 flex flex-col">
-										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
-										<span class="font-mono text-[10px] text-text-muted truncate" title={runTarget(run)}>{runTarget(run)}</span>
+									<div class="flex min-w-0 max-w-[22rem] flex-col">
+										<a href="/suite/{data.suite_id}/{run.prompt_run_id ?? run.audit_run_id ?? run.run_id}" class="truncate text-sm font-medium text-interactive hover:underline">{run.run_id}</a>
+										<span class="truncate font-mono text-[10px] text-text-muted" title={runTarget(run)}>{runTarget(run)}</span>
 									</div>
 								</div>
 							</td>
@@ -1168,3 +1168,45 @@
 	{/if}
 </div>
 {/if}
+
+<style>
+	/* The metric columns are user-selectable dropdowns whose labels ("Impermissible
+	   behavior violated") are far wider than the column needs. PrimerDropdown's
+	   trigger is a fixed-height, nowrap button, so the label alone set the column
+	   width and pushed the trailing Total column out of the container. Let the
+	   label wrap inside a fixed-width header instead of truncating it, so the whole
+	   table fits without a horizontal scroll at the container's max width. */
+	.metric-col {
+		width: 10rem;
+		white-space: normal;
+	}
+
+	.metric-col :global(.ActionMenu) {
+		display: block;
+	}
+
+	.metric-col :global(button.ActionMenu-button) {
+		width: 100%;
+		height: auto;
+		min-height: 0;
+		align-items: flex-start;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.75rem;
+		line-height: 1.25;
+		white-space: normal;
+	}
+
+	.metric-col :global(.ActionMenu-button-content) {
+		display: block;
+		min-width: 0;
+	}
+
+	.metric-col :global(.ActionMenu-button-value) {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.metric-col :global(.ActionMenu-button-chevron) {
+		margin-top: 1px;
+	}
+</style>
