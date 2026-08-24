@@ -10,7 +10,7 @@ description: >
   user as a description, PRD, design doc, threat model, red-team finding, or
   risk assessment. Then researches how that risk has been evaluated in the
   literature and turns it into an evidence-backed, cited config per selected
-  risk at examples/<slug>/eval_config.yaml, gets it approved, runs
+  risk at examples/<domain>/<risk>/eval_config.yaml, gets it approved, runs
   the pipeline, and reports pass/violation rates with trace-cited failure examples.
 ---
 
@@ -232,7 +232,8 @@ multi_behavior, suggested_splits}` — so Steps 2-6 are identical either way.
      boundary. **Do not skip this**: without it the judge cannot separate real harm
      from over-refusal, and both rates become uninterpretable.
    - *How would a user trigger this — innocently, and deliberately?* →
-     the `elicitation_variant` stratify dimension, the highest-value one
+     a candidate `elicitation_variant` stratify dimension — a research *seed*
+     for Step 3, not the final set
    - *How bad is it when it happens?* → severity → `priority`
 3. **Enforce atomicity now.** If their description bundles several independently
    testable behaviors ("it leaks data and hallucinates prices"), say so and propose
@@ -292,12 +293,12 @@ Collect one input before entering it, and **never silently default it**:
 
 What that workflow does, in order:
 
-1. **Isolation preflight** ([`generation-isolation-workflow.md`](workflows/generation-isolation-workflow.md))
-   — detects prior generations for the same slug **by path only**, and asks before using a
-   new dated directory. It never reads a prior generated YAML.
-2. **Reuse a repo spec first** — `assert-ai library list` / `show <name>`; prefer
+1. **Reuse a repo spec first** — `assert-ai library list` / `show <name>`; prefer
    `behavior.preset` or a copy-in spec from `examples/behavior_specs/` over reinventing a
-   description.
+   description. This is also what settles the harm's stable slug.
+2. **Isolation preflight** ([`generation-isolation-workflow.md`](workflows/generation-isolation-workflow.md))
+   — once the slug is stable, detects prior generations for it **by path only**, and asks
+   before using a new dated directory. It never reads a prior generated YAML.
 3. **Research the dimension model** — classify the harm's observability, build a dimension
    ledger, and gate each dimension on at least two independent authoritative sources (or
    one plus the repo spec). Behavior categories, stratify dimensions, and judge dimensions
@@ -306,10 +307,10 @@ What that workflow does, in order:
    — `N` complete passes, then semantic deduplication within each namespace.
 5. **Review and approve** — a compact table per namespace, and an explicit user approval.
    **Silence is not approval**, and the pre-write gate enforces this mechanically.
-6. **Write the cited config** to `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml`, with
+6. **Write the cited config** to `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml`, with
    inline `# sources:` citations and a consolidated `# References` block.
 
-Outputs land at `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml` — one directory per
+Outputs land at `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml` — one directory per
 generation, never overwritten. Prefix the eval **suite name** with a domain slug
 (`<domain>-<risk>`) so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` do not
 collide across domains.
@@ -423,15 +424,15 @@ only once inference starts. Validate on 3 real cases first:
 
 ```
 # 1. artifacts only, no inference cost
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 
 # 2. slice 3 real rows out of the generated test set
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config examples/<slug>/eval_config.yaml --count 3
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
 
 # 3. inference + judge on those rows only
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke \
   --override inference.test_set_path=<out path from step 2>
 ```
@@ -443,7 +444,7 @@ produce a subset. Full detail in `workflows/measure-clarity-failures.md`
 Step 5a.
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml --output json
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status
@@ -609,7 +610,6 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 | `workflows/iterative-dimension-workflow.md` | The `N`-pass cycle, semantic deduplication, and the approval gate |
 | `workflows/generation-isolation-workflow.md` | Path-only prior-generation preflight and isolated output directories |
 | `workflows/evaluation-intent-workflow.md` | Optional intake: what decision the eval supports, and for whom |
-| `workflows/system-eval-workflow.md` | **Not an entry point.** Ported for parity with the upstream skill: a whole-system harm *inventory*. Risk identification here belongs to Clarity or the user — use this only on explicit request |
 | `workflows/govern-and-remeasure.md` | The ACS baseline → generate → governed run → delta loop |
 | `workflows/diagnose-acs-delta.md` | Symptom-indexed diagnostics when the ACS delta comes out wrong |
 
@@ -648,7 +648,7 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
   - `README.md` — scenario, setup, atomic behaviors, run commands, and result paths.
   - `eval_config.yaml` — one independently runnable baseline config per behavior, written by
     `workflows/research-eval-dimensions.md` into its own isolated
-    `examples/<slug>[_YYYY-MM-DD]/` directory and never overwritten.
+    `examples/<domain>/<risk>[_YYYY-MM-DD]/` directory and never overwritten.
   Do not commit the dimension-review ledger or its approval stamp — those are working
   artifacts under `artifacts/dimension-reviews/`.
   A deliberately curated ACS demonstration may additionally keep the smallest

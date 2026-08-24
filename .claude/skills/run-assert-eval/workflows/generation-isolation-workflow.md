@@ -1,6 +1,6 @@
 # Prior-Generation Isolation
 
-Run this preflight once the stable harm or system slug is known and before online
+Run this preflight once the stable harm slug is known and before online
 research, dimension generation, or reading any matching generated YAML. Its goal
 is to prevent a new generation from inheriting assumptions, dimensions,
 citations, model settings, or other content from an earlier run.
@@ -13,14 +13,18 @@ contents.
 
 ```bash
 python .claude/skills/run-assert-eval/plan_generation_path.py \
-  --eval-type <harm-or-system> \
+  --eval-type harm \
   --name <stable_slug> \
-  --root examples
+  --root examples/<domain>
 ```
 
-For a custom output root, pass that root instead of `examples`. Matching
-generation directories are limited to `<slug>`, `<slug>_YYYY-MM-DD`, and
-same-day ordinal variants such as `<slug>_YYYY-MM-DD_2`.
+**Scope the root to the domain that owns the eval.** Two domains may legitimately
+share a risk name — `budget_overrun` and `fabricated_travel_details` each appear
+under both `phoenix_auto_trace` and `travel_planner_langgraph` — so a repo-wide
+`--root examples` would report one domain's config as a prior generation of the
+other's and force a spurious dated directory. A domain-scoped root compares like
+with like. Matching generation directories are limited to `<risk>`,
+`<risk>_YYYY-MM-DD`, and same-day ordinal variants such as `<risk>_YYYY-MM-DD_2`.
 
 Treat the planner's JSON as path metadata only:
 
@@ -58,8 +62,8 @@ the path and use the planner's non-colliding proposal.
 ## G3. Select the run directory
 
 With no prior matching generation, use the unsuffixed directory
-`examples/<slug>/`. When the user approves regeneration, use the proposed dated
-directory `examples/<slug>_YYYY-MM-DD/`. If that date already exists, the planner
+`examples/<domain>/<risk>/`. When the user approves regeneration, use the proposed dated
+directory `examples/<domain>/<risk>_YYYY-MM-DD/`. If that date already exists, the planner
 adds `_2`, `_3`, and so on while preserving the date.
 
 Record the selected directory once and use it consistently for the config,
@@ -67,17 +71,6 @@ review ledger, approval stamp, final command, and report. Run the planner again
 immediately before pre-write if enough time has passed for another process to
 claim the path. The validator's pre-write gate must reject an existing config
 path without reading it; never overwrite or replace a config from any run.
-
-For the whole-system inventory workflow (retained for upstream parity; **not** an entry
-point — see [`system-eval-workflow.md`](system-eval-workflow.md)), suffix the system
-portfolio directory once, then place all retained-harm children below it:
-
-```text
-examples/<system_run_directory>/<harm_name>/eval_config.yaml
-```
-
-Do not inspect any child YAML under an earlier matching system directory. Child
-runs inherit the newly selected system root and stay isolated from one another.
 
 ## G4. Preserve research independence
 

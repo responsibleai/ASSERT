@@ -51,8 +51,7 @@ only descriptions used for detection and refusal.
   become observable as a pattern across a long conversation.
 
 Do **not** use it to decide which risks a system has. That is Clarity's job, or the
-user's. See [`system-eval-workflow.md`](system-eval-workflow.md), which is retained for
-parity with the upstream skill and is **not** an entry point into this one.
+user's.
 
 ## Preconditions
 
@@ -150,10 +149,9 @@ one exception: **skip `safety-core` if it is listed.** 18 of the 52 behavior pre
 suggest it, but it defines dimensions named exactly `policy_violation` and `overrefusal`,
 so selecting it replaces both built-in rubrics rather than adding to them. Take the other
 suggestions (e.g. `safety-extended`, `grounding`) as given.
-For a standalone harm, finalize its stable slug and run the
+Finalize the harm's stable slug and run the
 [prior-generation isolation preflight](generation-isolation-workflow.md)
-before harm research. A system child instead inherits its new isolated system
-root and must not inspect standalone or prior-system harm generation paths.
+before harm research.
 
 ### 3. Deep-research one harm-specific dimension model
 
@@ -597,8 +595,6 @@ replacing every placeholder from the research and target inputs.
 - Sub-workflows: [iterative dimension workflow](iterative-dimension-workflow.md),
   [generation isolation](generation-isolation-workflow.md),
   [evaluation intent](evaluation-intent-workflow.md).
-- Not an entry point: [system eval workflow](system-eval-workflow.md) — retained for
-  parity with the upstream skill; risk identification belongs to Clarity or the user.
 - Schema reference: [docs/config/schema.md](../../../../docs/config/schema.md).
 - Behavior presets: [assert_ai/library/behaviors/](../../../../assert_ai/library/behaviors/).
 - Judge presets: [assert_ai/library/judges/](../../../../assert_ai/library/judges/).

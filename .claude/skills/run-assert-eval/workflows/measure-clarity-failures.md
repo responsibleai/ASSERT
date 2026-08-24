@@ -124,15 +124,16 @@ runs**.
 ## Step 3 — Confirm scope, then generate one config per selected behavior
 
 For **each** selected behavior, produce its **own** config in its own isolated
-directory: `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml`. Use a clear snake_case
+directory: `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml`. Use a clear snake_case
 slug. Never bundle.
 
 **Config generation is owned by
 [`research-eval-dimensions.md`](research-eval-dimensions.md).** Follow it per selected
-behavior; do not hand-roll a config here and do not skip its gates. It runs the path-only
-isolation preflight, reuses a repo behavior preset where one matches, researches **how the
-harm has been evaluated** against primary sources, runs `N` complete passes, deduplicates,
-blocks on explicit user approval, and writes a cited config.
+behavior; do not hand-roll a config here and do not skip its gates. It reuses a repo
+behavior preset where one matches (settling the harm's stable slug), runs the path-only
+isolation preflight on that slug, researches **how the harm has been evaluated** against
+primary sources, runs `N` complete passes, deduplicates, blocks on explicit user approval,
+and writes a cited config.
 
 The risk is already named by the time you reach this step — triage settled that. What the
 research settles is the test-set design: the timescale the harm becomes observable on,
@@ -309,7 +310,7 @@ Skip the offer only when the user has asked to run everything unattended.
 **1. Produce the artifacts without paying for inference.**
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 ```
 
@@ -320,7 +321,7 @@ Runs systematize and test_set only, producing the **full** taxonomy and the
 
 ```
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config examples/<slug>/eval_config.yaml --count 3
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
 ```
 
 Prints a JSON summary and writes `artifacts/smoke/<suite>-prompt-3.jsonl`. Take
@@ -330,7 +331,7 @@ risk is inherently multi-turn; scenario cases cost far more per case.
 **3. Run inference and judge on the slice only.**
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke \
   --override inference.test_set_path=<out path from step 2>
 ```
@@ -387,7 +388,7 @@ supplied with its taxonomy from context, so no `taxonomy_path` wiring is needed.
 ## Step 6 — Run sequentially
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml
 ```
 
 Run one at a time. Stream stage status (systematize → test_set → inference →
@@ -421,13 +422,13 @@ didn't cover.
 After a run, offer to write the outcome back into `.clarity-protocol/` via the
 Clarity MCP tool **`record_suggestion`** (or **`record_decision`**): note that the
 failure mode now has a **measured baseline** and where the eval lives
-(`examples/<slug>/eval_config.yaml`). This keeps Clarity's staleness tracking aware of the eval.
+(`examples/<domain>/<risk>/eval_config.yaml`). This keeps Clarity's staleness tracking aware of the eval.
 
 ## Step 9 — Curate the example and handle discovery scratch
 
 Do this at the end of the domain you just measured:
 
-1. Keep one selected failure mode per YAML under `evals/`.
+1. Keep one selected failure mode per config directory under `examples/<domain>/`.
 2. Write or update the example README with the scenario, setup, run command,
    suite/run result path, and a concise behavior table.
 3. Do not copy generated taxonomies, test sets, result artifacts, mailboxes,
@@ -463,15 +464,38 @@ Do this at the end of the domain you just measured:
 2. `failures.md` exists → parse. Top candidate is **`user_disengagement`** (P1),
    with an `elicitation_variant` dimension of 7 variants (challenging disposition,
    wrong calibration, happy-path attachment, cultural aversion, verbosity, unused
-   protocol, alert fatigue).
+   protocol, alert fatigue). Treat those variants as **research seeds**, not the
+   final dimension set.
 3. Triage: user picks **P1s only** → just `user_disengagement`.
-4. **Ask the user for `sample_size`** (recommend `25`; `10` = quick look, `50`+ = tightest). Say they pick `25`.
-5. Generate `evals/user_disengagement.yaml`: `behavior.description`
-   from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
-   (7 values folded into its description), `prompt.sample_size: 25` (the size the
-   user chose, applied to `scenario` too), `inference.max_turns: 12`, and **no
-   `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
-6. Confirm → offer a smoke run (Step 5a): generate artifacts with
+4. Collect both inputs that must never be silently defaulted: **`N`** (say they
+   pick `3`) and **`sample_size`** (recommend `25`; `10` = quick look, `50`+ =
+   tightest — say they pick `25`).
+5. Hand off to [`research-eval-dimensions.md`](research-eval-dimensions.md); do
+   not hand-roll the config here:
+   - **Intent intake** — the user says this gates a support-bot release, so
+     `purposes: [product_readiness]`; decision and population left blank and not
+     inferred.
+   - **Reuse a spec** — `assert-ai library list` has no matching preset, so draft
+     an inline description in the same `# Title` / `## Key Terms` /
+     `## Behavior Categories` shape as the bundled specs. The slug settles as
+     `user_disengagement`.
+   - **Isolation preflight** — `plan_generation_path.py --eval-type harm --name
+     user_disengagement --root examples/<domain>` finds no prior generation, so
+     the run directory is `examples/<domain>/user_disengagement/`.
+   - **Research** — `elicitation_variant` seeds the search; the retained axes are
+     only those ≥2 independent sources support, with explicit `levels` where the
+     literature supplies them. Judge dimensions are researched as their own
+     namespace (e.g. `disengagement_severity`, `recovery_quality`) under new
+     names — never `policy_violation` or `overrefusal`.
+   - **`N` passes → dedup → approval** — 3 complete passes, semantic dedup within
+     each namespace, then the three namespace tables go to the user. **Silence is
+     not approval**; `validate_dimension_review.py pre-write` enforces it.
+   - **Write** the cited config to
+     `examples/<domain>/user_disengagement/eval_config.yaml`:
+     `prompt.sample_size: 25` (applied to `scenario` too),
+     `inference.max_turns: 12`, `judge.preset: safety-extended` plus the approved
+     judge dimensions, inline `# sources:` comments, and a `# References` block.
+6. Offer a smoke run (Step 5a): generate artifacts with
    `--override inference.enabled=false --override judge.enabled=false`, slice 3
    real prompt cases with `smoke_slice.py`, run them under `run=baseline-smoke`.
    They pass, so continue.
@@ -482,6 +506,6 @@ Do this at the end of the domain you just measured:
    `permissible_policy_violation_rate` (an allowed behavior was broken) — with
    `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
 8. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
-   measured baseline at evals/user_disengagement.yaml."
+   measured baseline at examples/<domain>/user_disengagement/eval_config.yaml."
 9. Curate the example (Step 9): keep the atomic config and README, and export
    `.clarity-protocol/` outside `examples/` only if the user wants the raw record.

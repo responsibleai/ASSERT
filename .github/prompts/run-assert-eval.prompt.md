@@ -1,6 +1,6 @@
 ---
 agent: agent
-description: 'Run an ASSERT evaluation against a described risk. Risks come from Clarity (recommended — drives the real Clarity MCP tools (run_clarity) in-IDE to discover failure modes the user has not considered) or directly from the user as a description, PRD, design doc, threat model, red-team finding, or risk assessment. Researches how that risk has been evaluated in the literature, generates one evidence-backed, cited, user-approved examples/<slug>/eval_config.yaml per selected risk, runs the assert-ai pipeline, and reports per-dimension pass/violation rates with trace-cited failure examples.'
+description: 'Run an ASSERT evaluation against a described risk. Risks come from Clarity (recommended — drives the real Clarity MCP tools (run_clarity) in-IDE to discover failure modes the user has not considered) or directly from the user as a description, PRD, design doc, threat model, red-team finding, or risk assessment. Researches how that risk has been evaluated in the literature, generates one evidence-backed, cited, user-approved examples/<domain>/<risk>/eval_config.yaml per selected risk, runs the assert-ai pipeline, and reports per-dimension pass/violation rates with trace-cited failure examples.'
 ---
 
 # Run an ASSERT evaluation
@@ -102,7 +102,7 @@ ASSERT performs best with **one atomic behavior per eval**. Never bundle multipl
 
 Configs are **researched, cited, and user-approved** — not scaffolded and hoped for. Follow `../../.claude/skills/run-assert-eval/workflows/research-eval-dimensions.md` for each selected risk; it owns the whole of config generation. The risk is already named by the time you get here — what the research supplies is **how that risk has been evaluated**, converted into the test-set design. Collect one input first and **never silently default it**: `N` (positive integer — how many complete dimension-generation passes to run before deduplication).
 
-That workflow: runs a path-only isolation preflight (`plan_generation_path.py`) that never reads a prior generated YAML; reuses a repo behavior preset where one matches; researches the dimension model against retrieved primary sources with a ≥2-independent-source gate; runs `N` complete passes and semantically deduplicates across three namespaces (behavior categories, stratify dimensions, judge dimensions); blocks on **explicit user approval** (silence is not approval, enforced by `validate_dimension_review.py pre-write`); then writes a cited config to `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml` with inline `# sources:` comments and a `# References` block.
+That workflow: reuses a repo behavior preset where one matches (which settles the harm's stable slug); runs a path-only isolation preflight on that slug (`plan_generation_path.py`) that never reads a prior generated YAML; researches the dimension model against retrieved primary sources with a ≥2-independent-source gate; runs `N` complete passes and semantically deduplicates across three namespaces (behavior categories, stratify dimensions, judge dimensions); blocks on **explicit user approval** (silence is not approval, enforced by `validate_dimension_review.py pre-write`); then writes a cited config to `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml` with inline `# sources:` comments and a `# References` block.
 
 Prefix the eval **suite name** with a domain slug (`<domain>-<risk>`) so `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` don't collide.
 
@@ -135,18 +135,18 @@ Help the user set the right target in the config:
 **Offer a smoke run first.** Plumbing errors (wrong `callable`, missing credentials, a callable that raises on its first tool call, tool-schema mismatch, undeployed judge model) surface only once inference starts, after the upstream stages have already run. Validate on 3 real cases:
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config examples/<slug>/eval_config.yaml --count 3
-assert-ai run --config examples/<slug>/eval_config.yaml \
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke --override inference.test_set_path=<out path>
 ```
 
 If it fails, stop and report — do not start the full run. Three cases is not a measurement, so never report a rate from it. Never lower `test_set.sample_size` instead: that invalidates the cached test set and does not produce a subset. Detail in `.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` Step 5a.
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml --output json
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml --output json
 ```
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status to the user as each stage completes. For N configs, run them sequentially and track each `suite`/`run`. After a smoke run the first two stages report CACHED. Re-run from a stage with `--force-stage <stage>`. Note the `suite` and `run` names from the config for Step 6.

@@ -162,12 +162,13 @@ the whole of config generation. The risk is already named by the time you get he
 supplies is **how that risk has been evaluated**, converted into the test-set design. Collect one input
 first and **never silently default it**: `N`
 (positive integer — how many complete dimension-generation passes to run before deduplication).
-That workflow runs a path-only isolation preflight (`plan_generation_path.py`, which never reads a prior
-generated YAML); reuses a repo behavior preset where one matches; researches the dimension model against
+That workflow reuses a repo behavior preset where one matches (which settles the harm's stable
+slug); runs a path-only isolation preflight on that slug (`plan_generation_path.py`, which never
+reads a prior generated YAML); researches the dimension model against
 retrieved primary sources under a **≥2-independent-source gate**; runs `N` complete passes and semantically
 deduplicates across three namespaces (behavior categories, stratify dimensions, judge dimensions); blocks on
 **explicit user approval** (silence is not approval, enforced by `validate_dimension_review.py pre-write`);
-then writes a cited config to `examples/<slug>[_YYYY-MM-DD]/eval_config.yaml` with inline `# sources:` comments
+then writes a cited config to `examples/<domain>/<risk>[_YYYY-MM-DD]/eval_config.yaml` with inline `# sources:` comments
 and a `# References` block. Prefix the eval **suite name** with a domain slug (`<domain>-<risk>`) so
 `artifacts/results/<suite>/` and `artifacts/acs/<suite>/` don't collide across domains.
 **Pin the two ground-truth stages to the strong model** — keep `default_model.name: azure/gpt-5.4-mini` for
@@ -238,11 +239,11 @@ callable that raises on its first tool call, tool-schema mismatch, undeployed ju
 surface only once inference starts. Validate on 3 real cases:
 
 ```
-assert-ai run --config examples/<slug>/eval_config.yaml \
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override inference.enabled=false --override judge.enabled=false
 python .claude/skills/run-assert-eval/smoke_slice.py \
-  --config examples/<slug>/eval_config.yaml --count 3
-assert-ai run --config examples/<slug>/eval_config.yaml \
+  --config examples/<domain>/<risk>/eval_config.yaml --count 3
+assert-ai run --config examples/<domain>/<risk>/eval_config.yaml \
   --override run=<run>-smoke --override inference.test_set_path=<out path>
 ```
 
@@ -251,7 +252,7 @@ so never report a rate from it. Never lower `test_set.sample_size` instead: that
 the cached test set and does not produce a subset. Detail in
 `.claude/skills/run-assert-eval/workflows/measure-clarity-failures.md` Step 5a.
 
-`assert-ai run --config examples/<slug>/eval_config.yaml --output json`
+`assert-ai run --config examples/<domain>/<risk>/eval_config.yaml --output json`
 
 This is long-running (systematize -> test_set -> inference -> judge). Stream status as each stage
 completes. After a smoke run the first two stages report CACHED. For N configs, run them sequentially and track each `suite`/`run`. Re-run from a stage with

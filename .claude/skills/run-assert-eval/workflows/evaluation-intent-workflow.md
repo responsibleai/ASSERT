@@ -1,9 +1,9 @@
 # Evaluation Intent Intake
 
-Run this intake once near the start of every standalone harm or system run,
-before deep research. Its answers are optional research context, not prerequisites.
-If the user skips every question, continue with the existing harm/system workflow
-unchanged and do not infer answers.
+Run this intake once near the start of every harm run, before deep research. Its
+answers are optional research context, not prerequisites. If the user skips every
+question, continue with the existing harm workflow unchanged and do not infer
+answers.
 
 ## E1. Ask the optional questions
 
