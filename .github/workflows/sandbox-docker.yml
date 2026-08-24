@@ -4,11 +4,7 @@ name: Sandbox Docker Tests
 on:
   pull_request:
     paths:
-      - 'assert_ai/integrations/sandbox/**'
-      - 'assert_ai/core/config_model.py'
-      - 'assert_ai/core/model_client.py'
-      - 'assert_ai/core/session.py'
-      - 'assert_ai/stages/inference.py'
+      - 'assert_ai/**'
       - 'examples/sandbox_action_mediation/**'
       - 'tests/test_sandbox_*.py'
       - 'tests/conftest.py'
@@ -19,11 +15,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'assert_ai/integrations/sandbox/**'
-      - 'assert_ai/core/config_model.py'
-      - 'assert_ai/core/model_client.py'
-      - 'assert_ai/core/session.py'
-      - 'assert_ai/stages/inference.py'
+      - 'assert_ai/**'
       - 'examples/sandbox_action_mediation/**'
       - 'tests/test_sandbox_*.py'
       - 'tests/conftest.py'
@@ -57,8 +49,11 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -e ".[dev,otel]"
 
+      - name: Require a working Docker daemon
+        run: docker info
+
       - name: Run real Docker sandbox tests
-        run: pytest tests/test_sandbox_runtime_docker.py -x -q
+        run: pytest tests/test_sandbox_runtime_docker.py -x -q --junitxml=sandbox-docker-results.xml
 
       - name: Verify no sandbox resources remain
         if: always()

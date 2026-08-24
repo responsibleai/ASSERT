@@ -29,9 +29,14 @@ from assert_ai.stages.inference import run_inference
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = os.environ.get("ASSERT_RUN_DOCKER_TESTS", "").lower() in {"1", "true", "yes"}
+if RUN and not docker_available():
+    raise RuntimeError(
+        "ASSERT_RUN_DOCKER_TESTS is enabled, but the Docker daemon is unavailable; "
+        "required containment tests cannot be skipped"
+    )
 pytestmark = pytest.mark.skipif(
-    not RUN or not docker_available(),
-    reason="set ASSERT_RUN_DOCKER_TESTS=1 with Docker available",
+    not RUN,
+    reason="set ASSERT_RUN_DOCKER_TESTS=1 to run real Docker containment tests",
 )
 
 
