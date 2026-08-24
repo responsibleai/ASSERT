@@ -38,7 +38,23 @@ jobs:
         run: docker info
 
       - name: Run real Docker sandbox tests
-        run: pytest tests/test_sandbox_*docker*.py -x -q --junitxml=sandbox-docker-results.xml
+        run: pytest tests/test_sandbox_*docker*.py --runxfail -x -q --junitxml=sandbox-docker-results.xml
+
+      - name: Verify Docker test receipt
+        if: always()
+        shell: python
+        run: |
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("sandbox-docker-results.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.findall(".//testsuite"))
+          totals = {
+              key: sum(int(suite.attrib.get(key, 0)) for suite in suites)
+              for key in ("tests", "failures", "errors", "skipped")
+          }
+          print(totals)
+          if totals["tests"] <= 0 or any(totals[key] for key in ("failures", "errors", "skipped")):
+              raise SystemExit("real Docker receipt must contain executed tests with no failures or skips")
 
       - name: Preserve Docker test receipt
         if: always()
@@ -54,9 +70,11 @@ jobs:
         run: |
           containers="$(docker ps -aq --filter 'name=assert-sandbox-')"
           networks="$(docker network ls -q --filter 'name=assert-sandbox-')"
-          if [[ -n "$containers" || -n "$networks" ]]; then
+          images="$(docker image ls -q --filter 'reference=assert-sandbox-stock-agent:local')"
+          if [[ -n "$containers" || -n "$networks" || -n "$images" ]]; then
             echo 'ASSERT sandbox cleanup left Docker resources behind:'
             docker ps -a --filter 'name=assert-sandbox-'
             docker network ls --filter 'name=assert-sandbox-'
+            docker image ls --filter 'reference=assert-sandbox-stock-agent:local'
             exit 1
           fi

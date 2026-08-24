@@ -54,6 +54,13 @@ def stock_image():
         capture_output=True,
         text=True,
     )
+    yield
+    subprocess.run(
+        ["docker", "image", "rm", "-f", "assert-sandbox-stock-agent:local"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
