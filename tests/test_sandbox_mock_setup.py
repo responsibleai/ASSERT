@@ -16,16 +16,19 @@ calls the policy already decided to mock, and can never change that decision.
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Lock
 
 import pytest
 
 from assert_ai.integrations.sandbox.agent_hooks_context import AgentHooksContextBuilder
 from assert_ai.integrations.sandbox.cassettes import CassettePathError
+from assert_ai.integrations.sandbox.evidence import assert_tool_event
 from assert_ai.integrations.sandbox.mediation_setup import MediationSetup, TargetSpec
 from assert_ai.integrations.sandbox.mediator import ActionMediator
 from assert_ai.integrations.sandbox.mocks import (
+    InlineBackend,
     MockBackendError,
     MockCall,
     MockConfigError,
@@ -35,6 +38,7 @@ from assert_ai.integrations.sandbox.mocks import (
 from assert_ai.integrations.sandbox.mocks.matching import MatcherError, match_value
 from assert_ai.integrations.sandbox.policy import MediationPolicy
 from assert_ai.integrations.sandbox.records import MediationDecision
+from assert_ai.integrations.sandbox.tool_host import AgentHooksToolHost
 
 
 def _pre(name, args=None):
@@ -323,6 +327,54 @@ def test_concurrent_hosts_each_start_at_the_first_scenario_step():
     assert statuses == ["resumed", "resumed"]
 
 
+def test_one_library_serializes_parallel_scenario_resolution():
+    class TrackingScenarioBackend(ScenarioBackend):
+        def __init__(self):
+            super().__init__()
+            self._activity_lock = Lock()
+            self._active = 0
+            self.overlapped = False
+
+        def resolve(self, rule, call):
+            with self._activity_lock:
+                self._active += 1
+                self.overlapped = self.overlapped or self._active > 1
+            try:
+                time.sleep(0.02)
+                return super().resolve(rule, call)
+            finally:
+                with self._activity_lock:
+                    self._active -= 1
+
+    backend = TrackingScenarioBackend()
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [{
+                "tool": "retry",
+                "scenario": "payment",
+                "responses": [
+                    {"response": {"step": 0}},
+                    {"response": {"step": 1}},
+                ],
+            }]
+        },
+        backends={"scenario": backend},
+    )
+    barrier = Barrier(2)
+
+    def resolve_once(_index):
+        barrier.wait()
+        result = library.resolve(MockCall("retry", {}, case_id="case-a"))
+        assert result is not None
+        return result.value["step"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        steps = sorted(executor.map(resolve_once, range(2)))
+
+    assert steps == [0, 1]
+    assert backend.overlapped is False
+
+
 def test_later_read_reflects_a_mocked_write():
     """If a state-changing call is mocked, a later read must agree with it."""
     library = MockLibrary.from_dict({
@@ -430,6 +482,68 @@ def test_legacy_scenario_backend_current_state_override_still_works():
     resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
 
     assert resolved is not None and resolved.value == {"ok": True}
+
+
+def test_legacy_current_state_override_observes_its_own_transition():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def current_state(self, scenario):
+            return super().current_state(scenario)
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [
+                {
+                    "tool": "authorize",
+                    "scenario": "legacy",
+                    "response": {"status": "authorized"},
+                    "sets_state": "done",
+                },
+                {
+                    "tool": "status",
+                    "scenario": "legacy",
+                    "when_state": "done",
+                    "response": {"state": "done"},
+                },
+                {"tool": "status", "response": {"state": "fallback"}},
+            ]
+        },
+        backends={
+            "inline": InlineBackend(),
+            "scenario": LegacyScenarioBackend(),
+        },
+    )
+
+    library.resolve(MockCall("authorize", {}, case_id="case-a"))
+    status = library.resolve(MockCall("status", {}, case_id="case-a"))
+
+    assert status is not None and status.value == {"state": "done"}
+
+
+def test_judge_visible_evidence_names_the_matched_case_rule():
+    library = MockLibrary.from_dict({
+        "mocks": [{
+            "tool": "lookup",
+            "case_id": "case-a",
+            "response": {"branch": "case-a"},
+        }]
+    })
+    host = AgentHooksToolHost(
+        tools={"lookup": _never_executes},
+        mediator=ActionMediator(
+            MediationPolicy({"interactions": [{"match": "lookup", "mode": "mock"}]}),
+            mocks=library,
+        ),
+        agent_id="agent",
+        session_id="session",
+        case_id="case-a",
+    )
+
+    host.call_tool("lookup", {})
+    evidence = json.loads(assert_tool_event(host.records[0])["content"])
+
+    assert evidence["case_id"] == "case-a"
+    assert evidence["mock_source"] == "inline"
+    assert evidence["replay"]["matched_case_id"] == "case-a"
 
 
 def test_conflicting_context_case_ids_fail_before_mock_resolution():

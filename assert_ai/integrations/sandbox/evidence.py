@@ -45,6 +45,10 @@ def compact_evidence(record: MediationRecord) -> dict[str, Any]:
     case_id = case_id_from_context(record.pre_context)
     if case_id:
         evidence["case_id"] = str(case_id)
+    if record.decision.mock_source:
+        evidence["mock_source"] = record.decision.mock_source
+    if record.decision.replay:
+        evidence["replay"] = record.decision.replay
     if record.decision.policy_note:
         evidence["policy_note"] = record.decision.policy_note
     return evidence

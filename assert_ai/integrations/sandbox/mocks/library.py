@@ -46,6 +46,7 @@ live in the same file without ordering games.
 from __future__ import annotations
 
 import copy
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,6 +120,7 @@ class MockLibrary:
         )
         self.backends: dict[str, MockBackend] = dict(backends or default_backends(cassette_dir))
         self.cassette_dir = Path(cassette_dir) if cassette_dir else None
+        self._resolve_lock = threading.RLock()
         self._validate_backends()
 
     def _validate_backends(self) -> None:
@@ -224,26 +226,30 @@ class MockLibrary:
         about this call, and the caller should fall back to whatever the policy
         declares. It is never a silent empty response.
         """
-        rule = self.find(call)
-        if rule is None:
-            return None
-        backend = self.backends[rule.backend]
-        resolution = backend.resolve(rule.raw, call)
-        detail = dict(resolution.detail)
-        detail.update({"mock_rule": rule.tool, "backend": rule.backend})
-        if rule.when:
-            detail["matched_args"] = sorted(rule.when)
-        if rule.case_id:
-            detail["matched_case_id"] = rule.case_id
-        if rule.note:
-            detail["note"] = rule.note
-        return Resolution(
-            value=resolution.value,
-            mock_source=resolution.mock_source,
-            is_error=resolution.is_error,
-            state_note=resolution.state_note,
-            detail=detail,
-        )
+        # Matching and state transition are one operation. A target may issue
+        # parallel tool calls within one case; without this boundary two calls
+        # can both match the same state or consume the same scenario step.
+        with self._resolve_lock:
+            rule = self.find(call)
+            if rule is None:
+                return None
+            backend = self.backends[rule.backend]
+            resolution = backend.resolve(rule.raw, call)
+            detail = dict(resolution.detail)
+            detail.update({"mock_rule": rule.tool, "backend": rule.backend})
+            if rule.when:
+                detail["matched_args"] = sorted(rule.when)
+            if rule.case_id:
+                detail["matched_case_id"] = rule.case_id
+            if rule.note:
+                detail["note"] = rule.note
+            return Resolution(
+                value=resolution.value,
+                mock_source=resolution.mock_source,
+                is_error=resolution.is_error,
+                state_note=resolution.state_note,
+                detail=detail,
+            )
 
     def reset(self) -> None:
         """Reset per-run state (scenario cursors) between cases."""

@@ -134,6 +134,12 @@ class ScenarioBackend:
             return self.current_state(scenario)
         return self._state.get((case_id or "", scenario), "start")
 
+    def _case_key(self, case_id: str | None) -> str:
+        """Use legacy shared state when an override cannot accept case identity."""
+        if type(self).current_state is not ScenarioBackend.current_state:
+            return ""
+        return case_id or ""
+
     def reset(self) -> None:
         self._state.clear()
         self._cursor.clear()
@@ -178,7 +184,7 @@ class ScenarioBackend:
                 raise MockBackendError(f"`responses:` for '{call.tool}' must be a non-empty list")
             steps = list(responses)
 
-        case_key = call.case_id or ""
+        case_key = self._case_key(call.case_id)
         key = (case_key, scenario, call.tool)
         index = self._cursor.get(key, 0)
         # The last step repeats once exhausted, so a scenario cannot run off the
