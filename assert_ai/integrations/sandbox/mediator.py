@@ -37,6 +37,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from .agent_hooks_context import case_id_from_context
 from .cassettes import cassette_exists, read_cassette_json
 from .policy import MediationPolicy
 from .records import MediationDecision
@@ -118,6 +119,7 @@ class ActionMediator:
         """Choose pass/mock/block without executing target-owned tool code."""
         if pre_context.get("interception_point") != "pre_tool_call":
             raise ValueError("ActionMediator expects a pre_tool_call context")
+        case_id_from_context(pre_context)
         tool_call = pre_context.get("tool_call") or {}
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
@@ -165,7 +167,7 @@ class ActionMediator:
             return None
         from .mocks import MockCall  # local import keeps the core import-light
 
-        case_id = pre_context.get("case_id") or (pre_context.get("session") or {}).get("case_id")
+        case_id = case_id_from_context(dict(pre_context))
         resolution = self.mocks.resolve(MockCall(tool=name, args=args, case_id=case_id))
         if resolution is None:
             return None

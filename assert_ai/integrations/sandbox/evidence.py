@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .agent_hooks_context import case_id_from_context
 from .records import MediationRecord
 
 
@@ -41,7 +42,7 @@ def compact_evidence(record: MediationRecord) -> dict[str, Any]:
             },
         },
     }
-    case_id = (record.pre_context.get("session") or {}).get("case_id")
+    case_id = case_id_from_context(record.pre_context)
     if case_id:
         evidence["case_id"] = str(case_id)
     if record.decision.policy_note:

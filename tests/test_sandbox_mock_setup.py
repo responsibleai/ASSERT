@@ -161,6 +161,61 @@ def test_case_specific_rule_beats_a_more_argument_specific_generic_rule():
     assert resolved is not None and resolved.value == {"picked": "case"}
 
 
+def test_exact_case_rule_beats_matching_case_glob_regardless_of_file_order():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "case_id": "case-*",
+                "response": {"picked": "glob"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-007",
+                "response": {"picked": "exact"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {}, case_id="case-007"))
+
+    assert resolved is not None and resolved.value == {"picked": "exact"}
+
+
+def test_case_glob_beats_generic_rule_regardless_of_argument_specificity():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {
+                "tool": "charge_card",
+                "when": {"amount": 25},
+                "response": {"picked": "generic"},
+            },
+            {
+                "tool": "charge_card",
+                "case_id": "case-*",
+                "response": {"picked": "glob"},
+            },
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {"amount": 25}, case_id="case-007"))
+
+    assert resolved is not None and resolved.value == {"picked": "glob"}
+
+
+def test_case_bound_rules_do_not_match_an_uncorrelated_call():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "charge_card", "case_id": "case-*", "response": {"picked": "case"}},
+            {"tool": "charge_card", "response": {"picked": "generic"}},
+        ]
+    })
+
+    resolved = library.resolve(MockCall("charge_card", {}))
+
+    assert resolved is not None and resolved.value == {"picked": "generic"}
+
+
 @pytest.mark.parametrize(
     "matcher,value,expected",
     [
@@ -353,6 +408,47 @@ def test_legacy_scenario_backend_state_match_override_still_works():
     resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
 
     assert resolved is not None and resolved.value == {"ok": True}
+
+
+def test_legacy_scenario_backend_current_state_override_still_works():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def current_state(self, scenario):
+            return "ready"
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [{
+                "tool": "lookup",
+                "scenario": "legacy",
+                "when_state": "ready",
+                "response": {"ok": True},
+            }]
+        },
+        backends={"scenario": LegacyScenarioBackend()},
+    )
+
+    resolved = library.resolve(MockCall("lookup", {}, case_id="case-a"))
+
+    assert resolved is not None and resolved.value == {"ok": True}
+
+
+def test_conflicting_context_case_ids_fail_before_mock_resolution():
+    library = MockLibrary.from_dict({
+        "mocks": [
+            {"tool": "lookup", "case_id": "session-case", "response": {"picked": "session"}},
+            {"tool": "lookup", "case_id": "legacy-case", "response": {"picked": "legacy"}},
+        ]
+    })
+    mediator = ActionMediator(
+        MediationPolicy({"interactions": [{"match": "lookup", "mode": "mock"}]}),
+        mocks=library,
+    )
+    pre = _pre("lookup", {})
+    pre["case_id"] = "legacy-case"
+    pre["session"] = {"id": "session", "case_id": "session-case"}
+
+    with pytest.raises(ValueError, match="conflicting case_id"):
+        mediator.mediate(pre, _never_executes)
 
 
 def test_scenario_sequence_advances_then_holds():
@@ -665,3 +761,55 @@ def test_scenario_backend_state_is_observable():
     assert backend.current_state("s") == "done"
     backend.reset()
     assert backend.current_state("s") == "start"
+
+
+def test_resolve_cli_reports_the_rule_the_named_case_will_actually_get(tmp_path, capsys):
+    """The diagnostic must answer for a case, not for an uncorrelated run.
+
+    Without --case-id the CLI resolves as a run with no case ID would, which is
+    a different rule than any real ASSERT case selects once case-bound mocks
+    exist. Reporting that silently makes the tool actively misleading.
+    """
+    from assert_ai.integrations.sandbox import cli
+
+    (tmp_path / "policy.yaml").write_text(
+        "interactions:\n"
+        "  - match: charge_card\n"
+        "    mode: mock\n"
+        "default:\n"
+        "  mode: block\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mocks.yaml").write_text(
+        "version: 1\n"
+        "mocks:\n"
+        "  - tool: charge_card\n"
+        "    case_id: case-a\n"
+        "    response: {branch: case-a-only}\n"
+        "  - tool: charge_card\n"
+        "    response: {branch: uncorrelated-default}\n",
+        encoding="utf-8",
+    )
+    setup = tmp_path / "assert-setup.yaml"
+    setup.write_text(
+        "target:\n"
+        "  kind: endpoint\n"
+        "  url: http://127.0.0.1:9/chat\n"
+        "policy: policy.yaml\n"
+        "mocks: mocks.yaml\n",
+        encoding="utf-8",
+    )
+
+    rc = cli.main(["resolve", str(setup), "charge_card", "--case-id", "case-a"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "case-a-only" in out, out
+    assert "uncorrelated-default" not in out, out
+
+    # And without a case, it must not silently pass off the default branch as
+    # the answer while case-bound rules exist for this tool.
+    rc = cli.main(["resolve", str(setup), "charge_card"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "uncorrelated-default" in out, out
+    assert "--case-id" in out, "expected a warning that case-bound rules exist"

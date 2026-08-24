@@ -54,7 +54,13 @@ from typing import Any, cast
 import yaml
 
 from ..policy import _glob_match
-from .backends import MockBackend, MockCall, Resolution, ScenarioBackend, default_backends
+from .backends import (
+    MockBackend,
+    MockCall,
+    Resolution,
+    ScenarioBackend,
+    default_backends,
+)
 from .matching import match_args, specificity
 
 SUPPORTED_VERSIONS = frozenset({1})
@@ -100,13 +106,16 @@ class MockLibrary:
         backends: Mapping[str, MockBackend] | None = None,
         cassette_dir: str | Path | None = None,
     ) -> None:
-        # An explicit case binding is stronger than any generic argument rule:
-        # it exists specifically so otherwise-identical calls can take different
-        # branches in different ASSERT cases. Within each group, preserve the
-        # existing argument-specificity and file-order semantics.
+        # Case precedence is exact ID, matching prefix/suffix glob, then generic.
+        # Within each tier, preserve argument specificity and file order.
+        def case_rank(rule: MockRule) -> int:
+            if rule.case_id is None:
+                return 2
+            return 1 if "*" in rule.case_id else 0
+
         self.rules = sorted(
             rules,
-            key=lambda r: (0 if r.case_id else 1, -r.specificity, r.order),
+            key=lambda r: (case_rank(r), -r.specificity, r.order),
         )
         self.backends: dict[str, MockBackend] = dict(backends or default_backends(cassette_dir))
         self.cassette_dir = Path(cassette_dir) if cassette_dir else None

@@ -124,7 +124,14 @@ class ScenarioBackend:
         self._state: dict[tuple[str, str], str] = {}
         self._cursor: dict[tuple[str, str, str], int] = {}
 
-    def current_state(self, scenario: str, case_id: str | None = None) -> str:
+    def current_state(self, scenario: str) -> str:
+        """Return legacy/default-case state; kept stable for custom backends."""
+        return self._state.get(("", scenario), "start")
+
+    def _current_state_for_call(self, scenario: str, case_id: str | None) -> str:
+        """Read built-in case state without changing the extension signature."""
+        if type(self).current_state is not ScenarioBackend.current_state:
+            return self.current_state(scenario)
         return self._state.get((case_id or "", scenario), "start")
 
     def reset(self) -> None:
@@ -150,7 +157,7 @@ class ScenarioBackend:
         if want is None:
             return True
         scenario = str(rule.get("scenario") or "")
-        return self.current_state(scenario, call.case_id) == str(want)
+        return self._current_state_for_call(scenario, call.case_id) == str(want)
 
     def resolve(self, rule: Mapping[str, Any], call: MockCall) -> Resolution:
         scenario = str(rule.get("scenario") or "")
@@ -179,10 +186,10 @@ class ScenarioBackend:
         step = steps[min(index, len(steps) - 1)]
         self._cursor[key] = index + 1
 
-        before = self.current_state(scenario, call.case_id)
+        before = self._current_state_for_call(scenario, call.case_id)
         if "sets_state" in step:
             self._state[(case_key, scenario)] = str(step["sets_state"])
-        after = self.current_state(scenario, call.case_id)
+        after = self._current_state_for_call(scenario, call.case_id)
 
         is_error = "error" in step
         payload = step.get("error") if is_error else step.get("response")
