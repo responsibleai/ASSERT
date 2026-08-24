@@ -20,7 +20,7 @@ recovers is how the harm *manifests*:
 
 - **Timescale** — psychosocial, relational, and cumulative harms typically show up
   across turns rather than in a single answer, which drives `scenario` over `prompt`
-  and sets `max_turns` from the expected onset (Step 3d).
+  (Step 3d). `max_turns` is fixed at `6` and is not derived from the research.
 - **Viewpoint** — a hospital helpdesk is exercised by patients, nurses, and schedulers,
   not by one adversarial persona. Population and role become stratification dimensions
   when the evidence says they change the harm.
@@ -313,8 +313,8 @@ If the harm emerges over time:
   for contrast or early-stage behavior;
 - include evidence-backed temporal/trajectory dimensions, with levels that span
   relevant stages rather than collapsing progression into one generic level;
-- set `max_turns` from the expected onset/progression of the harm, without a fixed
-  6–10-turn cap;
+- keep `max_turns` at the fixed `6`; express a longer arc through the trajectory
+  dimensions and the judge rubric, not by widening the turn budget;
 - make judge rubrics score the whole transcript, including accumulation,
   escalation, recovery, consistency, and assistant-initiated behavior, rather
   than only the final response.
@@ -388,26 +388,32 @@ Tune knobs to the breadth of the harm rather than leaving defaults:
 
 | Knob | Location | Guidance |
 |---|---|---|
-| `behavior_category_count` | `pipeline.systematize` | Match the supported categories found before saturation; do not impose a generic maximum. |
+| `behavior_category_count` | `pipeline.systematize` | **`25`** — the standard count, and ASSERT's own default (`DEFAULT_BEHAVIOR_CATEGORY_COUNT`). Research shapes *which* categories are generated, not how many. |
 | `web_search` | `pipeline.systematize` | Keep `true` so systematization can expand categories with current context. |
-| `prompt.sample_size` | `pipeline.test_set.prompt` | **Ask the user; never pick silently.** Use the research to compute a coverage floor (categories × retained levels × pairwise tuples), then present the tradeoff: `10` = fast/noisy first look, `25` = stable rate (recommended), `50`+ = tightest signal, cost scales linearly. Use **`≥25` whenever the run will become an ACS A/B baseline** — see the sizing note below. |
+| `prompt.sample_size` | `pipeline.test_set.prompt` | **Ask the user; never pick silently, and never accept a value below `behavior_category_count` (so `≥25`).** Use the research to compute a coverage floor (categories × retained levels × pairwise tuples) and take the larger of that and `25`. Present the tradeoff: `25` = the floor and the recommendation, `50`+ = tightest signal, cost scales linearly — see the sizing note below. |
 | `scenario.sample_size` | `pipeline.test_set.scenario` | Multi-turn probes (need a `tester`). Ask once and apply the answer to **both** `prompt` and `scenario` unless the user says otherwise. Make these primary and numerous enough to span evidence-backed trajectories when the harm is cumulative. |
 | `stratify.dimensions` | `pipeline.test_set.stratify` | Include every retained relevant, supported, non-redundant dimension; there is no fixed dimension count. |
 | Explicit `levels` | Each `stratify.dimensions[]` | Choose each dimension's own evidence-based cardinality (minimum 2). Binary, ordinal, staged, or categorical dimensions may have different counts. |
 | `stratify.level_count` | `pipeline.test_set.stratify` | Applies only to generated-mode dimensions and is shared by all of them. It may be any useful positive integer greater than 1; `3` is only the schema default. Use explicit mode when dimensions need different counts or literature-defined levels. |
-| `max_turns` | `pipeline.inference` | Set from the harm's evidence-backed observability horizon, with a **floor of `12`** (the config template's baseline; `DEFAULT_TESTER_MAX_TURNS` is `10`). For longitudinal harms, set enough turns to expose onset, escalation, boundary response, and possible recovery; do not impose a generic cap. Only go below the floor (`4`–`6`) when the harm is genuinely single-turn *and* the user wants a cheaper run. Keep the value **identical in baseline and governed configs** — see the multi-turn note below. |
+| `max_turns` | `pipeline.inference` | **Fixed `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value. It is not research-derived: the evidence chooses the test *mode* (`scenario` vs `prompt`) and the trajectory dimensions, not the turn budget. A genuinely single-turn harm is expressed with `prompt` cases, which ignore this knob entirely. Keep the value **identical in baseline and governed configs** — see the multi-turn note below. |
 | `concurrency` | `pipeline.inference` | 1 while debugging; raise within rate limits for throughput. |
 | `judge.n` | `pipeline.judge` | 1 by default; 3 for majority-vote stability on borderline harms. |
 | `judge.preset` | `pipeline.judge` | `safety-extended` for nuanced coverage (additive: `harm_actionability`, `pii_leakage`). **Do not use `safety-core`** — it defines dimensions named exactly `policy_violation` and `overrefusal`, so it replaces both built-in rubrics instead of adding to them; the built-ins already provide both. When Step 2's preset lists `safety-core` under `suggested_judge_presets`, skip that entry. |
 | `systematize.model` + `judge.model` | `pipeline` | **Pin both to the strong model** (e.g. `azure/gpt-5.4`) while `default_model` stays cheap (e.g. `azure/gpt-5.4-mini`) for target, test-set, and tester. See Step 7. |
 
-> **Sizing for noise (why a first-run `10` is often too small).** Each rate is
-> `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the number
-> 10 percentage points**. Inference is non-deterministic (agent temperature is 1.0; gpt-5
+> **Sizing floor: `sample_size ≥ behavior_category_count` (so `≥25`).** Two reasons.
+> **Coverage** — the test set spreads `sample_size` cases across
+> `behavior_category_count` categories, so below the category count some categories get
+> **zero** cases and `coverage_at_k(…, k=1, …)` cannot reach `1.0`
+> (`assert_ai/analysis/test_set_metrics.py`); a harm living in an unsampled category
+> reads as absent. **Noise** — each rate is `violations / sample_size`, so **even at the
+> `25` floor one flipped case moves the number 4 percentage points**, and the swing grows
+> as the sample shrinks. Inference is non-deterministic (agent temperature is 1.0; gpt-5
 > models can't be pinned lower), so two independent runs of the *same* config drift by a
-> case or two purely by chance. That noise is harmless for a quick "is it broken?" look,
-> but it **wrecks an ACS before/after A/B**: a phantom ±10pp swing can masquerade as a
-> governance effect, or hide one. Recommend `25`; require `≥25` for an ACS baseline.
+> case or two purely by chance, which distorts an **ACS before/after A/B**: a phantom
+> swing can masquerade as a governance effect, or hide one. The floor protects coverage,
+> not precision — prefer `50`+ when the expected delta is small. There is no supported
+> sub-coverage "quick look".
 
 > **`max_turns` caps the alternating tester↔target loop** for **scenario** cases only
 > (single-turn `prompt` cases ignore it). Many of the strongest findings are **multi-turn
@@ -599,5 +605,6 @@ replacing every placeholder from the research and target inputs.
 - Behavior presets: [assert_ai/library/behaviors/](../../../../assert_ai/library/behaviors/).
 - Judge presets: [assert_ai/library/judges/](../../../../assert_ai/library/judges/).
 - `assert-ai init --model <litellm-model> --describe "..."` is the faster interactive
-  scaffold. It skips every evidence and approval gate in this workflow, so use it for a
-  throwaway config, not for a measurement you intend to report or govern against.
+  scaffold. It skips every evidence and approval gate in this workflow, so treat its
+  output as an unvalidated scaffold, not a measurement you intend to report or govern
+  against.

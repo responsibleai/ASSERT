@@ -42,8 +42,8 @@ pointing at a PRD, design doc, threat model, red-team finding, incident report, 
 Right when they already know what they want measured. **Both paths answer *what* to test for;
 neither answers *how*** — that is Step 3's job: once a risk is named, the research procedure reviews
 **how that risk has actually been evaluated** and converts the findings into the test-set design (the
-timescale it becomes observable on — psychosocial harms usually need `scenario` and a longer
-`max_turns`, not one answer; whose viewpoint the probes are authored from — a hospital helpdesk is
+timescale it becomes observable on — psychosocial harms usually need `scenario`, not one answer;
+whose viewpoint the probes are authored from — a hospital helpdesk is
 exercised by patients, nurses, and schedulers, not one adversarial persona; and which conditions the
 evidence says change it). **The skill does not invent risks** — risk identification is Clarity's job
 or the user's, and the Step 3 research never substitutes for deciding what to measure.
@@ -182,20 +182,23 @@ the target rather than adding noise around it, and inflates run-to-run applicabi
 `doxxing`, `stereotyping`, `sycophancy`, `harmful_medical_advice`, `violent_content`, `sexual_content`,
 `hate_speech_harassment`, `malicious_cyber_activity`, …) and `assert-ai library show <name>` prints one; prefer
 `behavior.preset` or a copy-in spec from `examples/behavior_specs/` over reinventing a description.
-**Ask the user for the `sample_size` — do not pick it silently:** each rate is `violations / sample_size`, so at `10`
-one flipped case = ±10pp of noise, and inference is non-deterministic (agent temperature 1.0; gpt-5 can't be pinned
-lower) so two runs of the same config drift by chance. Ask e.g. *"How many cases per behavior? `10` = fast/noisy,
-`25` = stable (recommended), `50`+ = tightest — same size for prompt and scenario."* Recommend `25`, and **`≥25` for
-any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size —
-see `govern-and-remeasure.md`). **`max_turns` has a floor of `12`** (the config template's baseline; ASSERT's own
-default is `10`), raised when the harm's
-evidence-backed observability horizon is longer, and **identical in baseline and governed configs** or the "only ACS
-differs" comparison breaks. After generation, show the user the resolved `behavior.description`, `context`,
+**`behavior_category_count` is `25`** (also ASSERT's own default). **Ask the user for the `sample_size` — do not pick
+it silently, and never accept a value below `behavior_category_count` (so `≥25`):** below it some behavior categories
+get zero cases and `coverage_at_k(k=1)` can't reach `1.0`, and each rate is `violations / sample_size`, so even at the
+`25` floor one flipped case = ±4pp of noise, growing as the sample shrinks. Inference is non-deterministic (agent
+temperature 1.0; gpt-5 can't be pinned lower) so two runs of the same config drift by chance. Ask e.g. *"How many
+cases per behavior? `25` = the floor and the recommendation, `50`+ = tightest — same size for prompt and scenario."*
+The floor protects coverage, not precision — prefer `50`+ for a small expected delta. The governed config is a
+byte-identical copy that inherits this size — see `govern-and-remeasure.md`. **`max_turns` is fixed at `6`** —
+ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value, not research-derived, and
+**identical in baseline and governed configs** or the "only ACS
+differs" comparison breaks. A genuinely single-turn harm uses `prompt` cases, which ignore the knob.
+After generation, show the user the resolved `behavior.description`, `context`,
 `pipeline.judge` settings, the `systematize` / `judge` models, and the reference list. Confirm before running.
 **If live source retrieval is unavailable**, say so and stop at the ledger — the evidence gate can't be met without
 it, and a config with remembered or invented citations is worse than no config.
 `assert-ai init --default-model <litellm-model> --describe-file <path> --non-interactive -o <path>` remains available
-as an explicitly unvalidated scaffold for a throwaway look — never for a measurement you intend to report or govern
+as an explicitly unvalidated scaffold — never for a measurement you intend to report or govern
 against. (`--describe-file` over `--describe "<text>"` for prose you did not author: a quote, backtick, or `$(...)`
 would break the command or inject into the shell. `--from <path>` extends an existing config.)
 **Author researched judge `dimensions`, but never reuse a built-in name:** `policy_violation` and `overrefusal` are

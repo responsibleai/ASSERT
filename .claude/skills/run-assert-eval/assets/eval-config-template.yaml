@@ -26,7 +26,7 @@ default_model:
 pipeline:
   systematize:
     model: {name: azure/gpt-5.4}  # pin the strong model: this stage defines ground truth
-    behavior_category_count: 12   # set from research
+    behavior_category_count: 25   # standard count; also ASSERT's own default
     web_search: true
 
   test_set:
@@ -55,9 +55,14 @@ pipeline:
               definition: <Evidence-backed stage definition.>   # sources: [2]; [3]
             - name: <stage_4>
               definition: <Evidence-backed stage definition.>   # source: [3]
-    # Ask the user for sample_size; do not pick it silently. Each rate is
-    # violations / sample_size, so at 10 one flipped case moves the rate 10pp.
-    # 25 is the recommendation, and the minimum for any run headed to an ACS A/B.
+    # Ask the user for sample_size; do not pick it silently. HARD FLOOR:
+    # sample_size >= behavior_category_count (so >= 25 here). Below that some
+    # behavior categories receive zero cases and go silently unmeasured --
+    # coverage_at_k(k=1) cannot reach 1.0 while they still count in the
+    # denominator. Each rate is also violations / sample_size, so even at the 25
+    # floor one flipped case moves the rate 4pp, growing as the sample shrinks --
+    # the floor protects coverage, not precision. Prefer 50+ when the expected
+    # ACS A/B delta is small.
     prompt:
       sample_size: 25
     scenario:
@@ -72,7 +77,8 @@ pipeline:
       system_prompt: |-
         <Optional target system prompt, or omit to use each test case's prompt.>
     tester: {}
-    max_turns: 12  # Example only: set from the harm's evidence-backed observability horizon.
+    max_turns: 6  # Fixed: ASSERT's default (DEFAULT_TESTER_MAX_TURNS). Do not change; a
+                  # single-turn harm uses `prompt` cases, which ignore this knob.
     concurrency: 1
 
   judge:

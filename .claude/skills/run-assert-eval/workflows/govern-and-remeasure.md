@@ -38,11 +38,13 @@ of this workflow**, not checked-in files — nothing here is specific to billing
    dimension) — the same source the permissibility split is derived from.
    **Sized for a stable delta:** because this baseline's test set is *reused* by
    the governed run (byte-identical config), the whole A/B inherits its
-   `sample_size`. At `sample_size: 10` one flipped case is ±10pp of noise that can
-   masquerade as — or bury — the governance effect. If the baseline was a quick
-   first pass at `10`, **ask the user to confirm a larger size (recommend `≥25`),
-   then raise `sample_size` in the baseline config and re-run it before comparing**
-   (see the sizing note in `measure-clarity-failures.md`).
+   `sample_size`. The floor is `sample_size ≥ behavior_category_count` (so `≥25`);
+   below it some behavior categories go unsampled entirely. Even at the floor one
+   flipped case is ±4pp of noise that can masquerade as — or bury — a small
+   governance effect, so prefer `50`+ when you expect a modest delta. If the
+   baseline was run below the floor, **raise `sample_size` in the baseline config
+   and re-run it before comparing** (see the sizing note in
+   `measure-clarity-failures.md`).
 2. **The ACS extra is installed**: `python -m pip install -e ".[acs]"` (pulls in
    the `agent-control-specification` SDK). Verify with `assert-ai acs --help`.
 3. **`opa` is on PATH** (Open Policy Agent) — required to evaluate the generated
@@ -160,7 +162,8 @@ allowed":
   caller's self-description, a self-asserted role) → do **not** condition on it.
   Calibrate the annotator to the **judge's** standard using the user's turns.
 
-**4. Is it multi-turn?** If the config has scenario cases (`max_turns > 1`), then
+**4. Is it multi-turn?** If the config has `scenario` test cases (the ones the
+`max_turns` loop applies to), then
 **both** are mandatory up front:
 
 - the callable declares `history` and the wrapper gates **every** turn — the judge
@@ -691,8 +694,11 @@ dropped to `Y%`. If the user chose to deploy and commit that policy in their own
 product repo, record that service-owned path as well. Do not copy generated policy
 output into ASSERT's worked examples merely to close the loop.
 
-**Optional — a cheap recurring regression check.** Once the delta is proven, you
-can generate a small standing config that re-checks the reviewed policy. Keep it
+**Optional — a recurring regression check.** Once the delta is proven, you
+can generate a standing policy-derived config that re-checks the reviewed policy. It is
+sized to the same standard as every other config this skill produces
+(`behavior_category_count: 25`, `sample_size: 25` — the coverage floor), so budget for a
+full run rather than a smoke test. Keep it
 local for an ASSERT example; in a user's product repo, commit it only when they
 choose to maintain that policy as an ongoing control:
 
@@ -701,7 +707,7 @@ assert-ai acs eval-config --manifest artifacts/acs/<suite>/manifest.yaml \
   --target-callable <governed-callable> --out <eval-dir>/eval_config.regression.yaml
 ```
 
-> **Do NOT use this for the A/B.** It emits a small, policy-derived config — a
+> **Do NOT use this for the A/B.** It emits a policy-derived config — a
 > *different* test set from your baseline, which would break the before/after
 > comparison by construction. The A/B governed config is still the byte-identical
 > copy from Step 4. This is only for ongoing "is the policy still holding?" runs.

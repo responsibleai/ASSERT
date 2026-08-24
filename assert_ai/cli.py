@@ -1829,7 +1829,7 @@ def acs_eval_config(
     out_path: Path,
     model: str | None,
 ):
-    """Generate a small ASSERT config to regression-check an existing ACS policy."""
+    """Generate a policy-derived ASSERT config to regression-check an existing ACS policy."""
     write_eval_config = _load_acs_symbol("write_eval_config")
     try:
         written = write_eval_config(

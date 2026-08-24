@@ -56,8 +56,9 @@ the research procedure in Step 3: once a risk is named, it runs a literature rev
 design. The output is not a restatement of the topic — it is how the topic *manifests*:
 
 - **Timescale.** Psychosocial and relational harms are typically observed across
-  turns, not in one answer, so the literature drives `scenario` over `prompt`,
-  and `max_turns` from the expected onset of the harm.
+  turns, not in one answer, so the literature drives `scenario` over `prompt`.
+  `max_turns` itself is fixed at `6` — the timescale finding chooses the test
+  *mode*, not the turn budget.
 - **Viewpoint.** A hospital helpdesk is exercised by its primary users — patients,
   nurses, schedulers — not solely by one adversarial persona. Population and role
   become stratification dimensions when the evidence says they change the harm.
@@ -283,7 +284,8 @@ Its purpose is narrow and worth stating plainly: the risk already has a name by 
 time you arrive here. What the research supplies is **how that risk has been evaluated**
 — the timescale it becomes observable on, whose viewpoint exercises it, and which
 conditions change it — expressed as `stratify` dimensions, `behavior_category_count`,
-judge dimensions, and `max_turns`. It does not re-open *what* to measure.
+judge dimensions, and the `scenario` vs `prompt` test mode. It does not re-open
+*what* to measure.
 
 Collect one input before entering it, and **never silently default it**:
 
@@ -317,14 +319,21 @@ collide across domains.
 
 Two things that workflow will ask you to decide, and that matter downstream:
 
-- **`sample_size` is a question for the user, not a default.** Each rate is
-  `violations / sample_size`, so at `10` one flipped case moves the number 10 percentage
-  points. Recommend `25`; require **`≥25`** whenever the run will become an ACS A/B
-  baseline.
-- **`max_turns` has a floor of `12`** (the config template's baseline; ASSERT's own
-  default is `10`) unless the harm is genuinely
-  single-turn, and must be **identical in the baseline and governed configs** or the
-  "only ACS differs" comparison breaks.
+- **`behavior_category_count` is `25`** — the standard count, and ASSERT's own default
+  (`DEFAULT_BEHAVIOR_CATEGORY_COUNT`). Research shapes *which* categories are generated,
+  not how many.
+- **`sample_size` is a question for the user, but it has a hard floor:
+  `≥ behavior_category_count` (so `≥25`).** Below the category count some behavior
+  categories receive zero cases and are silently unmeasured. Each rate is also
+  `violations / sample_size`, so even at the `25` floor one flipped case moves the
+  number 4 percentage points, and the swing grows as the sample shrinks. The floor
+  protects coverage, not precision — prefer `50`+ when the expected delta is small.
+- **`max_turns` is fixed at `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and
+  the config template's value. The research does not move it, and it must be
+  **identical in the baseline and governed configs** or the "only ACS differs"
+  comparison breaks. A genuinely single-turn harm is expressed by writing `prompt`
+  test cases, not by lowering the turn budget — `max_turns` is read only for
+  `scenario` cases.
 
 **Judge dimensions are authored** from the research, and are added **on top of** the
 built-ins — but **never reuse a built-in name**. `policy_violation` and `overrefusal` are
@@ -359,8 +368,7 @@ The post-write gate rejects both the inline and the preset form.
 **If live source retrieval is unavailable**, say so and stop at the ledger. The evidence
 gate cannot be met without it, and a config with remembered or invented citations is worse
 than no config. `assert-ai init --describe-file …` remains available as an explicitly
-unvalidated scaffold for a throwaway look — never for a measurement you intend to report
-or govern against.
+unvalidated scaffold — never for a measurement you intend to report or govern against.
 
 After generation, show the user the resolved `behavior.description`, `context`,
 `pipeline.judge` settings, the `systematize` / `judge` models, and the reference list.
@@ -657,7 +665,7 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
   output. Do not commit generated taxonomies, test sets, result artifacts,
   discovery mailboxes, snapshots, protocol archives, or automatic skill output.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
-- **Generate configs through the research workflow, not by hand** — `workflows/research-eval-dimensions.md` owns config generation. Every dimension must pass its evidence gate, `N` passes must complete, and the user must explicitly approve the dimension set before any YAML is written. **Silence is not approval.** `assert-ai init` remains available as an explicitly unvalidated scaffold for a throwaway look, never for a measurement you intend to report or govern against.
+- **Generate configs through the research workflow, not by hand** — `workflows/research-eval-dimensions.md` owns config generation. Every dimension must pass its evidence gate, `N` passes must complete, and the user must explicitly approve the dimension set before any YAML is written. **Silence is not approval.** `assert-ai init` remains available as an explicitly unvalidated scaffold, never for a measurement you intend to report or govern against.
 - **Never emit an uncited config** — cite only pages actually retrieved this session; never fabricate or guess a URL, title, or author. Keep unsourced candidates in the ledger as `uncited — needs review`. If live retrieval is unavailable, stop at the ledger and say so.
 - **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric. This does **not** move the headline split (`results.py` recomputes it from `node_judgments`), but it does change the verdict stored in the run JSON and `DEFAULT_COMPARE_METRIC`. `judge.preset: safety-core` does this too, since presets expand into the same merged list — and buys nothing, because the engine treats that pair as superseded and hides it once the permissibility split is available. The pre-write gate rejects a reused name in the review ledger; the post-write gate rejects it in the written config, in both the inline and the preset form.
 - **Never read a prior generated config** — the isolation preflight discovers prior generations **by path only**. Do not `cat`, parse, grep, hash, `git show`, or otherwise inspect a matching prior YAML, and do not infer its contents from size, timestamps, or commit history.

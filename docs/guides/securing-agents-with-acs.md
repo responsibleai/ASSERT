@@ -92,7 +92,7 @@ Validation reports two numbers: how many known-bad examples the policy `handled`
 
 ## Step 4: generate a regression eval config from an existing ACS manifest
 
-After a manifest exists, you can generate a small ASSERT config to check that the already-guarded target still enforces the known policy behavior and does not regress allowed behavior:
+After a manifest exists, you can generate a policy-derived ASSERT config to check that the already-guarded target still enforces the known policy behavior and does not regress allowed behavior:
 
 ```bash
 assert-ai acs eval-config \

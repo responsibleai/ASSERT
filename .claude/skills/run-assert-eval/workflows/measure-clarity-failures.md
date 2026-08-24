@@ -151,13 +151,13 @@ Fill from the candidate behavior (real schema field names):
 | `context` | Clarity `summary.md` / `goal/requirements.md` / `solution/architecture.md` |
 | `default_model.name` | the cheap model — drives the target, test-set generation, and tester (e.g. `azure/gpt-5.4-mini`) |
 | `pipeline.systematize.model` + `pipeline.judge.model` | **pin both to the strong model** (e.g. `azure/gpt-5.4`) — see the ground-truth note below |
-| `pipeline.systematize.behavior_category_count` | the supported categories found before research saturation; do not impose a generic maximum |
+| `pipeline.systematize.behavior_category_count` | **`25`** — the standard count, and ASSERT's own default (`DEFAULT_BEHAVIOR_CATEGORY_COUNT`); research shapes *which* categories are generated, not how many |
 | `pipeline.systematize.web_search` | `true`, so systematization can expand categories with current context |
 | `pipeline.test_set.stratify.dimensions` | the **approved, deduplicated** dimension set — with explicit `levels` where the literature supports them. `candidate_dimensions` from the parser (notably `elicitation_variant`) are *seeds* for research, not the final set |
-| `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
-| `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
+| `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently, and never accept a value below `behavior_category_count` (so **`≥25`**); recommend `25`, `50`+ for the tightest signal |
+| `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise; the same `≥ behavior_category_count` floor applies (see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
-| `pipeline.inference.max_turns` | **`12` floor** (the config template's baseline; ASSERT's own default is `10`), raised when the harm's evidence-backed observability horizon is longer. Use the **same** value in the baseline and governed configs. |
+| `pipeline.inference.max_turns` | **Fixed `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and the config template's value. Not research-derived. Use the **same** value in the baseline and governed configs; a genuinely single-turn harm uses `prompt` cases, which ignore this knob. |
 | `pipeline.judge.preset` | `safety-extended` for nuanced harms (additive). **Not `safety-core`** — it replaces both built-in rubrics; skip it if a library preset suggests it |
 | `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
@@ -221,27 +221,36 @@ Fill from the candidate behavior (real schema field names):
 > split is present the viewer now **hides** `policy_violation` / `overrefusal` as
 > superseded — they are still judged, aggregated, and written to artifacts.
 
-> **Sizing for noise (why the first-run "10" is often too small).** Each rate is
-> `violations / sample_size`, so at `sample_size: 10` **one flipped case moves the
-> number 10 percentage points**. Inference is non-deterministic (agent temperature
-> is 1.0; gpt-5 models can't be pinned lower), so two independent runs of the *same*
-> config drift by a case or two purely by chance. That noise is harmless for a quick
-> "is it broken?" look, but it **wrecks an ACS before/after A/B**: a phantom ±10pp
-> swing on a small sample can masquerade as a governance effect (or hide one).
+> **Sizing floor: `sample_size` must be `≥ behavior_category_count` (so `≥25`).**
+> Two independent reasons, and both have to hold.
+>
+> **Coverage.** The test set spreads `sample_size` cases across
+> `behavior_category_count` categories. Below the category count some categories
+> receive **zero** cases, so `coverage_at_k(…, k=1, …)`
+> (`assert_ai/analysis/test_set_metrics.py`) cannot reach `1.0` — those categories
+> still sit in the denominator while never being probed. A harm that lives in an
+> unsampled category reads as absent.
+>
+> **Noise.** Each rate is `violations / sample_size`, so **even at the `25` floor
+> one flipped case moves the number 4 percentage points** — and the swing grows as
+> the sample shrinks. Inference is non-deterministic (agent temperature is 1.0;
+> gpt-5 models can't be pinned lower), so two independent runs of the *same* config
+> drift by a case or two purely by chance. That distorts an **ACS before/after A/B**:
+> a phantom swing can masquerade as a governance effect (or hide one). This is why
+> `50`+ is worth the cost when the expected delta is small — the floor protects
+> coverage, not precision.
 >
 > **Always ask the user for the sample size before generating the config — do not
-> pick it silently.** Present the tradeoff in one line and let them choose, e.g.:
-> *"How many cases per behavior should I sample? `10` = fast/noisy first look,
-> `25` = stable rate (recommended), `50`+ = tightest signal. Cost scales linearly.
-> I'll use the same size for prompt and scenario."* Recommend `25` as the default,
-> and **`≥25` whenever the run will become an ACS A/B baseline** (the governed
-> config is a byte-identical copy that inherits this size — see
-> `govern-and-remeasure.md`). If the user has no preference, default to `25` (or
-> their first-look `10` only if they explicitly want a throwaway pass).
+> pick it silently, and do not accept a value below `behavior_category_count`.**
+> Present the tradeoff in one line, e.g.: *"How many cases per behavior should I
+> sample? `25` = the floor and the recommendation, `50`+ = tightest signal. Cost
+> scales linearly. I'll use the same size for prompt and scenario."* If the user has
+> no preference, use `25`. If they ask for less, explain the coverage floor and offer
+> `25` — there is no supported sub-coverage "quick look".
 
-> **Set `pipeline.inference.max_turns: 12`; do not leave it low (e.g. `2`).**
+> **Leave `pipeline.inference.max_turns` at `6`; do not lower it (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
-> cases (single-turn `prompt` cases ignore it). `10` is the ASSERT default
+> cases (single-turn `prompt` cases ignore it). `6` is the ASSERT default
 > (`DEFAULT_TESTER_MAX_TURNS`) and gives a realistic persistence/erosion arc room to
 > land — many of the strongest findings are **multi-turn erosion** (the agent holds
 > firm for a few turns, then softens into a dose/clearance/leak under pressure). A low
@@ -249,8 +258,9 @@ Fill from the candidate behavior (real schema field names):
 > rate**, and in an ACS A/B it hides violations the gate should be measured against.
 > Keep `max_turns` **identical in the baseline and governed configs** (it changes
 > elicitation depth, so a mismatch would break the "only ACS differs" comparison).
-> Only lower it (`4`–`6`) if the risk is genuinely single-turn (a one-shot disclosure
-> or a structural tool-arg failure) *and* the user wants a cheaper run.
+> If the risk is genuinely single-turn (a one-shot disclosure or a structural tool-arg
+> failure), express that with `prompt` test cases rather than by shrinking the turn
+> budget.
 
 > **`stratify.dimensions` come from the approved research**, not straight from the
 > parser. `research-eval-dimensions.md` uses the parser's `candidate_dimensions`
@@ -468,8 +478,8 @@ Do this at the end of the domain you just measured:
    final dimension set.
 3. Triage: user picks **P1s only** → just `user_disengagement`.
 4. Collect both inputs that must never be silently defaulted: **`N`** (say they
-   pick `3`) and **`sample_size`** (recommend `25`; `10` = quick look, `50`+ =
-   tightest — say they pick `25`).
+   pick `3`) and **`sample_size`** (floor is `behavior_category_count`, so `25`;
+   `50`+ = tightest — say they pick `25`).
 5. Hand off to [`research-eval-dimensions.md`](research-eval-dimensions.md); do
    not hand-roll the config here:
    - **Intent intake** — the user says this gates a support-bot release, so
@@ -493,7 +503,7 @@ Do this at the end of the domain you just measured:
    - **Write** the cited config to
      `examples/<domain>/user_disengagement/eval_config.yaml`:
      `prompt.sample_size: 25` (applied to `scenario` too),
-     `inference.max_turns: 12`, `judge.preset: safety-extended` plus the approved
+     `inference.max_turns: 6`, `judge.preset: safety-extended` plus the approved
      judge dimensions, inline `# sources:` comments, and a `# References` block.
 6. Offer a smoke run (Step 5a): generate artifacts with
    `--override inference.enabled=false --override judge.enabled=false`, slice 3
