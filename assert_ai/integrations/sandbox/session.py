@@ -27,6 +27,32 @@ from .runtime import (
 log = logging.getLogger(__name__)
 
 
+def _validate_target_action_case(
+    interaction_messages: list[dict[str, Any]],
+    expected_case_id: str | None,
+) -> None:
+    """Reject target-reported mediation evidence for another or unknown case."""
+    if not expected_case_id:
+        return
+    for message in interaction_messages:
+        raw = message.get("raw")
+        if not isinstance(raw, dict):
+            continue
+        evidence = raw.get("action_mediation")
+        if not isinstance(evidence, dict):
+            continue
+        reported = evidence.get("case_id")
+        if not isinstance(reported, str) or not reported.strip():
+            raise RuntimeError(
+                "target action-mediation evidence is missing the ASSERT case_id"
+            )
+        if reported.strip() != expected_case_id:
+            raise RuntimeError(
+                "target action-mediation evidence case_id does not match the "
+                "ASSERT-owned sandbox case"
+            )
+
+
 def _record_action_claim(
     claims: dict[str, tuple[str, dict[str, Any]]],
     *,
@@ -295,6 +321,11 @@ class SandboxedEndpointSession:
                 *filtered[insert_at:],
             ]
         else:
+            try:
+                _validate_target_action_case(result.interaction_messages, self.case_id)
+            except RuntimeError:
+                self._buffered_interaction_messages.extend(additions)
+                raise
             result.interaction_messages.extend(additions)
         return result
 

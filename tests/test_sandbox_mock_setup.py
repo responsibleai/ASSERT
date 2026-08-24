@@ -519,6 +519,41 @@ def test_legacy_current_state_override_observes_its_own_transition():
     assert status is not None and status.value == {"state": "done"}
 
 
+def test_legacy_matches_state_override_observes_its_own_transition():
+    class LegacyScenarioBackend(ScenarioBackend):
+        def matches_state(self, rule):
+            return super().matches_state(rule)
+
+    library = MockLibrary.from_dict(
+        {
+            "mocks": [
+                {
+                    "tool": "authorize",
+                    "scenario": "legacy",
+                    "response": {"status": "authorized"},
+                    "sets_state": "done",
+                },
+                {
+                    "tool": "status",
+                    "scenario": "legacy",
+                    "when_state": "done",
+                    "response": {"state": "done"},
+                },
+                {"tool": "status", "response": {"state": "fallback"}},
+            ]
+        },
+        backends={
+            "inline": InlineBackend(),
+            "scenario": LegacyScenarioBackend(),
+        },
+    )
+
+    library.resolve(MockCall("authorize", {}, case_id="case-a"))
+    status = library.resolve(MockCall("status", {}, case_id="case-a"))
+
+    assert status is not None and status.value == {"state": "done"}
+
+
 def test_judge_visible_evidence_names_the_matched_case_rule():
     library = MockLibrary.from_dict({
         "mocks": [{
