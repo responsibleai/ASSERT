@@ -63,6 +63,7 @@ class SandboxedEndpointSession:
             self._endpoint = HTTPEndpointSession(
                 endpoint=target.url,
                 message_timeout_s=self._message_timeout_s,
+                case_id=self.case_id,
             )
             await self._endpoint.open()
             return
@@ -118,6 +119,7 @@ class SandboxedEndpointSession:
                 endpoint=self._handle.endpoint_url,
                 message_timeout_s=self._message_timeout_s,
                 allow_private=True,
+                case_id=self.case_id,
             )
             await self._endpoint.open()
         except Exception:

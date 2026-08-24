@@ -14,14 +14,16 @@ policy has selected `mock`.
 
 An optional `case_id:` on a mock rule binds that response to one ASSERT test
 case (prefix/suffix `*` globs are supported). ASSERT propagates the stable test
-case ID into the container, mediation context, scenario state, and evidence, so
-two cases with identical tool arguments can still exercise different outcomes.
+case ID into the container, mediation context, scenario state, evidence, and the
+JSON request sent to an already-running sandbox endpoint. A sandbox endpoint
+receives `{"message": ..., "history": [...], "case_id": "..."}`; ordinary
+`target.endpoint` requests retain the existing message/history shape. Two cases
+with identical tool arguments can therefore exercise different outcomes.
 
-A `case_id:` is a precedence tier, not just another matcher: any case-bound
-rule is considered before every rule without one, regardless of how many
-`when:` arguments the unbound rule declares. Within each tier, the existing
+Case precedence is explicit: exact case ID, then a matching case glob, then a
+rule with no case binding. Within each tier, the existing
 most-specific-first-then-file-order rules still apply. So a case-bound rule
-matching any arguments *will* outrank a rule matching two exact arguments —
+matching any arguments *will* outrank a generic rule matching two exact arguments —
 that is deliberate, since the whole point is letting one case diverge from
 otherwise-identical traffic. Keep it in mind when adding a broad `case_id:`
 rule to a file that already has narrow argument rules for the same tool.
