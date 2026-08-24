@@ -2,27 +2,12 @@
 name: Sandbox Docker Tests
 
 on:
+  # Run on every PR so this check can be made a required status gate. Path
+  # filters can leave required checks pending, can miss base-branch changes,
+  # and are subject to GitHub's changed-file filter limits.
   pull_request:
-    paths:
-      - 'assert_ai/**'
-      - 'examples/sandbox_action_mediation/**'
-      - 'tests/test_sandbox_*.py'
-      - 'tests/conftest.py'
-      - 'pytest.ini'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/sandbox-docker.yml'
   push:
     branches: [main]
-    paths:
-      - 'assert_ai/**'
-      - 'examples/sandbox_action_mediation/**'
-      - 'tests/test_sandbox_*.py'
-      - 'tests/conftest.py'
-      - 'pytest.ini'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/sandbox-docker.yml'
   workflow_dispatch:
 
 permissions:
@@ -53,7 +38,15 @@ jobs:
         run: docker info
 
       - name: Run real Docker sandbox tests
-        run: pytest tests/test_sandbox_runtime_docker.py -x -q --junitxml=sandbox-docker-results.xml
+        run: pytest tests/test_sandbox_*docker*.py -x -q --junitxml=sandbox-docker-results.xml
+
+      - name: Preserve Docker test receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-docker-results-${{ github.run_attempt }}
+          path: sandbox-docker-results.xml
+          if-no-files-found: warn
 
       - name: Verify no sandbox resources remain
         if: always()
