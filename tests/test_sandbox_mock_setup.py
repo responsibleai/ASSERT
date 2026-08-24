@@ -451,6 +451,25 @@ def test_conflicting_context_case_ids_fail_before_mock_resolution():
         mediator.mediate(pre, _never_executes)
 
 
+def test_conflicting_context_case_ids_fail_before_pass_execution():
+    mediator = ActionMediator(
+        MediationPolicy({"interactions": [{"match": "lookup", "mode": "pass"}]})
+    )
+    pre = _pre("lookup", {})
+    pre["case_id"] = "legacy-case"
+    pre["session"] = {"id": "session", "case_id": "session-case"}
+    invoked = False
+
+    def execute(_args):
+        nonlocal invoked
+        invoked = True
+        return {"ok": True}
+
+    with pytest.raises(ValueError, match="conflicting case_id"):
+        mediator.mediate(pre, execute)
+    assert invoked is False
+
+
 def test_scenario_sequence_advances_then_holds():
     library = MockLibrary.from_dict({
         "mocks": [{

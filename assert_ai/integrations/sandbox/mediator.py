@@ -108,6 +108,7 @@ class ActionMediator:
     def mediate(self, pre_context: dict[str, Any], execute_effective: Execute) -> MediationDecision:
         if pre_context.get("interception_point") != "pre_tool_call":
             raise ValueError("ActionMediator expects a pre_tool_call context")
+        case_id_from_context(pre_context)
         tool_call = pre_context.get("tool_call") or {}
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
