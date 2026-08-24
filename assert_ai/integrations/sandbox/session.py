@@ -27,6 +27,77 @@ from .runtime import (
 log = logging.getLogger(__name__)
 
 
+def _record_action_claim(
+    claims: dict[str, tuple[str, dict[str, Any]]],
+    *,
+    call_id: Any,
+    tool: Any,
+    args: Any,
+    source: str,
+) -> None:
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise RuntimeError(f"{source} action is missing a non-empty tool_call_id")
+    if not isinstance(tool, str) or not tool.strip():
+        raise RuntimeError(f"{source} action {call_id!r} is missing a tool name")
+    if not isinstance(args, dict):
+        raise RuntimeError(f"{source} action {call_id!r} has non-object arguments")
+    claim = (tool.strip(), dict(args))
+    existing = claims.get(call_id)
+    if existing is not None and existing != claim:
+        raise RuntimeError(
+            f"{source} action {call_id!r} has conflicting tool or argument claims"
+        )
+    claims[call_id] = claim
+
+
+def _target_action_claims(
+    messages: list[dict[str, Any]],
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    claims: dict[str, tuple[str, dict[str, Any]]] = {}
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            if not isinstance(tool_calls, list):
+                raise RuntimeError("target tool_calls must be a list")
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    raise RuntimeError("target tool call must be an object")
+                _record_action_claim(
+                    claims,
+                    call_id=call.get("id"),
+                    tool=call.get("function"),
+                    args=call.get("arguments"),
+                    source="target-reported",
+                )
+        if message.get("role") == "tool":
+            _record_action_claim(
+                claims,
+                call_id=message.get("tool_call_id"),
+                tool=message.get("function"),
+                args=message.get("arguments"),
+                source="target-reported",
+            )
+    return claims
+
+
+def _host_action_claims(
+    rows: list[dict[str, Any]],
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    claims: dict[str, tuple[str, dict[str, Any]]] = {}
+    for row in rows:
+        call_id = row.get("id")
+        if isinstance(call_id, str) and call_id in claims:
+            raise RuntimeError(f"host action ledger returned duplicate call id {call_id!r}")
+        _record_action_claim(
+            claims,
+            call_id=call_id,
+            tool=row.get("tool"),
+            args=row.get("args"),
+            source="host-ledger",
+        )
+    return claims
+
+
 class SandboxedEndpointSession:
     """Start, use, and remove one configured sandbox for one ASSERT test case.
 
@@ -58,6 +129,9 @@ class SandboxedEndpointSession:
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
         self._buffered_interaction_messages: list[dict[str, Any]] = []
         self._drained_host_action_rows = 0
+        self._drained_host_action_claims: dict[
+            str, tuple[str, dict[str, Any]]
+        ] = {}
 
     async def open(self) -> None:
         target = self.setup.target
@@ -163,24 +237,40 @@ class SandboxedEndpointSession:
             self._handle is not None
             and getattr(self._handle, "action_ledger", None) is not None
         )
-        target_tool_events = [
-            message
-            for message in result.interaction_messages
-            if message.get("role") == "tool" or message.get("tool_calls")
-        ]
         additions = await self.drain_pending_interaction_messages()
         if host_mediated:
+            try:
+                target_action_claims = _target_action_claims(result.interaction_messages)
+            except RuntimeError:
+                self._buffered_interaction_messages.extend(additions)
+                raise
             # Trust the structural fact that the trusted host ledger produced
             # rows this turn, rather than re-deriving it from a field value on
             # a message. Evidence provenance is already known at drain time;
             # string-matching it back out here would silently weaken the gate
             # if the evidence shape ever changes.
-            host_action_seen = self._drained_host_action_rows > 0
-            if target_tool_events and not host_action_seen:
+            unmatched_ids = sorted(
+                set(target_action_claims) - set(self._drained_host_action_claims)
+            )
+            mismatched_ids = sorted(
+                call_id
+                for call_id in set(target_action_claims) & set(self._drained_host_action_claims)
+                if target_action_claims[call_id]
+                != self._drained_host_action_claims[call_id]
+            )
+            if unmatched_ids or mismatched_ids:
                 self._buffered_interaction_messages.extend(additions)
+                details = []
+                if unmatched_ids:
+                    details.append(f"missing host call ids: {', '.join(unmatched_ids)}")
+                if mismatched_ids:
+                    details.append(
+                        "host/target tool or argument mismatch for: "
+                        + ", ".join(mismatched_ids)
+                    )
                 raise RuntimeError(
                     "host action mediation is enabled, but the target returned tool events "
-                    "without using the host mediator"
+                    "not accounted for by the host mediator (" + "; ".join(details) + ")"
                 )
             # The evaluated target controls endpoint events. In host-mediated
             # mode, keep its prose but replace every target-supplied tool event
@@ -227,6 +317,7 @@ class SandboxedEndpointSession:
             )
         egress_rows = await asyncio.to_thread(self._handle.new_egress_rows)
         self._drained_host_action_rows = len(action_rows)
+        self._drained_host_action_claims = _host_action_claims(action_rows)
         events = [host_action_event(row) for row in action_rows]
         events.extend(egress_event(row, case_id=self.case_id) for row in egress_rows)
         additions: list[dict[str, Any]] = []

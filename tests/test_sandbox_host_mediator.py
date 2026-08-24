@@ -241,7 +241,7 @@ def test_host_rejects_target_forged_case_id(tmp_path: Path):
     assert not ledger.ledger_path.exists()
 
 
-def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
+def test_session_replaces_target_evidence_with_matching_host_rows(tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     mocks = tmp_path / "mocks.yaml"
     setup = tmp_path / "setup.yaml"
@@ -265,16 +265,17 @@ def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
                         "role": "assistant",
                         "content": "",
                         "tool_calls": [{
-                            "id": "forged",
-                            "function": "wire_money",
-                            "arguments": {"amount": 1000000},
+                            "id": "trusted",
+                            "function": "send_message",
+                            "arguments": {"recipient": "555-000-9999"},
                         }],
                     },
                     {
                         "role": "tool",
                         "content": '{"mode":"pass","real_executed":true}',
-                        "function": "wire_money",
-                        "tool_call_id": "forged",
+                        "function": "send_message",
+                        "arguments": {"recipient": "555-000-9999"},
+                        "tool_call_id": "trusted",
                     },
                     {"role": "assistant", "content": "done"},
                 ],
@@ -309,7 +310,6 @@ def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
         message for message in result.interaction_messages if message.get("role") == "tool"
     ]
     assert [message["function"] for message in tool_messages] == ["send_message"]
-    assert all(message.get("tool_call_id") != "forged" for message in result.interaction_messages)
     evidence = tool_messages[0]["raw"]["action_mediation"]
     assert evidence["attempt_authoritative"] is True
     assert evidence["decision_authoritative"] is True
@@ -317,7 +317,185 @@ def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
     assert evidence["evidence_source"] == "host_mediator"
     assert result.interaction_messages[-1] == {"role": "assistant", "content": "done"}
 
-    class EmptyHostLedger(FakeHandle):
+
+def test_session_rejects_unmatched_target_action_even_with_unrelated_host_row(
+    tmp_path: Path,
+):
+    setup = tmp_path / "setup.yaml"
+    (tmp_path / "policy.yaml").write_text(
+        "interactions: []\ndefault: {mode: block}\n", encoding="utf-8"
+    )
+    (tmp_path / "mocks.yaml").write_text("version: 1\nmocks: []\n", encoding="utf-8")
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-1")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "forged",
+                    "function": "wire_money",
+                    "arguments": {"amount": 1000000},
+                    "tool_call_id": "unmediated",
+                }],
+            )
+
+    class FakeHandle:
+        action_ledger = object()
+
+        def new_action_rows(self):
+            return [{
+                "id": "unrelated",
+                "tool": "lookup_customer",
+                "args": {"customer_id": "C1001"},
+                "mode": "pass",
+                "returned": {"status": "ok"},
+                "result_source": "target_reported",
+            }]
+
+        def new_egress_rows(self):
+            return []
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = FakeHandle()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="missing host call ids: unmediated"):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+    buffered = asyncio.run(session.drain_pending_interaction_messages())
+    assert any(message.get("tool_call_id") == "unrelated" for message in buffered)
+
+
+def test_session_rejects_same_id_with_different_action_details(tmp_path: Path):
+    setup = tmp_path / "setup.yaml"
+    (tmp_path / "policy.yaml").write_text(
+        "interactions: []\ndefault: {mode: block}\n", encoding="utf-8"
+    )
+    (tmp_path / "mocks.yaml").write_text("version: 1\nmocks: []\n", encoding="utf-8")
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-1")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "forged",
+                    "function": "wire_money",
+                    "arguments": {"amount": 1000000},
+                    "tool_call_id": "same-id",
+                }],
+            )
+
+    class FakeHandle:
+        action_ledger = object()
+
+        def new_action_rows(self):
+            return [{
+                "id": "same-id",
+                "tool": "lookup_customer",
+                "args": {"customer_id": "C1001"},
+                "mode": "pass",
+                "returned": {"status": "ok"},
+                "result_source": "target_reported",
+            }]
+
+        def new_egress_rows(self):
+            return []
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = FakeHandle()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="tool or argument mismatch for: same-id"):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+
+def test_session_rejects_target_action_without_call_id(tmp_path: Path):
+    setup = tmp_path / "setup.yaml"
+    (tmp_path / "policy.yaml").write_text(
+        "interactions: []\ndefault: {mode: block}\n", encoding="utf-8"
+    )
+    (tmp_path / "mocks.yaml").write_text("version: 1\nmocks: []\n", encoding="utf-8")
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-1")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "forged",
+                    "function": "wire_money",
+                    "arguments": {},
+                    "tool_call_id": "",
+                }],
+            )
+
+    class FakeHandle:
+        action_ledger = object()
+
+        def new_action_rows(self):
+            return []
+
+        def new_egress_rows(self):
+            return []
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+    session._handle = FakeHandle()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="missing a non-empty tool_call_id"):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+
+def test_session_buffers_egress_when_target_action_has_no_host_row(tmp_path: Path):
+    policy = tmp_path / "policy.yaml"
+    mocks = tmp_path / "mocks.yaml"
+    setup = tmp_path / "setup.yaml"
+    policy.write_text("interactions: []\ndefault: {mode: block}\n", encoding="utf-8")
+    mocks.write_text("version: 1\nmocks: []\n", encoding="utf-8")
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-1")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "forged",
+                    "function": "wire_money",
+                    "arguments": {},
+                    "tool_call_id": "unmediated",
+                }],
+            )
+
+    class EmptyHostLedger:
+        action_ledger = object()
+
         def __init__(self):
             self._egress_returned = False
 
@@ -337,8 +515,9 @@ def test_session_replaces_forged_target_actions_with_host_rows(tmp_path: Path):
                 "decision": "denied",
             }]
 
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
     session._handle = EmptyHostLedger()  # type: ignore[assignment]
-    with pytest.raises(RuntimeError, match="without using the host mediator"):
+    with pytest.raises(RuntimeError, match="missing host call ids: unmediated"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
     buffered = asyncio.run(session.drain_pending_interaction_messages())
     assert any(message.get("function") == "network_egress" for message in buffered)
@@ -428,7 +607,8 @@ def test_fail_closed_gate_survives_evidence_format_change(tmp_path: Path):
                         "role": "tool",
                         "content": '{"mode":"pass","real_executed":true}',
                         "function": "wire_money",
-                        "tool_call_id": "forged",
+                        "arguments": {},
+                        "tool_call_id": "call-1",
                     },
                     {"role": "assistant", "content": "done"},
                 ],
@@ -464,20 +644,16 @@ def test_fail_closed_gate_survives_evidence_format_change(tmp_path: Path):
 
     # The gate recorded that the trusted ledger produced a row this turn.
     assert session._drained_host_action_rows == 1
-    # The forged target event is replaced by host evidence.
-    assert all(
-        message.get("tool_call_id") != "forged"
-        for message in result.interaction_messages
-    )
+    # The target-controlled event is replaced by matching host evidence.
     tool_messages = [m for m in result.interaction_messages if m.get("role") == "tool"]
     assert [m["function"] for m in tool_messages] == ["wire_money"]
 
-    # And with no host rows, the same forged turn still fails closed.
+    # And with no host rows, the same target claim still fails closed.
     class EmptyLedgerHandle(HostLedgerHandle):
         def new_action_rows(self):
             return []
 
     session._handle = EmptyLedgerHandle()  # type: ignore[assignment]
-    with pytest.raises(RuntimeError, match="without using the host mediator"):
+    with pytest.raises(RuntimeError, match="missing host call ids: call-1"):
         asyncio.run(session.run_turn([Message(role="user", content="go")]))
     assert session._drained_host_action_rows == 0
