@@ -83,6 +83,31 @@ def test_real_stock_sandbox_contains_and_audits_egress_and_cleans_up():
                 text=True,
             )
             assert writable.returncode == 0, writable.stderr
+            # The target may write arbitrary files to its declared output mount,
+            # but that mount must not contain the host proxy's authoritative
+            # egress ledger. A forged lookalike must not alter host evidence.
+            host_egress_before = handle.egress_log.read_text(encoding="utf-8")
+            forged = subprocess.run(
+                [
+                    "docker", "exec", container, "sh", "-c",
+                    (
+                        "printf '%s\\n' '{\"decision\":\"allowed\",\"forged\":true}' "
+                        "> /sandbox/output/egress.jsonl"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert forged.returncode == 0, forged.stderr
+            assert handle.egress_log.read_text(encoding="utf-8") == host_egress_before
+            assert not handle.egress_log.is_relative_to(handle.output_dir)
+            assert not any(
+                handle.egress_log.resolve().is_relative_to(
+                    Path(mount["Source"]).resolve()
+                )
+                for mount in inspect["Mounts"]
+            )
             policy_write = subprocess.run(
                 ["docker", "exec", container, "sh", "-c", "echo x >> /sandbox/policy.json"],
                 check=False,
