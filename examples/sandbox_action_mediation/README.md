@@ -61,7 +61,8 @@ The stock container path applies:
 - optional `host_action_mediation: true`, which moves pass/mock/block decisions,
   mock responses, and the authoritative action ledger outside the target. The
   target cannot remove or rewrite those rows;
-- read-only policy and mock mounts plus a separate writable output mount;
+- read-only policy and mock mounts, a writable target-output mount, and a
+  host-owned network-evidence ledger that is never mounted into the target;
 - optional host-side model credential routing. The container receives a random
   short-lived proxy token, never the provider credential.
 
