@@ -1030,6 +1030,47 @@ def test_egress_rows_become_assert_tool_evidence(tmp_path):
     assert "prompt-case-007" in json.dumps(result.interaction_messages)
 
 
+@pytest.mark.parametrize(
+    "action_evidence,error_match",
+    [
+        ({"case_id": "case-b", "mode": "mock"}, "does not match"),
+        ({"mode": "mock"}, "missing the ASSERT case_id"),
+    ],
+)
+def test_target_action_evidence_must_match_the_assert_case(
+    tmp_path, action_evidence, error_match
+):
+    _, _, setup = _files(tmp_path)
+    setup.write_text(
+        "version: 1\ntarget: {kind: endpoint, url: 'http://localhost/chat'}\n"
+        "policy: ./policy.yaml\nmocks: ./mocks.yaml\n",
+        encoding="utf-8",
+    )
+    session = SandboxedEndpointSession(setup_path=setup, case_id="case-a")
+
+    class FakeEndpoint:
+        async def run_turn(self, messages):
+            from assert_ai.core.session import TurnResult
+
+            return TurnResult(
+                text="done",
+                state_messages=[],
+                interaction_messages=[{
+                    "role": "tool",
+                    "content": "{}",
+                    "function": "lookup",
+                    "arguments": {},
+                    "tool_call_id": "call-1",
+                    "raw": {"action_mediation": action_evidence},
+                }],
+            )
+
+    session._endpoint = FakeEndpoint()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match=error_match):
+        asyncio.run(session.run_turn([Message(role="user", content="go")]))
+
+
 def test_failed_sandbox_prompt_preserves_egress_evidence(monkeypatch):
     """A timed-out target still produces a target_error row with egress evidence."""
     class Runtime:

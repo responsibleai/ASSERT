@@ -130,13 +130,19 @@ class ScenarioBackend:
 
     def _current_state_for_call(self, scenario: str, case_id: str | None) -> str:
         """Read built-in case state without changing the extension signature."""
-        if type(self).current_state is not ScenarioBackend.current_state:
+        if (
+            type(self).current_state is not ScenarioBackend.current_state
+            or type(self).matches_state is not ScenarioBackend.matches_state
+        ):
             return self.current_state(scenario)
         return self._state.get((case_id or "", scenario), "start")
 
     def _case_key(self, case_id: str | None) -> str:
         """Use legacy shared state when an override cannot accept case identity."""
-        if type(self).current_state is not ScenarioBackend.current_state:
+        if (
+            type(self).current_state is not ScenarioBackend.current_state
+            or type(self).matches_state is not ScenarioBackend.matches_state
+        ):
             return ""
         return case_id or ""
 

@@ -26,6 +26,32 @@ from .runtime import (
 log = logging.getLogger(__name__)
 
 
+def _validate_target_action_case(
+    interaction_messages: list[dict[str, Any]],
+    expected_case_id: str | None,
+) -> None:
+    """Reject target-reported mediation evidence for another or unknown case."""
+    if not expected_case_id:
+        return
+    for message in interaction_messages:
+        raw = message.get("raw")
+        if not isinstance(raw, dict):
+            continue
+        evidence = raw.get("action_mediation")
+        if not isinstance(evidence, dict):
+            continue
+        reported = evidence.get("case_id")
+        if not isinstance(reported, str) or not reported.strip():
+            raise RuntimeError(
+                "target action-mediation evidence is missing the ASSERT case_id"
+            )
+        if reported.strip() != expected_case_id:
+            raise RuntimeError(
+                "target action-mediation evidence case_id does not match the "
+                "ASSERT-owned sandbox case"
+            )
+
+
 class SandboxedEndpointSession:
     """Start, use, and remove one configured sandbox for one ASSERT test case.
 
@@ -55,6 +81,7 @@ class SandboxedEndpointSession:
         self._handle: SandboxHandle | None = None
         self._endpoint: HTTPEndpointSession | None = None
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
+        self._buffered_interaction_messages: list[dict[str, Any]] = []
 
     async def open(self) -> None:
         target = self.setup.target
@@ -158,13 +185,26 @@ class SandboxedEndpointSession:
             raise RuntimeError("sandbox session is not open")
         result = await self._endpoint.run_turn(messages)
         additions = await self.drain_pending_interaction_messages()
+        try:
+            _validate_target_action_case(result.interaction_messages, self.case_id)
+        except RuntimeError:
+            self._buffered_interaction_messages.extend(additions)
+            raise
         result.interaction_messages.extend(additions)
         return result
 
     async def drain_pending_interaction_messages(self) -> list[dict[str, Any]]:
         """Drain host-side egress evidence even when the target turn failed."""
         if self._handle is None:
-            return []
+            buffered, self._buffered_interaction_messages = (
+                self._buffered_interaction_messages,
+                [],
+            )
+            return buffered
+        buffered, self._buffered_interaction_messages = (
+            self._buffered_interaction_messages,
+            [],
+        )
         rows = await asyncio.to_thread(self._handle.new_egress_rows)
         additions: list[dict[str, Any]] = []
         for row in rows:
@@ -189,7 +229,7 @@ class SandboxedEndpointSession:
                     "raw": {"sandbox": "network_egress"},
                 },
             ])
-        return additions
+        return [*buffered, *additions]
 
     @property
     def preserve_error_transcript(self) -> bool:
