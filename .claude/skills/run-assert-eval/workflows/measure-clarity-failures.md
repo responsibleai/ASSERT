@@ -130,12 +130,16 @@ slug. Never bundle.
 **Config generation is owned by
 [`research-eval-dimensions.md`](research-eval-dimensions.md).** Follow it per selected
 behavior; do not hand-roll a config here and do not skip its gates. It runs the path-only
-isolation preflight, reuses a repo behavior preset where one matches, researches the
-dimension model against primary sources, runs `N` complete passes, deduplicates, blocks on
-explicit user approval, and writes a cited config.
+isolation preflight, reuses a repo behavior preset where one matches, researches **how the
+harm has been evaluated** against primary sources, runs `N` complete passes, deduplicates,
+blocks on explicit user approval, and writes a cited config.
 
-Collect `eval_type` (`harm` for a triaged risk) and `N` (positive integer) first, and
-never silently default either.
+The risk is already named by the time you reach this step — triage settled that. What the
+research settles is the test-set design: the timescale the harm becomes observable on,
+whose viewpoint the probes are authored from, and which conditions the evidence says change
+it.
+
+Collect `N` (positive integer) first, and never silently default it.
 
 Fill from the candidate behavior (real schema field names):
 
@@ -152,7 +156,7 @@ Fill from the candidate behavior (real schema field names):
 | `pipeline.test_set.prompt.sample_size` | **ask the user (see the sizing note below)** — do not pick silently; recommend `25` (or `≥25` for an ACS A/B), offer `10` for a throwaway first look |
 | `pipeline.test_set.scenario.sample_size` | same — ask once and apply the user's answer to **both** `prompt` and `scenario` unless they say otherwise (`≥25` when the run will feed an ACS before/after A/B — see `govern-and-remeasure.md`) |
 | `pipeline.inference.target` | the target shape (see below) |
-| `pipeline.inference.max_turns` | **`10` floor** (the ASSERT default), raised when the harm's evidence-backed observability horizon is longer. Use the **same** value in the baseline and governed configs. |
+| `pipeline.inference.max_turns` | **`12` floor** (the config template's baseline; ASSERT's own default is `10`), raised when the harm's evidence-backed observability horizon is longer. Use the **same** value in the baseline and governed configs. |
 | `pipeline.judge.preset` | `safety-extended` for nuanced harms (additive). **Not `safety-core`** — it replaces both built-in rubrics; skip it if a library preset suggests it |
 | `pipeline.judge.dimensions` | the **approved researched judge dimensions**, under new names only — never a built-in name (see the built-in note below) |
 
@@ -189,13 +193,15 @@ Fill from the candidate behavior (real schema field names):
 > `longitudinal_harm_pattern`) are **added on top** of them. Config dimensions are
 > merged over the built-ins **by name** into the same dict, so declaring one called
 > `policy_violation` or `overrefusal` silently **replaces the built-in rubric** with a
-> hand-written one — and because the headline permissibility split is derived from
-> stored `policy_violation` judgments, that quietly redefines the headline metric and
-> any ACS baseline compared against it. The same applies to `judge.preset`, which
-> expands into that same merged list — do **not** use `safety-core`, which defines
-> dimensions named exactly `policy_violation` and `overrefusal`. The validator's
-> pre-write gate rejects a reused name in the ledger, and its post-write gate rejects
-> it in the written config, in both the inline and the preset form.
+> hand-written one. That does **not** move the headline permissibility split — which
+> `assert_ai/results.py` recomputes from the per-behavior `node_judgments`, not from
+> either dimension's verdict — but it does change the verdict stored in the run JSON and
+> `DEFAULT_COMPARE_METRIC`, so stored results stop meaning what the engine documents. The
+> same applies to `judge.preset`, which expands into that same merged list — do **not**
+> use `safety-core`, whose only two dimensions are named exactly `policy_violation` and
+> `overrefusal`, and which the engine hides anyway once the split is available. The
+> validator's pre-write gate rejects a reused name in the ledger, and its post-write gate
+> rejects it in the written config, in both the inline and the preset form.
 
 > **Built-in `policy_violation` couples with `overrefusal` — read the split instead.**
 > The built-in `policy_violation` dimension is the logical-OR over ALL violated
@@ -206,7 +212,8 @@ Fill from the candidate behavior (real schema field names):
 > config: `assert-ai results status <suite> <run> --json` already reports the
 > headline pair — `not_permissible_policy_violation_rate` (real harm) and
 > `permissible_policy_violation_rate` (allowed behavior broken) — each one vote per
-> conversation. The split is derived from stored judgments, so it needs no config
+> conversation. The split is recomputed from the stored per-behavior `node_judgments`,
+> so it needs no config
 > change and works on existing runs. In the viewer the same pair appears as the
 > dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
 > labelled **Impermissible behavior violated** / **Permissible behavior violated**. When the
@@ -231,7 +238,7 @@ Fill from the candidate behavior (real schema field names):
 > `govern-and-remeasure.md`). If the user has no preference, default to `25` (or
 > their first-look `10` only if they explicitly want a throwaway pass).
 
-> **Set `pipeline.inference.max_turns: 10`; do not leave it low (e.g. `2`).**
+> **Set `pipeline.inference.max_turns: 12`; do not leave it low (e.g. `2`).**
 > `max_turns` caps the alternating tester↔target loop for **scenario** (multi-turn)
 > cases (single-turn `prompt` cases ignore it). `10` is the ASSERT default
 > (`DEFAULT_TESTER_MAX_TURNS`) and gives a realistic persistence/erosion arc room to
@@ -462,7 +469,7 @@ Do this at the end of the domain you just measured:
 5. Generate `evals/user_disengagement.yaml`: `behavior.description`
    from the doc Summary, `stratify.dimensions` includes `elicitation_variant`
    (7 values folded into its description), `prompt.sample_size: 25` (the size the
-   user chose, applied to `scenario` too), `inference.max_turns: 10`, and **no
+   user chose, applied to `scenario` too), `inference.max_turns: 12`, and **no
    `judge.dimensions` block** — `policy_violation` + `overrefusal` are built in.
 6. Confirm → offer a smoke run (Step 5a): generate artifacts with
    `--override inference.enabled=false --override judge.enabled=false`, slice 3

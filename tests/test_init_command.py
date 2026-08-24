@@ -11,7 +11,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from assert_ai.cli import cli
-from assert_ai.init._context import build_system_message
+from assert_ai.init._context import _resolve_harm_skill_path, build_system_message
 
 
 _MINIMAL_VALID_YAML = (
@@ -175,12 +175,50 @@ class InitPromptContentTest(unittest.TestCase):
     def test_prompt_contains_required_section_anchors(self) -> None:
         prompt = build_system_message()
         for anchor in (
+            "### 0. Mode Selection",
             "### 1. Application Context",
             "### 3. Pipeline Default Model",
+            "Automatic harm-template flow",
             "policy_violation",
             "overrefusal",
         ):
             self.assertIn(anchor, prompt, f"missing anchor: {anchor!r}")
+
+    def test_prompt_injects_harm_template_skill(self) -> None:
+        """The automatic flow relies on the harm skill being injected.
+
+        Guards both the wrapper preamble (which adapts the skill to the
+        no-web-tools init runtime) and a distinctive line from the skill
+        body itself, so a broken loader can't silently drop the skill.
+
+        The body check reads the heading from whichever methodology doc
+        this repo actually ships, so the test follows the loader's
+        resolution order instead of pinning one repo layout.
+        """
+        prompt = build_system_message()
+        self.assertIn("Harm Eval Template Skill", prompt)
+        # Adaptation preamble reconciling the skill with the init runtime.
+        self.assertIn("do **not** have live web-browsing tools", prompt)
+        skill_path = _resolve_harm_skill_path()
+        self.assertIsNotNone(skill_path, "no harm methodology doc was found to inject")
+        assert skill_path is not None
+        heading = skill_path.read_text(encoding="utf-8").splitlines()[0].strip()
+        self.assertIn(heading, prompt)
+
+    def test_prompt_web_capability_toggles_with_web_search(self) -> None:
+        """Web-capability wording flips with the ``web_search`` flag.
+
+        With web search on, the prompt advertises the live tool and tells
+        the harm flow to research for real. With it off (the default), it
+        keeps the knowledge-only, no-fabricated-URLs guidance.
+        """
+        with_web = build_system_message(web_search=True)
+        self.assertIn("Live Web Research", with_web)
+        self.assertIn("Do the skill's research for real", with_web)
+
+        without_web = build_system_message(web_search=False)
+        self.assertNotIn("Live Web Research", without_web)
+        self.assertIn("do **not** have live web-browsing tools", without_web)
 
     def test_prompt_includes_default_model_hint_when_provided(self) -> None:
         prompt = build_system_message(default_model_hint="azure/gpt-5.4")
@@ -213,6 +251,72 @@ class InitPromptContentTest(unittest.TestCase):
         # --default-model hint should be surfaced when provided.
         self.assertIn("Pipeline default_model hint", first_user)
         self.assertIn("azure/gpt-5.4", first_user)
+
+
+class InitWebSearchTest(unittest.TestCase):
+    """Live web research wiring for the design agent."""
+
+    def test_web_search_available_gates_by_family(self) -> None:
+        from assert_ai.init._llm import web_search_available
+
+        self.assertTrue(web_search_available("azure/gpt-5.4-mini"))
+        self.assertTrue(web_search_available("openai/gpt-4o"))
+        self.assertFalse(web_search_available("gemini/gemini-1.5-pro"))
+
+    @patch("assert_ai.init._llm._chat_completion_web_search", return_value="{}")
+    def test_chat_completion_routes_to_web_search_path(self, mock_web) -> None:
+        from assert_ai.init._llm import chat_completion
+
+        chat_completion(model="azure/gpt-5.4-mini", messages=[], web_search=True)
+        self.assertTrue(mock_web.called)
+
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
+    def test_web_search_flag_passed_to_loop(self, _mock_sys, mock_llm) -> None:
+        mock_llm.return_value = _done_response()
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, [
+                "init",
+                "--describe", "A chatbot",
+                "--non-interactive",
+                "--model", "azure/gpt-5.4-mini",
+                "--web-search",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(mock_llm.call_args.kwargs["web_search"])
+
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
+    def test_no_web_search_flag_disables_web(self, _mock_sys, mock_llm) -> None:
+        mock_llm.return_value = _done_response()
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, [
+                "init",
+                "--describe", "A chatbot",
+                "--non-interactive",
+                "--no-web-search",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+        self.assertFalse(mock_llm.call_args.kwargs["web_search"])
+
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
+    def test_web_search_degrades_for_unsupported_model(self, _mock_sys, mock_llm) -> None:
+        mock_llm.return_value = _done_response()
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, [
+                "init",
+                "--describe", "A chatbot",
+                "--non-interactive",
+                "--model", "gemini/gemini-1.5-pro",
+                "--web-search",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+        # Unsupported family → web search disabled before the loop runs.
+        self.assertFalse(mock_llm.call_args.kwargs["web_search"])
 
 
 if __name__ == "__main__":

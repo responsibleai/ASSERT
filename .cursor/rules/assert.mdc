@@ -38,15 +38,17 @@ Clarity discovery (recommended — present it first, but never alone):** an exis
 `run_clarity` run; its value is finding failure modes the user has *not* thought of, plus severity and
 causal chains. Recommend it whenever they're unsure what to measure or want coverage rather than one
 known bug. **Path B — user-supplied risks:** the user names the risk themselves, as prose or by
-pointing at a PRD, design doc, threat model, incident report, or test plan. Right when they already
-know what they want measured. **Path C — system-derived harm portfolio:** the user points at a
-*system* (product description, deployment context, user population) rather than a risk, and wants the
-harm surface enumerated for it. Follow
-`.claude/skills/run-assert-eval/workflows/system-eval-workflow.md` — it researches the system's
-plausible harms against retrieved sources, then hands the retained harms back as candidate behaviors
-that feed the **same** Step 2 triage gate (never a second, parallel triage). Right when the question is
-"what should we even be measuring?" and Clarity isn't wired up. **Whenever you need a new risk to measure**, and the user has not
-already named one, offer the choice explicitly. An existing `.clarity-protocol/` changes the
+pointing at a PRD, design doc, threat model, red-team finding, incident report, or risk assessment.
+Right when they already know what they want measured. **Both paths answer *what* to test for;
+neither answers *how*** — that is Step 3's job: once a risk is named, the research procedure reviews
+**how that risk has actually been evaluated** and converts the findings into the test-set design (the
+timescale it becomes observable on — psychosocial harms usually need `scenario` and a longer
+`max_turns`, not one answer; whose viewpoint the probes are authored from — a hospital helpdesk is
+exercised by patients, nurses, and schedulers, not one adversarial persona; and which conditions the
+evidence says change it). **The skill does not invent risks** — risk identification is Clarity's job
+or the user's, and the Step 3 research never substitutes for deciding what to measure.
+**Whenever you need a new risk to measure**, and the user has not
+already named one, offer both options explicitly. An existing `.clarity-protocol/` changes the
 **default**, never the **choice** — offer it as the recommended option ("I found an existing Clarity
 protocol with these risks — measure one of those, or is there a different risk you have in mind?"),
 then take the user's answer. **An explicit user-supplied risk always wins:** if the user names a
@@ -156,8 +158,9 @@ ASSERT performs best with **one atomic behavior per eval**. Never bundle multipl
 
 Configs are **researched, cited, and user-approved** — not scaffolded and hoped for. Follow
 `.claude/skills/run-assert-eval/workflows/research-eval-dimensions.md` for each selected risk; it owns
-the whole of config generation. Collect two inputs first and **never silently default either**:
-`eval_type` (`harm` for a triaged risk, `system` to discover a whole-system harm portfolio) and `N`
+the whole of config generation. The risk is already named by the time you get here — what the research
+supplies is **how that risk has been evaluated**, converted into the test-set design. Collect one input
+first and **never silently default it**: `N`
 (positive integer — how many complete dimension-generation passes to run before deduplication).
 That workflow runs a path-only isolation preflight (`plan_generation_path.py`, which never reads a prior
 generated YAML); reuses a repo behavior preset where one matches; researches the dimension model against
@@ -183,7 +186,8 @@ one flipped case = ±10pp of noise, and inference is non-deterministic (agent te
 lower) so two runs of the same config drift by chance. Ask e.g. *"How many cases per behavior? `10` = fast/noisy,
 `25` = stable (recommended), `50`+ = tightest — same size for prompt and scenario."* Recommend `25`, and **`≥25` for
 any run headed to an ACS before/after A/B** (the governed config is a byte-identical copy that inherits this size —
-see `govern-and-remeasure.md`). **`max_turns` has a floor of `10`** (the ASSERT default), raised when the harm's
+see `govern-and-remeasure.md`). **`max_turns` has a floor of `12`** (the config template's baseline; ASSERT's own
+default is `10`), raised when the harm's
 evidence-backed observability horizon is longer, and **identical in baseline and governed configs** or the "only ACS
 differs" comparison breaks. After generation, show the user the resolved `behavior.description`, `context`,
 `pipeline.judge` settings, the `systematize` / `judge` models, and the reference list. Confirm before running.
@@ -196,11 +200,13 @@ would break the command or inject into the shell. `--from <path>` extends an exi
 **Author researched judge `dimensions`, but never reuse a built-in name:** `policy_violation` and `overrefusal` are
 `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly disabled; researched
 harm-specific dimensions are added **on top** of them. Config dimensions merge over the built-ins **by name** into the
-same dict, so declaring one called `policy_violation` or `overrefusal` silently replaces the built-in rubric — and
-since the headline permissibility split is derived from stored `policy_violation` judgments, that quietly redefines the
-headline metric and any ACS baseline compared against it. **The same applies to `judge.preset`, which expands into that
-same merged list: do not use `safety-core`** — it defines dimensions named exactly `policy_violation` and
-`overrefusal`, so it replaces both built-in rubrics and buys nothing the built-ins do not already provide.
+same dict, so declaring one called `policy_violation` or `overrefusal` silently replaces the built-in rubric. That does
+**not** move the headline permissibility split — `assert_ai/results.py` recomputes it from the per-behavior
+`node_judgments`, never from a dimension verdict — but it does change the verdict stored in the run JSON and
+`DEFAULT_COMPARE_METRIC`. **The same applies to `judge.preset`, which expands into that
+same merged list: do not use `safety-core`** — its only two dimensions are named exactly `policy_violation` and
+`overrefusal`, so it replaces both built-in rubrics and buys nothing: `_SUPERSEDED_DISPLAY_METRICS`
+(`assert_ai/cli.py`) hides that pair whenever the split is available.
 `safety-extended` is additive (`harm_actionability`, `pii_leakage`) and is safe. The post-write gate rejects both forms.
 
 ### 4. Identify the target shape
@@ -346,7 +352,7 @@ product behavior.
 - **Govern with ACS, don't just prompt-tweak** — to fix and *prove* it, generate an ACS policy from the findings (`assert-ai acs generate`), **review and commit** it (scope the gated tools, tighten conditions), and re-run the same eval against the governed callable to show the delta; needs a wrappable callable target (`../../.claude/skills/run-assert-eval/workflows/govern-and-remeasure.md`). Whenever a gate needs a value the model doesn't put in the tool args — a trusted session flag (verification), a trusted comparison value (the caller's own id), a trusted numeric cap, or a running total / prior-call fact — the governed agent must surface that scalar from its **session state** into the tool-call **policy_target** so the generated `input.policy_target.value.*` rule actually fires. ACS evaluates each call in isolation, so multi-call constraints (running totals, ordering, rate limits) are handled by that same injection, not by encoding history in Rego. Free-form content failures (unsafe advice, PII in prose, a verbal-only high-risk promise) and inbound prompt-injection instead use an **annotator-based** gate at the `output`/`input` point, proven by the remeasure delta since offline `validate` can't run annotators. Never hand-drive an external `acs` CLI for this loop.
 - **Config generation is owned by the research workflow** — `research-eval-dimensions.md` runs the isolation preflight, the ≥2-source evidence gate, the `N` deduplicated passes, and the blocking approval step. Do not hand-write a config around it, and do not treat `assert-ai init` as the default path.
 - **Never emit an uncited dimension** — every behavior category, stratify dimension, and judge dimension carries inline `# sources:` tags resolving to the config's `# References` block. If live retrieval is unavailable, stop at the ledger rather than shipping remembered citations.
-- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` merge by name into the same dict, so a collision silently replaces the built-in rubric that the headline metric and every ACS baseline are derived from. `validate_dimension_review.py pre-write` rejects it.
+- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` merge by name into the same dict, so a collision silently replaces the built-in rubric. It does not move the headline split (recomputed from `node_judgments`), but it changes the verdict stored in the run JSON and the default compare metric. `validate_dimension_review.py pre-write` rejects it.
 - **Never read a prior generated config to "align" with it** — the isolation preflight is path-only by design. No `read_file`, `cat`, `grep`, `git show`, hashing, or inferring content from size, timestamps, or commit history.
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.

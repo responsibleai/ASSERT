@@ -1,6 +1,6 @@
 # Iterative Dimension Generation and Review
 
-Use this workflow for every `eval_type: harm` run. It controls repeated research,
+Use this workflow for every harm run. It controls repeated research,
 cross-run deduplication, and the user approval gate. Do not write an
 `eval_config.yaml` until the workflow reaches explicit approval.
 

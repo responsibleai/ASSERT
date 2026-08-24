@@ -38,8 +38,11 @@ import json
 import logging
 import os
 import random
+import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 from assert_ai.core import azure_auth
@@ -442,6 +445,73 @@ def _maybe_inject_azure_aad_token(model: str, payload: dict[str, Any]) -> None:
         payload["azure_ad_token_provider"] = provider
 
 
+def _maybe_inject_azure_responses_api_version(model: str, payload: dict[str, Any]) -> None:
+    """Forward ``AZURE_API_VERSION`` onto ``azure/*`` Responses API payloads.
+
+    LiteLLM's Responses path does not read ``AZURE_API_VERSION`` from the
+    environment the way its Chat Completions path does. Left to its own
+    default it uses ``AZURE_DEFAULT_RESPONSES_API_VERSION`` — literally
+    ``"preview"`` — which routes the request to the newer
+    ``/openai/v1/responses`` surface. Azure OpenAI resources that only
+    serve the classic ``/openai/responses?api-version=<dated>`` endpoint
+    reject the ``/openai/v1/`` surface with a 401 ("wrong API endpoint"),
+    so ``web_search`` fails even though the same identity works for Chat
+    Completions.
+
+    Passing an explicit dated ``api_version`` keeps LiteLLM on the classic
+    ``/openai/responses`` route — matching the api-version the Chat path
+    already uses. No-op unless the model is ``azure/*`` and
+    ``AZURE_API_VERSION`` is set; ``azure_ai/*`` (Foundry) uses a different
+    route and is intentionally excluded. Callers must invoke this *before*
+    applying ``extra_kwargs`` so an explicit user-supplied ``api_version``
+    still wins.
+    """
+    if _model_family(model) != "azure":
+        return
+    if "api_version" in payload:
+        return
+    api_version = (os.environ.get("AZURE_API_VERSION") or "").strip()
+    if api_version:
+        payload["api_version"] = api_version
+
+
+def _inject_azure_responses_aad_header(model: str, payload: dict[str, Any]) -> None:
+    """Attach an ``Authorization: Bearer`` header to ``azure/*`` Responses payloads under AAD.
+
+    LiteLLM's Azure Responses path — unlike its Chat Completions path —
+    does not apply the ``azure_ad_token_provider`` callable (nor a static
+    ``azure_ad_token``); it only supports api-key auth. Under Entra/AAD
+    that leaves the web-search Responses call with no valid credential:
+    LiteLLM silently falls back to whatever ``AZURE_OPENAI_API_KEY`` /
+    ``AZURE_API_KEY`` is in the environment, which is typically the wrong
+    resource or a stale key and gets rejected with a 401.
+
+    We bridge the gap by resolving the AAD token here and injecting it as
+    an explicit ``extra_headers`` bearer, which LiteLLM *does* forward on
+    the Responses request — matching a hand-rolled ``Authorization:
+    Bearer`` curl against ``/openai/responses``.
+
+    No-op for non-``azure/*`` families, for api-key auth mode (LiteLLM's
+    own api-key path already works), and when ``azure-identity`` is
+    unavailable so the provider is ``None`` (that case is surfaced by
+    :func:`_maybe_inject_azure_aad_token`, which runs first). Runs before
+    ``extra_kwargs`` is merged, and uses ``setdefault`` so an explicit
+    user-supplied Authorization header still wins.
+    """
+    if _model_family(model) != "azure":
+        return
+    if azure_auth._get_azure_auth_mode() == "key":
+        return
+    provider = azure_auth.get_azure_token_provider(azure_auth.AZURE_OPENAI_SCOPE)
+    if provider is None:
+        return
+    headers = payload.get("extra_headers")
+    if not isinstance(headers, dict):
+        headers = {}
+    headers.setdefault("Authorization", f"Bearer {provider()}")
+    payload["extra_headers"] = headers
+
+
 def _supports_web_search_preview(model: str) -> bool:
     """Whether this model can use the Responses API web_search_preview tool.
 
@@ -673,6 +743,8 @@ def _build_responses_payload(
     if resolved_options.reasoning_effort is not None:
         payload["reasoning_effort"] = resolved_options.reasoning_effort
     _maybe_inject_azure_aad_token(model, payload)
+    _maybe_inject_azure_responses_api_version(model, payload)
+    _inject_azure_responses_aad_header(model, payload)
     payload.update(resolved_options.extra_kwargs)
     return payload
 
@@ -685,16 +757,59 @@ def _responses_client(litellm: Any) -> tuple[Any, bool]:
     raise ValueError("web_search requires a LiteLLM responses client")
 
 
+@contextmanager
+def _litellm_import_context() -> Iterator[None]:
+    """Temporarily remove local checkout paths that shadow LiteLLM's tokenizer plugins."""
+    original_path = list(sys.path)
+    shadowing_entries: list[str] = []
+    for entry in original_path:
+        if not entry:
+            continue
+        path = Path(entry).expanduser()
+        if not path.exists():
+            continue
+        # Never drop the directory that actually provides LiteLLM. A real
+        # ``pip install`` puts litellm and tiktoken's ``tiktoken_ext`` namespace
+        # package in the same site-packages, so matching ``tiktoken_ext`` alone
+        # would remove the environment's site-packages and make litellm
+        # unimportable. Only shadowing local checkouts (which carry the tokenizer
+        # plugins or internal markers but not litellm itself) should be dropped.
+        if (path / "litellm").exists():
+            continue
+        if any((path / marker).exists() for marker in ("tiktoken_ext", "sciclone_utils", "clusters")):
+            shadowing_entries.append(entry)
+
+    if shadowing_entries:
+        filtered_path = [entry for entry in original_path if entry not in shadowing_entries]
+        sys.path[:] = filtered_path
+    try:
+        yield
+    finally:
+        sys.path[:] = original_path
+
+
 def _get_litellm_module() -> Any:
     global _LITELLM_MODULE
     if _LITELLM_MODULE is None:
-        try:
-            _LITELLM_MODULE = importlib.import_module("litellm")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "litellm is not installed. Install it with `python -m pip install litellm` "
-                "before using assert_ai.core.model_client."
-            ) from exc
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                with _litellm_import_context():
+                    _LITELLM_MODULE = importlib.import_module("litellm")
+                break
+            except Exception as exc:  # pragma: no cover - exercised via regression test
+                last_exc = exc
+                if attempt == 1:
+                    if isinstance(exc, ModuleNotFoundError):
+                        raise RuntimeError(
+                            "litellm is not installed. Install it with `python -m pip install litellm` "
+                            "before using assert_ai.core.model_client."
+                        ) from exc
+                    raise
+                for module_name in ("litellm", "tiktoken", "tiktoken_ext", "sciclone_utils", "clusters"):
+                    sys.modules.pop(module_name, None)
+        if _LITELLM_MODULE is None:
+            raise RuntimeError("LiteLLM import unexpectedly failed") from last_exc
         # Silence noisy litellm warnings that pollute stderr
         _LITELLM_MODULE.suppress_debug_info = True
         # Disable LiteLLM's internal retry so _with_retries is the

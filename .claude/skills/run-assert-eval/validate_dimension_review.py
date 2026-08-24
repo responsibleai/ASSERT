@@ -329,9 +329,9 @@ def _validate_cycle(
                     raise ReviewValidationError(
                         f"{item_label}.name {canonical_name!r} reuses a built-in judge "
                         "dimension. Config dimensions merge over the built-ins by name, so "
-                        "this would silently replace the built-in rubric and corrupt the "
-                        "policy-violation split every metric and ACS delta is derived from. "
-                        "Rename it to a distinct researched name."
+                        "this silently replaces the built-in rubric: the verdict stored in "
+                        "the run JSON and the default compare metric would no longer mean "
+                        "what the engine documents. Rename it to a distinct researched name."
                     )
             _text(item.get("purpose"), f"{item_label}.purpose")
             _text(item.get("levels_or_mode"), f"{item_label}.levels_or_mode")
@@ -824,10 +824,11 @@ def _reject_shadowing_judge_dimensions(config: dict, config_path: Path) -> None:
             f"config {config_path} "
             + "; ".join(problems)
             + ". Judge dimensions from both `dimensions` and `preset` merge over the "
-            "built-ins by name, so this silently replaces the built-in rubric and "
-            "corrupts the policy-violation split every metric and ACS delta is derived "
-            "from. Rename to a distinct researched name, or drop the preset - the "
-            "built-ins already provide these dimensions."
+            "built-ins by name, so this silently replaces the built-in rubric: the verdict "
+            "stored in the run JSON and the default compare metric would no longer mean "
+            "what the engine documents. Rename to a distinct researched name, or drop the "
+            "preset - the built-ins already provide these dimensions, and the engine treats "
+            "them as superseded once the permissibility split is available."
         )
 
 

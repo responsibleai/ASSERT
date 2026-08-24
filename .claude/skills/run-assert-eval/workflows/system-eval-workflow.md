@@ -1,10 +1,19 @@
 # System Eval Workflow
 
-This workflow is mandatory when `eval_type` is `system`. Complete every stage,
-then return to `SKILL.md` and run the harm procedure once for every retained
-harm. Carry the validated `N` and cumulative dimension criteria into every child
-run. `N` repeats dimension generation within each harm child; it does not repeat
-the system-level harm inventory workflow.
+> **Not an entry point into `run-assert-eval`.** This file is retained for parity with
+> the upstream `assert-add-harm-eval-template` skill, where whole-system harm discovery
+> is a supported mode. In `run-assert-eval`, risk *identification* has exactly two
+> sources — **Clarity discovery** and **user-supplied risks** (`SKILL.md` Step 1) — and
+> [`research-eval-dimensions.md`](research-eval-dimensions.md) runs downstream of both to
+> answer *how* an already-named risk should be tested. Do not offer this workflow in the
+> risk-source menu and do not enter it on your own initiative. Use it only when the user
+> explicitly asks for a whole-system harm inventory, and treat its output as candidate
+> risks that still pass through the Step 2 triage gate like any other source.
+
+Complete every stage, then return to `SKILL.md` and run the harm procedure once for
+every retained harm. Carry the validated `N` and cumulative dimension criteria into
+every child run. `N` repeats dimension generation within each harm child; it does not
+repeat the system-level harm inventory workflow.
 
 ## S1. Define the system and evaluation boundary
 

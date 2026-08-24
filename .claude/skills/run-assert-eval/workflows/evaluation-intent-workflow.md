@@ -38,8 +38,8 @@ Canonical purpose names are `model_comparison`, `product_readiness`,
 `mitigation_validation`, `regression_testing`, and `red_team_discovery`.
 Preserve the meaning of free-text answers rather than silently broadening them.
 Freeze the answered fields into every generation cycle and every one of its `N`
-passes. In system mode, propagate them to system-level harm discovery and every
-retained-harm child unless the user explicitly gives a harm-specific override.
+passes. When several risks were selected in triage, propagate them to every harm
+unless the user explicitly gives a harm-specific override.
 
 Do not add `evaluation_intent` as an `eval_config.yaml` schema field. Put supplied
 target, deployment, and population facts in `context` where appropriate; keep

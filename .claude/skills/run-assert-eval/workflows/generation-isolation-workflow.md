@@ -68,8 +68,9 @@ immediately before pre-write if enough time has passed for another process to
 claim the path. The validator's pre-write gate must reject an existing config
 path without reading it; never overwrite or replace a config from any run.
 
-For `eval_type: system`, suffix the system portfolio directory once, then place
-all retained-harm children below it:
+For the whole-system inventory workflow (retained for upstream parity; **not** an entry
+point — see [`system-eval-workflow.md`](system-eval-workflow.md)), suffix the system
+portfolio directory once, then place all retained-harm children below it:
 
 ```text
 examples/<system_run_directory>/<harm_name>/eval_config.yaml

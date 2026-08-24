@@ -83,6 +83,18 @@ log = logging.getLogger(__name__)
     ),
 )
 @click.option(
+    "--web-search/--no-web-search",
+    "web_search",
+    default=True,
+    show_default=True,
+    help=(
+        "Let the design agent do live web research via the OpenAI/Azure "
+        "Responses API web_search_preview tool. Falls back to a "
+        "knowledge-only conversation when the model or region does not "
+        "support it."
+    ),
+)
+@click.option(
     "--env-file",
     type=click.Path(path_type=Path),
     default=Path(".env"),
@@ -125,6 +137,7 @@ def init(
     dimensions: str | None,
     model: str,
     default_model_hint: str | None,
+    web_search: bool,
     env_file: Path,
     non_interactive: bool,
     max_turns: int,
@@ -143,6 +156,7 @@ def init(
 
     from assert_ai.init._design_agent import run_design_loop
     from assert_ai.init._emit import emit_config
+    from assert_ai.init._llm import web_search_available
 
     # Load env vars for LLM credentials
     if env_file.exists():
@@ -183,6 +197,21 @@ def init(
     console = Console(highlight=False, color_system=None if no_color else "auto", stderr=True)
     log.info("Starting eval config designer")
 
+    # Live web research rides the OpenAI/Azure Responses API web_search_preview
+    # tool, so it only applies to those model families. If the user asked for it
+    # on an unsupported design-agent model, degrade to a knowledge-only
+    # conversation instead of failing mid-run. (Responses-API-unavailable
+    # regions still degrade automatically inside model_client.generate.)
+    effective_web_search = web_search
+    if web_search and not web_search_available(model):
+        log.warning(
+            "Web search requested but the design-agent model %r does not support "
+            "it (needs an OpenAI/Azure model via the Responses API). Continuing "
+            "without live web research.",
+            model,
+        )
+        effective_web_search = False
+
     # Load seed config if provided
     seed_yaml: str | None = None
     if seed_path is not None:
@@ -197,6 +226,7 @@ def init(
         judge_preset=judge_preset,
         dimension_hints=dimensions,
         default_model_hint=default_model_hint,
+        web_search=effective_web_search,
         non_interactive=non_interactive,
         max_turns=max_turns,
         console=console,

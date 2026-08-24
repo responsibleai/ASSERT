@@ -7,9 +7,10 @@ description: >
   that the support bot never gives legal advice"). Risks come either from
   Clarity — recommended, driving the real Clarity MCP tools (run_clarity) in-IDE
   to discover failure modes the user has not considered — or directly from the
-  user as a description, PRD, design doc, threat model, or test plan — or from a
-  whole-system harm inventory. Then researches an evidence-backed, cited config
-  per selected risk at examples/<slug>/eval_config.yaml, gets it approved, runs
+  user as a description, PRD, design doc, threat model, red-team finding, or
+  risk assessment. Then researches how that risk has been evaluated in the
+  literature and turns it into an evidence-backed, cited config per selected
+  risk at examples/<slug>/eval_config.yaml, gets it approved, runs
   the pipeline, and reports pass/violation rates with trace-cited failure examples.
 ---
 
@@ -45,28 +46,37 @@ with severity and causal chains. Recommend it whenever the user is unsure what
 to measure, is new to the agent, or wants coverage rather than one known bug.
 
 **Path B — user-supplied risks.** The user names the risk themselves, as prose
-or by pointing at a PRD, design doc, threat model, incident report, or test
-plan. This is the right path when they already know what they want measured.
+or by pointing at a PRD, design doc, threat model, red-team finding, incident
+report, risk assessment, or test plan. This is the right path when they already
+know what they want measured.
 
-**Path C — system-derived harm inventory.** The user doesn't have a specific risk
-*or* a Clarity protocol — they have a **system**, and want to know what it should be
-evaluated for at all ("what should I even be testing my RAG assistant for?"). Research
-the harms the system's type, domain, architecture, tasks, and populations actually expose,
-gate them on evidence, and produce a retained/merged/rejected harm ledger. Follow
-[`workflows/system-eval-workflow.md`](workflows/system-eval-workflow.md).
+**Both paths answer *what* to test for. Neither answers *how*.** That is the job of
+the research procedure in Step 3: once a risk is named, it runs a literature review of
+**how that risk has actually been evaluated** and turns the findings into the test-set
+design. The output is not a restatement of the topic — it is how the topic *manifests*:
 
-Path C produces the **same candidate shape** as Paths A and B, so it feeds the *same*
-triage gate in Step 2 — it does not get its own. It intentionally over-produces, exactly
-like Clarity, so triage matters more here, not less. Each retained harm then becomes one
-`eval_type: harm` child run in Step 3, one level of fan-out only.
+- **Timescale.** Psychosocial and relational harms are typically observed across
+  turns, not in one answer, so the literature drives `scenario` over `prompt`,
+  and `max_turns` from the expected onset of the harm.
+- **Viewpoint.** A hospital helpdesk is exercised by its primary users — patients,
+  nurses, schedulers — not solely by one adversarial persona. Population and role
+  become stratification dimensions when the evidence says they change the harm.
+- **Conditions.** Pressure, severity, context position, and trajectory stage become
+  explicit `levels` when sources support them.
+
+This is the difference between a config that names a risk and a config that can
+actually measure it.
 
 **Whenever you need a new risk to measure**, and the user has not already named
 one, **offer the choice**:
 
-> I can discover risks with Clarity — it interviews you and surfaces failure
-> modes you may not have considered (recommended if you're not sure what to
-> measure) — or you can tell me the risk directly, in your own words or by
-> pointing me at a PRD or design doc. Which do you prefer?
+> I can find a risk two ways. **Clarity** interviews you and surfaces failure
+> modes you may not have considered — recommended when you know the agent but
+> aren't sure what to measure. Or **you name it directly**, in your own words or
+> by pointing me at a PRD, design doc, threat model, red-team finding, or risk
+> assessment — best when you already know what you want measured. Either way I
+> then research how that risk has been evaluated and build the test set from
+> that evidence. Which do you prefer?
 
 An existing `.clarity-protocol/` changes the **default**, never the **choice**.
 Offer it as the recommended option ("I found an existing Clarity protocol with
@@ -254,10 +264,6 @@ On Path B the list is usually short and already chosen — still play it back an
 confirm scope before generating configs, rather than assuming every risk they
 mentioned should be measured in this pass.
 
-On Path C the list is long by construction — a system-wide harm inventory over-produces
-the same way Clarity does. Surface the retained harms with their evidence and ask which to
-measure now; never fan out a child run for every harm in the ledger.
-
 ### 3. Turn each selected risk into an atomic config
 
 ASSERT performs best with **one atomic behavior per eval**. Never bundle multiple
@@ -272,11 +278,16 @@ Follow [`workflows/research-eval-dimensions.md`](workflows/research-eval-dimensi
 each selected risk. That workflow owns the whole of config generation; do not hand-roll a
 config here and do not skip its gates.
 
-Collect two inputs before entering it, and **never silently default either**:
+Its purpose is narrow and worth stating plainly: the risk already has a name by the
+time you arrive here. What the research supplies is **how that risk has been evaluated**
+— the timescale it becomes observable on, whose viewpoint exercises it, and which
+conditions change it — expressed as `stratify` dimensions, `behavior_category_count`,
+judge dimensions, and `max_turns`. It does not re-open *what* to measure.
+
+Collect one input before entering it, and **never silently default it**:
 
 | Input | Rule |
 |---|---|
-| `eval_type` | `harm` (one named risk) or `system` (discover a harm portfolio for a whole system, then fan out one child run per retained harm). Normalize to lowercase; accept nothing else. A risk selected in Step 2 is `harm`. |
 | `N` | Positive integer — how many complete dimension-generation passes to run before deduplication. Ask for it when missing or invalid rather than inferring one. |
 
 What that workflow does, in order:
@@ -309,7 +320,8 @@ Two things that workflow will ask you to decide, and that matter downstream:
   `violations / sample_size`, so at `10` one flipped case moves the number 10 percentage
   points. Recommend `25`; require **`≥25`** whenever the run will become an ACS A/B
   baseline.
-- **`max_turns` has a floor of `10`** (the ASSERT default) unless the harm is genuinely
+- **`max_turns` has a floor of `12`** (the config template's baseline; ASSERT's own
+  default is `10`) unless the harm is genuinely
   single-turn, and must be **identical in the baseline and governed configs** or the
   "only ACS differs" comparison breaks.
 
@@ -317,21 +329,29 @@ Two things that workflow will ask you to decide, and that matter downstream:
 built-ins — but **never reuse a built-in name**. `policy_violation` and `overrefusal` are
 `BUILT_IN_DIMENSIONS` (`assert_ai/core/judge.py`) and are always judged unless explicitly
 disabled. Config dimensions merge over the built-ins **by name** into the same dict, so a
-researched dimension called `policy_violation` silently replaces the built-in rubric — and
-since the headline `not_permissible_policy_violation_rate` /
-`permissible_policy_violation_rate` split is derived from stored `policy_violation`
-judgments, that quietly redefines the headline metric and any ACS baseline compared
-against it.
+researched dimension called `policy_violation` silently replaces the built-in rubric — no
+warning, no error.
+
+**What shadowing does and does not affect.** It does **not** move the headline pair. Both
+`not_permissible_policy_violation_rate` and `permissible_policy_violation_rate` are
+recomputed in `assert_ai/results.py` from the judge's per-behavior `node_judgments` — each
+relevant node's `violated` flag, bucketed by that behavior category's `permissible` value —
+so they never read either dimension's verdict. What shadowing *does* change is the
+dimension verdict persisted in the run JSON, and `DEFAULT_COMPARE_METRIC`
+(`assert_ai/cli.py`), which is still `policy_violation`. That is a comparability and
+stored-artifact problem, not a corrupted headline.
 
 The same applies to **judge presets**, which expand into that same merged list:
 
-- **Do not set `judge.preset: safety-core`.** It defines dimensions named exactly
-  `policy_violation` and `overrefusal`, so selecting it replaces *both* built-in rubrics.
-  The built-ins already provide both, so it buys nothing and costs the headline metric.
-  `overrefusal` is the more dangerous of the two — unlike `policy_violation` it is **not**
-  recomputed from `node_judgments`, so the substituted rubric *is* the reported number.
+- **Do not set `judge.preset: safety-core`.** Its only two dimensions are named exactly
+  `policy_violation` and `overrefusal`, so it replaces *both* built-in rubrics — and buys
+  nothing, because the engine treats that pair as **superseded**:
+  `_SUPERSEDED_DISPLAY_METRICS` (`assert_ai/cli.py`) hides both from CLI detail surfaces
+  whenever the permissibility split is available, which for this skill's configs is always.
+  You would pay judge tokens per dimension per row for two numbers that are never shown and
+  never reported.
 - **`safety-extended` is safe and recommended** for nuanced harms — it defines
-  `harm_actionability` and `pii_leakage`, which collide with nothing.
+  `harm_actionability` and `pii_leakage`, which collide with nothing and are displayed.
 
 The post-write gate rejects both the inline and the preset form.
 
@@ -589,7 +609,7 @@ when they disagree with this skill on *product behavior*, they win; this skill o
 | `workflows/iterative-dimension-workflow.md` | The `N`-pass cycle, semantic deduplication, and the approval gate |
 | `workflows/generation-isolation-workflow.md` | Path-only prior-generation preflight and isolated output directories |
 | `workflows/evaluation-intent-workflow.md` | Optional intake: what decision the eval supports, and for whom |
-| `workflows/system-eval-workflow.md` | Path C — whole-system harm inventory, then one harm child run per retained harm |
+| `workflows/system-eval-workflow.md` | **Not an entry point.** Ported for parity with the upstream skill: a whole-system harm *inventory*. Risk identification here belongs to Clarity or the user — use this only on explicit request |
 | `workflows/govern-and-remeasure.md` | The ACS baseline → generate → governed run → delta loop |
 | `workflows/diagnose-acs-delta.md` | Symptom-indexed diagnostics when the ACS delta comes out wrong |
 
@@ -610,6 +630,11 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
   the user-supplied path (Step 1b) to the same bar: atomic behaviors, an explicit
   permissible boundary, researched and cited dimensions. Never block a measurement on
   Clarity setup.
+- **The skill does not invent risks** — risk *identification* is Clarity's job, or
+  the user's (red team, threat model, risk assessment). Step 3's research answers
+  *how to measure* a risk that already has a name; it never substitutes for
+  deciding *what* to measure. If the user has no risk and no protocol, offer
+  Clarity — do not silently generate a harm list of your own.
 - **Never imitate Clarity's interview from your own head** — if the user chose
   Clarity, drive the real MCP tools (`run_clarity` returns its genuine process
   guide inlined). Step 1b is a distinct structured intake, not a hand-rolled
@@ -634,7 +659,7 @@ Helper scripts at the skill root: `clarity_intake.py` (parse `failures.md`),
 - **One atomic behavior per config** — split N selected risks into N configs run sequentially; never bundle.
 - **Generate configs through the research workflow, not by hand** — `workflows/research-eval-dimensions.md` owns config generation. Every dimension must pass its evidence gate, `N` passes must complete, and the user must explicitly approve the dimension set before any YAML is written. **Silence is not approval.** `assert-ai init` remains available as an explicitly unvalidated scaffold for a throwaway look, never for a measurement you intend to report or govern against.
 - **Never emit an uncited config** — cite only pages actually retrieved this session; never fabricate or guess a URL, title, or author. Keep unsourced candidates in the ledger as `uncited — needs review`. If live retrieval is unavailable, stop at the ledger and say so.
-- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric and corrupts the headline split and any ACS delta derived from it. `judge.preset: safety-core` does this too, since presets expand into the same merged list. The pre-write gate rejects a reused name in the review ledger; the post-write gate rejects it in the written config, in both the inline and the preset form.
+- **Never reuse a built-in judge dimension name** — `policy_violation` and `overrefusal` are `BUILT_IN_DIMENSIONS`; config dimensions merge over them by name, so reusing one silently replaces its rubric. This does **not** move the headline split (`results.py` recomputes it from `node_judgments`), but it does change the verdict stored in the run JSON and `DEFAULT_COMPARE_METRIC`. `judge.preset: safety-core` does this too, since presets expand into the same merged list — and buys nothing, because the engine treats that pair as superseded and hides it once the permissibility split is available. The pre-write gate rejects a reused name in the review ledger; the post-write gate rejects it in the written config, in both the inline and the preset form.
 - **Never read a prior generated config** — the isolation preflight discovers prior generations **by path only**. Do not `cat`, parse, grep, hash, `git show`, or otherwise inspect a matching prior YAML, and do not infer its contents from size, timestamps, or commit history.
 - **Triage before running** — never auto-generate an eval for every enumerated risk; ask which to measure now.
 - **Don't invent metrics** — only report what's in the artifacts.

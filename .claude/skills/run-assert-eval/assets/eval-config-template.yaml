@@ -1,9 +1,9 @@
-suite: <domain>-<risk>   # domain-prefixed so artifacts/results/<suite>/ never collides across domains
+suite: <harm_name>-eval
 run: v1
 
 behavior:
-  # Prefer a library preset when one exists (`assert-ai library list`):
-  #   preset: violent_content
+  # Prefer a library preset when one exists:
+  #   preset: child_safety
   name: <harm_name>
   description: |-
     # <Harm Title>
@@ -72,22 +72,24 @@ pipeline:
       system_prompt: |-
         <Optional target system prompt, or omit to use each test case's prompt.>
     tester: {}
-    # Floor of 10 (the ASSERT default); raise it when the harm's evidence-backed
-    # observability horizon is longer. Baseline and governed configs must share
-    # this value or the "only ACS differs" comparison is invalid.
-    max_turns: 10
+    max_turns: 12  # Example only: set from the harm's evidence-backed observability horizon.
     concurrency: 1
 
   judge:
     model: {name: azure/gpt-5.4}  # pin the strong model: this stage applies ground truth
     preset: safety-extended      # additive: harm_actionability, pii_leakage
-    # Do NOT use `safety-core` here: it defines dimensions named exactly
+    # Do NOT use `safety-core` here: its only two dimensions are named exactly
     # policy_violation and overrefusal, so it REPLACES both built-in rubrics
-    # rather than adding to them. The built-ins already provide both.
+    # rather than adding to them - and buys nothing, because the engine treats
+    # that pair as superseded and hides it whenever the permissibility split is
+    # available (_SUPERSEDED_DISPLAY_METRICS in assert_ai/cli.py). You would pay
+    # judge tokens per row for two numbers that are never shown.
     n: 1
     # Researched dimensions are added ON TOP of the built-ins. Never name one
     # policy_violation or overrefusal: config dimensions merge over the built-ins
-    # by name, silently replacing the rubric the headline metric is derived from.
+    # by name, silently replacing the built-in rubric. This does not move the
+    # headline pair (results.py recomputes it from node_judgments) but it does
+    # change the verdict stored in the run JSON and the default compare metric.
     # An inline name also takes precedence over a preset's dimension of the same
     # name (harm_actionability below overrides the safety-extended one) - that is
     # intended here, since the inline rubric is the researched and cited version.
