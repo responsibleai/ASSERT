@@ -25,7 +25,7 @@ Return exactly one JSON object with the fields below, and no additional fields.
       "expertise": "string — what this perspective contributes"
     }
   ],
-  "reasoning_summary": "string — verbose details of key synthesis decisions at each step that was used to produce the final systematization",
+  "reasoning_summary": "string — concise summary of key synthesis decisions and tradeoffs; do not include hidden chain-of-thought",
   "concept_spec": {
     "behavior": "string — behavior label, must match input behavior",
     "patterns": [
@@ -43,7 +43,7 @@ Return exactly one JSON object with the fields below, and no additional fields.
         "slot_components": [
           {
             "component": "string — slot/component name such as TARGET_GROUP",
-            "nested_slot_components": "null or object",
+            "nested_slot_components": "null or array of objects with component and slot_values",
             "slot_values": [
               {
                 "slot_value": "string",
@@ -109,7 +109,7 @@ If no document was provided, refine the Step 1 output into the Output Contract.
 4. `alternative_systematizations` must document materially distinct framing choices and why they were not selected.
 5. `references` must include relevant academic or authoritative sources used in systematization.
 6. `stakeholder_lenses` must be meaningfully distinct and non-redundant. When a systematization document is provided and it contains no stakeholder information, `stakeholder_lenses` may be an empty list.
-7. `reasoning_summary` must be non-empty and describe the main synthesis choices and tradeoffs that led to the final output.
+7. `reasoning_summary` must be non-empty and concisely describe the main synthesis choices and tradeoffs that led to the final output. Do not provide step-by-step hidden reasoning.
 
 ## Behavior Spec Fields
 

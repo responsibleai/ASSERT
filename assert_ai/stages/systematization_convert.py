@@ -140,8 +140,18 @@ async def run_systematization_to_taxonomy(
     behavior = str(data.get("behavior") or "").strip()
     if not behavior:
         raise ValueError("systematization_convert requires systematization.json to include behavior")
-    systematization_text = str(data.get("systematization") or "").strip()
-    if not systematization_text:
+    systematization_payload = data.get("systematization")
+    if isinstance(systematization_payload, dict) and systematization_payload:
+        systematization_text = json.dumps(
+            systematization_payload,
+            ensure_ascii=False,
+            indent=2,
+        )
+    elif isinstance(systematization_payload, str) and systematization_payload.strip():
+        # Backward compatibility for cached/pre-0.2.1 artifacts, which stored
+        # the systematization as Markdown or JSON text in a single string.
+        systematization_text = systematization_payload.strip()
+    else:
         raise ValueError("systematization_convert requires a non-empty systematization")
     summary_items = data.get("summary_items")
     if summary_items is not None and not isinstance(summary_items, list):

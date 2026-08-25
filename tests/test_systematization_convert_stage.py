@@ -7,9 +7,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from assert_ai.core.model_client import ModelResponse
 from assert_ai.core.config_model import ModelConfig
-from assert_ai.stages.systematization_convert import GUIDELINE_PROMPT, run_systematization_to_taxonomy
+from assert_ai.core.model_client import ModelResponse
+from assert_ai.stages.systematization_convert import (
+    GUIDELINE_PROMPT,
+    run_systematization_to_taxonomy,
+)
 
 _FIXTURE_SYSTEMATIZATION = (
     "# Systematization\n\n## Scope\nText\n\n## Coverage notes\nText\n\n"
@@ -43,6 +46,20 @@ _FIXTURE_SYSTEMATIZATION = (
     "## Downstream harms\n- Harm\n"
 )
 
+_STRUCTURED_SYSTEMATIZATION = {
+    "behavior": "Harmful advice",
+    "scope": "Assistant output that operationally enables harmful activity.",
+    "impact_analysis": "The output can reduce the effort required to cause harm.",
+    "alternative_systematizations": "A topic-only framing was rejected.",
+    "references": ["Authoritative safety policy"],
+    "stakeholder_lenses": [],
+    "reasoning_summary": "Separate operational enablement from benign discussion.",
+    "concept_spec": {
+        "behavior": "Harmful advice",
+        "patterns": [],
+    },
+}
+
 
 class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
     def test_guideline_prompt_preserves_converter_specific_contract(self) -> None:
@@ -57,9 +74,11 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
     async def test_run_systematization_to_taxonomy_writes_policy(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             self.assertEqual(schema_name, "taxonomy")
-            self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
-            self.assertIn("[DELIVERY_MODE]", prompt)
-            self.assertIn("# SUMMARY ITEMS\n[", prompt)
+            self.assertIn(
+                "# SYSTEMATIZATION\n" + json.dumps(_STRUCTURED_SYSTEMATIZATION, ensure_ascii=False, indent=2),
+                prompt,
+            )
+            self.assertNotIn("# SUMMARY ITEMS", prompt)
             self.assertIn("12", prompt)
             return ModelResponse(
                 model=model,
@@ -90,13 +109,7 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps(
                     {
                         "behavior": "Harmful advice",
-                        "systematization": _FIXTURE_SYSTEMATIZATION,
-                        "summary_items": [
-                            {
-                                "description": "Pattern summary",
-                                "example": "Example summary snippet",
-                            }
-                        ],
+                        "systematization": _STRUCTURED_SYSTEMATIZATION,
                     }
                 ),
                 encoding="utf-8",
@@ -384,8 +397,9 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
         attempts = 0
 
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
-            del prompt, schema_name, json_schema, options
             nonlocal attempts
+            del schema_name, json_schema, options
+            self.assertIn("# SYSTEMATIZATION\n# Systematization", prompt)
             attempts += 1
             if attempts == 1:
                 return ModelResponse(model=model, parsed=None, finish_reason="stop", text="oops")

@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
+from typing import Literal
 
 log = logging.getLogger(__name__)
 
@@ -27,22 +27,74 @@ SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
 ALLOWED_MODES = {"research", "direct"}
 
 
-class SummaryItem(BaseModel):
-    description: str
-    example: str
+class StakeholderLens(BaseModel):
+    label: str
+    expertise: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class KeyTerm(BaseModel):
+    term: str
+    definition: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotValue(BaseModel):
+    slot_value: str
+    definition: str
+    example_phrase: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NestedSlotComponent(BaseModel):
+    component: str
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlotComponent(BaseModel):
+    component: str
+    nested_slot_components: list[NestedSlotComponent] | None
+    slot_values: list[SlotValue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BehaviorPattern(BaseModel):
+    pattern: str
+    pattern_role: Literal["problematic", "acceptable"]
+    primary_theory: str
+    related_theory: str
+    key_terms: list[KeyTerm]
+    slot_components: list[SlotComponent]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConceptSpec(BaseModel):
+    behavior: str
+    patterns: list[BehaviorPattern]
 
     model_config = ConfigDict(extra="forbid")
 
 
 class SystematizationResponse(BaseModel):
-    systematization: str
-    summary_items: list[SummaryItem]
+    """Structured output contract mirrored by systematization_single.md."""
+
+    behavior: str
+    scope: str
+    impact_analysis: str
+    alternative_systematizations: str
+    references: list[str]
+    stakeholder_lenses: list[StakeholderLens]
+    reasoning_summary: str
+    concept_spec: ConceptSpec
 
     model_config = ConfigDict(extra="forbid")
-
-
-def _humanize_behavior_name(behavior_name: str | None) -> str:
-    return str(behavior_name or "").replace("_", " ").replace("-", " ").strip()
 
 def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = None) -> str:
     parts = [
@@ -55,56 +107,6 @@ def _build_prompt(*, behavior: str, behavior_text: str, context: str | None = No
     if context:
         parts.append(f"\n## Application Context\n{context.strip()}\n")
     return "".join(parts)
-
-
-def _extract_pattern_blocks(systematization: str) -> list[str]:
-    """Split the systematization into individual pattern blocks.
-
-    Each block starts with ``- **Pattern**:`` and extends until the next
-    pattern bullet or the end of the patterns section.
-    """
-    parts = re.split(r"(?m)^- \*\*Pattern\*\*:", systematization)
-    return [part.strip() for part in parts[1:] if part.strip()]
-
-
-def _validate_pattern_block(block: str) -> None:
-    """Validate a single slot-based pattern block."""
-    if "**Key Terms**:" not in block:
-        raise ValueError("systematization pattern block is missing Key Terms section")
-    if "**Variables**:" not in block:
-        raise ValueError("systematization pattern block is missing Variables section")
-    slot_refs = re.findall(r"\[([A-Z][A-Z0-9_]*)\]", block.split("**Variables**:")[0])
-    if not slot_refs:
-        raise ValueError("systematization pattern template has no [SLOT] placeholders")
-    variable_names = re.findall(r"\*\*\[([A-Z][A-Z0-9_]*)\]\*\*:\s*\{\{", block)
-    if not variable_names:
-        raise ValueError("systematization pattern has no {{ }} variable blocks")
-    for slot in slot_refs:
-        if slot not in variable_names:
-            raise ValueError(f"systematization pattern has [SLOT] '{slot}' with no matching variable block")
-
-
-def _validate_systematization(systematization: str) -> None:
-    text = systematization.strip()
-    if not text:
-        raise ValueError("systematization returned empty systematization")
-
-    # The systematization prompt now produces structured JSON output.
-    # The text field may contain either Markdown-formatted or plain-text
-    # systematization. Only validate non-emptiness — the Pydantic model
-    # already enforces schema correctness.
-    # Legacy Markdown header validation is skipped since the prompt was
-    # updated to produce JSON-structured output.
-
-
-def _validate_summary_items(summary_items: list[SummaryItem]) -> None:
-    if not summary_items:
-        raise ValueError("systematization requires at least one summary item")
-    for item in summary_items:
-        if not item.description.strip():
-            raise ValueError("systematization summary_items.description must be non-empty")
-        if not item.example.strip():
-            raise ValueError("systematization summary_items.example must be non-empty")
 
 
 async def run_systematization(
@@ -196,8 +198,11 @@ async def run_systematization(
 
     try:
         parsed = SystematizationResponse.model_validate(payload)
-        _validate_systematization(parsed.systematization)
-        _validate_summary_items(parsed.summary_items)
+        if parsed.behavior != behavior or parsed.concept_spec.behavior != behavior:
+            raise ValueError(
+                "systematization behavior labels must exactly match the input behavior "
+                f"{behavior!r}"
+            )
     except ValueError as exc:
         raise llm_failure_error(
             response,
@@ -210,8 +215,7 @@ async def run_systematization(
 
     artifact = {
         "behavior": behavior,
-        "systematization": parsed.systematization,
-        "summary_items": [item.model_dump() for item in parsed.summary_items],
+        "systematization": parsed.model_dump(mode="json"),
         "meta": {
             "mode": mode,
             "model": model_cfg.name,
