@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
+
 ## [0.2.0] - 2026-08-14
 
 First release after the initial public launch. Adds an ACS guardrail
