@@ -230,8 +230,9 @@ multi_behavior, suggested_splits}` — so Steps 2-6 are identical either way.
    - *What does the agent do, and who uses it?* → `context`
    - *What must it never do?* → `behavior.name` + `behavior.description`
    - *What is it explicitly allowed to do that looks similar?* → the permissible
-     boundary. **Do not skip this**: without it the judge cannot separate real harm
-     from over-refusal, and both rates become uninterpretable.
+     boundary. **Do not skip this**: without it the run has no permissible behaviors
+     to attribute violations to, so the permissibility split cannot be computed and
+     collapses to a single uninterpretable rate.
    - *How would a user trigger this — innocently, and deliberately?* →
      a candidate `elicitation_variant` stratify dimension — a research *seed*
      for Step 3, not the final set
@@ -269,8 +270,8 @@ mentioned should be measured in this pass.
 ### 3. Turn each selected risk into an atomic config
 
 ASSERT performs best with **one atomic behavior per eval**. Never bundle multiple
-risks into one config — bundling makes `policy_violation` a fuzzy logical-OR and
-hides per-behavior signal.
+risks into one config — bundling makes the reported **impermissible behavior
+violated** rate a fuzzy logical-OR and hides per-behavior signal.
 
 - **1 selected risk** → generate one config and run once.
 - **N selected risks** → generate N configs and run them sequentially, one per behavior.
@@ -471,14 +472,14 @@ the `inference_set.jsonl` row for a *specific case the judge already cited* is f
 bulk trace trawling is not.
 
 1. **Headline rates**: run `assert-ai results status <suite> <run>` for per-dimension
-   flagged rates (split into prompt and scenario). Report the violation dimension and
-   `overrefusal` SEPARATELY — they are two different problems. Note: the built-in
-   `policy_violation` ORs over ALL violated taxonomy nodes (permissible included), so
-   it couples with `overrefusal`. The headline pair is the permissibility split: add
-   `--json` and read `not_permissible_policy_violation_rate` (real harm got through)
-   and `permissible_policy_violation_rate` (the agent broke a behavior it was allowed
-   to do), each one vote per conversation. Those are the two numbers to headline in an
-   ACS A/B — harm should drop while permissible stays flat (see
+   flagged rates (split into prompt and scenario). The headline pair is the
+   permissibility split: add `--json` and read `not_permissible_policy_violation_rate`
+   (real harm got through) and `permissible_policy_violation_rate` (the agent broke a
+   behavior it was allowed to do), each one vote per conversation. Report **only** this
+   pair — do not report the built-in `policy_violation` or `overrefusal` rates (the raw
+   `policy_violation` ORs over ALL violated taxonomy nodes, permissible included, so it
+   couples with `overrefusal` and is uninformative here). This same pair is what to
+   headline in an ACS A/B — harm should drop while permissible stays flat (see
    `workflows/govern-and-remeasure.md`). The viewer exposes the same pair as the
    dimension keys `policy_violation_not_permissible` / `policy_violation_permissible`,
    rendered on screen as **Impermissible behavior violated** /
@@ -530,8 +531,8 @@ See `docs/guides/use-local-viewer.md` for the full layout.
 
 ### 8. Govern the failure and re-measure (ACS)
 
-When a run surfaces `policy_violation` failures and the user wants to **fix and
-prove it**, don't stop at prompt-tweaking. Generate a deployable **ACS** (Agent
+When a run surfaces **impermissible behavior violated** failures and the user wants
+to **fix and prove it**, don't stop at prompt-tweaking. Generate a deployable **ACS** (Agent
 Control Specification) policy from the findings and re-run the same eval against
 the governed agent to show the failure rate dropped — the ACS delta. This uses
 ASSERT's native `assert-ai acs generate` / `validate` adapter (no external `acs`
@@ -547,7 +548,7 @@ the two `status --json` rate fields when you need machine-readable counts.
 `verdict.dimension_justifications` to decide semantic (`output` annotator) vs
 structural (tool gate), and confirm the harm actually routes through the tool you
 plan to gate. Getting that wrong is the main cause of a gate that fires ~0 times.
-If the governed run's delta still comes out wrong (no drop, or `overrefusal` rose),
+If the governed run's delta still comes out wrong (no drop, or the permissible-violation / over-gating rate rose),
 `workflows/diagnose-acs-delta.md` is the symptom-indexed diagnostic manual —
 match the signature, apply the smallest fix, cap at ~4 attempts.
 `examples/billing_support_agent/agent.py` shows the baseline callable shape; the
@@ -565,14 +566,14 @@ read https://raw.githubusercontent.com/responsibleai/assert-ai-action/main/ONBOA
 
 Present a short summary with this structure:
 
-**Headline metrics**:
+**Headline metrics** — the only two rates reported:
 - Impermissible behavior violated: X% (N/M cases) [`not_permissible_policy_violation_rate`]
 - Permissible behavior violated: X% (N/M cases) [`permissible_policy_violation_rate`]
-- Overrefusal rate: X% (N/M cases) — the separate availability check
 
-Report the permissibility split as the headline pair (from `results status --json`);
-the raw `policy_violation` rate ORs over all violated nodes and couples the two, so
-quote it only as context, never as the headline.
+Report the permissibility split (from `results status --json`). Do **not** report the
+built-in `policy_violation` or `overrefusal` rates — the raw `policy_violation` ORs over
+all violated nodes and couples with `overrefusal`, so neither is reported; the split is
+the complete headline.
 
 **Researched judge dimensions** (when the config declares them), each on its own line
 with its flagged rate — reported beside the headline pair, never merged into it:

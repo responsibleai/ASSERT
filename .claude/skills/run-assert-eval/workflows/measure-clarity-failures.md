@@ -283,15 +283,15 @@ Fill from the candidate behavior (real schema field names):
   (`def chat(message, history=None)`) — ASSERT detects multi-turn support by that
   parameter's *name*, so a callable that omits it (or calls it `messages` /
   `conversation`) silently receives only the latest turn, breaking multi-turn scenario
-  cases (prior verification/context is dropped, inflating both the violation and
-  `overrefusal` rates).
+  cases (prior verification/context is dropped, inflating both halves of the
+  permissibility split).
 - Hosted model + system prompt (+ optional tools) → `target.model` / `target.tools`.
 - Pre-collected traces → `assert-ai judge-traces --traces <path> --config <path>`.
 
 ## Step 4 — Atomicity (enforce)
 
-**One atomic behavior per YAML.** Bundling makes `policy_violation`
-a fuzzy logical-OR and masks per-behavior signal.
+**One atomic behavior per YAML.** Bundling makes the reported **impermissible
+behavior violated** rate a fuzzy logical-OR and masks per-behavior signal.
 
 - A single Clarity failure mode is usually one behavior → one config.
 - If a doc is flagged `multi_behavior` (e.g. failure-07 "operational **and**
@@ -411,8 +411,9 @@ remaining configs. Note each `suite`/`run` for the report.
 
 One results table, **one behavior per column, one experiment per row**, with:
 
-- `policy_violation` and `overrefusal` rates reported **separately** (two
-  different problems).
+- The permissibility split — `not_permissible_policy_violation_rate` (real harm)
+  and `permissible_policy_violation_rate` (an allowed behavior broken) — as the only
+  reported rates. Do **not** report the built-in `policy_violation` or `overrefusal`.
 - Cited failure examples pulled from the run artifacts
   (`assert-ai results status <suite> <run>`, then `scores.jsonl` for
   `verdict.dimension_justifications`). Do **not** trawl raw traces.
@@ -513,8 +514,8 @@ Do this at the end of the domain you just measured:
    `user_disengagement` column.
    Headline the permissibility split from `results status --json` —
    `not_permissible_policy_violation_rate` (real harm got through) and
-   `permissible_policy_violation_rate` (an allowed behavior was broken) — with
-   `overrefusal` alongside as the separate availability check, plus 3–5 cited examples.
+   `permissible_policy_violation_rate` (an allowed behavior was broken) — as the only
+   reported rates, plus 3–5 cited examples.
 8. Offer `record_suggestion` back to Clarity: "user_disengagement now has a
    measured baseline at examples/<domain>/user_disengagement/eval_config.yaml."
 9. Curate the example (Step 9): keep the atomic config and README, and export
