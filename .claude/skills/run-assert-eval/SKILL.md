@@ -329,6 +329,9 @@ Two things that workflow will ask you to decide, and that matter downstream:
   `violations / sample_size`, so even at the `25` floor one flipped case moves the
   number 4 percentage points, and the swing grows as the sample shrinks. The floor
   protects coverage, not precision — prefer `50`+ when the expected delta is small.
+  Write the chosen value into the config with an inline review comment
+  (`# min for behavior-category coverage -- user should review; 50+ tightens the
+  signal`) so it reads as a floor the user still owns, not a settled default.
 - **`max_turns` is fixed at `6`** — ASSERT's default (`DEFAULT_TESTER_MAX_TURNS`) and
   the config template's value. The research does not move it, and it must be
   **identical in the baseline and governed configs** or the "only ACS differs"

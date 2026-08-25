@@ -62,11 +62,13 @@ pipeline:
     # denominator. Each rate is also violations / sample_size, so even at the 25
     # floor one flipped case moves the rate 4pp, growing as the sample shrinks --
     # the floor protects coverage, not precision. Prefer 50+ when the expected
-    # ACS A/B delta is small.
+    # ACS A/B delta is small. Carry the inline review comment below through to
+    # every generated config: the written value is a floor the user should
+    # confirm, and a bare number reads as a settled default.
     prompt:
-      sample_size: 25
+      sample_size: 25  # min for behavior-category coverage -- user should review; 50+ tightens the signal
     scenario:
-      sample_size: 25
+      sample_size: 25  # min for behavior-category coverage -- user should review; 50+ tightens the signal
 
   inference:
     # Select the real target shape. This hosted-model example must not replace a

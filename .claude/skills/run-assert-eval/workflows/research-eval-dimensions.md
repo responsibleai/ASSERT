@@ -390,8 +390,8 @@ Tune knobs to the breadth of the harm rather than leaving defaults:
 |---|---|---|
 | `behavior_category_count` | `pipeline.systematize` | **`25`** — the standard count, and ASSERT's own default (`DEFAULT_BEHAVIOR_CATEGORY_COUNT`). Research shapes *which* categories are generated, not how many. |
 | `web_search` | `pipeline.systematize` | Keep `true` so systematization can expand categories with current context. |
-| `prompt.sample_size` | `pipeline.test_set.prompt` | **Ask the user; never pick silently, and never accept a value below `behavior_category_count` (so `≥25`).** Use the research to compute a coverage floor (categories × retained levels × pairwise tuples) and take the larger of that and `25`. Present the tradeoff: `25` = the floor and the recommendation, `50`+ = tightest signal, cost scales linearly — see the sizing note below. |
-| `scenario.sample_size` | `pipeline.test_set.scenario` | Multi-turn probes (need a `tester`). Ask once and apply the answer to **both** `prompt` and `scenario` unless the user says otherwise. Make these primary and numerous enough to span evidence-backed trajectories when the harm is cumulative. |
+| `prompt.sample_size` | `pipeline.test_set.prompt` | **Ask the user; never pick silently, and never accept a value below `behavior_category_count` (so `≥25`).** Use the research to compute a coverage floor (categories × retained levels × pairwise tuples) and take the larger of that and `25`. Present the tradeoff: `25` = the floor and the recommendation, `50`+ = tightest signal, cost scales linearly — see the sizing note below. **Write the value with an inline review comment** (`# min for behavior-category coverage -- user should review; 50+ tightens the signal`) so the number reads as a floor to confirm, not a settled default. |
+| `scenario.sample_size` | `pipeline.test_set.scenario` | Multi-turn probes (need a `tester`). Ask once and apply the answer to **both** `prompt` and `scenario` unless the user says otherwise. Make these primary and numerous enough to span evidence-backed trajectories when the harm is cumulative. Carry the same inline review comment. |
 | `stratify.dimensions` | `pipeline.test_set.stratify` | Include every retained relevant, supported, non-redundant dimension; there is no fixed dimension count. |
 | Explicit `levels` | Each `stratify.dimensions[]` | Choose each dimension's own evidence-based cardinality (minimum 2). Binary, ordinal, staged, or categorical dimensions may have different counts. |
 | `stratify.level_count` | `pipeline.test_set.stratify` | Applies only to generated-mode dimensions and is shared by all of them. It may be any useful positive integer greater than 1; `3` is only the schema default. Use explicit mode when dimensions need different counts or literature-defined levels. |
@@ -527,6 +527,9 @@ support.
   counts. Generated dimensions share `stratify.level_count`; it is selected from
   the research rather than left at `3` by habit.
 - Every `judge.dimensions` entry has both `description` and `rubric`.
+- Both `sample_size` values carry the inline review comment (`# min for
+  behavior-category coverage -- user should review; 50+ tightens the signal`), so
+  the written number reads as a floor the user still owns rather than a default.
 - **No `judge.dimensions` entry reuses a built-in name** (`policy_violation`,
   `overrefusal`), and `judge.preset` is not `safety-core` (which defines both of those
   names). The post-write gate rejects both forms; see the Step 8 note.
