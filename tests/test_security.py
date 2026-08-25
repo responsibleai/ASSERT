@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from assert_ai.core.security import (
     sanitize_payload,
+    sanitize_text,
     validate_callable_ref,
     validate_endpoint_url,
     validate_module_ref,
@@ -346,6 +347,15 @@ class SanitizePayloadTest(unittest.TestCase):
 
 
 class SanitizeResponseTextTest(unittest.TestCase):
+    def test_preserves_structured_json_while_redacting_assignment(self) -> None:
+        text = '{"authorization": "not-a-real-secret-value", "ok": true}'
+        result = sanitize_text(text)
+
+        self.assertEqual(
+            json.loads(result),
+            {"authorization": "[REDACTED]", "ok": True},
+        )
+
     def test_redacts_bearer_token(self) -> None:
         text = "Your token is Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.longtoken"
         result = _sanitize_response_text(text)

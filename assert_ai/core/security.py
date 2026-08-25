@@ -16,7 +16,7 @@ import re
 import socket
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -319,7 +319,58 @@ _SENSITIVE_KEYS = re.compile(
     re.IGNORECASE,
 )
 
+_CREDENTIAL_TEXT_PATTERNS = re.compile(
+    r"("
+    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
+    r"|Basic\s+[A-Za-z0-9+/]+=*"
+    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
+    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
+    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
+    r")",
+    re.IGNORECASE,
+)
+
+_SENSITIVE_TEXT_ASSIGNMENT = re.compile(
+    r"(?P<prefix>"
+    r"[\"']?(?:api[_-]?key|auth[_-]?token|secret|password|credential|"
+    r"access[_-]?token|refresh[_-]?token|private[_-]?key|client[_-]?secret|"
+    r"authorization|azure[_-]?ad[_-]?token)[\"']?\s*[:=]\s*"
+    r")"
+    r"(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,}\]\r\n]+)",
+    re.IGNORECASE,
+)
+
 _REDACTED = "[REDACTED]"
+
+
+def sanitize_text(text: str) -> str:
+    """Redact credential-like values embedded in plain text."""
+    if not text:
+        return text
+    sanitized = _SENSITIVE_TEXT_ASSIGNMENT.sub(
+        lambda match: f'{match.group("prefix")}"{_REDACTED}"',
+        text,
+    )
+    return _CREDENTIAL_TEXT_PATTERNS.sub(_REDACTED, sanitized)
+
+
+def redact_path_prefixes(text: str, paths: Iterable[str | Path]) -> str:
+    """Replace configured path prefixes, including JSON-escaped variants."""
+    if not text:
+        return text
+    variants: set[str] = set()
+    for path in paths:
+        raw = str(path)
+        variants.update((raw, Path(raw).as_posix(), raw.replace("\\", "\\\\")))
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    redacted = text
+    for variant in sorted(
+        (value for value in variants if value),
+        key=len,
+        reverse=True,
+    ):
+        redacted = re.sub(re.escape(variant), ".", redacted, flags=flags)
+    return redacted
 
 
 def sanitize_payload(payload: Any, *, depth: int = 0, max_depth: int = 10) -> Any:
@@ -346,7 +397,5 @@ def sanitize_payload(payload: Any, *, depth: int = 0, max_depth: int = 10) -> An
         return [sanitize_payload(item, depth=depth + 1, max_depth=max_depth) for item in payload]
     elif isinstance(payload, str):
         # Redact Bearer tokens in string values
-        if payload.startswith("Bearer ") or payload.startswith("Basic "):
-            return _REDACTED
-        return payload
+        return sanitize_text(payload)
     return payload

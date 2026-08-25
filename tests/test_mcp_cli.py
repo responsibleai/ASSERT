@@ -47,6 +47,18 @@ def test_mcp_serve_forwards_resolved_options() -> None:
                 "author",
                 "--enable-group",
                 "design",
+                "--default-page-size",
+                "10",
+                "--max-page-size",
+                "25",
+                "--max-response-bytes",
+                "8192",
+                "--default-artifact-chunk-bytes",
+                "1024",
+                "--max-artifact-chunk-bytes",
+                "2048",
+                "--max-config-bytes",
+                "4096",
             ],
         )
 
@@ -55,6 +67,12 @@ def test_mcp_serve_forwards_resolved_options() -> None:
     assert create_kwargs["workspace_root"].is_absolute()
     assert create_kwargs["mode"] == "author"
     assert create_kwargs["enabled_groups"] == ("design",)
+    assert create_kwargs["default_page_size"] == 10
+    assert create_kwargs["max_page_size"] == 25
+    assert create_kwargs["max_response_bytes"] == 8192
+    assert create_kwargs["default_artifact_chunk_bytes"] == 1024
+    assert create_kwargs["max_artifact_chunk_bytes"] == 2048
+    assert create_kwargs["max_config_bytes"] == 4096
     run_stdio_server.assert_called_once_with(options)
 
 

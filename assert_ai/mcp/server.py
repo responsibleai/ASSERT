@@ -17,10 +17,17 @@ from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.mcp.models import (
     CapabilityGroup,
+    ServerLimits,
     ServerInfo,
     ServerMode,
     WorkspaceInfo,
 )
+from assert_ai.mcp.resources import register_inspect_resources
+from assert_ai.mcp.tools import InspectServices, register_inspect_tools
+from assert_ai.services.artifacts import ArtifactRepository
+from assert_ai.services.configs import ConfigService
+from assert_ai.services.library import LibraryService
+from assert_ai.services.results import ResultRepository
 
 SERVER_NAME = "ASSERT"
 
@@ -53,9 +60,35 @@ class ServerOptions:
     workspace_root: Path
     mode: ServerMode = ServerMode.INSPECT
     enabled_groups: tuple[CapabilityGroup, ...] = ()
+    default_page_size: int = 50
+    max_page_size: int = 200
+    max_response_bytes: int = 1024 * 1024
+    default_artifact_chunk_bytes: int = 64 * 1024
+    max_artifact_chunk_bytes: int = 256 * 1024
+    max_config_bytes: int = 256 * 1024
     workspace: WorkspaceService = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.default_page_size < 1:
+            raise ValueError("default_page_size must be positive")
+        if self.max_page_size < self.default_page_size:
+            raise ValueError("max_page_size must be >= default_page_size")
+        if self.max_response_bytes < 4096:
+            raise ValueError("max_response_bytes must be at least 4096")
+        if self.max_config_bytes < 1:
+            raise ValueError("max_config_bytes must be positive")
+        if self.max_config_bytes > self.max_response_bytes:
+            raise ValueError("max_config_bytes must not exceed max_response_bytes")
+        if self.default_artifact_chunk_bytes < 4:
+            raise ValueError("default_artifact_chunk_bytes must be at least 4")
+        if self.max_artifact_chunk_bytes < self.default_artifact_chunk_bytes:
+            raise ValueError(
+                "max_artifact_chunk_bytes must be >= default_artifact_chunk_bytes"
+            )
+        if self.max_artifact_chunk_bytes * 2 > self.max_response_bytes:
+            raise ValueError(
+                "max_artifact_chunk_bytes must not exceed half max_response_bytes"
+            )
         workspace = WorkspaceService.create(self.workspace_root)
         object.__setattr__(self, "workspace_root", workspace.root)
         object.__setattr__(self, "workspace", workspace)
@@ -67,6 +100,12 @@ class ServerOptions:
         workspace_root: str | Path,
         mode: str | ServerMode = ServerMode.INSPECT,
         enabled_groups: Iterable[str | CapabilityGroup] = (),
+        default_page_size: int = 50,
+        max_page_size: int = 200,
+        max_response_bytes: int = 1024 * 1024,
+        default_artifact_chunk_bytes: int = 64 * 1024,
+        max_artifact_chunk_bytes: int = 256 * 1024,
+        max_config_bytes: int = 256 * 1024,
     ) -> "ServerOptions":
         parsed_mode = ServerMode(mode)
         parsed_groups = tuple(CapabilityGroup(group) for group in enabled_groups)
@@ -80,6 +119,12 @@ class ServerOptions:
             workspace_root=Path(workspace_root),
             mode=parsed_mode,
             enabled_groups=parsed_groups,
+            default_page_size=default_page_size,
+            max_page_size=max_page_size,
+            max_response_bytes=max_response_bytes,
+            default_artifact_chunk_bytes=default_artifact_chunk_bytes,
+            max_artifact_chunk_bytes=max_artifact_chunk_bytes,
+            max_config_bytes=max_config_bytes,
         )
 
     @property
@@ -111,6 +156,8 @@ def build_server(options: ServerOptions) -> MCPServer:
         title="Get ASSERT server information",
         annotations=ToolAnnotations(
             read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
             open_world_hint=False,
         ),
         structured_output=True,
@@ -127,6 +174,54 @@ def build_server(options: ServerOptions) -> MCPServer:
                 artifacts_root=options.workspace.reference(options.workspace.artifacts_root),
                 results_root=options.workspace.reference(options.workspace.results_root),
             ),
+            limits=ServerLimits(
+                default_page_size=options.default_page_size,
+                max_page_size=options.max_page_size,
+                max_response_bytes=options.max_response_bytes,
+                default_artifact_chunk_bytes=options.default_artifact_chunk_bytes,
+                max_artifact_chunk_bytes=options.max_artifact_chunk_bytes,
+                max_config_bytes=options.max_config_bytes,
+            ),
+        )
+
+    if CapabilityGroup.INSPECT in options.capability_groups:
+        results = ResultRepository(
+            options.workspace.results_root,
+            path_policy=options.path_policy,
+            default_page_size=options.default_page_size,
+            max_page_size=options.max_page_size,
+            max_page_bytes=options.max_response_bytes,
+            max_item_bytes=options.max_response_bytes,
+        )
+        services = InspectServices(
+            workspace=options.workspace,
+            library=LibraryService(
+                default_page_size=options.default_page_size,
+                max_page_size=options.max_page_size,
+            ),
+            configs=ConfigService(
+                options.workspace,
+                max_config_bytes=options.max_config_bytes,
+                default_page_size=options.default_page_size,
+                max_page_size=options.max_page_size,
+            ),
+            results=results,
+            artifacts=ArtifactRepository(
+                options.workspace,
+                results,
+                default_page_size=options.default_page_size,
+                max_page_size=options.max_page_size,
+                default_chunk_bytes=options.default_artifact_chunk_bytes,
+                max_chunk_bytes=options.max_artifact_chunk_bytes,
+                max_text_artifact_bytes=options.max_response_bytes,
+            ),
+            max_response_bytes=options.max_response_bytes,
+        )
+        register_inspect_tools(server, services)
+        register_inspect_resources(
+            server,
+            services,
+            inline_artifact_bytes=options.max_artifact_chunk_bytes,
         )
 
     return server

@@ -74,11 +74,59 @@ def mcp() -> None:
     default=None,
     help="Optional dotenv file contained within --workspace. No file is discovered by default.",
 )
+@click.option(
+    "--default-page-size",
+    type=click.IntRange(min=1),
+    default=50,
+    show_default=True,
+    help="Default number of items returned by paginated inspect tools.",
+)
+@click.option(
+    "--max-page-size",
+    type=click.IntRange(min=1),
+    default=200,
+    show_default=True,
+    help="Maximum number of items accepted by paginated inspect tools.",
+)
+@click.option(
+    "--max-response-bytes",
+    type=click.IntRange(min=4096),
+    default=1024 * 1024,
+    show_default=True,
+    help="Maximum serialized bytes returned by one tool or resource.",
+)
+@click.option(
+    "--default-artifact-chunk-bytes",
+    type=click.IntRange(min=4),
+    default=64 * 1024,
+    show_default=True,
+    help="Default source-byte budget for artifact chunk reads.",
+)
+@click.option(
+    "--max-artifact-chunk-bytes",
+    type=click.IntRange(min=4),
+    default=256 * 1024,
+    show_default=True,
+    help="Maximum source-byte budget for one artifact chunk read.",
+)
+@click.option(
+    "--max-config-bytes",
+    type=click.IntRange(min=1),
+    default=256 * 1024,
+    show_default=True,
+    help="Maximum size of one managed config payload.",
+)
 def serve(
     workspace: Path,
     mode: str,
     enabled_groups: tuple[str, ...],
     env_file: Path | None,
+    default_page_size: int,
+    max_page_size: int,
+    max_response_bytes: int,
+    default_artifact_chunk_bytes: int,
+    max_artifact_chunk_bytes: int,
+    max_config_bytes: int,
 ) -> None:
     """Serve ASSERT over stdio; stdout is reserved for MCP protocol traffic."""
     try:
@@ -98,6 +146,12 @@ def serve(
             workspace_root=workspace_service.root,
             mode=mode,
             enabled_groups=enabled_groups,
+            default_page_size=default_page_size,
+            max_page_size=max_page_size,
+            max_response_bytes=max_response_bytes,
+            default_artifact_chunk_bytes=default_artifact_chunk_bytes,
+            max_artifact_chunk_bytes=max_artifact_chunk_bytes,
+            max_config_bytes=max_config_bytes,
         )
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
