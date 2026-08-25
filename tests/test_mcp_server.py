@@ -11,6 +11,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -20,8 +21,10 @@ from mcp.client import Client
 from mcp.client._transport import TransportStreams
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from assert_ai.core.config_document import ConfigValidationReport
 from assert_ai.mcp.models import CapabilityGroup, ServerMode
 from assert_ai.mcp.server import ServerOptions, build_server
+from assert_ai.services.configs import ConfigDraft
 from tests.result_catalog_fixture import create_result_catalog_fixture
 
 EXPECTED_INSPECT_TOOLS = {
@@ -43,6 +46,15 @@ EXPECTED_INSPECT_TOOLS = {
     "get_transcript",
     "list_artifacts",
     "read_artifact_chunk",
+}
+EXPECTED_AUTHOR_TOOLS = EXPECTED_INSPECT_TOOLS | {
+    "validate_config",
+    "save_config",
+    "preflight_evaluation",
+}
+EXPECTED_FULL_TOOLS = EXPECTED_AUTHOR_TOOLS | {
+    "design_config",
+    "probe_target",
 }
 
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -303,19 +315,70 @@ def test_server_options_validate_response_limits(tmp_path: Path) -> None:
         )
 
 
-def test_design_group_requires_author_or_full_mode(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("max_concurrency", 0, "max_concurrency must be positive"),
+        (
+            "max_prompt_sample_size",
+            0,
+            "max_prompt_sample_size must be positive",
+        ),
+        (
+            "max_scenario_sample_size",
+            0,
+            "max_scenario_sample_size must be positive",
+        ),
+        (
+            "allowed_model_patterns",
+            (" ",),
+            "allowed_model_patterns cannot contain empty values",
+        ),
+        (
+            "allowed_endpoint_hosts",
+            ("",),
+            "allowed_endpoint_hosts cannot contain empty values",
+        ),
+    ],
+)
+def test_server_options_validate_preflight_policy(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ServerOptions(
+            workspace_root=tmp_path,
+            **{field: value},
+        )
+
+
+@pytest.mark.parametrize("group", ["design", "probe"])
+def test_author_extension_groups_require_author_or_full_mode(
+    tmp_path: Path,
+    group: str,
+) -> None:
     with pytest.raises(ValueError, match="require --mode author or --mode full"):
         ServerOptions.create(
             workspace_root=tmp_path,
             mode="inspect",
-            enabled_groups=["design"],
+            enabled_groups=[group],
         )
 
 
-@pytest.mark.parametrize("mode", list(ServerMode))
-def test_inspect_tools_are_registered_in_every_base_mode(
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (ServerMode.INSPECT, EXPECTED_INSPECT_TOOLS),
+        (ServerMode.AUTHOR, EXPECTED_AUTHOR_TOOLS),
+        (ServerMode.FULL, EXPECTED_FULL_TOOLS),
+    ],
+)
+def test_tools_are_registered_for_each_base_mode(
     tmp_path: Path,
     mode: ServerMode,
+    expected: set[str],
 ) -> None:
     async def run() -> set[str]:
         options = ServerOptions.create(workspace_root=tmp_path, mode=mode)
@@ -323,7 +386,32 @@ def test_inspect_tools_are_registered_in_every_base_mode(
             tools = await client.list_tools()
             return {tool.name for tool in tools.tools}
 
-    assert asyncio.run(run()) == EXPECTED_INSPECT_TOOLS
+    assert asyncio.run(run()) == expected
+
+
+@pytest.mark.parametrize(
+    ("group", "tool"),
+    [
+        ("design", "design_config"),
+        ("probe", "probe_target"),
+    ],
+)
+def test_author_extension_groups_register_explicitly(
+    tmp_path: Path,
+    group: str,
+    tool: str,
+) -> None:
+    async def run() -> set[str]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="author",
+            enabled_groups=[group],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            tools = await client.list_tools()
+            return {item.name for item in tools.tools}
+
+    assert asyncio.run(run()) == EXPECTED_AUTHOR_TOOLS | {tool}
 
 
 def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
@@ -332,6 +420,8 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
             workspace_root=tmp_path,
             mode="full",
             enabled_groups=["analysis"],
+            allowed_model_patterns=["azure/*"],
+            allowed_endpoint_hosts=["api.example.test"],
         )
         async with Client(build_server(options), raise_exceptions=True) as client:
             return await client.call_tool("get_server_info", {})
@@ -345,6 +435,27 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     assert result.structured_content["workspace"]["root"] == "."
     assert "env_file" not in result.structured_content
     assert result.structured_content["limits"]["max_page_size"] == 200
+    assert result.structured_content["limits"]["max_concurrency"] == 32
+    assert result.structured_content["limits"]["max_prompt_sample_size"] == 100_000
+    assert result.structured_content["limits"]["max_scenario_sample_size"] == 100_000
+    assert result.structured_content["limits"]["model_allowlist_enabled"] is True
+    assert (
+        result.structured_content["limits"]["endpoint_host_allowlist_enabled"]
+        is True
+    )
+    assert result.structured_content["limits"]["allowed_model_patterns"] == [
+        "azure/*"
+    ]
+    assert result.structured_content["limits"]["allowed_endpoint_hosts"] == [
+        "api.example.test"
+    ]
+    assert result.structured_content["limits"]["target_probe_timeout_s"] == 15.0
+    assert result.structured_content["target_kinds"] == [
+        "callable",
+        "model",
+        "connector",
+        "endpoint",
+    ]
     assert result.structured_content["enabled_capability_groups"] == [
         "inspect",
         "author",
@@ -385,7 +496,7 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "get_config_schema": "cca1d3a48240e20eff93a123b34d7ba92df3ed1df87f57f9eb217aa21515ec26",
         "get_preset": "25352522a3ed4ff76217c5415453c6641ad229c2dd6e4e05df4621b89ce4819c",
         "get_run": "e5216cd0085d049f8b49c54add913b6f83756c4ce59995317fe63e010ea44936",
-        "get_server_info": "d51f9ff9fe235b5c53f5db71a1bba11cfb35bbc27be1f8c3552f5bee8ecc5e8d",
+        "get_server_info": "19b16f3a1acbbe39914256977d48c594c6ac68a4ee6a406a00d70c09d3e72935",
         "get_suite": "8f629c93e02b656052f637c3cbba9217834315a693c4f7935f6d961203b46fd0",
         "get_test_case": "11380555caaa71d5992923815a499fc08b368c02f4d4836e4761630654589148",
         "get_transcript": "aa09669e0cb99202e8dec0b858b4faa41742ecb616351c3956b0d0bd488717e8",
@@ -399,6 +510,239 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "list_test_cases": "5f46d6640668d017db8afb98d700113cfc671f93d43d57d425f82c773a6e0906",
         "read_artifact_chunk": "895f33b2e66a44cca276f94348155563fec3eab4780fe49eff101835e0c15ab7",
     }
+
+
+def test_author_tools_publish_stable_schemas_and_annotations(
+    tmp_path: Path,
+) -> None:
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            tools = (await client.list_tools()).tools
+            return {tool.name: tool for tool in tools}
+
+    tools = asyncio.run(run())
+    expected_annotations = {
+        "validate_config": (True, False, True, False),
+        "save_config": (False, True, False, False),
+        "preflight_evaluation": (True, False, True, False),
+        "design_config": (True, False, False, True),
+        "probe_target": (True, False, False, True),
+    }
+    expected_digests = {
+        "validate_config": (
+            "b3068ce71b224596e9a8c25775ecaed0ab83feded27cc0fc9e26477153956203"
+        ),
+        "save_config": (
+            "b09950417a44bf14c9bbf2702c1c00f23a18a0bfec03cab16a482733d8cf98c8"
+        ),
+        "preflight_evaluation": (
+            "e86012ecf7fd9684714e25abc052341f22e6f9cac78d08d112b19c03111b7e29"
+        ),
+        "design_config": (
+            "1cd55a1bba06468b0aaa785cf05a445e4bf16768ff6165254ceecf0181a8392e"
+        ),
+        "probe_target": (
+            "0a46b06b94ef40d13b579fa3facb60024875c9a3348c9d80265c71b05837456b"
+        ),
+    }
+
+    for name, annotations in expected_annotations.items():
+        tool = tools[name]
+        actual = tool.annotations
+        assert actual is not None
+        assert (
+            actual.read_only_hint,
+            actual.destructive_hint,
+            actual.idempotent_hint,
+            actual.open_world_hint,
+        ) == annotations
+        assert _schema_digest(tool) == expected_digests[name]
+
+
+def test_complete_author_preflight_and_probe_workflow(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "agent.py").write_text(
+        "def run(message, *, history=None):\n"
+        "    return message\n",
+        encoding="utf-8",
+    )
+    document = {
+        "suite": "author-suite",
+        "context": "authorization: not-a-real-secret",
+        "pipeline": {
+            "inference": {
+                "target": {"callable": "agent:run"},
+                "test_set_path": "fixtures/test_set.jsonl",
+            }
+        },
+    }
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            invalid = await client.call_tool(
+                "validate_config",
+                {
+                    "yaml_text": (
+                        "pipeline: {}\n"
+                        "api_key: 'not-a-real-secret\n"
+                    )
+                },
+            )
+            valid = await client.call_tool(
+                "validate_config",
+                {"document": document},
+            )
+            saved = await client.call_tool(
+                "save_config",
+                {
+                    "config_ref": "nested/agent.yaml",
+                    "document": document,
+                },
+            )
+            loaded = await client.call_tool(
+                "get_config",
+                {"config_ref": "nested/agent.yaml"},
+            )
+            preflight = await client.call_tool(
+                "preflight_evaluation",
+                {
+                    "config_ref": "nested/agent.yaml",
+                    "overrides": {
+                        "run": "candidate-a",
+                        "concurrency": 3,
+                    },
+                },
+            )
+            revised_document = {
+                **document,
+                "context": "Evaluate deterministic echo behavior.",
+            }
+            replaced = await client.call_tool(
+                "save_config",
+                {
+                    "config_ref": "nested/agent.yaml",
+                    "document": revised_document,
+                    "expected_etag": loaded.structured_content["etag"],
+                },
+            )
+            probe = await client.call_tool(
+                "probe_target",
+                {"config_ref": "nested/agent.yaml"},
+            )
+            return {
+                "invalid": invalid.structured_content,
+                "valid": valid.structured_content,
+                "saved": saved.structured_content,
+                "loaded": loaded.structured_content,
+                "preflight": preflight.structured_content,
+                "replaced": replaced.structured_content,
+                "probe": probe.structured_content,
+            }
+
+    results = asyncio.run(run())
+
+    assert results["invalid"]["validation"]["valid"] is False
+    assert "not-a-real-secret" not in json.dumps(results["invalid"])
+    assert results["valid"]["validation"]["valid"] is True
+    assert results["saved"]["created"] is True
+    assert results["saved"]["resource_uri"] == (
+        "assert://config/nested%2Fagent.yaml"
+    )
+    assert results["preflight"]["ready"] is True
+    assert results["preflight"]["run_id"] == "candidate-a"
+    assert results["preflight"]["concurrency"] == 3
+    assert results["preflight"]["target"]["kind"] == "callable"
+    assert "not-a-real-secret" not in json.dumps(results["preflight"])
+    assert "[REDACTED]" in json.dumps(results["preflight"])
+    assert results["loaded"]["etag"] == results["saved"]["etag"]
+    assert results["replaced"]["created"] is False
+    assert results["replaced"]["etag"] != results["saved"]["etag"]
+    assert results["probe"]["target_kind"] == "callable"
+    assert results["probe"]["details"]["reference"] == "agent:run"
+    assert not (tmp_path / "artifacts").exists()
+
+
+def test_design_config_returns_an_unpersisted_draft(tmp_path: Path) -> None:
+    draft = ConfigDraft(
+        yaml=(
+            "pipeline: {}\n"
+            "api_key: not-a-real-secret\n"
+        ),
+        document={
+            "pipeline": {},
+            "api_key": "not-a-real-secret",
+        },
+        validation=ConfigValidationReport(valid=True),
+    )
+
+    async def run() -> object:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="author",
+            enabled_groups=["design"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            return await client.call_tool(
+                "design_config",
+                {
+                    "description": "Evaluate a local deterministic agent",
+                    "max_turns": 3,
+                },
+            )
+
+    with patch(
+        "assert_ai.services.configs.ConfigService.design_config",
+        new=Mock(return_value=draft),
+    ) as design_config:
+        result = asyncio.run(run())
+
+    assert "not-a-real-secret" not in json.dumps(result.structured_content)
+    assert "[REDACTED]" in result.structured_content["yaml"]
+    assert result.structured_content["persisted"] is False
+    assert result.structured_content["model_cost_incurred"] is True
+    assert design_config.call_count == 1
+    request = design_config.call_args.args[0]
+    assert request.description == "Evaluate a local deterministic agent"
+    assert request.max_turns == 3
+    assert not (tmp_path / "evals").exists()
+
+
+def test_design_config_enforces_operator_model_allowlist(
+    tmp_path: Path,
+) -> None:
+    async def run() -> object:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="author",
+            enabled_groups=["design"],
+            allowed_model_patterns=["openai/*"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            return await client.call_tool(
+                "design_config",
+                {
+                    "description": "Draft an evaluation",
+                    "model": "azure/gpt-5.4-mini",
+                },
+            )
+
+    with patch(
+        "assert_ai.services.configs.ConfigService.design_config",
+    ) as design_config:
+        result = asyncio.run(run())
+
+    assert '"code":"INVALID_ARGUMENT"' in _error_text(result)
+    assert "not allowed by server policy" in _error_text(result)
+    design_config.assert_not_called()
 
 
 def test_complete_read_only_tool_workflow(tmp_path: Path) -> None:
@@ -616,6 +960,34 @@ def test_resources_are_lazy_path_free_and_readable(tmp_path: Path) -> None:
     assert "First response" in contents["transcript"]
     assert "[REDACTED]" in contents["artifact"]
     assert str(tmp_path) not in json.dumps(contents)
+
+
+@pytest.mark.parametrize(
+    ("mode", "raise_exceptions"),
+    [("auto", True), ("legacy", False)],
+)
+def test_author_errors_are_stable_across_protocol_modes(
+    tmp_path: Path,
+    mode: str,
+    raise_exceptions: bool,
+) -> None:
+    async def run() -> object:
+        async with Client(
+            build_server(
+                ServerOptions.create(
+                    workspace_root=tmp_path,
+                    mode="author",
+                )
+            ),
+            mode=mode,
+            raise_exceptions=raise_exceptions,
+        ) as client:
+            return await client.call_tool("validate_config", {})
+
+    text = _error_text(asyncio.run(run()))
+
+    assert '"code":"INVALID_ARGUMENT"' in text
+    assert "Provide exactly one" in text
 
 
 @pytest.mark.parametrize(

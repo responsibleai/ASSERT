@@ -116,6 +116,46 @@ def mcp() -> None:
     show_default=True,
     help="Maximum size of one managed config payload.",
 )
+@click.option(
+    "--max-concurrency",
+    type=click.IntRange(min=1),
+    default=32,
+    show_default=True,
+    help="Maximum inference concurrency accepted by preflight.",
+)
+@click.option(
+    "--max-prompt-sample-size",
+    type=click.IntRange(min=1),
+    default=100_000,
+    show_default=True,
+    help="Maximum prompt sample size accepted by preflight.",
+)
+@click.option(
+    "--max-scenario-sample-size",
+    type=click.IntRange(min=1),
+    default=100_000,
+    show_default=True,
+    help="Maximum scenario sample size accepted by preflight.",
+)
+@click.option(
+    "--allowed-model",
+    "allowed_model_patterns",
+    multiple=True,
+    help="Optional allowed model glob. Repeat as needed.",
+)
+@click.option(
+    "--allowed-endpoint-host",
+    "allowed_endpoint_hosts",
+    multiple=True,
+    help="Optional allowed endpoint-host glob. Repeat as needed.",
+)
+@click.option(
+    "--target-probe-timeout-seconds",
+    type=click.FloatRange(min=0.1),
+    default=15.0,
+    show_default=True,
+    help="Operator timeout for isolated target imports.",
+)
 def serve(
     workspace: Path,
     mode: str,
@@ -127,6 +167,12 @@ def serve(
     default_artifact_chunk_bytes: int,
     max_artifact_chunk_bytes: int,
     max_config_bytes: int,
+    max_concurrency: int,
+    max_prompt_sample_size: int,
+    max_scenario_sample_size: int,
+    allowed_model_patterns: tuple[str, ...],
+    allowed_endpoint_hosts: tuple[str, ...],
+    target_probe_timeout_seconds: float,
 ) -> None:
     """Serve ASSERT over stdio; stdout is reserved for MCP protocol traffic."""
     try:
@@ -152,6 +198,12 @@ def serve(
             default_artifact_chunk_bytes=default_artifact_chunk_bytes,
             max_artifact_chunk_bytes=max_artifact_chunk_bytes,
             max_config_bytes=max_config_bytes,
+            max_concurrency=max_concurrency,
+            max_prompt_sample_size=max_prompt_sample_size,
+            max_scenario_sample_size=max_scenario_sample_size,
+            allowed_model_patterns=allowed_model_patterns,
+            allowed_endpoint_hosts=allowed_endpoint_hosts,
+            target_probe_timeout_s=target_probe_timeout_seconds,
         )
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

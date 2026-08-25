@@ -60,6 +60,14 @@ class ServerLimits(BaseModel):
     default_artifact_chunk_bytes: int
     max_artifact_chunk_bytes: int
     max_config_bytes: int
+    max_concurrency: int
+    max_prompt_sample_size: int
+    max_scenario_sample_size: int
+    model_allowlist_enabled: bool = False
+    endpoint_host_allowlist_enabled: bool = False
+    allowed_model_patterns: tuple[str, ...] = ()
+    allowed_endpoint_hosts: tuple[str, ...] = ()
+    target_probe_timeout_s: float
 
 
 class ServerInfo(BaseModel):
@@ -74,8 +82,15 @@ class ServerInfo(BaseModel):
     enabled_capability_groups: list[CapabilityGroup]
     workspace: WorkspaceInfo = Field(default_factory=WorkspaceInfo)
     limits: ServerLimits
-    target_kinds: list[Literal["callable", "model"]] = Field(
-        default_factory=lambda: ["callable", "model"]
+    target_kinds: list[
+        Literal["callable", "model", "connector", "endpoint"]
+    ] = Field(
+        default_factory=lambda: [
+            "callable",
+            "model",
+            "connector",
+            "endpoint",
+        ]
     )
     transports: list[Literal["stdio"]] = Field(default_factory=lambda: ["stdio"])
     protocol_notes: list[str] = Field(
@@ -158,6 +173,34 @@ class ConfigResult(_McpModel):
     etag: str
     validation: ConfigValidationReport
     resource_uri: str
+
+
+class ConfigValidationResult(_McpModel):
+    """Layered validation report for a managed config or draft."""
+
+    source: Literal["config", "yaml", "document"]
+    config_ref: str
+    validation: ConfigValidationReport
+
+
+class ConfigSaveToolResult(_McpModel):
+    """Identity and ETag after an atomic managed-config save."""
+
+    config_ref: str
+    etag: str
+    created: bool
+    validation: ConfigValidationReport
+    resource_uri: str
+
+
+class ConfigDesignResult(_McpModel):
+    """Unpersisted model-generated config draft."""
+
+    yaml: str
+    document: dict[str, Any]
+    validation: ConfigValidationReport
+    model_cost_incurred: Literal[True] = True
+    persisted: Literal[False] = False
 
 
 class SuiteCatalogItem(_McpModel):

@@ -59,6 +59,18 @@ def test_mcp_serve_forwards_resolved_options() -> None:
                 "2048",
                 "--max-config-bytes",
                 "4096",
+                "--max-concurrency",
+                "7",
+                "--max-prompt-sample-size",
+                "12",
+                "--max-scenario-sample-size",
+                "13",
+                "--allowed-model",
+                "azure/*",
+                "--allowed-endpoint-host",
+                "api.example.test",
+                "--target-probe-timeout-seconds",
+                "4.5",
             ],
         )
 
@@ -73,6 +85,12 @@ def test_mcp_serve_forwards_resolved_options() -> None:
     assert create_kwargs["default_artifact_chunk_bytes"] == 1024
     assert create_kwargs["max_artifact_chunk_bytes"] == 2048
     assert create_kwargs["max_config_bytes"] == 4096
+    assert create_kwargs["max_concurrency"] == 7
+    assert create_kwargs["max_prompt_sample_size"] == 12
+    assert create_kwargs["max_scenario_sample_size"] == 13
+    assert create_kwargs["allowed_model_patterns"] == ("azure/*",)
+    assert create_kwargs["allowed_endpoint_hosts"] == ("api.example.test",)
+    assert create_kwargs["target_probe_timeout_s"] == 4.5
     run_stdio_server.assert_called_once_with(options)
 
 
@@ -88,6 +106,25 @@ def test_mcp_serve_reports_missing_optional_dependency() -> None:
     assert result.exit_code == 1
     assert 'python -m pip install "assert-ai[mcp]"' in result.output
     assert "Traceback" not in result.output
+
+
+def test_mcp_serve_rejects_nonpositive_preflight_limit() -> None:
+    runner = CliRunner()
+
+    with patch("assert_ai.mcp._command._load_server_module") as load_server:
+        result = runner.invoke(
+            cli,
+            [
+                "mcp",
+                "serve",
+                "--max-concurrency",
+                "0",
+            ],
+        )
+
+    assert result.exit_code == 2
+    assert "not in the range" in result.output
+    load_server.assert_not_called()
 
 
 def test_mcp_serve_loads_workspace_env_before_server() -> None:

@@ -199,6 +199,47 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertIsNotNone(recovered)
             self.assertEqual(recovered["version"], v0001_plan.version)
 
+    def test_activate_latest_without_repair_does_not_write_recovered_state(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_category_count": 2,
+            }
+            v0001_plan = self._finalize_policy(ctx, raw_cfg)
+
+            changed_ctx = self._ctx(root)
+            changed_ctx["behavior"] = "Changed behavior text."
+            v0002_plan = self._finalize_policy(changed_ctx, raw_cfg)
+            shutil.rmtree(v0002_plan.artifact_dir)
+
+            suite_root = Path(ctx["suite_root"])
+            latest_path = suite_root / "latest.json"
+            compatibility_path = suite_root / "taxonomy.json"
+            compatibility_path.write_text(
+                '{"sentinel":"leave-unchanged"}',
+                encoding="utf-8",
+            )
+            latest_before = latest_path.read_bytes()
+            compatibility_before = compatibility_path.read_bytes()
+
+            recovery_ctx = self._ctx(root)
+            activate_latest_artifacts(recovery_ctx, repair=False)
+
+            recovered = recovery_ctx.get("artifact_versions", {}).get(
+                "systematize"
+            )
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["version"], v0001_plan.version)
+            self.assertEqual(latest_path.read_bytes(), latest_before)
+            self.assertEqual(
+                compatibility_path.read_bytes(),
+                compatibility_before,
+            )
+
     def test_activate_latest_skips_stage_when_no_valid_version_remains(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

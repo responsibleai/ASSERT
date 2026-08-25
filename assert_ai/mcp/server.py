@@ -23,11 +23,24 @@ from assert_ai.mcp.models import (
     WorkspaceInfo,
 )
 from assert_ai.mcp.resources import register_inspect_resources
-from assert_ai.mcp.tools import InspectServices, register_inspect_tools
+from assert_ai.mcp.tools import (
+    AuthorServices,
+    InspectServices,
+    ProbeServices,
+    register_author_tools,
+    register_design_tools,
+    register_inspect_tools,
+    register_probe_tools,
+)
 from assert_ai.services.artifacts import ArtifactRepository
 from assert_ai.services.configs import ConfigService
 from assert_ai.services.library import LibraryService
 from assert_ai.services.results import ResultRepository
+from assert_ai.services.run_planning import (
+    PreflightPolicy,
+    RunPlanningService,
+)
+from assert_ai.services.target_probe import TargetProbeService
 
 SERVER_NAME = "ASSERT"
 
@@ -66,6 +79,12 @@ class ServerOptions:
     default_artifact_chunk_bytes: int = 64 * 1024
     max_artifact_chunk_bytes: int = 256 * 1024
     max_config_bytes: int = 256 * 1024
+    max_concurrency: int = 32
+    max_prompt_sample_size: int = 100_000
+    max_scenario_sample_size: int = 100_000
+    allowed_model_patterns: tuple[str, ...] = ()
+    allowed_endpoint_hosts: tuple[str, ...] = ()
+    target_probe_timeout_s: float = 15.0
     workspace: WorkspaceService = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -79,6 +98,21 @@ class ServerOptions:
             raise ValueError("max_config_bytes must be positive")
         if self.max_config_bytes > self.max_response_bytes:
             raise ValueError("max_config_bytes must not exceed max_response_bytes")
+        if self.max_concurrency < 1:
+            raise ValueError("max_concurrency must be positive")
+        if self.max_prompt_sample_size < 1:
+            raise ValueError("max_prompt_sample_size must be positive")
+        if self.max_scenario_sample_size < 1:
+            raise ValueError("max_scenario_sample_size must be positive")
+        if self.target_probe_timeout_s <= 0:
+            raise ValueError("target_probe_timeout_s must be positive")
+        PreflightPolicy(
+            max_concurrency=self.max_concurrency,
+            max_prompt_sample_size=self.max_prompt_sample_size,
+            max_scenario_sample_size=self.max_scenario_sample_size,
+            allowed_model_patterns=self.allowed_model_patterns,
+            allowed_endpoint_hosts=self.allowed_endpoint_hosts,
+        )
         if self.default_artifact_chunk_bytes < 4:
             raise ValueError("default_artifact_chunk_bytes must be at least 4")
         if self.max_artifact_chunk_bytes < self.default_artifact_chunk_bytes:
@@ -106,6 +140,12 @@ class ServerOptions:
         default_artifact_chunk_bytes: int = 64 * 1024,
         max_artifact_chunk_bytes: int = 256 * 1024,
         max_config_bytes: int = 256 * 1024,
+        max_concurrency: int = 32,
+        max_prompt_sample_size: int = 100_000,
+        max_scenario_sample_size: int = 100_000,
+        allowed_model_patterns: Iterable[str] = (),
+        allowed_endpoint_hosts: Iterable[str] = (),
+        target_probe_timeout_s: float = 15.0,
     ) -> "ServerOptions":
         parsed_mode = ServerMode(mode)
         parsed_groups = tuple(CapabilityGroup(group) for group in enabled_groups)
@@ -125,6 +165,12 @@ class ServerOptions:
             default_artifact_chunk_bytes=default_artifact_chunk_bytes,
             max_artifact_chunk_bytes=max_artifact_chunk_bytes,
             max_config_bytes=max_config_bytes,
+            max_concurrency=max_concurrency,
+            max_prompt_sample_size=max_prompt_sample_size,
+            max_scenario_sample_size=max_scenario_sample_size,
+            allowed_model_patterns=tuple(allowed_model_patterns),
+            allowed_endpoint_hosts=tuple(allowed_endpoint_hosts),
+            target_probe_timeout_s=target_probe_timeout_s,
         )
 
     @property
@@ -150,6 +196,13 @@ def build_server(options: ServerOptions) -> MCPServer:
         SERVER_NAME,
         description="Local, spec-driven evaluation workflows for AI agents.",
         version=_server_version(),
+    )
+
+    configs = ConfigService(
+        options.workspace,
+        max_config_bytes=options.max_config_bytes,
+        default_page_size=options.default_page_size,
+        max_page_size=options.max_page_size,
     )
 
     @server.tool(
@@ -181,6 +234,16 @@ def build_server(options: ServerOptions) -> MCPServer:
                 default_artifact_chunk_bytes=options.default_artifact_chunk_bytes,
                 max_artifact_chunk_bytes=options.max_artifact_chunk_bytes,
                 max_config_bytes=options.max_config_bytes,
+                max_concurrency=options.max_concurrency,
+                max_prompt_sample_size=options.max_prompt_sample_size,
+                max_scenario_sample_size=options.max_scenario_sample_size,
+                model_allowlist_enabled=bool(options.allowed_model_patterns),
+                endpoint_host_allowlist_enabled=bool(
+                    options.allowed_endpoint_hosts
+                ),
+                allowed_model_patterns=options.allowed_model_patterns,
+                allowed_endpoint_hosts=options.allowed_endpoint_hosts,
+                target_probe_timeout_s=options.target_probe_timeout_s,
             ),
         )
 
@@ -199,12 +262,7 @@ def build_server(options: ServerOptions) -> MCPServer:
                 default_page_size=options.default_page_size,
                 max_page_size=options.max_page_size,
             ),
-            configs=ConfigService(
-                options.workspace,
-                max_config_bytes=options.max_config_bytes,
-                default_page_size=options.default_page_size,
-                max_page_size=options.max_page_size,
-            ),
+            configs=configs,
             results=results,
             artifacts=ArtifactRepository(
                 options.workspace,
@@ -222,6 +280,41 @@ def build_server(options: ServerOptions) -> MCPServer:
             server,
             services,
             inline_artifact_bytes=options.max_artifact_chunk_bytes,
+        )
+
+    author_services = AuthorServices(
+        workspace=options.workspace,
+        configs=configs,
+        planning=RunPlanningService(
+            options.workspace,
+            configs,
+            policy=PreflightPolicy(
+                max_concurrency=options.max_concurrency,
+                max_prompt_sample_size=options.max_prompt_sample_size,
+                max_scenario_sample_size=options.max_scenario_sample_size,
+                allowed_model_patterns=options.allowed_model_patterns,
+                allowed_endpoint_hosts=options.allowed_endpoint_hosts,
+            ),
+        ),
+        max_response_bytes=options.max_response_bytes,
+        allowed_model_patterns=options.allowed_model_patterns,
+    )
+    if CapabilityGroup.AUTHOR in options.capability_groups:
+        register_author_tools(server, author_services)
+    if CapabilityGroup.DESIGN in options.capability_groups:
+        register_design_tools(server, author_services)
+    if CapabilityGroup.PROBE in options.capability_groups:
+        register_probe_tools(
+            server,
+            ProbeServices(
+                workspace=options.workspace,
+                probe=TargetProbeService(
+                    options.workspace,
+                    configs,
+                    timeout_s=options.target_probe_timeout_s,
+                ),
+                max_response_bytes=options.max_response_bytes,
+            ),
         )
 
     return server

@@ -93,8 +93,8 @@ acs = [
 ]
 mcp = [
   # OpenAI Agents currently requires mcp<2, so this extra is intentionally
-  # separate from `examples` and the `all` meta-extra. psutil is required by
-  # the planned Windows worker process-tree cancellation path.
+  # separate from `examples` and the `all` meta-extra. psutil is required for
+  # isolated target-probe cleanup and worker process-tree cancellation.
   "mcp>=2,<3",
   "psutil>=6,<8",
 ]

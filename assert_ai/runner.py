@@ -53,6 +53,7 @@ from assert_ai.core.runtime_safety import (
     run_stage_coro,
 )
 from assert_ai.core.run_result import RunResult, RunState
+from assert_ai.core.run_plan import resolve_forced_stages
 from assert_ai.display import label_metric
 from assert_ai.services.result_metadata import (
     refresh_stage_indexes,
@@ -755,12 +756,16 @@ def _run_pipeline_result(
                 "[runner] --concurrency ignored: this config has no inference stage to override."
             )
 
-    requested_force_stages = set(force_stages or [])
     configured_stage_names = {stage_name for stage_name, _ in ctx["stages"]}
-    invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
-    if invalid_forced:
-        joined = ", ".join(invalid_forced)
-        message = f"--force-stage stage(s) not present in config: {joined}"
+    try:
+        requested_force_stages = set(
+            resolve_forced_stages(
+                configured_stage_names,
+                force_stages or (),
+            )
+        )
+    except ValueError as exc:
+        message = str(exc).replace("Forced stage", "--force-stage stage", 1)
         log.error(f"[config error] {message}")
         return _run_result_from_context(
             ctx,
@@ -769,28 +774,6 @@ def _run_pipeline_result(
             error_code="CONFIG_INVALID",
             error_message=message,
         )
-
-    # Cascade: forcing an upstream stage logically invalidates every stage
-    # downstream of it. Without this, `--force-stage test_set` regenerates test_set
-    # but inference silently keeps the old inference rows (its resume cache keys on
-    # test_case_id, and test case ids are deterministic so they collide with the prior
-    # run's content). Same hazard for judge against scores.jsonl. Computing
-    # the closure here keeps the workflow `--force-stage <upstream>` honest
-    # without forcing users to remember the full downstream chain.
-    if requested_force_stages:
-        forced_indices = [
-            PIPELINE_STAGE_ORDER.index(name)
-            for name in requested_force_stages
-            if name in PIPELINE_STAGE_ORDER
-        ]
-        if forced_indices:
-            min_forced_index = min(forced_indices)
-            cascade = {
-                name
-                for name in PIPELINE_STAGE_ORDER[min_forced_index:]
-                if name in configured_stage_names
-            }
-            requested_force_stages = requested_force_stages.union(cascade)
 
     suite_root = Path(ctx["suite_root"])
     path_policy = ctx.get("path_policy")

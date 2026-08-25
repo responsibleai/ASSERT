@@ -202,36 +202,23 @@ def prepare_artifact_plan(
 
     if stage_name not in CACHEABLE_STAGES:
         raise ValueError(f"unsupported cacheable stage: {stage_name}")
-    suite_root = _managed_suite_root(ctx)
-    fingerprint = build_artifact_fingerprint(ctx=ctx, stage_name=stage_name, raw_cfg=raw_cfg)
-    stage_root = _managed_output_path(
-        ctx,
-        suite_root / ARTIFACTS_DIR / stage_name,
-        field_name=f"{stage_name} artifact cache root",
-        expected_root=suite_root,
-        reject_links=True,
-    )
 
+    suite_root = _managed_suite_root(ctx)
+    fingerprint = build_artifact_fingerprint(
+        ctx=ctx,
+        stage_name=stage_name,
+        raw_cfg=raw_cfg,
+    )
+    stage_root = _artifact_stage_root(ctx, suite_root, stage_name)
     if not forced:
-        match = _latest_matching_metadata(stage_name, stage_root, fingerprint.input_hash)
-        if match is not None:
-            version, metadata = match
-            artifact_dir = _managed_output_path(
-                ctx,
-                stage_root / version,
-                field_name=f"{stage_name} artifact cache version",
-                expected_root=stage_root,
-                reject_links=True,
-            )
-            return ArtifactPlan(
-                stage_name=stage_name,
-                version=version,
-                artifact_dir=artifact_dir,
-                output_paths=_output_paths(stage_name, artifact_dir),
-                fingerprint=fingerprint,
-                reused=True,
-                metadata=metadata,
-            )
+        reusable = _find_reusable_artifact_plan(
+            ctx=ctx,
+            stage_name=stage_name,
+            fingerprint=fingerprint,
+            stage_root=stage_root,
+        )
+        if reusable is not None:
+            return reusable
 
     version, artifact_dir = _allocate_version_dir(stage_root)
     return ArtifactPlan(
@@ -242,6 +229,77 @@ def prepare_artifact_plan(
         fingerprint=fingerprint,
         reused=False,
         metadata=None,
+    )
+
+
+def find_reusable_artifact_plan(
+    *,
+    ctx: dict[str, Any],
+    stage_name: str,
+    raw_cfg: dict[str, Any],
+) -> ArtifactPlan | None:
+    """Return a matching artifact plan without allocating or repairing files."""
+    if stage_name not in CACHEABLE_STAGES:
+        raise ValueError(f"unsupported cacheable stage: {stage_name}")
+    suite_root = _managed_suite_root(ctx)
+    fingerprint = build_artifact_fingerprint(
+        ctx=ctx,
+        stage_name=stage_name,
+        raw_cfg=raw_cfg,
+    )
+    stage_root = _artifact_stage_root(ctx, suite_root, stage_name)
+    return _find_reusable_artifact_plan(
+        ctx=ctx,
+        stage_name=stage_name,
+        fingerprint=fingerprint,
+        stage_root=stage_root,
+    )
+
+
+def _find_reusable_artifact_plan(
+    *,
+    ctx: dict[str, Any],
+    stage_name: str,
+    fingerprint: ArtifactFingerprint,
+    stage_root: Path,
+) -> ArtifactPlan | None:
+    match = _latest_matching_metadata(
+        stage_name,
+        stage_root,
+        fingerprint.input_hash,
+    )
+    if match is None:
+        return None
+    version, metadata = match
+    artifact_dir = _managed_output_path(
+        ctx,
+        stage_root / version,
+        field_name=f"{stage_name} artifact cache version",
+        expected_root=stage_root,
+        reject_links=True,
+    )
+    return ArtifactPlan(
+        stage_name=stage_name,
+        version=version,
+        artifact_dir=artifact_dir,
+        output_paths=_output_paths(stage_name, artifact_dir),
+        fingerprint=fingerprint,
+        reused=True,
+        metadata=metadata,
+    )
+
+
+def _artifact_stage_root(
+    ctx: dict[str, Any],
+    suite_root: Path,
+    stage_name: str,
+) -> Path:
+    return _managed_output_path(
+        ctx,
+        suite_root / ARTIFACTS_DIR / stage_name,
+        field_name=f"{stage_name} artifact cache root",
+        expected_root=suite_root,
+        reject_links=True,
     )
 
 
@@ -310,7 +368,11 @@ def override_cacheable_output_paths(
     return cfg
 
 
-def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
+def activate_latest_artifacts(
+    ctx: dict[str, Any],
+    *,
+    repair: bool = True,
+) -> None:
     """Load latest artifact refs into context for run-only stage configs.
 
     When ``latest.json`` references an artifact directory that has been
@@ -403,29 +465,32 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
                     metadata=metadata,
                     primary_path=output_paths[next(iter(_OUTPUT_FILES[stage_name]))],
                 )
-                update_latest(ctx, stage_name, ref)
-                log.warning(
-                    "latest.json %s entry referenced missing paths; rebuilt "
-                    "ref pointing at the current on-disk location of version %s.",
-                    stage_name,
-                    version,
-                )
+                if repair:
+                    update_latest(ctx, stage_name, ref)
+                    log.warning(
+                        "latest.json %s entry referenced missing paths; rebuilt "
+                        "ref pointing at the current on-disk location of version %s.",
+                        stage_name,
+                        version,
+                    )
             ctx.setdefault("artifact_versions", {})[stage_name] = ref
             ctx[_CONTEXT_DIR_KEYS[stage_name]] = str(artifact_dir)
             for output_key, context_key in _CONTEXT_PATH_KEYS[stage_name].items():
                 if output_key in output_paths:
                     ctx[context_key] = str(output_paths[output_key])
-            refresh_compatibility_files(ctx, stage_name, output_paths)
+            if repair:
+                refresh_compatibility_files(ctx, stage_name, output_paths)
             continue
 
         recovery = _recover_latest_valid_version(stage_name, stage_root)
         if recovery is None:
-            log.warning(
-                "latest.json references missing or incomplete %s artifact %s; "
-                "no valid prior version was found.",
-                stage_name,
-                version,
-            )
+            if repair:
+                log.warning(
+                    "latest.json references missing or incomplete %s artifact %s; "
+                    "no valid prior version was found.",
+                    stage_name,
+                    version,
+                )
             continue
         recovered_version, recovered_dir, recovered_metadata = recovery
         recovered_outputs = _metadata_output_paths(
@@ -446,14 +511,15 @@ def activate_latest_artifacts(ctx: dict[str, Any]) -> None:
         for output_key, context_key in _CONTEXT_PATH_KEYS[stage_name].items():
             if output_key in recovered_outputs:
                 ctx[context_key] = str(recovered_outputs[output_key])
-        refresh_compatibility_files(ctx, stage_name, recovered_outputs)
-        update_latest(ctx, stage_name, recovered_ref)
-        log.warning(
-            "latest.json %s entry was missing or incomplete; "
-            "recovered to version %s.",
-            stage_name,
-            recovered_version,
-        )
+        if repair:
+            refresh_compatibility_files(ctx, stage_name, recovered_outputs)
+            update_latest(ctx, stage_name, recovered_ref)
+            log.warning(
+                "latest.json %s entry was missing or incomplete; "
+                "recovered to version %s.",
+                stage_name,
+                recovered_version,
+            )
 
 
 def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str, Any]:
