@@ -1942,7 +1942,10 @@ def judge_traces(traces: Path, config_path: Path, group_by: str, output: Path | 
     click.echo("Run the full pipeline with --force-stage judge to score these inference rows.")
 
 
-@cli.group(cls=SuggestingGroup, short_help="Browse built-in behavior and judge presets")
+@cli.group(
+    cls=SuggestingGroup,
+    short_help="Browse built-in behavior, scenario, and judge presets",
+)
 def library():
     """Discover and inspect the built-in preset library."""
 
@@ -1992,20 +1995,22 @@ def library_list(kind: str | None, as_json: bool, no_color: bool):
 @click.option("--json", "as_json", is_flag=True, help="Emit raw YAML content as JSON.")
 def library_show(name: str, kind: str | None, as_json: bool):
     """Show the full content of a preset by name."""
-    from assert_ai.library.loader import VALID_KINDS, load_preset
+    from assert_ai.library.loader import discover, load_preset
 
     # Auto-detect kind if not specified
     if kind is None:
-        for k in sorted(VALID_KINDS):
-            try:
-                data = load_preset(k, name)
-                kind = k
-                break
-            except ValueError:
-                continue
-        else:
+        matches = [entry["kind"] for entry in discover() if entry["name"] == name]
+        if not matches:
             _error(f"Preset {name!r} not found in any kind. Use --kind to be explicit.")
             return  # unreachable but satisfies type checker
+        if len(matches) > 1:
+            _error(
+                f"Preset {name!r} exists in multiple kinds: {', '.join(matches)}. "
+                "Use --kind to be explicit."
+            )
+            return  # unreachable but satisfies type checker
+        kind = matches[0]
+        data = load_preset(kind, name)
     else:
         data = load_preset(kind, name)
 

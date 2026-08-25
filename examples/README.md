@@ -43,6 +43,13 @@ assert-ai library list --kind behavior
 assert-ai library show <preset-name>
 ```
 
+Use the selected preset directly in a config:
+
+```yaml
+behavior:
+  preset: prompt_injection
+```
+
 Pair a preset with application context from the **[Scenario Library](../assert_ai/library/scenarios/README.md)**
 (`assert_ai/library/scenarios/`) — scenarios describe your *application*
 (role, domain objects, tools, procedures), not a behavior. One config per
