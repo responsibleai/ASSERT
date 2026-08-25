@@ -339,25 +339,43 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
     async def test_persistent_empty_parse_keeps_transient_error_message(self) -> None:
         """When neither attempt was truncated, the pre-existing 'transient
         model issue' error message is preserved verbatim."""
+        full_text = "garbage-response-" * 80
+
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del prompt, schema_name, json_schema, options
-            return ModelResponse(model=model, parsed=None, finish_reason="stop", text="garbage")
+            return ModelResponse(
+                model=model,
+                parsed=None,
+                finish_reason="stop",
+                text=full_text,
+                status="completed",
+                response_id="resp-convert-failure",
+            )
 
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             systematization_path = self._write_fixture(tmp_path)
+            diagnostics_dir = tmp_path / "diagnostics"
             with (
                 patch(
                     "assert_ai.stages.systematization_convert.generate_structured",
                     new=fake_generate_structured,
                 ),
-                self.assertRaisesRegex(ValueError, "transient model issue"),
+                self.assertRaisesRegex(ValueError, "transient model issue.*Full response diagnostic"),
             ):
                 await run_systematization_to_taxonomy(
                     systematization_path=str(systematization_path),
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                    diagnostics_dir=str(diagnostics_dir),
                 )
+
+            diagnostic_files = list((diagnostics_dir / "systematization_convert").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "unparseable_output")
+            self.assertEqual(diagnostic["attempt"], 2)
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], full_text)
 
     async def test_first_attempt_failure_then_success_uses_existing_retry(self) -> None:
         """The pre-existing 2-attempt retry loop must keep working: attempt

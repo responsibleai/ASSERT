@@ -179,10 +179,24 @@ class StageRunnerSmokeTest(unittest.TestCase):
                         )
                     )
 
-                self.assertEqual(calls["systematization"]["behavior"], "harmful_advice")
-                self.assertEqual(calls["systematization"]["behavior_text"], "Harmful advice")
-                self.assertEqual(calls["systematization"]["model_cfg"].name, "azure/gpt-5.4")
-                self.assertEqual(calls["convert"]["behavior_category_count_hint"], 5)
+                systematization_call = calls["systematization"]
+                convert_call = calls["convert"]
+                self.assertIsInstance(systematization_call, dict)
+                self.assertIsInstance(convert_call, dict)
+                assert isinstance(systematization_call, dict)
+                assert isinstance(convert_call, dict)
+                self.assertEqual(systematization_call["behavior"], "harmful_advice")
+                self.assertEqual(systematization_call["behavior_text"], "Harmful advice")
+                self.assertEqual(systematization_call["model_cfg"].name, "azure/gpt-5.4")
+                self.assertEqual(
+                    Path(str(systematization_call["diagnostics_dir"])).resolve(),
+                    (root / "diagnostics").resolve(),
+                )
+                self.assertEqual(
+                    Path(str(convert_call["diagnostics_dir"])).resolve(),
+                    (root / "diagnostics").resolve(),
+                )
+                self.assertEqual(convert_call["behavior_category_count_hint"], 5)
                 self.assertEqual(Path(result["taxonomy_path"]).resolve(), (root / "taxonomy.json").resolve())
 
         for case in [

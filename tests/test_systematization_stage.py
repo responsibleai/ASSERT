@@ -324,26 +324,73 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
     async def test_non_truncation_parse_failure_keeps_original_error(self) -> None:
         """Prior to issue #131, the parse-failure path raised this exact message.
         That behavior is preserved verbatim for non-truncation parse failures."""
+        full_text = "this is not json " * 80
+
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
             del model, prompt, schema_name, json_schema, options
             return ModelResponse(
                 model="azure/gpt-5.4",
-                text="this is not json",
+                text=full_text,
                 finish_reason="stop",
+                status="completed",
+                incomplete_details={"reason": "unknown"},
+                response_id="resp-systematization-failure",
+                api_mode="responses",
+                request_payload={"api_key": "secret", "model": "azure/gpt-5.4"},
             )
 
         with TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir) / "systematization.json"
+            diagnostics_dir = Path(tmp_dir) / "diagnostics"
             with (
                 patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
-                self.assertRaisesRegex(ValueError, "unparseable output"),
+                self.assertRaisesRegex(ValueError, "unparseable output.*Full response diagnostic"),
             ):
                 await run_systematization(
                     behavior="harmful advice",
                     behavior_text="Harmful advice",
                     save_path=str(out_path),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
+                    diagnostics_dir=str(diagnostics_dir),
                 )
+
+            diagnostic_files = list((diagnostics_dir / "systematization").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "unparseable_output")
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], full_text)
+            self.assertEqual(diagnostic["llm_call"]["request"]["api_key"], "[REDACTED]")
+            self.assertEqual(diagnostic["response_metadata"]["response_id"], "resp-systematization-failure")
+
+    async def test_schema_validation_failure_writes_diagnostic(self) -> None:
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model=model,
+                parsed={"systematization": FINAL_SYSTEMATIZATION, "summary_items": []},
+                text=json.dumps({"systematization": FINAL_SYSTEMATIZATION, "summary_items": []}),
+                finish_reason="stop",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            diagnostics_dir = Path(tmp_dir) / "diagnostics"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(ValueError, "requires at least one summary item.*Full response diagnostic"),
+            ):
+                await run_systematization(
+                    behavior="harmful advice",
+                    behavior_text="Harmful advice",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4"),
+                    diagnostics_dir=str(diagnostics_dir),
+                )
+
+            diagnostic_files = list((diagnostics_dir / "systematization").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "schema_validation_failed")
 
     async def test_single_attempt_no_retry(self) -> None:
         """Behavioural guarantee: the systematize stage makes exactly one

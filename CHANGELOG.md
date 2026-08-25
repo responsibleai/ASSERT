@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `assert-ai --version` now reads the installed distribution metadata instead of reporting a hard-coded stale version.
+- Preserve a credential-sanitized request, full model response, and provider metadata when systematization parsing or validation fails, and print the diagnostic artifact path in the error.
 
 ## [0.2.0] - 2026-08-14
 

@@ -113,5 +113,31 @@ class PolicyTaskTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(calls, ["taxonomy"])
             self.assertEqual(result["taxonomy"]["behavior"]["name"], "Risk")
+
+    async def test_run_systematize_writes_full_failure_diagnostic(self) -> None:
+        full_text = "legacy-malformed-output-" * 60
+
+        async def fake_generate_structured(model, messages, *, schema_name, json_schema, options):
+            del messages, schema_name, json_schema, options
+            return ModelResponse(model=model, text=full_text, parsed=None, finish_reason="stop")
+
+        with TemporaryDirectory() as tmp_dir:
+            diagnostics_dir = Path(tmp_dir) / "diagnostics"
+            with (
+                patch("assert_ai.stages.systematize.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(ValueError, "first 500 chars.*Full response diagnostic"),
+            ):
+                await run_systematize(
+                    behavior="Harmful advice",
+                    model="azure/gpt-5.4",
+                    save_dir=tmp_dir,
+                    diagnostics_dir=diagnostics_dir,
+                )
+
+            diagnostic_files = list((diagnostics_dir / "systematize_direct").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], full_text)
+
 if __name__ == "__main__":
     unittest.main()

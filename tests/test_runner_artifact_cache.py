@@ -10,7 +10,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from assert_ai.core.model_client import ModelResponse
 from assert_ai.runner import run_pipeline
+from assert_ai.stages import systematize
 
 
 class RunnerArtifactCacheTest(unittest.TestCase):
@@ -430,6 +432,46 @@ class RunnerArtifactCacheTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((test_set_root / "v0001" / "test_set.jsonl").exists())
             self.assertFalse((test_set_root / "v0002").exists())
+
+    def test_systematization_diagnostic_survives_failed_artifact_cleanup(self) -> None:
+        full_text = "provider-returned-malformed-output-" * 40
+
+        async def fake_generate_structured(*args: object, **kwargs: object) -> ModelResponse:
+            del args, kwargs
+            return ModelResponse(
+                text=full_text,
+                parsed=None,
+                finish_reason="stop",
+                status="completed",
+                model="azure/gpt-5.4",
+                response_id="resp-runner-failure",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            ctx["stages"] = [ctx["stages"][0]]
+            with (
+                patch("assert_ai.runner._load_context", return_value=ctx),
+                patch("assert_ai.runner.STAGES", {"systematize": systematize}),
+                patch(
+                    "assert_ai.stages.systematization.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                patch("sys.__stderr__", new_callable=io.StringIO),
+            ):
+                code = run_pipeline(config=str(ctx["config_path"]))
+
+            self.assertEqual(code, 1)
+            systematize_root = root / "results" / "suite-a" / "artifacts" / "systematize"
+            self.assertFalse((systematize_root / "v0001").exists())
+            diagnostic_files = list(
+                (root / "results" / "suite-a" / "diagnostics" / "systematization").glob("*.json")
+            )
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "unparseable_output")
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], full_text)
 
     def test_partial_test_set_skips_artifact_finalization(self) -> None:
         """Regression for Jake's review on the absorb of PR #44.

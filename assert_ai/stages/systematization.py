@@ -16,7 +16,12 @@ from pydantic import BaseModel, ConfigDict
 
 from assert_ai.core.config_model import ModelConfig
 from assert_ai.core.io import load_prompt_text
-from assert_ai.core.model_client import GenerateOptions, generate_structured, is_truncated_response
+from assert_ai.core.llm_diagnostics import llm_failure_error
+from assert_ai.core.model_client import (
+    GenerateOptions,
+    generate_structured,
+    is_truncated_response,
+)
 
 SYSTEMATIZATION_PROMPT = load_prompt_text("systematization_single.md")
 ALLOWED_MODES = {"research", "direct"}
@@ -111,6 +116,7 @@ async def run_systematization(
     mode: str = "research",
     web_search: bool = True,
     context: str | None = None,
+    diagnostics_dir: str | Path | None = None,
 ) -> Path:
     """Generate one systematization artifact and persist it to disk.
 
@@ -127,6 +133,8 @@ async def run_systematization(
     if mode not in ALLOWED_MODES:
         raise ValueError(f"systematization.mode must be one of: {', '.join(sorted(ALLOWED_MODES))}")
     log.debug(f"systematization: behavior={behavior}, model={model_cfg.name}, mode={mode}, web_search={web_search}")
+    output_path = Path(save_path).expanduser().with_suffix(".json")
+    diagnostic_root = Path(diagnostics_dir).expanduser() if diagnostics_dir else output_path.parent / "diagnostics"
 
     temperature = model_cfg.temperature
     # Reasoning models don't support temperature
@@ -147,27 +155,58 @@ async def run_systematization(
     )
     if is_truncated_response(response):
         finish_reason = getattr(response, "finish_reason", None)
-        raise ValueError(
-            "systematization response was truncated by the model's output budget "
-            f"(finish_reason={finish_reason!r}, max_tokens={model_cfg.max_tokens}). "
-            "Increase pipeline.systematize.model.max_tokens (or remove the override "
-            "to use the default) or simplify the behavior description."
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="output_truncated",
+            attempt=1,
+            message=(
+                "systematization response was truncated by the model's output budget "
+                f"(finish_reason={finish_reason!r}, max_tokens={model_cfg.max_tokens}). "
+                "Increase pipeline.systematize.model.max_tokens (or remove the override "
+                "to use the default) or simplify the behavior description."
+            ),
         )
     payload = response.parsed
     if not isinstance(payload, dict) or not payload:
         if not response.text:
-            raise ValueError("systematization returned no structured systematization")
+            raise llm_failure_error(
+                response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization",
+                reason="empty_structured_output",
+                attempt=1,
+                message="systematization returned no structured systematization",
+            )
         try:
             payload = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"systematization model returned unparseable output: {exc}. "
-                f"Raw text (first 500 chars): {response.text[:500]}"
+            raise llm_failure_error(
+                response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization",
+                reason="unparseable_output",
+                attempt=1,
+                message=(
+                    f"systematization model returned unparseable output: {exc}. "
+                    f"Raw text (first 500 chars): {response.text[:500]}"
+                ),
             ) from exc
 
-    parsed = SystematizationResponse.model_validate(payload)
-    _validate_systematization(parsed.systematization)
-    _validate_summary_items(parsed.summary_items)
+    try:
+        parsed = SystematizationResponse.model_validate(payload)
+        _validate_systematization(parsed.systematization)
+        _validate_summary_items(parsed.summary_items)
+    except ValueError as exc:
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="schema_validation_failed",
+            attempt=1,
+            message=str(exc),
+        ) from exc
 
     artifact = {
         "behavior": behavior,
@@ -179,7 +218,6 @@ async def run_systematization(
             "reasoning_effort": model_cfg.reasoning_effort,
         },
     }
-    output_path = Path(save_path).expanduser().with_suffix(".json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
