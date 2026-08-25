@@ -44,7 +44,7 @@ StageName = Literal["systematize", "test_set", "inference", "judge"]
 
 
 class _ServiceModel(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class ModelOverrides(_ServiceModel):

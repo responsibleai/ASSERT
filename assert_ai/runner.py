@@ -13,6 +13,7 @@ import socket
 import sys
 import time
 import warnings
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,7 +39,7 @@ from assert_ai.core.artifact_cache import (
     update_latest,
 )
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
-from assert_ai.core.io import write_json
+from assert_ai.core.io import write_json, write_text_atomic
 from assert_ai.core.model_client import (
     LLMAuthError,
     LLMInputError,
@@ -54,6 +55,7 @@ from assert_ai.core.runtime_safety import (
 )
 from assert_ai.core.run_result import RunResult, RunState
 from assert_ai.core.run_plan import resolve_forced_stages
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric
 from assert_ai.services.result_metadata import (
     refresh_stage_indexes,
@@ -109,20 +111,34 @@ def _load_context(
     config: str,
     overrides: list[str] | None = None,
     path_policy: RuntimePathPolicy | None = None,
+    config_document: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load one config file into runtime context."""
     cfg_path = (
-        path_policy.resolve_config_path(config, must_exist=True)
+        path_policy.resolve_config_path(
+            config,
+            must_exist=config_document is None,
+        )
         if path_policy is not None
         else Path(config).resolve()
     )
-    raw = _apply_config_overrides(load_config(cfg_path), overrides)
-    return load_runtime_context(
+    raw = _apply_config_overrides(
+        (
+            deepcopy(config_document)
+            if config_document is not None
+            else load_config(cfg_path)
+        ),
+        overrides,
+    )
+    ctx = load_runtime_context(
         raw,
         cfg_path,
         stage_modules=STAGES,
         path_policy=path_policy,
     )
+    if config_document is not None:
+        ctx["_config_snapshot_document"] = raw
+    return ctx
 
 
 def _write_suite_metadata(ctx: dict[str, Any]) -> None:
@@ -163,6 +179,18 @@ def _write_manifest(manifest: RunManifest, run_root: Path) -> None:
         manifest.heartbeat_at = datetime.now(timezone.utc).isoformat()
     manifest_path = run_root / "manifest.json"
     write_json(manifest_path, manifest.to_dict())
+
+
+def _write_active_manifest(
+    manifest: RunManifest,
+    run_root: Path,
+    heartbeat: ManifestHeartbeat | None,
+) -> None:
+    """Write without racing the heartbeat's atomic manifest replacement."""
+    if heartbeat is not None:
+        heartbeat.write_now()
+    else:
+        _write_manifest(manifest, run_root)
 
 
 def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: Path) -> None:
@@ -712,6 +740,35 @@ def run_pipeline_result(
         )
 
 
+def run_pipeline_document_result(
+    *,
+    document: dict[str, Any],
+    config_path: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+) -> RunResult:
+    """Execute an immutable config document using its original path as a base."""
+    try:
+        return _run_pipeline_result(
+            config=config_path,
+            force_stages=force_stages,
+            strict=strict,
+            concurrency=concurrency,
+            path_policy=path_policy,
+            config_document=document,
+        )
+    except Exception:  # noqa: BLE001
+        log.error("[runner] Unexpected pipeline setup error", exc_info=True)
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="INTERNAL",
+            error_message="Unexpected pipeline setup error",
+        )
+
+
 def _run_pipeline_result(
     *,
     config: str,
@@ -720,6 +777,7 @@ def _run_pipeline_result(
     overrides: list[str] | None = None,
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
+    config_document: dict[str, Any] | None = None,
 ) -> RunResult:
     """Execute configured stages.
 
@@ -753,6 +811,7 @@ def _run_pipeline_result(
             config=config,
             overrides=overrides,
             path_policy=path_policy,
+            config_document=config_document,
         )
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
@@ -881,12 +940,14 @@ def _run_pipeline_result(
         run_root.mkdir(parents=True, exist_ok=True)
         manifest = _build_manifest(ctx)
         config_path = ctx.get("config_path")
-        if config_path is not None and Path(config_path).is_file():
-            config_path = (
-                path_policy.resolve_config_path(config_path, must_exist=True)
-                if path_policy is not None
-                else Path(config_path)
+        snapshot_document = ctx.get("_config_snapshot_document")
+        if (
+            isinstance(snapshot_document, dict)
+            or (
+                config_path is not None
+                and Path(config_path).is_file()
             )
+        ):
             config_snapshot = (
                 path_policy.resolve_managed_output(
                     run_root / "config.yaml",
@@ -897,7 +958,21 @@ def _run_pipeline_result(
                 if path_policy is not None
                 else run_root / "config.yaml"
             )
-            shutil.copy2(config_path, config_snapshot)
+            if isinstance(snapshot_document, dict):
+                write_text_atomic(
+                    config_snapshot,
+                    dump_yaml(snapshot_document),
+                )
+            else:
+                config_path = (
+                    path_policy.resolve_config_path(
+                        config_path,
+                        must_exist=True,
+                    )
+                    if path_policy is not None
+                    else Path(config_path)
+                )
+                shutil.copy2(config_path, config_snapshot)
         _record_run_artifacts(manifest, ctx, run_root)
         _write_manifest(manifest, run_root)
         _refresh_run_summary(
@@ -983,7 +1058,7 @@ def _run_stages_inner(
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }
             _record_run_artifacts(manifest, ctx, run_root)
-            _write_manifest(manifest, run_root)
+            _write_active_manifest(manifest, run_root, heartbeat)
             _refresh_run_summary(
                 ctx,
                 manifest,
@@ -1120,7 +1195,7 @@ def _run_stages_inner(
             existing_timing["duration_secs"] = round(elapsed, 3)
             manifest.stage_timings[stage_name] = existing_timing
             _record_run_artifacts(manifest, ctx, run_root)
-            _write_manifest(manifest, run_root)
+            _write_active_manifest(manifest, run_root, heartbeat)
             _refresh_run_summary(
                 ctx,
                 manifest,
@@ -1186,7 +1261,7 @@ def _run_stages_inner(
         manifest.ended_at = datetime.now(timezone.utc).isoformat()
         manifest.status = "completed" if failed_stage is None else "failed"
         _record_run_artifacts(manifest, ctx, run_root)
-        _write_manifest(manifest, run_root)
+        _write_active_manifest(manifest, run_root, heartbeat)
         _refresh_run_summary(
             ctx,
             manifest,

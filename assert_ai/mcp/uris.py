@@ -16,6 +16,10 @@ def config_uri(config_ref: str) -> str:
     return f"assert://config/{quote(config_ref, safe='')}"
 
 
+def job_log_uri(job_id: str) -> str:
+    return f"assert://job/{quote(job_id, safe='')}/log"
+
+
 def suite_taxonomy_uri(suite_id: str) -> str:
     return f"assert://suite/{quote(suite_id, safe='')}/taxonomy"
 

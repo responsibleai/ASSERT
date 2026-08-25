@@ -24,6 +24,7 @@ from assert_ai.core.runtime_path_policy import (
     RuntimePathError,
     RuntimePathErrorCode,
     RuntimePathPolicy,
+    _is_within,
 )
 from assert_ai.core.security import validate_sys_path_addition
 from assert_ai.core.tool_backend import import_callable_module, load_tool_module
@@ -65,6 +66,15 @@ def test_workspace_service_exposes_only_relative_references(tmp_path: Path) -> N
     assert workspace.reference(workspace.configs_root) == "evals"
     assert workspace.reference(workspace.artifacts_root) == "artifacts"
     assert workspace.reference(workspace.results_root) == "artifacts/results"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path representation")
+def test_extended_length_path_is_compared_as_the_same_windows_path() -> None:
+    root = Path("C:/workspace")
+    extended_child = Path("//?/C:/workspace/artifacts/results")
+
+    assert _is_within(extended_child, root)
+    assert not _is_within(Path("//?/C:/outside"), root)
 
 
 def test_config_path_is_contained_under_config_root(tmp_path: Path) -> None:

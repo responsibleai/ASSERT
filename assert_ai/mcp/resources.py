@@ -15,6 +15,7 @@ from assert_ai.core.config_document import EVAL_CONFIG_SCHEMA_VERSION
 from assert_ai.mcp.errors import invoke_resource
 from assert_ai.mcp.sanitize import sanitize_for_mcp
 from assert_ai.mcp.tools.inspect import InspectServices
+from assert_ai.mcp.tools.jobs import JobServices
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 
 _SCHEMA_URI = "assert://schema/eval-config"
@@ -24,6 +25,7 @@ def register_inspect_resources(
     server: MCPServer,
     services: InspectServices,
     *,
+    job_services: JobServices,
     inline_artifact_bytes: int,
 ) -> None:
     """Register static and templated resources for the inspect group."""
@@ -75,6 +77,22 @@ def register_inspect_resources(
     def config(config_ref: str) -> str:
         return invoke_resource(
             lambda: _sanitized_config_yaml(config_ref, services=services),
+            workspace=workspace,
+        )
+
+    @server.resource(
+        "assert://job/{job_id}/log",
+        name="job-log",
+        title="ASSERT evaluation job log",
+        description="Bounded, filtered stdout and stderr tails for one worker.",
+        mime_type="text/plain",
+    )
+    def job_log(job_id: str) -> str:
+        return invoke_resource(
+            lambda: job_services.evaluations.read_log(
+                job_id,
+                max_bytes=inline_artifact_bytes,
+            ),
             workspace=workspace,
         )
 

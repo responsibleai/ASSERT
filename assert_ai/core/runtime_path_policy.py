@@ -48,11 +48,26 @@ class RuntimePathError(ValueError):
 
 
 def _is_within(path: Path, root: Path) -> bool:
+    path = _comparison_path(path)
+    root = _comparison_path(root)
     try:
         path.relative_to(root)
         return True
     except ValueError:
         return False
+
+
+def _comparison_path(path: Path) -> Path:
+    """Normalize equivalent Windows extended-length paths for comparison."""
+    value = os.path.normpath(os.fspath(path))
+    if os.name == "nt":
+        value = value.replace("/", "\\")
+        if value.startswith("\\\\?\\UNC\\"):
+            value = "\\\\" + value[8:]
+        elif value.startswith("\\\\?\\"):
+            value = value[4:]
+        value = os.path.normcase(value)
+    return Path(value)
 
 
 def _resolved(path: str | Path) -> Path:
@@ -400,9 +415,10 @@ class RuntimePathPolicy:
         *,
         field_name: str,
     ) -> None:
-        normalized = Path(os.path.abspath(path))
+        normalized = _comparison_path(Path(os.path.abspath(path)))
+        comparison_root = _comparison_path(root)
         try:
-            relative = normalized.relative_to(root)
+            relative = normalized.relative_to(comparison_root)
         except ValueError:
             return
         current = root

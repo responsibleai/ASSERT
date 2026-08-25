@@ -8,10 +8,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import yaml
+
 from assert_ai.core.model_client import LLMInputError
 from assert_ai.core.run_result import RunState
 from assert_ai.core.workspace import WorkspaceService
-from assert_ai.runner import run_pipeline, run_pipeline_result
+from assert_ai.runner import (
+    run_pipeline,
+    run_pipeline_document_result,
+    run_pipeline_result,
+)
 
 
 def test_invalid_config_returns_typed_failure_and_legacy_exit_code() -> None:
@@ -134,6 +140,40 @@ def test_classified_stage_error_hides_strict_workspace_root() -> None:
 
         assert result.state == RunState.FAILED
         assert result.error_message == "invalid request from ."
+
+
+def test_document_run_preserves_logical_config_base_and_snapshot(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspaceService.create(tmp_path)
+    logical_path = workspace.configs_root / "nested" / "config.yaml"
+    document = {
+        "suite": "suite-a",
+        "run": "run-a",
+        "pipeline": {
+            "inference": {
+                "target": {"callable": "agent:run"},
+                "test_set_path": "fixture.jsonl",
+            }
+        },
+    }
+
+    async def complete_stage(*_: object, **__: object) -> dict:
+        return {}
+
+    with patch("assert_ai.stages.inference.run", new=complete_stage):
+        result = run_pipeline_document_result(
+            document=document,
+            config_path=str(logical_path),
+            path_policy=workspace.path_policy,
+        )
+
+    assert result.state is RunState.COMPLETED
+    assert result.run_root is not None
+    snapshot = yaml.safe_load(
+        (result.run_root / "config.yaml").read_text(encoding="utf-8")
+    )
+    assert snapshot == document
 
 
 def test_unexpected_setup_failure_is_returned_not_raised() -> None:

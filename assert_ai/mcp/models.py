@@ -61,6 +61,9 @@ class ServerLimits(BaseModel):
     max_artifact_chunk_bytes: int
     max_config_bytes: int
     max_concurrency: int
+    max_active_jobs: int
+    max_queued_jobs: int
+    max_job_log_bytes: int
     max_prompt_sample_size: int
     max_scenario_sample_size: int
     model_allowlist_enabled: bool = False

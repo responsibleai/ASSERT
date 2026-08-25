@@ -29,6 +29,8 @@ from tests.result_catalog_fixture import create_result_catalog_fixture
 
 EXPECTED_INSPECT_TOOLS = {
     "get_server_info",
+    "list_jobs",
+    "get_job",
     "list_presets",
     "get_preset",
     "get_config_schema",
@@ -55,11 +57,13 @@ EXPECTED_AUTHOR_TOOLS = EXPECTED_INSPECT_TOOLS | {
 EXPECTED_FULL_TOOLS = EXPECTED_AUTHOR_TOOLS | {
     "design_config",
     "probe_target",
+    "start_evaluation",
 }
 
 EXPECTED_RESOURCE_TEMPLATES = {
     "assert://preset/{kind}/{name}",
     "assert://config/{config_ref}",
+    "assert://job/{job_id}/log",
     "assert://suite/{suite_id}/taxonomy",
     "assert://suite/{suite_id}/test-case/{test_case_id}{?kind,run_id}",
     "assert://run/{suite_id}/{run_id}/summary",
@@ -253,6 +257,45 @@ def _seed_workspace(root: Path) -> None:
         )
 
 
+def _seed_evaluation_workspace(root: Path) -> None:
+    evals_root = root / "evals"
+    evals_root.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(
+        evals_root / "fixture.jsonl",
+        [
+            {
+                "type": "prompt",
+                "test_case_id": "case-1",
+                "behavior": "local behavior",
+                "seed": {"description": "hello"},
+            }
+        ],
+    )
+    (root / "agent.py").write_text(
+        "def run(message, *, history=None):\n"
+        "    del history\n"
+        "    print('api_key=not-a-real-secret')\n"
+        "    return f'local: {message}'\n",
+        encoding="utf-8",
+    )
+    (evals_root / "job.yaml").write_text(
+        json.dumps(
+            {
+                "suite": "mcp-job-suite",
+                "pipeline": {
+                    "inference": {
+                        "target": {"callable": "agent:run"},
+                        "test_set_path": "fixture.jsonl",
+                        "concurrency": 1,
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _schema_digest(tool: Any) -> str:
     payload = {
         "input": tool.input_schema,
@@ -319,6 +362,13 @@ def test_server_options_validate_response_limits(tmp_path: Path) -> None:
     ("field", "value", "message"),
     [
         ("max_concurrency", 0, "max_concurrency must be positive"),
+        ("max_active_jobs", 0, "max_active_jobs must be positive"),
+        ("max_queued_jobs", 0, "max_queued_jobs must be positive"),
+        (
+            "max_job_log_bytes",
+            1024,
+            "max_job_log_bytes must be between",
+        ),
         (
             "max_prompt_sample_size",
             0,
@@ -436,6 +486,9 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     assert "env_file" not in result.structured_content
     assert result.structured_content["limits"]["max_page_size"] == 200
     assert result.structured_content["limits"]["max_concurrency"] == 32
+    assert result.structured_content["limits"]["max_active_jobs"] == 1
+    assert result.structured_content["limits"]["max_queued_jobs"] == 100
+    assert result.structured_content["limits"]["max_job_log_bytes"] == 1024 * 1024
     assert result.structured_content["limits"]["max_prompt_sample_size"] == 100_000
     assert result.structured_content["limits"]["max_scenario_sample_size"] == 100_000
     assert result.structured_content["limits"]["model_allowlist_enabled"] is True
@@ -495,15 +548,17 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "compare_runs": "f7bfeca051f8f81bf3621936588ed906332076a3a34b550090f87c2944656ce5",
         "get_config": "bf38188871cb818e0b0cf6e28183aa728ed8d041923a158f593832d2459bd13a",
         "get_config_schema": "cca1d3a48240e20eff93a123b34d7ba92df3ed1df87f57f9eb217aa21515ec26",
+        "get_job": "76794436d4665712dfbd226a4c44738f1b4e8ab6ff3ed3f7eb184311f1f60cb0",
         "get_preset": "81db6723ad5065ce8a0a402d29dc2f9df7657d302e3ebe8b377f54c9d62353d0",
         "get_run": "e5216cd0085d049f8b49c54add913b6f83756c4ce59995317fe63e010ea44936",
-        "get_server_info": "59f160f8840051916a5e0623fe0b46ea4bb6bba5b0ecc78202325a5b1ba4bc0d",
+        "get_server_info": "51e1d08335b4c8c6cb5eb70b6857563ab2dead550347f83dac64d89d8d417069",
         "get_suite": "8f629c93e02b656052f637c3cbba9217834315a693c4f7935f6d961203b46fd0",
         "get_test_case": "11380555caaa71d5992923815a499fc08b368c02f4d4836e4761630654589148",
         "get_transcript": "aa09669e0cb99202e8dec0b858b4faa41742ecb616351c3956b0d0bd488717e8",
         "list_artifacts": "3d3bede0b7209401b15d1f39d82671092c3097a05cd901122bd46c3c42edebfc",
         "list_configs": "92f78db2533034e6bf80e1d95089460acdd40a18468d4eb06fdf055726dfef19",
         "list_failures": "d3cc3f3bcc86c110754673297d28ac1e5ccbf698668c997de0bba2d0cbd425e2",
+        "list_jobs": "4570a8790f6f5c42fa015c49056111f4b7f00744a2300e3a79af9a68f08d2530",
         "list_presets": "55faa31adbf7f689eb5efbf1211fa73b2474d1a0e4549ec0a836ea69919c46b1",
         "list_runs": "7280687daafcd7ff5d89756c9584ca06c432a44f5a98ce8ff3ae0e4427dcf40b",
         "list_scores": "5c1951a3a3b91089b68b30e970a1b13f59bc2659a2c234db4451cbe2d5362a4d",
@@ -532,6 +587,7 @@ def test_author_tools_publish_stable_schemas_and_annotations(
         "preflight_evaluation": (True, False, True, False),
         "design_config": (True, False, False, True),
         "probe_target": (True, False, False, True),
+        "start_evaluation": (False, True, True, True),
     }
     expected_digests = {
         "validate_config": (
@@ -541,13 +597,16 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             "b09950417a44bf14c9bbf2702c1c00f23a18a0bfec03cab16a482733d8cf98c8"
         ),
         "preflight_evaluation": (
-            "f53c4526b5df97e62f33b61a7c3a2eee375fc09eb44adabc7f5a9703d62eec64"
+            "c9a686f7879c7e06a8f32c210cc02ed8e30c4fb8c6473cf77999971d114c9805"
         ),
         "design_config": (
             "1cd55a1bba06468b0aaa785cf05a445e4bf16768ff6165254ceecf0181a8392e"
         ),
         "probe_target": (
             "406d97ba84821a4e2661779dcc1211d208d2485013f8dea761c04f1fcdf59e63"
+        ),
+        "start_evaluation": (
+            "b594f1ef3510f31503960291e7ed5b57967876b5c5d4d628b0d5ee86cc000c0c"
         ),
     }
 
@@ -670,6 +729,122 @@ def test_complete_author_preflight_and_probe_workflow(
     assert results["probe"]["target_kind"] == "callable"
     assert results["probe"]["details"]["reference"] == "agent:run"
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_complete_persisted_evaluation_workflow_through_mcp(
+    tmp_path: Path,
+) -> None:
+    _seed_evaluation_workspace(tmp_path)
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+            max_active_jobs=1,
+            max_queued_jobs=2,
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            empty = await client.call_tool("list_jobs", {})
+            started = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "mcp-integration-request",
+                },
+            )
+            repeated = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "mcp-integration-request",
+                },
+            )
+            conflict = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "mcp-integration-request",
+                    "overrides": {"run": "different-run"},
+                },
+            )
+            invalid_override = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "invalid-override",
+                    "overrides": {"unsupported": True},
+                },
+            )
+            job_id = started.structured_content["job"]["job_id"]
+            deadline = asyncio.get_running_loop().time() + 30
+            while True:
+                detail = await client.call_tool(
+                    "get_job",
+                    {"job_id": job_id},
+                )
+                if detail.structured_content["state"] in {
+                    "completed",
+                    "failed",
+                    "interrupted",
+                }:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("MCP evaluation job did not finish")
+                await asyncio.sleep(0.05)
+            jobs = await client.call_tool(
+                "list_jobs",
+                {"states": ["completed"], "page_size": 1},
+            )
+            run = await client.call_tool(
+                "get_run",
+                {
+                    "suite_id": detail.structured_content["suite_id"],
+                    "run_id": detail.structured_content["run_id"],
+                },
+            )
+            job_log = await client.read_resource(
+                detail.structured_content["resources"]["worker_log"]
+            )
+            return {
+                "empty": empty,
+                "started": started,
+                "repeated": repeated,
+                "conflict": conflict,
+                "invalid_override": invalid_override,
+                "detail": detail,
+                "jobs": jobs,
+                "run": run,
+                "job_log": job_log.contents[0].text,
+            }
+
+    results = asyncio.run(run())
+
+    assert results["empty"].structured_content == {
+        "items": [],
+        "next_cursor": None,
+    }
+    started = results["started"].structured_content
+    repeated = results["repeated"].structured_content
+    assert started["created"] is True
+    assert repeated["created"] is False
+    assert repeated["job"]["job_id"] == started["job"]["job_id"]
+    assert '"code":"CONFLICT"' in _error_text(results["conflict"])
+    assert results["invalid_override"].is_error is True
+    detail = results["detail"].structured_content
+    assert detail["state"] == "completed"
+    assert detail["terminal_result"]["exit_code"] == 0
+    assert detail["resources"]["config"] == "assert://config/job.yaml"
+    assert detail["resources"]["run_summary"].endswith("/summary")
+    assert "pid" not in detail
+    assert str(tmp_path) not in json.dumps(detail)
+    assert results["jobs"].structured_content["items"][0]["job_id"] == (
+        detail["job_id"]
+    )
+    assert results["run"].structured_content["state"] == "completed"
+    assert "filtered tail" in results["job_log"]
+    assert str(tmp_path) not in results["job_log"]
+    assert "not-a-real-secret" not in results["job_log"]
+    assert "[REDACTED]" in results["job_log"]
 
 
 def test_design_config_returns_an_unpersisted_draft(tmp_path: Path) -> None:

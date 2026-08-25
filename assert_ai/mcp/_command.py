@@ -124,6 +124,27 @@ def mcp() -> None:
     help="Maximum inference concurrency accepted by preflight.",
 )
 @click.option(
+    "--max-active-jobs",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Maximum number of evaluation workers active at once.",
+)
+@click.option(
+    "--max-queued-jobs",
+    type=click.IntRange(min=1),
+    default=100,
+    show_default=True,
+    help="Maximum number of evaluations waiting to start.",
+)
+@click.option(
+    "--max-job-log-bytes",
+    type=click.IntRange(min=4096, max=16 * 1024 * 1024),
+    default=1024 * 1024,
+    show_default=True,
+    help="Maximum retained bytes for each worker stdout/stderr log.",
+)
+@click.option(
     "--max-prompt-sample-size",
     type=click.IntRange(min=1),
     default=100_000,
@@ -168,6 +189,9 @@ def serve(
     max_artifact_chunk_bytes: int,
     max_config_bytes: int,
     max_concurrency: int,
+    max_active_jobs: int,
+    max_queued_jobs: int,
+    max_job_log_bytes: int,
     max_prompt_sample_size: int,
     max_scenario_sample_size: int,
     allowed_model_patterns: tuple[str, ...],
@@ -199,6 +223,9 @@ def serve(
             max_artifact_chunk_bytes=max_artifact_chunk_bytes,
             max_config_bytes=max_config_bytes,
             max_concurrency=max_concurrency,
+            max_active_jobs=max_active_jobs,
+            max_queued_jobs=max_queued_jobs,
+            max_job_log_bytes=max_job_log_bytes,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,
             allowed_model_patterns=allowed_model_patterns,

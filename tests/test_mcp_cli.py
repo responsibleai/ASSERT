@@ -61,6 +61,12 @@ def test_mcp_serve_forwards_resolved_options() -> None:
                 "4096",
                 "--max-concurrency",
                 "7",
+                "--max-active-jobs",
+                "2",
+                "--max-queued-jobs",
+                "9",
+                "--max-job-log-bytes",
+                "5000",
                 "--max-prompt-sample-size",
                 "12",
                 "--max-scenario-sample-size",
@@ -86,6 +92,9 @@ def test_mcp_serve_forwards_resolved_options() -> None:
     assert create_kwargs["max_artifact_chunk_bytes"] == 2048
     assert create_kwargs["max_config_bytes"] == 4096
     assert create_kwargs["max_concurrency"] == 7
+    assert create_kwargs["max_active_jobs"] == 2
+    assert create_kwargs["max_queued_jobs"] == 9
+    assert create_kwargs["max_job_log_bytes"] == 5000
     assert create_kwargs["max_prompt_sample_size"] == 12
     assert create_kwargs["max_scenario_sample_size"] == 13
     assert create_kwargs["allowed_model_patterns"] == ("azure/*",)

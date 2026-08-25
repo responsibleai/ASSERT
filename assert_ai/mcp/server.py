@@ -26,14 +26,22 @@ from assert_ai.mcp.resources import register_inspect_resources
 from assert_ai.mcp.tools import (
     AuthorServices,
     InspectServices,
+    JobServices,
     ProbeServices,
     register_author_tools,
     register_design_tools,
     register_inspect_tools,
+    register_job_execute_tools,
+    register_job_inspect_tools,
     register_probe_tools,
 )
 from assert_ai.services.artifacts import ArtifactRepository
 from assert_ai.services.configs import ConfigService
+from assert_ai.services.evaluations import (
+    EvaluationJobManager,
+    EvaluationService,
+)
+from assert_ai.services.job_store import JobStore
 from assert_ai.services.library import LibraryService
 from assert_ai.services.results import ResultRepository
 from assert_ai.services.run_planning import (
@@ -80,6 +88,9 @@ class ServerOptions:
     max_artifact_chunk_bytes: int = 256 * 1024
     max_config_bytes: int = 256 * 1024
     max_concurrency: int = 32
+    max_active_jobs: int = 1
+    max_queued_jobs: int = 100
+    max_job_log_bytes: int = 1024 * 1024
     max_prompt_sample_size: int = 100_000
     max_scenario_sample_size: int = 100_000
     allowed_model_patterns: tuple[str, ...] = ()
@@ -100,6 +111,14 @@ class ServerOptions:
             raise ValueError("max_config_bytes must not exceed max_response_bytes")
         if self.max_concurrency < 1:
             raise ValueError("max_concurrency must be positive")
+        if self.max_active_jobs < 1:
+            raise ValueError("max_active_jobs must be positive")
+        if self.max_queued_jobs < 1:
+            raise ValueError("max_queued_jobs must be positive")
+        if not 4096 <= self.max_job_log_bytes <= 16 * 1024 * 1024:
+            raise ValueError(
+                "max_job_log_bytes must be between 4096 and 16777216"
+            )
         if self.max_prompt_sample_size < 1:
             raise ValueError("max_prompt_sample_size must be positive")
         if self.max_scenario_sample_size < 1:
@@ -141,6 +160,9 @@ class ServerOptions:
         max_artifact_chunk_bytes: int = 256 * 1024,
         max_config_bytes: int = 256 * 1024,
         max_concurrency: int = 32,
+        max_active_jobs: int = 1,
+        max_queued_jobs: int = 100,
+        max_job_log_bytes: int = 1024 * 1024,
         max_prompt_sample_size: int = 100_000,
         max_scenario_sample_size: int = 100_000,
         allowed_model_patterns: Iterable[str] = (),
@@ -166,6 +188,9 @@ class ServerOptions:
             max_artifact_chunk_bytes=max_artifact_chunk_bytes,
             max_config_bytes=max_config_bytes,
             max_concurrency=max_concurrency,
+            max_active_jobs=max_active_jobs,
+            max_queued_jobs=max_queued_jobs,
+            max_job_log_bytes=max_job_log_bytes,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,
             allowed_model_patterns=tuple(allowed_model_patterns),
@@ -204,6 +229,53 @@ def build_server(options: ServerOptions) -> MCPServer:
         default_page_size=options.default_page_size,
         max_page_size=options.max_page_size,
     )
+    planning = RunPlanningService(
+        options.workspace,
+        configs,
+        policy=PreflightPolicy(
+            max_concurrency=options.max_concurrency,
+            max_prompt_sample_size=options.max_prompt_sample_size,
+            max_scenario_sample_size=options.max_scenario_sample_size,
+            allowed_model_patterns=options.allowed_model_patterns,
+            allowed_endpoint_hosts=options.allowed_endpoint_hosts,
+        ),
+    )
+    jobs_db = options.path_policy.resolve_managed_output(
+        options.workspace.artifacts_root / "mcp" / "jobs.sqlite3",
+        field_name="evaluation job store",
+        expected_root=options.workspace.artifacts_root,
+        reject_links=True,
+    )
+    job_store = JobStore(
+        jobs_db,
+        path_policy=options.path_policy,
+        expected_root=options.workspace.artifacts_root,
+    )
+    execution_enabled = (
+        CapabilityGroup.EXECUTE in options.capability_groups
+    )
+    job_manager = EvaluationJobManager(
+        options.workspace,
+        job_store,
+        max_active_jobs=options.max_active_jobs,
+        max_log_bytes=options.max_job_log_bytes,
+        launch_enabled=execution_enabled,
+    )
+    evaluations = EvaluationService(
+        options.workspace,
+        configs,
+        planning,
+        job_store,
+        job_manager,
+        default_page_size=options.default_page_size,
+        max_page_size=options.max_page_size,
+        max_queued_jobs=options.max_queued_jobs,
+    )
+    job_services = JobServices(
+        workspace=options.workspace,
+        evaluations=evaluations,
+        max_response_bytes=options.max_response_bytes,
+    )
 
     @server.tool(
         title="Get ASSERT server information",
@@ -235,6 +307,9 @@ def build_server(options: ServerOptions) -> MCPServer:
                 max_artifact_chunk_bytes=options.max_artifact_chunk_bytes,
                 max_config_bytes=options.max_config_bytes,
                 max_concurrency=options.max_concurrency,
+                max_active_jobs=options.max_active_jobs,
+                max_queued_jobs=options.max_queued_jobs,
+                max_job_log_bytes=options.max_job_log_bytes,
                 max_prompt_sample_size=options.max_prompt_sample_size,
                 max_scenario_sample_size=options.max_scenario_sample_size,
                 model_allowlist_enabled=bool(options.allowed_model_patterns),
@@ -276,26 +351,18 @@ def build_server(options: ServerOptions) -> MCPServer:
             max_response_bytes=options.max_response_bytes,
         )
         register_inspect_tools(server, services)
+        register_job_inspect_tools(server, job_services)
         register_inspect_resources(
             server,
             services,
+            job_services=job_services,
             inline_artifact_bytes=options.max_artifact_chunk_bytes,
         )
 
     author_services = AuthorServices(
         workspace=options.workspace,
         configs=configs,
-        planning=RunPlanningService(
-            options.workspace,
-            configs,
-            policy=PreflightPolicy(
-                max_concurrency=options.max_concurrency,
-                max_prompt_sample_size=options.max_prompt_sample_size,
-                max_scenario_sample_size=options.max_scenario_sample_size,
-                allowed_model_patterns=options.allowed_model_patterns,
-                allowed_endpoint_hosts=options.allowed_endpoint_hosts,
-            ),
-        ),
+        planning=planning,
         max_response_bytes=options.max_response_bytes,
         allowed_model_patterns=options.allowed_model_patterns,
     )
@@ -316,6 +383,9 @@ def build_server(options: ServerOptions) -> MCPServer:
                 max_response_bytes=options.max_response_bytes,
             ),
         )
+    if execution_enabled:
+        register_job_execute_tools(server, job_services)
+        job_manager.enqueue()
 
     return server
 
