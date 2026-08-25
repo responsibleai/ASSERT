@@ -207,6 +207,58 @@ def test_model_override_cannot_replace_callable_target() -> None:
         assert invalid.value.code == ServiceErrorCode.INVALID_ARGUMENT
 
 
+def test_sandbox_preflight_is_static_and_not_a_model_target() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        configs, planning = _services(root)
+        configs.workspace.configs_root.mkdir(parents=True)
+        (configs.workspace.configs_root / "policy.yaml").write_text(
+            "interactions: []\ndefault: {mode: block}\n",
+            encoding="utf-8",
+        )
+        (configs.workspace.configs_root / "setup.yaml").write_text(
+            "version: 1\n"
+            "target: {kind: endpoint, url: 'https://agent.example.test/chat'}\n"
+            "policy: ./policy.yaml\n",
+            encoding="utf-8",
+        )
+        document = _document()
+        document["pipeline"]["inference"]["target"] = {
+            "sandbox": "./setup.yaml",
+        }
+        configs.save_config("demo.yaml", document=document)
+
+        result = planning.preflight("demo.yaml")
+
+        assert result.target is not None
+        assert result.target.kind == "sandbox"
+        assert result.target.identifier == "evals/setup.yaml"
+        assert result.target.probe_required is False
+        assert not any(model.role == "target" for model in result.models)
+
+        restricted = RunPlanningService(
+            planning.workspace,
+            configs,
+            policy=PreflightPolicy(
+                allowed_endpoint_hosts=("api.example.test",),
+            ),
+        ).preflight("demo.yaml")
+        assert "ENDPOINT_NOT_ALLOWED" in {
+            issue.code for issue in restricted.blocking_issues
+        }
+
+        with pytest.raises(ServiceError) as invalid:
+            planning.preflight(
+                "demo.yaml",
+                overrides=EvaluationOverrides(
+                    models=ModelOverrides(
+                        target_model="openai/replacement",
+                    )
+                ),
+            )
+        assert invalid.value.code == ServiceErrorCode.INVALID_ARGUMENT
+
+
 def test_stratify_model_planning_matches_runtime_fallback_order() -> None:
     with TemporaryDirectory() as tmp:
         root = Path(tmp)

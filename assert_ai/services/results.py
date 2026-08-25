@@ -29,7 +29,15 @@ from assert_ai.core.jsonl_index import (
     load_jsonl_index,
     scan_jsonl,
 )
-from assert_ai.core.judge import get_verdict_dimension, infer_judge_status
+from assert_ai.core.judge import (
+    get_verdict_dimension,
+    infer_judge_status,
+    is_valid_event_flag,
+)
+from assert_ai.results import (
+    compute_policy_violation_by_permissibility,
+    has_permissibility_split_data,
+)
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.result_metadata import (
     RUN_CATALOG_FILENAME,
@@ -49,6 +57,13 @@ if TYPE_CHECKING:
 
 _CURSOR_VERSION = 1
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+_DEFAULT_COMPARE_METRIC = "policy_violation"
+_DERIVED_PERMISSIBILITY_SUMMARY_KEYS = {
+    "policy_violation_not_permissible": (
+        "policy_violation_on_not_permissible"
+    ),
+    "policy_violation_permissible": "policy_violation_on_permissible",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,7 +529,7 @@ class ResultRepository:
         self,
         run_refs: Sequence[RunReference | tuple[str, str]],
         *,
-        metric: str = "policy_violation",
+        metric: str | None = None,
         behavior_limit: int = 8,
     ) -> dict[str, Any]:
         refs = [
@@ -530,6 +545,7 @@ class ResultRepository:
             self.load_run_detail(ref.suite_id, ref.run_id)
             for ref in refs
         ]
+        metric = _resolve_compare_metric(metric, details)
         available_dimensions = _available_dimensions(details)
         if metric not in available_dimensions:
             raise ServiceError(
@@ -596,10 +612,12 @@ class ResultRepository:
             first_map = _behavior_metric_map(
                 [row for row in rows_by_run[0] if not row.get("tester_model")],
                 metric,
+                self._behavior_categories(refs[0], details[0]),
             )
             last_map = _behavior_metric_map(
                 [row for row in rows_by_run[-1] if not row.get("tester_model")],
                 metric,
+                self._behavior_categories(refs[-1], details[-1]),
             )
             for behavior_name in sorted(set(first_map) | set(last_map)):
                 first = first_map.get(behavior_name)
@@ -633,6 +651,26 @@ class ResultRepository:
             "behavior_category_deltas": behavior_deltas,
             "warnings": warnings,
         }
+
+    def _behavior_categories(
+        self,
+        ref: RunReference,
+        detail: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        suite_dir = self._suite_dir(ref.suite_id, must_exist=True)
+        run_dir = self._run_dir(
+            suite_dir,
+            ref.run_id,
+            must_exist=True,
+        )
+        taxonomy_path = self._source_path(
+            suite_dir=suite_dir,
+            run_dir=run_dir,
+            summary=detail,
+            source_name="taxonomy",
+            fallback=suite_dir / "taxonomy.json",
+        )
+        return _load_behavior_categories(taxonomy_path)
 
     def _source_context(
         self,
@@ -1765,16 +1803,56 @@ def _oversized_row_stub(
     }
 
 
+def _load_behavior_categories(
+    taxonomy_path: Path | None,
+) -> list[dict[str, Any]]:
+    taxonomy = load_json(taxonomy_path) if taxonomy_path is not None else None
+    categories = (taxonomy or {}).get("behavior_categories")
+    if not isinstance(categories, list):
+        return []
+    return [
+        category
+        for category in categories
+        if isinstance(category, dict)
+    ]
+
+
+def _row_metric_value(
+    row: dict[str, Any],
+    metric: str,
+    behavior_categories: Iterable[dict[str, Any]],
+) -> bool | int | None:
+    summary_key = _DERIVED_PERMISSIBILITY_SUMMARY_KEYS.get(metric)
+    if summary_key is not None:
+        split = compute_policy_violation_by_permissibility(
+            [row],
+            behavior_categories,
+        )
+        bucket = (
+            "not_permissible"
+            if metric == "policy_violation_not_permissible"
+            else "permissible"
+        )
+        summary = split.get(bucket)
+        if not isinstance(summary, dict) or not summary.get("count"):
+            return None
+        return bool(summary.get("flagged_count"))
+    value = get_verdict_dimension(row.get("verdict"), metric)
+    return value if is_valid_event_flag(value) else None
+
+
 def _behavior_metric_map(
     rows: Iterable[dict[str, Any]],
     metric: str,
+    behavior_categories: Iterable[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
+    categories = list(behavior_categories)
     for row in rows:
         if infer_judge_status(row) != "ok":
             continue
-        value = get_verdict_dimension(row.get("verdict"), metric)
-        if not isinstance(value, bool):
+        value = _row_metric_value(row, metric, categories)
+        if not is_valid_event_flag(value):
             continue
         behavior = row_behavior(row)
         bucket = grouped.setdefault(
@@ -1785,7 +1863,7 @@ def _behavior_metric_map(
                 "permissible": get_permissible_flag(row),
             },
         )
-        bucket["true_count"] += int(value)
+        bucket["true_count"] += int(bool(value))
         bucket["count"] += 1
     return {
         behavior: {
@@ -1843,6 +1921,30 @@ def _structural_summary(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _resolve_compare_metric(
+    metric: str | None,
+    details: Sequence[dict[str, Any]],
+) -> str:
+    if metric:
+        return metric
+    if details and all(
+        _detail_has_permissibility_split(detail)
+        for detail in details
+    ):
+        return "policy_violation_not_permissible"
+    return _DEFAULT_COMPARE_METRIC
+
+
+def _detail_has_permissibility_split(detail: dict[str, Any]) -> bool:
+    quality = detail.get("quality")
+    if not isinstance(quality, dict):
+        return False
+    return has_permissibility_split_data(
+        quality.get("prompt"),
+        quality.get("scenario"),
+    )
+
+
 def _available_dimensions(details: Iterable[dict[str, Any]]) -> set[str]:
     names: set[str] = set()
     for detail in details:
@@ -1858,6 +1960,8 @@ def _available_dimensions(details: Iterable[dict[str, Any]]) -> set[str]:
             )
             if isinstance(dimensions, dict):
                 names.update(str(name) for name in dimensions)
+            if has_permissibility_split_data(metrics):
+                names.update(_DERIVED_PERMISSIBILITY_SUMMARY_KEYS)
     return names
 
 
@@ -1871,16 +1975,7 @@ def _first_dimension_summary(
             continue
         for kind in ("prompt", "scenario"):
             metrics = quality.get(kind)
-            dimensions = (
-                metrics.get("dimensions")
-                if isinstance(metrics, dict)
-                else None
-            )
-            summary = (
-                dimensions.get(dimension)
-                if isinstance(dimensions, dict)
-                else None
-            )
+            summary = _metric_summary(metrics, dimension)
             if isinstance(summary, dict):
                 return summary
     return None
@@ -1942,18 +2037,28 @@ def _dimension_summary_by_kind(
     result: dict[str, dict[str, Any] | None] = {}
     for kind in ("prompt", "scenario"):
         metrics = quality.get(kind) if isinstance(quality, dict) else None
-        dimensions = (
-            metrics.get("dimensions")
-            if isinstance(metrics, dict)
-            else None
-        )
+        summary = _metric_summary(metrics, dimension)
+        result[kind] = summary if isinstance(summary, dict) else None
+    return result
+
+
+def _metric_summary(
+    metrics: Any,
+    dimension: str,
+) -> dict[str, Any] | None:
+    if not isinstance(metrics, dict):
+        return None
+    summary_key = _DERIVED_PERMISSIBILITY_SUMMARY_KEYS.get(dimension)
+    if summary_key is not None:
+        summary = metrics.get(summary_key)
+    else:
+        dimensions = metrics.get("dimensions")
         summary = (
             dimensions.get(dimension)
             if isinstance(dimensions, dict)
             else None
         )
-        result[kind] = summary if isinstance(summary, dict) else None
-    return result
+    return summary if isinstance(summary, dict) else None
 
 
 def _rate_delta(

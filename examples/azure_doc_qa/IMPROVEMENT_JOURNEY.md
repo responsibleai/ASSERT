@@ -5,6 +5,16 @@ improve a multi-agent RAG system from a **~20% pass rate to 82%** over 7 rounds
 of targeted fixes. It demonstrates the **eval → diagnose → fix → re-eval** loop
 that makes agent development systematic rather than guesswork.
 
+> **Historical note.** This journey was run against an earlier bundled
+> `eval_config.yaml` that scored 9 judge dimensions over 56 test cases in a
+> single run. That config has since been split into one config per risk under
+> [`evals/`](evals/) — see
+> [`evals/fabricated_ungrounded_answer.yaml`](evals/fabricated_ungrounded_answer.yaml)
+> and
+> [`evals/confidential_internal_leakage.yaml`](evals/confidential_internal_leakage.yaml).
+> The rates below are preserved as historical results and will not reproduce
+> verbatim against the split configs; the loop they demonstrate is unchanged.
+
 ## The Agent Under Test
 
 The `azure_doc_qa` agent is a LangGraph multi-agent system with three specialist
@@ -31,7 +41,8 @@ cases across different question types and adversarial pressures.
 ### Step 1 — Run the baseline eval
 
 ```bash
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 ```
 
 The initial run showed a **~80% policy_violation rate** — nearly every test case
@@ -83,7 +94,8 @@ Each fix was a small, focused commit:
 ### Step 5 — Re-evaluate
 
 ```bash
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 ```
 
 Result: **34/56 passing (61%)**, up from ~20%. The routing JSON leak was
@@ -417,19 +429,19 @@ resistance in multi-step conversations).
 
 ```bash
 # Install
-cd /path/to/adaptive-eval
+cd /path/to/ASSERT
 pip install -e ".[otel,langgraph]"
 cp .env.example .env  # configure AZURE_API_BASE, AZURE_API_KEY
 
-# Run eval
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/eval_config.yaml
+# Run eval (one config per risk; this is the grounding suite)
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
 
 # Check results
-cat artifacts/results/azure-doc-qa-v1/demo-1/metrics.json
+cat artifacts/results/azure-doc-qa-fabricated-answer/baseline/metrics.json
 # Read individual failures
 python -c "
 import json
-with open('artifacts/results/azure-doc-qa-v1/demo-1/scores.jsonl') as f:
+with open('artifacts/results/azure-doc-qa-fabricated-answer/baseline/scores.jsonl') as f:
     for line in f:
         row = json.loads(line)
         fails = {k: v for k, v in row.get('scores', {}).items() if v.get('pass') == False}

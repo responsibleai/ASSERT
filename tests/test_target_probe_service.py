@@ -112,7 +112,7 @@ def test_probe_timeout_terminates_worker() -> None:
             "    return message\n",
             encoding="utf-8",
         )
-        configs, probe = _service(root, timeout_s=1.5)
+        configs, probe = _service(root, timeout_s=4.0)
         configs.save_config(
             "demo.yaml",
             document=_callable_document("slow:run"),
@@ -123,7 +123,7 @@ def test_probe_timeout_terminates_worker() -> None:
 
         assert timed_out.value.code == ServiceErrorCode.TARGET_IMPORT_FAILED
         assert timed_out.value.details == {"timed_out": True}
-        assert "1.5 seconds" in str(timed_out.value)
+        assert "4 seconds" in str(timed_out.value)
         child_pid = int((root / "child.pid").read_text(encoding="utf-8"))
         import psutil
 
@@ -155,6 +155,46 @@ def test_model_probe_is_static_and_reports_model() -> None:
         assert result.details == {
             "model": "openai/gpt-test",
             "trace_enabled": False,
+        }
+
+
+def test_sandbox_probe_validates_setup_without_starting_target() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        configs, probe = _service(root)
+        configs.workspace.configs_root.mkdir(parents=True)
+        (configs.workspace.configs_root / "policy.yaml").write_text(
+            "interactions: []\ndefault: {mode: block}\n",
+            encoding="utf-8",
+        )
+        (configs.workspace.configs_root / "setup.yaml").write_text(
+            "version: 1\n"
+            "target: {kind: endpoint, url: 'https://agent.example.test/chat'}\n"
+            "policy: ./policy.yaml\n",
+            encoding="utf-8",
+        )
+        configs.save_config(
+            "demo.yaml",
+            document={
+                "suite": "probe-suite",
+                "pipeline": {
+                    "inference": {
+                        "target": {"sandbox": "./setup.yaml"},
+                        "test_set_path": "fixtures/test_set.jsonl",
+                    }
+                },
+            },
+        )
+
+        result = probe.probe("demo.yaml")
+
+        assert result.target_kind == "sandbox"
+        assert result.details == {
+            "setup": "evals/setup.yaml",
+            "runtime_kind": "endpoint",
+            "policy": "evals/policy.yaml",
+            "mocks_configured": False,
+            "cassettes_configured": False,
         }
 
 

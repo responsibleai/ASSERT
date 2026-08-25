@@ -48,6 +48,21 @@ def test_library_service_gets_complete_preset() -> None:
     assert "description:" in preset.yaml
 
 
+def test_library_service_exposes_application_scenarios() -> None:
+    service = LibraryService()
+
+    page = service.list_presets(kind=PresetKind.SCENARIO)
+    preset = service.get_preset(
+        PresetKind.SCENARIO,
+        "travel_planner",
+    )
+
+    assert page.items
+    assert all(item.kind is PresetKind.SCENARIO for item in page.items)
+    assert preset.kind is PresetKind.SCENARIO
+    assert preset.document["kind"] == "scenario"
+
+
 def test_library_service_rejects_unknown_or_path_like_names() -> None:
     service = LibraryService()
 

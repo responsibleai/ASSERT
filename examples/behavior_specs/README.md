@@ -1,5 +1,12 @@
 # Behavior Spec References
 
+> **Source of truth:** [`assert_ai/library/behaviors/`](../../assert_ai/library/behaviors/).
+> Each `.md` here is the same prose as that preset's `description:` field, kept
+> as a plain-markdown reference. Only the YAML ships in the wheel, so a
+> `pip install assert-ai` user sees the library, not this directory.
+> `scripts/check_behavior_library.py` runs in CI and fails if the two drift or
+> if a spec here has no preset. **Edit the YAML; mirror it here.**
+
 Each `.md` file is a reusable behavior spec reference. The pipeline no longer loads companion markdown files automatically; customer-authored evals should keep the full spec inline in the YAML under `behavior.description`.
 
 To reuse one of these references, copy its text into your config:
@@ -11,6 +18,12 @@ behavior:
     # Harmful Medical Advice
     ...
 ```
+
+**One behavior per config.** Every spec here is atomic, and it should stay that
+way — see [best practices §8.D](../../docs/config/best-practices.md). To cover
+several behaviors for one application, write one config per behavior sharing a
+common `context:`; application specs live in
+[`assert_ai/library/scenarios/`](../../assert_ai/library/scenarios/).
 
 ## Safety and multi-agent behavior specs
 
@@ -30,6 +43,8 @@ Reference specs for safety-critical content, attacks, AI-identity and user-influ
 |------|-----------|
 | `doxxing.md` | Revealing or compiling private personal information |
 | `prompt_injection.md` | Prompt injection and instruction override attacks |
+| `identity_verification_failures.md` | Account-specific disclosures before required identity checks |
+| `unauthorized_action_failures.md` | State-changing actions without required authorization or confirmation |
 
 ### AI identity and user influence
 
@@ -72,6 +87,7 @@ Quality-focused references for agent failure modes — useful for evaluating sin
 | `intent_misinterpretation_failures.md` | Detect when an agent acts on a confidently wrong reading of what the user actually wants. |
 | `success_criteria_ambiguity_failures.md` | Detect when an agent proceeds without a clear definition of what "done" looks like, leading to over-work, under-work, or unstable stopping points. |
 | `conflicting_instruction_resolution_failures.md` | Detect when an agent receives contradictory instructions and either silently picks a side, mixes them inconsistently, or fails to flag the conflict. |
+| `explicit_constraint_violation_failures.md` | Detect when an agent produces an output that violates an explicit user constraint. |
 
 ### Planning and control flow
 
@@ -88,6 +104,7 @@ Quality-focused references for agent failure modes — useful for evaluating sin
 | `incorrect_tool_selection_failures.md` | Detect when the agent picks the wrong tool from its toolbox for the step it is trying to perform. |
 | `tool_parameter_formatting_failures.md` | Detect when the agent calls the right tool but constructs the arguments in a way the tool cannot accept or interpret correctly. |
 | `tool_call_error_recovery_failures.md` | Detect when the agent handles tool errors poorly — retrying without thought, giving up too soon, or hiding the failure from the user. |
+| `tool_call_turn_protocol_failures.md` | Detect violations of required turn-level protocol around tool calls and user-visible responses. |
 
 ### State, memory, and feedback
 
@@ -96,6 +113,7 @@ Quality-focused references for agent failure modes — useful for evaluating sin
 | `tool_output_misinterpretation_failures.md` | Detect when the agent calls the right tool but reads its output incorrectly, leading to confidently wrong follow-up actions. |
 | `stale_state_failures.md` | Detect when the agent acts on outdated internal state — values that were correct earlier but no longer reflect reality. |
 | `observation_neglect_failures.md` | Detect when the agent receives a clear signal — from a tool, the environment, or the user — and fails to incorporate it into the next step. |
+| `output_internal_consistency_failures.md` | Detect outputs whose own dates, numbers, sequence, or claims contradict each other. |
 
 ### Verification and answer synthesis
 
@@ -104,6 +122,7 @@ Quality-focused references for agent failure modes — useful for evaluating sin
 | `insufficient_verification_failures.md` | Detect when the agent skips checks that the task obviously requires before producing or committing its answer. |
 | `incomplete_answer_synthesis_failures.md` | Detect when the agent has gathered enough information to produce a complete answer but synthesizes only part of it into the final response. |
 | `unsupported_conclusion_failures.md` | Detect when the agent presents conclusions, recommendations, or inferences that go beyond what the underlying evidence supports. |
+| `unit_conversion_failures.md` | Detect incorrect handling of units, currencies, measures, or time zones requested by the user. |
 
 ### Retrieval and grounding
 
@@ -118,3 +137,12 @@ Quality-focused references for agent failure modes — useful for evaluating sin
 | File | Behavior |
 |------|-----------|
 | `ineffective_team_communication_failures.md` | Detect when specialist agents share information so poorly that the team produces worse results than any agent would alone. |
+| `actionability_failures.md` | Detect answers that are too vague to act on when the user requested concrete options or next steps. |
+
+### Operational boundaries and procedures
+
+| File | Behavior |
+|------|-----------|
+| `procedure_adherence_failures.md` | Detect when an agent skips, reorders, or contradicts required operational procedure steps. |
+| `out_of_scope_request_failures.md` | Detect when an agent complies with requests outside its defined role, policy, or tool authority. |
+| `escalation_judgment_failures.md` | Detect poor decisions about when to resolve a task directly versus escalate to a human or specialist. |

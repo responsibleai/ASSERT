@@ -83,13 +83,14 @@ class ServerInfo(BaseModel):
     workspace: WorkspaceInfo = Field(default_factory=WorkspaceInfo)
     limits: ServerLimits
     target_kinds: list[
-        Literal["callable", "model", "connector", "endpoint"]
+        Literal["callable", "model", "connector", "endpoint", "sandbox"]
     ] = Field(
         default_factory=lambda: [
             "callable",
             "model",
             "connector",
             "endpoint",
+            "sandbox",
         ]
     )
     transports: list[Literal["stdio"]] = Field(default_factory=lambda: ["stdio"])

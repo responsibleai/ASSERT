@@ -264,6 +264,32 @@ def compute_policy_violation_by_permissibility(
     }
 
 
+def has_permissibility_split_data(*metric_sets: Any) -> bool:
+    """Return whether a computed permissibility split contains usable rows.
+
+    Key presence alone is insufficient after a suite taxonomy is regenerated:
+    older runs can still receive split-shaped summaries whose two buckets both
+    have zero matching judgments. A one-sided taxonomy remains valid because
+    its populated bucket has data even though the other bucket is empty.
+    """
+    key_pairs = (
+        ("policy_violation_on_permissible", "permissible_policy_violation_rate"),
+        ("policy_violation_on_not_permissible", "not_permissible_policy_violation_rate"),
+    )
+    for metrics in metric_sets:
+        if not isinstance(metrics, dict):
+            continue
+        for summary_key, rate_key in key_pairs:
+            summary = metrics.get(summary_key)
+            count = summary.get("count") if isinstance(summary, dict) else None
+            if isinstance(count, (int, float)) and not isinstance(count, bool) and count > 0:
+                return True
+            rate = metrics.get(rate_key)
+            if isinstance(rate, (int, float)) and not isinstance(rate, bool):
+                return True
+    return False
+
+
 def _first_str(rows: Iterable[dict[str, Any]], key: str) -> str:
     for row in rows:
         value = row.get(key)

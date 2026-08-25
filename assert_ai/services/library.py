@@ -26,6 +26,7 @@ class PresetKind(StrEnum):
 
     BEHAVIOR = "behavior"
     JUDGE_PRESET = "judge_preset"
+    SCENARIO = "scenario"
 
 
 class _LibraryModel(BaseModel):

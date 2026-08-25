@@ -135,7 +135,7 @@ class CredentialRequirement(_ServiceModel):
 
 
 class TargetPreflight(_ServiceModel):
-    kind: Literal["model", "callable", "connector", "endpoint"]
+    kind: Literal["model", "callable", "connector", "endpoint", "sandbox"]
     identifier: str
     trace_enabled: bool = False
     static_validation: Literal["valid", "invalid"]
@@ -261,7 +261,11 @@ class RunPlanningService:
 
         ctx["strict"] = applied.strict
         models = _collect_model_uses(effective)
-        target, target_issues = _target_preflight(ctx, self.policy)
+        target, target_issues = _target_preflight(
+            ctx,
+            self.policy,
+            self.workspace,
+        )
         blocking.extend(target_issues)
         blocking.extend(_policy_issues(effective, models, ctx, self.policy))
         credentials, credential_issues, credential_warnings = (
@@ -414,10 +418,13 @@ def _apply_model_overrides(
             "target",
             "target_model requires pipeline.inference.target",
         )
-        if any(target.get(kind) for kind in ("callable", "connector", "endpoint")):
+        if any(
+            target.get(kind)
+            for kind in ("callable", "connector", "endpoint", "sandbox")
+        ):
             raise ServiceError(
                 ServiceErrorCode.INVALID_ARGUMENT,
-                "target_model cannot replace a callable, connector, or endpoint target",
+                "target_model cannot replace a callable, connector, endpoint, or sandbox target",
             )
         _replace_model(target, "model", overrides.target_model)
     if overrides.tester_model is not None:
@@ -576,7 +583,7 @@ def _collect_model_uses(document: dict[str, Any]) -> list[ModelUse]:
         if isinstance(target, dict):
             has_non_model_target = any(
                 target.get(kind)
-                for kind in ("callable", "connector", "endpoint")
+                for kind in ("callable", "connector", "endpoint", "sandbox")
             )
             if not has_non_model_target:
                 _append_model(
@@ -646,12 +653,13 @@ def _model_provider(model: str) -> str:
 def _target_preflight(
     ctx: dict[str, Any],
     policy: PreflightPolicy,
+    workspace: WorkspaceService,
 ) -> tuple[TargetPreflight | None, list[PreflightIssue]]:
     target = ctx.get("target")
     if target is None:
         return None, []
     issues: list[PreflightIssue] = []
-    kind: Literal["model", "callable", "connector", "endpoint"]
+    kind: Literal["model", "callable", "connector", "endpoint", "sandbox"]
     identifier: str
     probe_required = False
     try:
@@ -668,6 +676,44 @@ def _target_preflight(
             identifier = str(target.connector)
             validate_module_ref(identifier)
             probe_required = True
+        elif target.sandbox:
+            kind = "sandbox"
+            setup_path = workspace.path_policy.resolve_input(
+                target.sandbox,
+                base_dir=Path(ctx["config_path"]).parent,
+                field_name="pipeline.inference.target.sandbox",
+                must_exist=True,
+                file_only=True,
+            )
+            identifier = workspace.reference(setup_path)
+            from assert_ai.integrations.sandbox import load_setup
+
+            setup = load_setup(
+                setup_path,
+                path_policy=workspace.path_policy,
+            )
+            if setup.target.kind == "endpoint":
+                endpoint = str(setup.target.url or "")
+                _endpoint_origin(endpoint)
+                host = urlsplit(endpoint).hostname
+                if host is None:
+                    raise ValueError(
+                        "Sandbox endpoint target must include a hostname"
+                    )
+                if policy.allowed_endpoint_hosts and not any(
+                    fnmatchcase(host.lower(), pattern.lower())
+                    for pattern in policy.allowed_endpoint_hosts
+                ):
+                    issues.append(
+                        PreflightIssue(
+                            code="ENDPOINT_NOT_ALLOWED",
+                            path="/pipeline/inference/target/sandbox",
+                            message=(
+                                f"Sandbox endpoint host {host!r} is not "
+                                "allowed by server policy"
+                            ),
+                        )
+                    )
         else:
             kind = "endpoint"
             identifier = _endpoint_origin(str(target.endpoint or ""))

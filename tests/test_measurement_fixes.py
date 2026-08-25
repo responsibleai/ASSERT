@@ -177,6 +177,26 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertIn("[Tool call: get_weather(", formatted)
         self.assertIn('"city": "Miami"', formatted)
 
+    def test_json_tool_result_is_pretty_printed_in_transcript(self) -> None:
+        transcript = Transcript(metadata=self._meta())
+        transcript.add_event(
+            TranscriptEvent(
+                view=["target", "combined"],
+                actor="tool",
+                edit=ToolCallEdit(
+                    tool_name="send_message",
+                    tool_args={"recipient": "555-000-9999"},
+                    tool_result='{"mode":"mock","real_executed":false,"returned":{"status":"sent"}}',
+                ),
+            )
+        )
+
+        formatted = transcript.format_transcript("target", skip_system=False)
+
+        self.assertIn('\n  "mode": "mock",', formatted)
+        self.assertIn('\n  "real_executed": false,', formatted)
+        self.assertNotIn('\\"mode\\"', formatted)
+
     def test_extract_xml_citations_preserves_tool_arg_provenance(self) -> None:
         transcript = Transcript(metadata=self._meta())
         transcript.add_event(

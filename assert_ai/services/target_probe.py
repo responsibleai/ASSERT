@@ -37,7 +37,13 @@ class TargetProbeResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     config_ref: str
-    target_kind: Literal["model", "callable", "connector", "endpoint"]
+    target_kind: Literal[
+        "model",
+        "callable",
+        "connector",
+        "endpoint",
+        "sandbox",
+    ]
     ready: Literal[True] = True
     isolated: Literal[True] = True
     duration_ms: int = Field(ge=0)
@@ -95,7 +101,13 @@ class TargetProbeService:
             )
 
         target_kind = payload.get("target_kind")
-        if target_kind not in {"model", "callable", "connector", "endpoint"}:
+        if target_kind not in {
+            "model",
+            "callable",
+            "connector",
+            "endpoint",
+            "sandbox",
+        }:
             raise ServiceError(
                 ServiceErrorCode.TARGET_IMPORT_FAILED,
                 "Target probe worker returned an invalid target kind",

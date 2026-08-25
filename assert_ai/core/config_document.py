@@ -164,7 +164,7 @@ class TraceDocument(_DocumentModel):
 
 
 class TargetDocument(_DocumentModel):
-    """Hosted model, callable, endpoint, or connector target declaration."""
+    """Hosted model, callable, endpoint, sandbox, or connector target declaration."""
 
     model: ModelDocument | None = Field(default=None)
     system_prompt: str | None = Field(default=None)
@@ -172,6 +172,7 @@ class TargetDocument(_DocumentModel):
     connector: str | None = Field(default=None)
     callable: str | None = Field(default=None)
     endpoint: str | None = Field(default=None)
+    sandbox: str | None = Field(default=None)
     trace: TraceDocument | None = Field(default=None)
 
 

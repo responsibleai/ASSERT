@@ -210,6 +210,29 @@ def _probe(
             },
         }
 
+    if target.sandbox:
+        from assert_ai.integrations.sandbox import load_setup
+
+        setup = load_setup(
+            target.sandbox,
+            path_policy=workspace.path_policy,
+        )
+        if setup.target.kind == "endpoint":
+            from assert_ai.core.session import HTTPEndpointSession
+
+            HTTPEndpointSession(endpoint=str(setup.target.url or ""))
+        return {
+            "ok": True,
+            "target_kind": "sandbox",
+            "details": {
+                "setup": workspace.reference(setup.source_path),
+                "runtime_kind": setup.target.kind,
+                "policy": workspace.reference(setup.policy_path),
+                "mocks_configured": setup.mocks_path is not None,
+                "cassettes_configured": setup.cassette_dir is not None,
+            },
+        }
+
     endpoint = str(target.endpoint or "")
     from assert_ai.core.session import HTTPEndpointSession
 

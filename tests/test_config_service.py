@@ -188,6 +188,38 @@ def test_validation_does_not_import_callable_target() -> None:
         assert report.valid is True
 
 
+def test_sandbox_validation_contains_setup_references() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        service = _service(root)
+        service.workspace.configs_root.mkdir(parents=True)
+        outside_policy = root / "outside-policy.yaml"
+        outside_policy.write_text(
+            "interactions: []\ndefault: {mode: block}\n",
+            encoding="utf-8",
+        )
+        (service.workspace.configs_root / "setup.yaml").write_text(
+            "version: 1\n"
+            "target: {kind: endpoint, url: 'http://localhost/chat'}\n"
+            "policy: ../outside-policy.yaml\n",
+            encoding="utf-8",
+        )
+        document = _valid_document()
+        document["pipeline"]["inference"]["target"] = {
+            "sandbox": "./setup.yaml",
+        }
+
+        report = service.validate_document(document)
+
+        assert report.valid is False
+        assert report.issues[0].code == (
+            ConfigValidationCode.WORKSPACE_VIOLATION
+        )
+        assert report.issues[0].path == (
+            "/pipeline/inference/target/sandbox/policy"
+        )
+
+
 def test_config_refs_are_contained_and_payloads_are_bounded() -> None:
     with TemporaryDirectory() as tmp:
         service = _service(Path(tmp), max_config_bytes=100)

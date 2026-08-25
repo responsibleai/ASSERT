@@ -44,7 +44,14 @@ def _score(
                 "policy_violation": violation,
                 "severity": severity,
             },
-            "node_judgments": [],
+            "node_judgments": [
+                {
+                    "node_index": 0,
+                    "node_name": "unsafe-action",
+                    "relevant": True,
+                    "violated": violation,
+                }
+            ],
         }
         if judge_status == "ok"
         else {}
@@ -340,6 +347,12 @@ def test_compare_runs_reports_binary_ordinal_structural_and_sample_warnings() ->
             ]
         )
 
+        assert comparison["metric"] == "policy_violation_not_permissible"
+        derived = comparison["dimension_deltas"][
+            "policy_violation_not_permissible"
+        ]
+        assert derived["kind"] == "binary"
+        assert derived["runs"][1]["prompt_rate_delta"] == -1.0
         policy = comparison["dimension_deltas"]["policy_violation"]
         assert policy["kind"] == "binary"
         assert policy["runs"][1]["prompt_rate_delta"] == -1.0

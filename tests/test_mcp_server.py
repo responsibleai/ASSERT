@@ -455,6 +455,7 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
         "model",
         "connector",
         "endpoint",
+        "sandbox",
     ]
     assert result.structured_content["enabled_capability_groups"] == [
         "inspect",
@@ -494,16 +495,16 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "compare_runs": "f7bfeca051f8f81bf3621936588ed906332076a3a34b550090f87c2944656ce5",
         "get_config": "bf38188871cb818e0b0cf6e28183aa728ed8d041923a158f593832d2459bd13a",
         "get_config_schema": "cca1d3a48240e20eff93a123b34d7ba92df3ed1df87f57f9eb217aa21515ec26",
-        "get_preset": "25352522a3ed4ff76217c5415453c6641ad229c2dd6e4e05df4621b89ce4819c",
+        "get_preset": "81db6723ad5065ce8a0a402d29dc2f9df7657d302e3ebe8b377f54c9d62353d0",
         "get_run": "e5216cd0085d049f8b49c54add913b6f83756c4ce59995317fe63e010ea44936",
-        "get_server_info": "19b16f3a1acbbe39914256977d48c594c6ac68a4ee6a406a00d70c09d3e72935",
+        "get_server_info": "59f160f8840051916a5e0623fe0b46ea4bb6bba5b0ecc78202325a5b1ba4bc0d",
         "get_suite": "8f629c93e02b656052f637c3cbba9217834315a693c4f7935f6d961203b46fd0",
         "get_test_case": "11380555caaa71d5992923815a499fc08b368c02f4d4836e4761630654589148",
         "get_transcript": "aa09669e0cb99202e8dec0b858b4faa41742ecb616351c3956b0d0bd488717e8",
         "list_artifacts": "3d3bede0b7209401b15d1f39d82671092c3097a05cd901122bd46c3c42edebfc",
         "list_configs": "92f78db2533034e6bf80e1d95089460acdd40a18468d4eb06fdf055726dfef19",
         "list_failures": "d3cc3f3bcc86c110754673297d28ac1e5ccbf698668c997de0bba2d0cbd425e2",
-        "list_presets": "2cb18ca86885b3dcfb230437413fef501624c0c989f26ea7f57fb56d3ff3d557",
+        "list_presets": "55faa31adbf7f689eb5efbf1211fa73b2474d1a0e4549ec0a836ea69919c46b1",
         "list_runs": "7280687daafcd7ff5d89756c9584ca06c432a44f5a98ce8ff3ae0e4427dcf40b",
         "list_scores": "5c1951a3a3b91089b68b30e970a1b13f59bc2659a2c234db4451cbe2d5362a4d",
         "list_suites": "80f696cdb1812636e4e98089ae7a5b9fceddfc8ae994ab8e9835307c8ea12108",
@@ -540,13 +541,13 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             "b09950417a44bf14c9bbf2702c1c00f23a18a0bfec03cab16a482733d8cf98c8"
         ),
         "preflight_evaluation": (
-            "e86012ecf7fd9684714e25abc052341f22e6f9cac78d08d112b19c03111b7e29"
+            "f53c4526b5df97e62f33b61a7c3a2eee375fc09eb44adabc7f5a9703d62eec64"
         ),
         "design_config": (
             "1cd55a1bba06468b0aaa785cf05a445e4bf16768ff6165254ceecf0181a8392e"
         ),
         "probe_target": (
-            "0a46b06b94ef40d13b579fa3facb60024875c9a3348c9d80265c71b05837456b"
+            "406d97ba84821a4e2661779dcc1211d208d2485013f8dea761c04f1fcdf59e63"
         ),
     }
 

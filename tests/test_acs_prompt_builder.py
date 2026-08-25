@@ -84,7 +84,11 @@ def test_build_guardrail_prompt_includes_generalization_guidance() -> None:
     assert "general CLASS" in prompt.prompt
     assert "Do not hardcode literal wording" in prompt.prompt
     assert "paraphrases and novel instances" in prompt.prompt
-    assert "Prefer a semantic classifier or LLM annotator" in prompt.prompt
+    # The prompt steers by rule STYLE: deterministic Rego for structural gates,
+    # annotators for semantic gates.
+    assert "STRUCTURAL gate" in prompt.prompt
+    assert "SEMANTIC gate" in prompt.prompt
+    assert "input.annotations.<annotator>" in prompt.prompt
 
 
 def test_build_guardrail_prompt_benign_branch_omits_generalization_guidance() -> None:
