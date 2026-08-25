@@ -22,19 +22,24 @@ def test_large_catalog_is_metadata_only_and_single_case_lookup_is_indexed() -> N
         )
         original_open = Path.open
 
-        def reject_score_reads(
+        def reject_catalog_source_reads(
             path: Path,
             mode: str = "r",
             *args: object,
             **kwargs: object,
         ):
-            if path.name == "scores.jsonl" and "r" in mode:
-                raise AssertionError("catalog listing opened score rows")
+            if (
+                path.name in {"scores.jsonl", "run_summary.json"}
+                and "r" in mode
+            ):
+                raise AssertionError(
+                    f"catalog listing opened {path.name}"
+                )
             return original_open(path, mode, *args, **kwargs)
 
         started = time.perf_counter()
         with (
-            patch.object(Path, "open", reject_score_reads),
+            patch.object(Path, "open", reject_catalog_source_reads),
             patch(
                 "assert_ai.services.results.scan_jsonl",
                 side_effect=AssertionError("catalog listing scanned JSONL"),

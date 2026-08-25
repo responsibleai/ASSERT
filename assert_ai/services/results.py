@@ -32,10 +32,14 @@ from assert_ai.core.jsonl_index import (
 from assert_ai.core.judge import get_verdict_dimension, infer_judge_status
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.result_metadata import (
+    RUN_CATALOG_FILENAME,
+    RUN_CATALOG_SCHEMA_VERSION,
     RUN_SUMMARY_SCHEMA_VERSION,
     SUITE_SUMMARY_SCHEMA_VERSION,
+    run_catalog_entry,
     suite_run_catalog_identity,
     suite_run_set_identity,
+    write_run_catalog,
     write_run_summary,
     write_suite_summary,
 )
@@ -163,11 +167,7 @@ class ResultRepository:
         page_size: int | None = None,
     ) -> ResultPage:
         suite_dir = self._suite_dir(suite_id, must_exist=True)
-        entries: list[dict[str, Any]] = []
-        for run_dir in self._run_dirs(suite_dir):
-            summary = self._ensure_run_summary(suite_dir, run_dir)
-            if summary is not None:
-                entries.append(self._run_catalog_entry(summary))
+        entries = self._ensure_run_catalog(suite_dir)
         entries.sort(
             key=lambda item: (
                 str(
@@ -692,6 +692,95 @@ class ResultRepository:
             self._ensure_run_summary(suite_dir, run_dir)
         ctx = self._legacy_context(suite_dir)
         return write_suite_summary(ctx, rebuild_indexes=True)
+
+    def _ensure_run_catalog(
+        self,
+        suite_dir: Path,
+    ) -> list[dict[str, Any]]:
+        catalog = _load_optional_json(suite_dir / RUN_CATALOG_FILENAME)
+        items = catalog.get("items") if isinstance(catalog, dict) else None
+        if (
+            isinstance(catalog, dict)
+            and catalog.get("schema_version") == RUN_CATALOG_SCHEMA_VERSION
+            and catalog.get("suite_id") == suite_dir.name
+            and isinstance(items, list)
+            and all(isinstance(item, dict) for item in items)
+            and catalog.get("run_catalog_identity")
+            == suite_run_catalog_identity(suite_dir)
+            and self._run_catalog_sources_current(catalog, suite_dir)
+        ):
+            return [dict(item) for item in items]
+
+        summaries: list[dict[str, Any]] = []
+        for run_dir in self._run_dirs(suite_dir):
+            summary = self._ensure_run_summary(suite_dir, run_dir)
+            if summary is not None:
+                summaries.append(summary)
+
+        catalog_identity = suite_run_catalog_identity(suite_dir)
+        try:
+            rebuilt = write_run_catalog(
+                suite_dir,
+                summaries,
+                catalog_identity=catalog_identity,
+            )
+        except OSError:
+            rebuilt = None
+        rebuilt_items = (
+            rebuilt.get("items") if isinstance(rebuilt, dict) else None
+        )
+        if isinstance(rebuilt_items, list) and all(
+            isinstance(item, dict) for item in rebuilt_items
+        ):
+            return [dict(item) for item in rebuilt_items]
+        return [
+            run_catalog_entry(summary, suite_id=suite_dir.name)
+            for summary in summaries
+        ]
+
+    def _run_catalog_sources_current(
+        self,
+        catalog: dict[str, Any],
+        suite_dir: Path,
+    ) -> bool:
+        items = catalog.get("items")
+        summary_sources = catalog.get("summary_sources")
+        if not isinstance(items, list) or not isinstance(
+            summary_sources,
+            dict,
+        ):
+            return False
+
+        run_ids: list[str] = []
+        for item in items:
+            run_id = item.get("run_id") if isinstance(item, dict) else None
+            if not isinstance(run_id, str) or not _IDENTIFIER_RE.fullmatch(
+                run_id
+            ):
+                return False
+            run_ids.append(run_id)
+        if (
+            len(run_ids) != len(set(run_ids))
+            or set(run_ids) != set(summary_sources)
+        ):
+            return False
+
+        for run_id in run_ids:
+            sources = summary_sources.get(run_id)
+            if not isinstance(sources, dict):
+                return False
+            run_dir = self._run_dir(
+                suite_dir,
+                run_id,
+                must_exist=False,
+            )
+            if not run_dir.is_dir() or not self._summary_sources_current(
+                {"sources": sources},
+                suite_dir=suite_dir,
+                run_dir=run_dir,
+            ):
+                return False
+        return True
 
     def _ensure_run_summary(
         self,
@@ -1317,26 +1406,6 @@ class ResultRepository:
             "created_at": summary.get("created_at"),
             "updated_at": summary.get("updated_at"),
             "latest_run": summary.get("latest_run"),
-        }
-
-    def _run_catalog_entry(
-        self,
-        summary: dict[str, Any],
-    ) -> dict[str, Any]:
-        quality = summary.get("quality") or {}
-        return {
-            "suite_id": summary.get("suite_id"),
-            "run_id": summary.get("run_id"),
-            "status": summary.get("state"),
-            "current_stage": summary.get("current_stage"),
-            "started_at": summary.get("started_at"),
-            "ended_at": summary.get("ended_at"),
-            "updated_at": summary.get("updated_at"),
-            "prompt_metrics": quality.get("prompt"),
-            "scenario_metrics": quality.get("scenario"),
-            "models": summary.get("models") or {},
-            "counts": summary.get("counts") or {},
-            "metrics": summary.get("metrics"),
         }
 
     def _matches_common(

@@ -28,6 +28,8 @@ from assert_ai.results import (
 
 SUITE_SUMMARY_SCHEMA_VERSION = 1
 RUN_SUMMARY_SCHEMA_VERSION = 1
+RUN_CATALOG_SCHEMA_VERSION = 1
+RUN_CATALOG_FILENAME = "run_catalog.json"
 
 
 def refresh_stage_indexes(
@@ -201,6 +203,74 @@ def write_run_summary(
     return normalized_payload
 
 
+def run_catalog_entry(
+    summary: dict[str, Any],
+    *,
+    suite_id: str | None = None,
+) -> dict[str, Any]:
+    """Project a run summary into the lightweight catalog contract."""
+    quality = summary.get("quality")
+    if not isinstance(quality, dict):
+        quality = {}
+    return {
+        "suite_id": summary.get("suite_id") or suite_id,
+        "run_id": summary.get("run_id"),
+        "status": summary.get("state"),
+        "current_stage": summary.get("current_stage"),
+        "started_at": summary.get("started_at"),
+        "ended_at": summary.get("ended_at"),
+        "updated_at": summary.get("updated_at"),
+        "prompt_metrics": quality.get("prompt"),
+        "scenario_metrics": quality.get("scenario"),
+        "models": summary.get("models") or {},
+        "counts": summary.get("counts") or {},
+        "metrics": summary.get("metrics"),
+    }
+
+
+def write_run_catalog(
+    suite_root: Path,
+    run_summaries: list[dict[str, Any]],
+    *,
+    catalog_identity: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Atomically persist projected run metadata for one stable suite snapshot."""
+    expected_identity = (
+        suite_run_catalog_identity(suite_root)
+        if catalog_identity is None
+        else catalog_identity
+    )
+    if suite_run_catalog_identity(suite_root) != expected_identity:
+        return None
+
+    payload = _json_payload(
+        {
+            "schema_version": RUN_CATALOG_SCHEMA_VERSION,
+            "suite_id": suite_root.name,
+            "generated_at": _utc_now(),
+            "run_catalog_identity": expected_identity,
+            "items": [
+                run_catalog_entry(summary, suite_id=suite_root.name)
+                for summary in run_summaries
+            ],
+            "summary_sources": {
+                str(summary.get("run_id")): (
+                    summary.get("sources")
+                    if isinstance(summary.get("sources"), dict)
+                    else {}
+                )
+                for summary in run_summaries
+                if isinstance(summary.get("run_id"), str)
+            },
+        }
+    )
+    write_json(suite_root / RUN_CATALOG_FILENAME, payload)
+
+    if suite_run_catalog_identity(suite_root) != expected_identity:
+        return None
+    return payload
+
+
 def write_suite_summary(
     ctx: dict[str, Any],
     *,
@@ -274,7 +344,15 @@ def write_suite_summary(
                 ),
             }
 
+    catalog_identity_before = suite_run_catalog_identity(suite_root)
     runs = _run_catalog_entries(suite_root)
+    catalog_identity = suite_run_catalog_identity(suite_root)
+    if catalog_identity_before == catalog_identity:
+        write_run_catalog(
+            suite_root,
+            runs,
+            catalog_identity=catalog_identity,
+        )
     latest_run = max(
         runs,
         key=lambda item: str(
@@ -331,7 +409,7 @@ def write_suite_summary(
         "updated_at": _utc_now(),
         "run_count": len(runs),
         "run_set_identity": suite_run_set_identity(suite_root),
-        "run_catalog_identity": suite_run_catalog_identity(suite_root),
+        "run_catalog_identity": catalog_identity,
         "latest_run": (
             {
                 "run_id": latest_run.get("run_id"),

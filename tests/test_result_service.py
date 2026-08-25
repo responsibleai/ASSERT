@@ -218,10 +218,32 @@ def test_catalogs_rebuild_legacy_once_and_then_remain_metadata_only() -> None:
         assert (
             results_root / "suite-a" / "run-a" / "run_summary.json"
         ).exists()
+        assert (
+            results_root / "suite-a" / "run_catalog.json"
+        ).exists()
 
-        with patch(
-            "assert_ai.services.results.scan_jsonl",
-            side_effect=AssertionError("catalog listing must not scan JSONL"),
+        original_open = Path.open
+
+        def reject_run_summary_reads(
+            path: Path,
+            mode: str = "r",
+            *args: object,
+            **kwargs: object,
+        ):
+            if path.name == "run_summary.json" and "r" in mode:
+                raise AssertionError(
+                    "warm catalog listing must use run_catalog.json"
+                )
+            return original_open(path, mode, *args, **kwargs)
+
+        with (
+            patch.object(Path, "open", reject_run_summary_reads),
+            patch(
+                "assert_ai.services.results.scan_jsonl",
+                side_effect=AssertionError(
+                    "catalog listing must not scan JSONL"
+                ),
+            ),
         ):
             suites = repository.list_suite_catalog_entries()
             runs = repository.list_run_catalog_entries("suite-a")
@@ -411,6 +433,92 @@ def test_suite_summary_detects_out_of_band_run_addition() -> None:
         (suite_root / "run-b" / "run_summary.json").unlink()
 
         assert repository.get_suite("suite-a")["run_count"] == 2
+        assert {
+            item["run_id"]
+            for item in repository.list_run_catalog_entries(
+                "suite-a"
+            ).items
+        } == {"run-a", "run-b"}
+
+
+def test_run_catalog_detects_out_of_band_summary_change() -> None:
+    with TemporaryDirectory() as tmp:
+        results_root = _build_legacy_fixture(Path(tmp))
+        repository = ResultRepository(results_root)
+        repository.get_suite("suite-a")
+
+        summary_path = (
+            results_root
+            / "suite-a"
+            / "run-a"
+            / "run_summary.json"
+        )
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["state"] = "failed"
+        summary["updated_at"] = "2026-08-25T00:00:00+00:00"
+        _write_json(summary_path, summary)
+
+        runs = repository.list_run_catalog_entries("suite-a")
+
+        assert runs.items[0]["status"] == "failed"
+        catalog = json.loads(
+            (
+                results_root
+                / "suite-a"
+                / "run_catalog.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert catalog["items"][0]["status"] == "failed"
+
+
+def test_run_catalog_detects_out_of_band_summary_source_change() -> None:
+    with TemporaryDirectory() as tmp:
+        results_root = _build_legacy_fixture(Path(tmp))
+        repository = ResultRepository(results_root)
+        repository.get_suite("suite-a")
+
+        taxonomy_path = (
+            results_root
+            / "suite-a"
+            / "artifacts"
+            / "systematize"
+            / "v0001"
+            / "taxonomy.json"
+        )
+        taxonomy = json.loads(taxonomy_path.read_text(encoding="utf-8"))
+        taxonomy["behavior_categories"].append(
+            {"name": "new-category", "permissible": True}
+        )
+        _write_json(taxonomy_path, taxonomy)
+
+        repository.list_run_catalog_entries("suite-a")
+
+        expected_mtime = taxonomy_path.stat().st_mtime_ns
+        run_summary = json.loads(
+            (
+                results_root
+                / "suite-a"
+                / "run-a"
+                / "run_summary.json"
+            ).read_text(encoding="utf-8")
+        )
+        run_catalog = json.loads(
+            (
+                results_root
+                / "suite-a"
+                / "run_catalog.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert (
+            run_summary["sources"]["taxonomy"]["mtime_ns"]
+            == expected_mtime
+        )
+        assert (
+            run_catalog["summary_sources"]["run-a"]["taxonomy"][
+                "mtime_ns"
+            ]
+            == expected_mtime
+        )
 
 
 def test_oversized_page_row_returns_bounded_stub_and_remains_pageable() -> None:
@@ -465,9 +573,15 @@ def test_corrupt_derived_summaries_are_rebuilt_from_canonical_artifacts() -> Non
         repository = ResultRepository(results_root)
         suite = repository.get_suite("suite-a")
         run = repository.load_run_detail("suite-a", "run-a")
+        (suite_root / "run_catalog.json").write_text(
+            "{",
+            encoding="utf-8",
+        )
+        runs = repository.list_run_catalog_entries("suite-a")
 
         assert suite["run_count"] == 1
         assert run["state"] == "completed"
+        assert runs.items[0]["status"] == "completed"
 
 
 def test_cli_results_list_uses_metadata_and_compare_supports_ordinal() -> None:

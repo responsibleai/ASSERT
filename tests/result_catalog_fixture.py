@@ -14,6 +14,7 @@ from assert_ai.services.result_metadata import (
     SUITE_SUMMARY_SCHEMA_VERSION,
     suite_run_catalog_identity,
     suite_run_set_identity,
+    write_run_catalog,
 )
 
 
@@ -41,6 +42,7 @@ def create_result_catalog_fixture(
         suite_id = f"suite-{suite_index:03d}"
         suite_root = results_root / suite_id
         suite_root.mkdir(parents=True)
+        run_summaries = []
 
         for run_index in range(runs_per_suite):
             run_id = f"run-{run_index:03d}"
@@ -67,73 +69,83 @@ def create_result_catalog_fixture(
                 f"2026-08-{(suite_index % 28) + 1:02d}"
                 f"T00:{run_index:02d}:00+00:00"
             )
-            write_json(
-                run_root / "run_summary.json",
-                {
-                    "schema_version": RUN_SUMMARY_SCHEMA_VERSION,
-                    "suite_id": suite_id,
-                    "run_id": run_id,
-                    "state": "completed",
-                    "current_stage": "judge",
-                    "started_at": timestamp,
-                    "ended_at": timestamp,
-                    "updated_at": timestamp,
-                    "stages": {
-                        "inference": "completed",
-                        "judge": "completed",
-                    },
-                    "stage_timings": {},
-                    "stage_summaries": {},
-                    "models": {
-                        "target": {
-                            "kind": "model",
-                            "identifier": "fixture-target",
-                        },
-                        "tester": None,
-                        "judge": "fixture-judge",
-                    },
-                    "counts": {
-                        "scores": {
-                            "total": 1,
-                            "prompt": 1,
-                            "scenario": 0,
-                            "other": 0,
-                        }
-                    },
-                    "quality": {
-                        "prompt": {
-                            "total": 1,
-                            "scored_total": 1,
-                            "judge_failures": 0,
-                            "judge_failure_rate": 0.0,
-                            "policy_violation_rate": 0.0,
-                            "overrefusal_rate": None,
-                            "dimensions": {
-                                "policy_violation": {
-                                    "rate": 0.0,
-                                    "counts": {"0": 1, "1": 0},
-                                    "count": 1,
-                                    "applicable_count": 1,
-                                    "not_applicable_count": 0,
-                                    "flagged_count": 0,
-                                    "clear_count": 1,
-                                }
-                            },
-                            "target": "fixture-target",
-                            "judge_model": "fixture-judge",
-                        },
-                        "scenario": None,
-                    },
-                    "metrics": {
-                        "schema_version": 1,
-                        "elapsed_s": 1.0,
-                        "totals": {"calls": 1},
-                    },
-                    "artifact_versions": {},
-                    "sources": {},
-                    "indexes": {},
+            run_summary = {
+                "schema_version": RUN_SUMMARY_SCHEMA_VERSION,
+                "suite_id": suite_id,
+                "run_id": run_id,
+                "state": "completed",
+                "current_stage": "judge",
+                "started_at": timestamp,
+                "ended_at": timestamp,
+                "updated_at": timestamp,
+                "stages": {
+                    "inference": "completed",
+                    "judge": "completed",
                 },
+                "stage_timings": {},
+                "stage_summaries": {},
+                "models": {
+                    "target": {
+                        "kind": "model",
+                        "identifier": "fixture-target",
+                    },
+                    "tester": None,
+                    "judge": "fixture-judge",
+                },
+                "counts": {
+                    "scores": {
+                        "total": 1,
+                        "prompt": 1,
+                        "scenario": 0,
+                        "other": 0,
+                    }
+                },
+                "quality": {
+                    "prompt": {
+                        "total": 1,
+                        "scored_total": 1,
+                        "judge_failures": 0,
+                        "judge_failure_rate": 0.0,
+                        "policy_violation_rate": 0.0,
+                        "overrefusal_rate": None,
+                        "dimensions": {
+                            "policy_violation": {
+                                "rate": 0.0,
+                                "counts": {"0": 1, "1": 0},
+                                "count": 1,
+                                "applicable_count": 1,
+                                "not_applicable_count": 0,
+                                "flagged_count": 0,
+                                "clear_count": 1,
+                            }
+                        },
+                        "target": "fixture-target",
+                        "judge_model": "fixture-judge",
+                    },
+                    "scenario": None,
+                },
+                "metrics": {
+                    "schema_version": 1,
+                    "elapsed_s": 1.0,
+                    "totals": {"calls": 1},
+                },
+                "artifact_versions": {},
+                "sources": {},
+                "indexes": {},
+            }
+            write_json(run_root / "run_summary.json", run_summary)
+            run_summaries.append(run_summary)
+
+        run_catalog_identity = suite_run_catalog_identity(suite_root)
+        if (
+            write_run_catalog(
+                suite_root,
+                run_summaries,
+                catalog_identity=run_catalog_identity,
             )
+            is None
+        ):
+            raise RuntimeError("Result catalog fixture changed while being built")
 
         sources: dict[str, object] = {}
         test_case_counts = {
@@ -200,7 +212,7 @@ def create_result_catalog_fixture(
                 ),
                 "run_count": runs_per_suite,
                 "run_set_identity": suite_run_set_identity(suite_root),
-                "run_catalog_identity": suite_run_catalog_identity(suite_root),
+                "run_catalog_identity": run_catalog_identity,
                 "latest_run": {
                     "run_id": f"run-{runs_per_suite - 1:03d}",
                     "state": "completed",

@@ -213,6 +213,19 @@ def test_suite_summary_uses_active_versioned_test_set_and_metadata_only_runs() -
             payload["sources"]["test_set"]["path"]
             == "artifacts/test_set/v0002/test_set.jsonl"
         )
+        run_catalog = json.loads(
+            (
+                root
+                / "results"
+                / "suite-a"
+                / "run_catalog.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert run_catalog["run_catalog_identity"] == payload[
+            "run_catalog_identity"
+        ]
+        assert run_catalog["items"][0]["run_id"] == "run-a"
+        assert run_catalog["items"][0]["status"] == "completed"
 
 
 def test_running_boundary_preserves_last_valid_detail_without_rescanning_rows() -> None:
