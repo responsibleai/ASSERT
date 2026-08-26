@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -27,10 +28,13 @@ from assert_ai.config import (
     load_runtime_context,
 )
 from assert_ai.core.artifact_cache import (
+    ARTIFACTS_DIR,
     activate_latest_artifacts,
     activate_artifact_plan,
     discard_artifact_plan,
     finalize_artifact_plan,
+    file_sha256,
+    find_reusable_artifact_plan,
     is_cacheable_stage,
     override_cacheable_output_paths,
     prepare_artifact_plan,
@@ -73,6 +77,17 @@ from assert_ai.services.result_metadata import (
     write_run_summary,
     write_suite_summary,
 )
+
+_PINNED_ARTIFACT_FILES = {
+    "systematize": {
+        "taxonomy": "taxonomy.json",
+        "systematization": "systematization.json",
+    },
+    "test_set": {
+        "test_set": "test_set.jsonl",
+        "stratification": "stratification.json",
+    },
+}
 from assert_ai.stages import STAGES
 
 if TYPE_CHECKING:
@@ -786,6 +801,7 @@ def run_pipeline_document_result(
     path_policy: RuntimePathPolicy | None = None,
     control: RunControl | None = None,
     observer: RunObserver | None = None,
+    expected_artifacts: dict[str, dict[str, Any]] | None = None,
 ) -> RunResult:
     """Execute an immutable config document using its original path as a base."""
     try:
@@ -798,6 +814,7 @@ def run_pipeline_document_result(
             config_document=document,
             control=control,
             observer=observer,
+            expected_artifacts=expected_artifacts,
         )
     except RunCancelled as exc:
         result = RunResult(
@@ -825,6 +842,135 @@ def run_pipeline_document_result(
         )
 
 
+def _pinned_artifact_error(
+    ctx: dict[str, Any],
+    expected_artifacts: dict[str, dict[str, Any]],
+    forced_stages: set[str],
+) -> str | None:
+    if not expected_artifacts:
+        return None
+    if not supports_artifact_cache(ctx):
+        return "The preflight-selected artifact versions are no longer available"
+
+    activate_latest_artifacts(ctx, repair=False)
+    configured = {stage_name: raw_cfg for stage_name, raw_cfg in ctx["stages"]}
+    suite_root = Path(ctx["suite_root"])
+    path_policy = ctx.get("path_policy")
+    for stage_name in PIPELINE_STAGE_ORDER:
+        expected = expected_artifacts.get(stage_name)
+        if expected is None:
+            continue
+        expected_version = expected["version"]
+        raw_cfg = configured.get(stage_name)
+        reusable = None
+        if isinstance(raw_cfg, dict) and raw_cfg.get("enabled", True):
+            if stage_name in forced_stages or not is_cacheable_stage(stage_name):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} is no longer reusable"
+                )
+            reusable = find_reusable_artifact_plan(
+                ctx=ctx,
+                stage_name=stage_name,
+                raw_cfg=raw_cfg,
+            )
+            if reusable is None or reusable.version != expected_version:
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while the job was queued"
+                )
+            artifact_dir = reusable.artifact_dir
+            output_paths = reusable.output_paths
+        else:
+            active = (ctx.get("artifact_versions") or {}).get(stage_name)
+            if (
+                not isinstance(active, dict)
+                or active.get("version") != expected_version
+            ):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while the job was queued"
+                )
+            artifact_dir = suite_root / ARTIFACTS_DIR / stage_name / expected_version
+            if path_policy is not None:
+                artifact_dir = path_policy.resolve_managed_output(
+                    artifact_dir,
+                    field_name=f"pinned {stage_name} artifact",
+                    expected_root=suite_root,
+                    reject_links=True,
+                )
+            output_paths = {
+                key: artifact_dir / filename
+                for key, filename in _PINNED_ARTIFACT_FILES[stage_name].items()
+            }
+        metadata_path = artifact_dir / "artifact.json"
+        if path_policy is not None:
+            metadata_path = path_policy.resolve_managed_output(
+                metadata_path,
+                field_name=f"pinned {stage_name} artifact metadata",
+                expected_root=artifact_dir,
+                reject_links=True,
+            )
+        try:
+            with metadata_path.open("rb") as handle:
+                metadata_bytes = handle.read(1024 * 1024 + 1)
+            if len(metadata_bytes) > 1024 * 1024:
+                raise ValueError("metadata is too large")
+            metadata = json.loads(metadata_bytes.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return (
+                f"The preflight-selected {stage_name} artifact "
+                f"{expected_version} metadata is unavailable"
+            )
+        metadata_sha256 = (
+            "sha256:" + hashlib.sha256(metadata_bytes).hexdigest()
+        )
+        if (
+            metadata_sha256 != expected["metadata_sha256"]
+            or not isinstance(metadata, dict)
+            or metadata.get("version") != expected_version
+            or metadata.get("file_hashes") != expected["file_hashes"]
+        ):
+            return (
+                f"The preflight-selected {stage_name} artifact "
+                f"{expected_version} metadata changed while the job was queued"
+            )
+        for output_key, expected_hash in expected["file_hashes"].items():
+            output_path = output_paths.get(output_key)
+            if output_path is not None and path_policy is not None:
+                output_path = path_policy.resolve_managed_output(
+                    output_path,
+                    field_name=f"pinned {stage_name} artifact file",
+                    expected_root=artifact_dir,
+                    reject_links=True,
+                )
+            try:
+                before = output_path.stat()
+                actual_hash = file_sha256(output_path)
+                after = output_path.stat()
+            except (AttributeError, OSError):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} is incomplete"
+                )
+            if (
+                before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+            ):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while it was being verified"
+                )
+            if actual_hash != expected_hash:
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} failed its integrity check"
+                )
+        if reusable is not None:
+            activate_artifact_plan(ctx, reusable)
+    return None
+
+
 def _run_pipeline_result(
     *,
     config: str,
@@ -836,6 +982,7 @@ def _run_pipeline_result(
     config_document: dict[str, Any] | None = None,
     control: RunControl | None = None,
     observer: RunObserver | None = None,
+    expected_artifacts: dict[str, dict[str, Any]] | None = None,
 ) -> RunResult:
     """Execute configured stages.
 
@@ -936,6 +1083,31 @@ def _run_pipeline_result(
             reject_links=True,
         )
         ctx["suite_root"] = suite_root
+    pinned_artifact_error = _pinned_artifact_error(
+        ctx,
+        expected_artifacts or {},
+        requested_force_stages,
+    )
+    if pinned_artifact_error is not None:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="PREFLIGHT_FAILED",
+            error_message=pinned_artifact_error,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+                error_code=result.error_code,
+                error_message=result.error_message,
+            ),
+        )
+        return result
     suite_root.mkdir(parents=True, exist_ok=True)
     _write_suite_metadata(ctx)
     ctx.setdefault("artifact_versions", {})

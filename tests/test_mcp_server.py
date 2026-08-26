@@ -599,6 +599,7 @@ def test_trace_group_does_not_control_or_launch_evaluation_jobs(
             job_id=job_id,
             idempotency_key="evaluation-request",
             request_hash="sha256:" + ("1" * 64),
+            request_sha256="sha256:" + ("3" * 64),
             suite_id="evaluation-suite",
             run_id="evaluation-run",
             config_ref="evaluation.yaml",
@@ -775,7 +776,7 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             "b09950417a44bf14c9bbf2702c1c00f23a18a0bfec03cab16a482733d8cf98c8"
         ),
         "preflight_evaluation": (
-            "c9a686f7879c7e06a8f32c210cc02ed8e30c4fb8c6473cf77999971d114c9805"
+            "a26252422f3aaebd06087da2c5cf4c7fc47c73e6a78ad80a29a6eaf543ffa014"
         ),
         "design_config": (
             "1cd55a1bba06468b0aaa785cf05a445e4bf16768ff6165254ceecf0181a8392e"
@@ -1003,7 +1004,7 @@ def test_complete_versioned_curation_workflow(tmp_path: Path) -> None:
             {
                 "type": "prompt",
                 "test_case_id": "test_case_000001",
-                "prompt": "Book a flight.",
+                "seed": {"description": "Book a flight."},
                 "dimensions": {"behavior": "safe_booking"},
             }
         )
@@ -1051,7 +1052,9 @@ def test_complete_versioned_curation_workflow(tmp_path: Path) -> None:
                     "suite_id": "curation-suite",
                     "test_case_id": "test_case_000001",
                     "updates": {
-                        "prompt": "Book a policy-compliant flight.",
+                        "seed": {
+                            "description": "Book a policy-compliant flight.",
+                        },
                     },
                     "expected_etag": first_test_set_etag,
                     "change_summary": "Make the prompt explicit.",
@@ -1070,7 +1073,9 @@ def test_complete_versioned_curation_workflow(tmp_path: Path) -> None:
                 {
                     "suite_id": "curation-suite",
                     "test_case_id": "test_case_000001",
-                    "updates": {"prompt": "Stale update."},
+                    "updates": {
+                        "seed": {"description": "Stale update."},
+                    },
                     "expected_etag": first_test_set_etag,
                     "change_summary": "Attempt a stale edit.",
                 },
@@ -1092,7 +1097,7 @@ def test_complete_versioned_curation_workflow(tmp_path: Path) -> None:
     assert result["revised_case"].structured_content["artifacts"][0][
         "version"
     ] == "v0002"
-    assert result["fetched"].structured_content["row"]["prompt"] == (
+    assert result["fetched"].structured_content["row"]["seed"]["description"] == (
         "Book a policy-compliant flight."
     )
     assert result["stale"].is_error is True

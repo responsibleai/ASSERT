@@ -25,7 +25,7 @@ from assert_ai.services.job_models import (
 )
 
 _BUSY_TIMEOUT_MS = 5_000
-_JOB_STORE_SCHEMA_VERSION = 3
+_JOB_STORE_SCHEMA_VERSION = 4
 _ACTIVE_STATES = (
     JobState.STARTING.value,
     JobState.RUNNING.value,
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS jobs(
     job_id TEXT PRIMARY KEY,
     idempotency_key TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
     kind TEXT NOT NULL,
     retry_of TEXT,
     state TEXT NOT NULL,
@@ -158,21 +159,39 @@ class JobStore:
                 )
 
             created_at = _now()
+            if new_job.run_id is not None:
+                collision = connection.execute(
+                    """
+                    SELECT job_id FROM jobs
+                    WHERE suite_id = ? COLLATE NOCASE
+                      AND run_id = ? COLLATE NOCASE
+                    LIMIT 1
+                    """,
+                    (new_job.suite_id, new_job.run_id),
+                ).fetchone()
+                if collision is not None:
+                    raise ServiceError(
+                        ServiceErrorCode.CONFLICT,
+                        "The requested suite/run output is already assigned",
+                        details={"job_id": str(collision["job_id"])},
+                    )
             try:
                 connection.execute(
                     """
                     INSERT INTO jobs(
-                        job_id, idempotency_key, request_hash, kind, retry_of,
+                        job_id, idempotency_key, request_hash, request_sha256,
+                        kind, retry_of,
                         state,
                         created_at, suite_id, run_id, config_ref,
                         config_sha256, snapshot_path, request_path,
                         resource_keys_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         new_job.job_id,
                         new_job.idempotency_key,
                         new_job.request_hash,
+                        new_job.request_sha256,
                         new_job.kind,
                         new_job.retry_of,
                         JobState.QUEUED.value,
@@ -183,12 +202,16 @@ class JobStore:
                         new_job.config_sha256,
                         new_job.snapshot_path,
                         new_job.request_path,
-                        _json(new_job.resource_keys),
+                        _json(_canonical_resource_keys(new_job.resource_keys)),
                     ),
                 )
             except sqlite3.IntegrityError as exc:
                 collision = connection.execute(
-                    "SELECT job_id FROM jobs WHERE suite_id = ? AND run_id = ?",
+                    """
+                    SELECT job_id FROM jobs
+                    WHERE suite_id = ? COLLATE NOCASE
+                      AND run_id = ? COLLATE NOCASE
+                    """,
                     (new_job.suite_id, new_job.run_id),
                 ).fetchone()
                 if collision is not None:
@@ -388,7 +411,7 @@ class JobStore:
         lease_seconds: float,
     ) -> bool:
         """Reserve resources against job claims for one short operation."""
-        keys = tuple(dict.fromkeys(resource_keys))
+        keys = _canonical_resource_keys(resource_keys)
         if not keys:
             raise ValueError("at least one resource key is required")
         if not owner:
@@ -414,7 +437,7 @@ class JobStore:
             active_operation = connection.execute(
                 f"""
                 SELECT 1 FROM operation_locks
-                WHERE resource_key IN ({placeholders})
+                WHERE resource_key COLLATE NOCASE IN ({placeholders})
                 LIMIT 1
                 """,
                 keys,
@@ -444,14 +467,15 @@ class JobStore:
         if not owner:
             raise ValueError("owner is required")
         self.initialize()
-        keys = tuple(dict.fromkeys(resource_keys))
+        keys = _canonical_resource_keys(resource_keys)
         with self._transaction() as connection:
             if keys:
                 placeholders = ", ".join("?" for _ in keys)
                 connection.execute(
                     f"""
                     DELETE FROM operation_locks
-                    WHERE owner = ? AND resource_key IN ({placeholders})
+                    WHERE owner = ?
+                      AND resource_key COLLATE NOCASE IN ({placeholders})
                     """,
                     (owner, *keys),
                 )
@@ -469,7 +493,7 @@ class JobStore:
         lease_seconds: float,
     ) -> bool:
         """Extend unexpired operation locks when every key is still owned."""
-        keys = tuple(dict.fromkeys(resource_keys))
+        keys = _canonical_resource_keys(resource_keys)
         if not keys:
             raise ValueError("at least one resource key is required")
         if not owner:
@@ -487,7 +511,7 @@ class JobStore:
                 FROM operation_locks
                 WHERE owner = ?
                   AND lease_expires_at > ?
-                  AND resource_key IN ({placeholders})
+                  AND resource_key COLLATE NOCASE IN ({placeholders})
                 """,
                 (owner, now, *keys),
             ).fetchone()
@@ -499,7 +523,7 @@ class JobStore:
                 SET lease_expires_at = ?
                 WHERE owner = ?
                   AND lease_expires_at > ?
-                  AND resource_key IN ({placeholders})
+                  AND resource_key COLLATE NOCASE IN ({placeholders})
                 """,
                 (expires_at, owner, now, *keys),
             ).rowcount
@@ -934,6 +958,7 @@ class JobStore:
                             0,
                             1,
                             2,
+                            3,
                             _JOB_STORE_SCHEMA_VERSION,
                         }:
                             raise ServiceError(
@@ -951,6 +976,15 @@ class JobStore:
                                 connection.execute(
                                     "ALTER TABLE jobs "
                                     "ADD COLUMN retry_of TEXT"
+                                )
+                            except sqlite3.OperationalError as exc:
+                                if "duplicate column" not in str(exc).lower():
+                                    raise
+                        if "request_sha256" not in columns:
+                            try:
+                                connection.execute(
+                                    "ALTER TABLE jobs "
+                                    "ADD COLUMN request_sha256 TEXT"
                                 )
                             except sqlite3.OperationalError as exc:
                                 if "duplicate column" not in str(exc).lower():
@@ -1018,7 +1052,7 @@ class JobStore:
         row = connection.execute(
             f"""
             SELECT 1 FROM resource_locks
-            WHERE resource_key IN ({placeholders})
+            WHERE resource_key COLLATE NOCASE IN ({placeholders})
             LIMIT 1
             """,
             resource_keys,
@@ -1044,7 +1078,7 @@ class JobStore:
         operation = connection.execute(
             f"""
             SELECT 1 FROM operation_locks
-            WHERE resource_key IN ({operation_placeholders})
+            WHERE resource_key COLLATE NOCASE IN ({operation_placeholders})
             LIMIT 1
             """,
             operation_keys,
@@ -1058,22 +1092,25 @@ class JobStore:
     ) -> bool:
         if resource_key.startswith("suite:"):
             suite_id = resource_key.removeprefix("suite:")
+            run_prefix = f"run:{suite_id}/"
             row = connection.execute(
                 """
                 SELECT 1 FROM resource_locks
-                WHERE resource_key = ? OR resource_key LIKE ?
+                WHERE resource_key = ? COLLATE NOCASE
+                   OR substr(resource_key, 1, length(?)) = ? COLLATE NOCASE
                 LIMIT 1
                 """,
                 (
                     resource_key,
-                    f"run:{suite_id}/%",
+                    run_prefix,
+                    run_prefix,
                 ),
             ).fetchone()
         else:
             row = connection.execute(
                 """
                 SELECT 1 FROM resource_locks
-                WHERE resource_key = ?
+                WHERE resource_key = ? COLLATE NOCASE
                 LIMIT 1
                 """,
                 (resource_key,),
@@ -1180,11 +1217,16 @@ def _suite_id_from_resource_key(resource_key: str) -> str | None:
     return None
 
 
+def _canonical_resource_keys(resource_keys: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(key.casefold() for key in resource_keys))
+
+
 def _record(row: sqlite3.Row) -> JobRecord:
     return JobRecord(
         job_id=str(row["job_id"]),
         idempotency_key=str(row["idempotency_key"]),
         request_hash=str(row["request_hash"]),
+        request_sha256=_optional_str(row["request_sha256"]),
         kind=str(row["kind"]),
         retry_of=_optional_str(row["retry_of"]),
         state=JobState(str(row["state"])),

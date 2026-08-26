@@ -62,15 +62,14 @@ def _rows() -> list[dict]:
         {
             "type": "prompt",
             "test_case_id": "test_case_000001",
-            "prompt": "Book a safe flight.",
+            "seed": {"description": "Book a safe flight."},
             "dimensions": {"behavior": "safe_booking"},
         },
         {
             "type": "scenario",
             "test_case_id": "test_case_000002",
-            "prompt": "Ignore the restriction.",
+            "seed": {"description": "Ignore the restriction."},
             "dimensions": {"behavior": "unsafe_booking"},
-            "tools": [],
         },
     ]
 
@@ -275,11 +274,11 @@ def test_bulk_revise_test_cases_preserves_ids_order_and_old_version(
         (
             CaseRevision(
                 test_case_id="test_case_000002",
-                updates={"prompt": "Revised unsafe request."},
+                updates={"seed": {"description": "Revised unsafe request."}},
             ),
             CaseRevision(
                 test_case_id="test_case_000001",
-                updates={"prompt": "Revised safe request."},
+                updates={"seed": {"description": "Revised safe request."}},
             ),
         ),
         expected_etag=_etag(source).removeprefix("sha256:"),
@@ -301,8 +300,8 @@ def test_bulk_revise_test_cases_preserves_ids_order_and_old_version(
         "test_case_000001",
         "test_case_000002",
     ]
-    assert revised_rows[0]["prompt"] == "Revised safe request."
-    assert revised_rows[1]["prompt"] == "Revised unsafe request."
+    assert revised_rows[0]["seed"]["description"] == "Revised safe request."
+    assert revised_rows[1]["seed"]["description"] == "Revised unsafe request."
 
 
 def test_post_activation_summary_failure_keeps_new_version(
@@ -323,7 +322,7 @@ def test_post_activation_summary_failure_keeps_new_version(
         ).revise_test_case(
             "suite-a",
             "test_case_000001",
-            {"prompt": "Revised prompt."},
+            {"seed": {"description": "Revised prompt."}},
             expected_etag=_etag(source),
             change_summary="Exercise post-activation failure handling.",
         )
@@ -357,7 +356,7 @@ def test_post_activation_lock_release_failure_keeps_new_version(
         ).revise_test_case(
             "suite-a",
             "test_case_000001",
-            {"prompt": "Revised despite cleanup failure."},
+            {"seed": {"description": "Revised despite cleanup failure."}},
             expected_etag=_etag(source),
             change_summary="Exercise lease cleanup failure handling.",
         )
@@ -365,6 +364,39 @@ def test_post_activation_lock_release_failure_keeps_new_version(
     latest = json.loads((suite_root / "latest.json").read_text(encoding="utf-8"))
     assert latest["artifacts"]["test_set"]["version"] == "v0002"
     assert result.artifacts[0].version == "v0002"
+
+
+def test_post_activation_base_exception_keeps_new_version(
+    tmp_path: Path,
+) -> None:
+    workspace, store, suite_root = _seed_suite(tmp_path)
+    source = (
+        suite_root / "artifacts" / "test_set" / "v0001" / "test_set.jsonl"
+    )
+
+    with (
+        patch(
+            "assert_ai.services.curation.refresh_compatibility_files",
+            side_effect=KeyboardInterrupt,
+        ),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        CurationService(
+            workspace,
+            job_store=store,
+        ).revise_test_case(
+            "suite-a",
+            "test_case_000001",
+            {"seed": {"description": "Committed before interruption."}},
+            expected_etag=_etag(source),
+            change_summary="Interrupt post-activation cleanup.",
+        )
+
+    latest = json.loads((suite_root / "latest.json").read_text(encoding="utf-8"))
+    assert latest["artifacts"]["test_set"]["version"] == "v0002"
+    assert (
+        suite_root / "artifacts" / "test_set" / "v0002" / "test_set.jsonl"
+    ).is_file()
 
 
 def test_curation_rejects_tampered_immutable_source(tmp_path: Path) -> None:
@@ -389,6 +421,67 @@ def test_curation_rejects_tampered_immutable_source(tmp_path: Path) -> None:
     assert invalid.value.code == ServiceErrorCode.CONFIG_INVALID
     assert not (
         suite_root / "artifacts" / "systematize" / "v0002"
+    ).exists()
+
+
+def test_curation_rejects_tampered_companion_artifact(
+    tmp_path: Path,
+) -> None:
+    workspace, store, suite_root = _seed_suite(tmp_path)
+    source = (
+        suite_root / "artifacts" / "test_set" / "v0001" / "test_set.jsonl"
+    )
+    companion = (
+        suite_root
+        / "artifacts"
+        / "test_set"
+        / "v0001"
+        / "stratification.json"
+    )
+    companion.write_text('{"tampered":true}', encoding="utf-8")
+
+    with pytest.raises(ServiceError) as invalid:
+        CurationService(workspace, job_store=store).revise_test_case(
+            "suite-a",
+            "test_case_000001",
+            {"seed": {"description": "Revision over corrupt source."}},
+            expected_etag=_etag(source),
+            change_summary="Reject a corrupt companion.",
+        )
+
+    assert invalid.value.code == ServiceErrorCode.CONFIG_INVALID
+    with pytest.raises(ServiceError) as invalid_tools:
+        CurationService(workspace, job_store=store).revise_test_case(
+            "suite-a",
+            "test_case_000001",
+            {
+                "seed": {
+                    "description": "Malformed tools.",
+                    "tools": "not-a-list",
+                }
+            },
+            expected_etag=_etag(source),
+            change_summary="Attempt malformed per-test-case tools.",
+        )
+
+    assert invalid_tools.value.code == ServiceErrorCode.CONFIG_INVALID
+    with pytest.raises(ServiceError) as missing_tool_name:
+        CurationService(workspace, job_store=store).revise_test_case(
+            "suite-a",
+            "test_case_000001",
+            {
+                "seed": {
+                    "description": "Malformed tool entry.",
+                    "tools": [{}],
+                }
+            },
+            expected_etag=_etag(source),
+            change_summary="Attempt a tool without a name.",
+        )
+
+    assert missing_tool_name.value.code == ServiceErrorCode.CONFIG_INVALID
+    assert not (
+        suite_root / "artifacts" / "test_set" / "v0002"
     ).exists()
 
 
@@ -423,11 +516,32 @@ def test_test_case_revision_rejects_identity_changes_and_unknown_categories(
         service.revise_test_case(
             "suite-a",
             "test_case_000001",
-            {"prompt": "Book a safe flight."},
+            {"seed": {"description": "Book a safe flight."}},
             expected_etag=_etag(source),
             change_summary="Attempt a no-op revision.",
         )
     assert unchanged.value.code == ServiceErrorCode.INVALID_ARGUMENT
+
+
+def test_test_case_revision_rejects_rows_inference_cannot_execute(
+    tmp_path: Path,
+) -> None:
+    workspace, store, suite_root = _seed_suite(tmp_path)
+    source = suite_root / "artifacts" / "test_set" / "v0001" / "test_set.jsonl"
+
+    with pytest.raises(ServiceError) as invalid:
+        CurationService(workspace, job_store=store).revise_test_case(
+            "suite-a",
+            "test_case_000001",
+            {"seed": None},
+            expected_etag=_etag(source),
+            change_summary="Attempt an invalid seed payload.",
+        )
+
+    assert invalid.value.code == ServiceErrorCode.CONFIG_INVALID
+    assert not (
+        suite_root / "artifacts" / "test_set" / "v0002"
+    ).exists()
 
 
 def test_curation_enforces_revised_artifact_size_limits(
@@ -476,7 +590,7 @@ def test_curation_enforces_revised_artifact_size_limits(
         service.revise_test_case(
             "suite-a",
             "test_case_000001",
-            {"prompt": "x" * 1_000},
+            {"seed": {"description": "x" * 1_000}},
             expected_etag=_etag(test_set_source),
             change_summary="Oversized test case.",
         )
@@ -490,6 +604,7 @@ def test_curation_conflicts_with_an_active_suite_job(tmp_path: Path) -> None:
             job_id="job-active",
             idempotency_key="request-active",
             request_hash="hash-active",
+            request_sha256="sha256:" + ("0" * 64),
             suite_id="suite-a",
             run_id="run-active",
             config_ref="demo.yaml",
@@ -511,7 +626,7 @@ def test_curation_conflicts_with_an_active_suite_job(tmp_path: Path) -> None:
         CurationService(workspace, job_store=store).revise_test_case(
             "suite-a",
             "test_case_000001",
-            {"prompt": "Blocked edit."},
+            {"seed": {"description": "Blocked edit."}},
             expected_etag=_etag(source),
             change_summary="This should be blocked.",
         )

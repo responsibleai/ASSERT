@@ -12,6 +12,7 @@ import pytest
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.job_models import JobState, NewJob
 from assert_ai.services.job_store import JobStore
+from assert_ai.services.output_identity import validate_output_id
 
 
 def _new_job(
@@ -29,6 +30,7 @@ def _new_job(
         job_id=f"job-{suffix}",
         idempotency_key=request_id or f"request-{suffix}",
         request_hash=request_hash or f"hash-{suffix}",
+        request_sha256="sha256:" + ("0" * 64),
         suite_id=suite_id or f"suite-{suffix}",
         run_id=run_id if run_id is not None else f"run-{suffix}",
         config_ref="demo.yaml",
@@ -91,6 +93,33 @@ def test_suite_run_assignment_is_unique(tmp_path: Path) -> None:
 
     assert conflict.value.code == ServiceErrorCode.CONFLICT
     assert conflict.value.details == {"job_id": "job-one"}
+
+
+def test_suite_run_assignment_is_portably_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.create_or_get(
+        _new_job("one", suite_id="SuiteA", run_id="RunA"),
+        max_queued_jobs=10,
+    )
+
+    with pytest.raises(ServiceError) as conflict:
+        store.create_or_get(
+            _new_job("two", suite_id="suitea", run_id="runa"),
+            max_queued_jobs=10,
+        )
+
+    assert conflict.value.code == ServiceErrorCode.CONFLICT
+    assert conflict.value.details == {"job_id": "job-one"}
+
+
+@pytest.mark.parametrize("value", ["run.", "CON", "nul.txt", "LPT9"])
+def test_output_ids_reject_windows_path_aliases(value: str) -> None:
+    with pytest.raises(ServiceError) as invalid:
+        validate_output_id(value, field_name="run_id")
+
+    assert invalid.value.code == ServiceErrorCode.INVALID_ARGUMENT
 
 
 def test_create_respects_queued_job_limit(tmp_path: Path) -> None:
@@ -392,21 +421,44 @@ def test_v1_store_is_migrated_before_a_mutating_operation(
                 'demo.yaml', 'sha256:v1', 'config.yaml', 'request.json',
                 '[]'
             );
+            INSERT INTO jobs(
+                job_id, idempotency_key, request_hash, kind, state,
+                created_at, suite_id, run_id, config_ref, config_sha256,
+                snapshot_path, request_path, resource_keys_json
+            ) VALUES (
+                'job-v1-case-alias', 'request-v1-case-alias',
+                'hash-v1-case-alias', 'evaluation', 'queued',
+                '2026-01-01T00:00:01+00:00', 'Suite-V1', 'Run-V1',
+                'demo.yaml', 'sha256:v1-case-alias', 'config.yaml',
+                'request.json', '[]'
+            );
             PRAGMA user_version = 1;
             """
         )
 
-    cancelled = JobStore(path).request_cancel("job-v1")
+    migrated = JobStore(path)
+    cancelled = migrated.request_cancel("job-v1")
 
     assert cancelled.state is JobState.CANCELLED
     assert cancelled.retry_of is None
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(jobs)")
         }
     assert "retry_of" in columns
+    assert "request_sha256" in columns
+    with pytest.raises(ServiceError) as collision:
+        migrated.create_or_get(
+            _new_job(
+                "new-case-alias",
+                suite_id="SUITE-V1",
+                run_id="RUN-V1",
+            ),
+            max_queued_jobs=10,
+        )
+    assert collision.value.code == ServiceErrorCode.CONFLICT
 
 
 def test_operation_lock_blocks_job_claim_until_released(
@@ -546,6 +598,31 @@ def test_suite_operation_lock_conflicts_with_active_run_resource(
 
     assert not store.acquire_operation_locks(
         ("suite:suite-one",),
+        owner="curator",
+        lease_seconds=30,
+    )
+
+
+def test_suite_operation_lock_treats_underscore_as_literal(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.create_or_get(
+        _new_job(
+            "one",
+            suite_id="suitex",
+            resource_keys=("run:suitex/run-one",),
+        ),
+        max_queued_jobs=10,
+    )
+    assert store.claim_next(
+        lease_owner="manager",
+        lease_seconds=30,
+        max_active_jobs=1,
+    )
+
+    assert store.acquire_operation_locks(
+        ("suite:suite_",),
         owner="curator",
         lease_seconds=30,
     )

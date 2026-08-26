@@ -47,6 +47,7 @@ class JobRecord:
     job_id: str
     idempotency_key: str
     request_hash: str
+    request_sha256: str | None
     kind: str
     retry_of: str | None
     state: JobState
@@ -81,6 +82,7 @@ class NewJob:
     job_id: str
     idempotency_key: str
     request_hash: str
+    request_sha256: str
     suite_id: str
     run_id: str | None
     config_ref: str

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import hashlib
 import logging
 import shutil
 import unittest
@@ -13,6 +14,7 @@ from assert_ai.core.artifact_cache import (
     activate_latest_artifacts,
     artifact_ref,
     discard_artifact_plan,
+    file_sha256,
     finalize_artifact_plan,
     hash_payload,
     override_cacheable_output_paths,
@@ -62,6 +64,14 @@ class ArtifactCacheTest(unittest.TestCase):
             hash_payload({"b": [2, {"d": 4, "c": 3}], "a": 1}),
             hash_payload({"a": 1, "b": [2, {"c": 3, "d": 4}]}),
         )
+
+    def test_file_sha256_hashes_across_streaming_chunks(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "large.jsonl"
+            payload = (b"0123456789abcdef" * 65537) + b"tail"
+            path.write_bytes(payload)
+
+            self.assertEqual(file_sha256(path), hashlib.sha256(payload).hexdigest())
 
     def test_prepare_reuses_latest_matching_artifact(self) -> None:
         with TemporaryDirectory() as tmp_dir:

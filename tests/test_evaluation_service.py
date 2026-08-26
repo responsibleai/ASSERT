@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -15,20 +16,29 @@ from unittest.mock import patch
 
 import pytest
 
+from assert_ai.config import load_runtime_context
+from assert_ai.core.artifact_cache import (
+    activate_artifact_plan,
+    finalize_artifact_plan,
+    prepare_artifact_plan,
+)
 from assert_ai.core.io import write_json
+from assert_ai.core.run_result import RunResult, RunState
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.services._evaluation_worker import (
     _BoundedTextLog,
     main as worker_main,
 )
+from assert_ai.services.artifact_pins import load_artifact_pin
 from assert_ai.services.configs import ConfigService
+from assert_ai.services.curation import CurationService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.evaluations import (
     EvaluationJobManager,
     EvaluationService,
     _active_stage_from_events,
 )
-from assert_ai.services.job_models import JobState
+from assert_ai.services.job_models import JobState, NewJob
 from assert_ai.services.job_store import JobStore
 from assert_ai.services.results import ResultRepository
 from assert_ai.services.run_planning import (
@@ -36,6 +46,7 @@ from assert_ai.services.run_planning import (
     PreflightPolicy,
     RunPlanningService,
 )
+from assert_ai.stages import STAGES
 
 
 def _service(
@@ -45,6 +56,8 @@ def _service(
     lease_seconds: float = 60.0,
     max_trace_input_bytes: int = 16 * 1024 * 1024,
     max_prompt_sample_size: int = 100_000,
+    max_concurrency: int = 32,
+    allowed_model_patterns: tuple[str, ...] = (),
 ) -> tuple[ConfigService, EvaluationService]:
     workspace = WorkspaceService.create(root)
     configs = ConfigService(workspace)
@@ -53,6 +66,8 @@ def _service(
         configs,
         policy=PreflightPolicy(
             max_prompt_sample_size=max_prompt_sample_size,
+            max_concurrency=max_concurrency,
+            allowed_model_patterns=allowed_model_patterns,
         ),
     )
     store = JobStore(workspace.artifacts_root / "mcp" / "jobs.sqlite3")
@@ -304,6 +319,209 @@ def test_inference_only_job_completes_and_is_idempotent(
     assert service.list().items[0].job_id == started.job.job_id
 
 
+def test_queued_job_rejects_a_different_curated_artifact_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    seed_document = {
+        "suite": "pinned-suite",
+        "behavior": {
+            "name": "safe_help",
+            "description": "The agent should provide safe help.",
+        },
+        "default_model": {"name": "openai/gpt-test"},
+        "pipeline": {
+            "systematize": {
+                "model": {"name": "openai/gpt-test"},
+            },
+            "test_set": {
+                "model": {"name": "openai/gpt-test"},
+                "prompt": {"sample_size": 1},
+            },
+        },
+    }
+    configs.save_config("seed.yaml", document=seed_document)
+    record = configs.get_config("seed.yaml")
+    config_path = service.workspace.path_policy.resolve_config_path(
+        record.config_ref,
+        must_exist=True,
+        reject_links=True,
+    )
+    context = load_runtime_context(
+        deepcopy(record.document),
+        config_path,
+        stage_modules=STAGES,
+        path_policy=service.workspace.path_policy,
+    )
+    raw_systematize = dict(
+        next(raw for name, raw in context["stages"] if name == "systematize")
+    )
+    taxonomy_artifact = prepare_artifact_plan(
+        ctx=context,
+        stage_name="systematize",
+        raw_cfg=raw_systematize,
+        forced=False,
+    )
+    activate_artifact_plan(context, taxonomy_artifact)
+    taxonomy = {
+        "behavior": {
+            "name": "safe_help",
+            "definition": "The agent should provide safe help.",
+        },
+        "definition_of_terms": [],
+        "behavior_categories": [
+            {
+                "name": "safe",
+                "definition": "The response follows the requirement.",
+                "examples": ["Provide safe help."],
+                "permissible": True,
+            }
+        ],
+    }
+    write_json(taxonomy_artifact.output_paths["taxonomy"], taxonomy)
+    write_json(
+        taxonomy_artifact.output_paths["systematization"],
+        {
+            "behavior": "safe_help",
+            "systematization": "Fixture",
+            "summary_items": [],
+        },
+    )
+    finalize_artifact_plan(context, taxonomy_artifact)
+    raw_test_set = dict(
+        next(raw for name, raw in context["stages"] if name == "test_set")
+    )
+    test_set_artifact = prepare_artifact_plan(
+        ctx=context,
+        stage_name="test_set",
+        raw_cfg=raw_test_set,
+        forced=False,
+    )
+    activate_artifact_plan(context, test_set_artifact)
+    test_set_artifact.output_paths["test_set"].write_text(
+        json.dumps(
+            {
+                "type": "prompt",
+                "test_case_id": "case-1",
+                "seed": {"description": "Provide safe help."},
+                "dimensions": {"behavior": "safe"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_json(test_set_artifact.output_paths["stratification"], {"counts": {}})
+    finalize_artifact_plan(context, test_set_artifact)
+    (tmp_path / "agent.py").write_text(
+        "def run(message, *, history=None):\n"
+        "    del history\n"
+        "    return message\n",
+        encoding="utf-8",
+    )
+    configs.save_config(
+        "pinned.yaml",
+        document={
+            "suite": "pinned-suite",
+            "pipeline": {
+                "inference": {
+                    "target": {"callable": "agent:run"},
+                    "concurrency": 1,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start(
+        "pinned.yaml",
+        request_id="pinned-artifact",
+    )
+    job_record = service.store.get(started.job.job_id)
+    request = json.loads(
+        Path(job_record.request_path).read_text(encoding="utf-8")
+    )
+    assert request["expected_artifacts"]["test_set"]["version"] == (
+        test_set_artifact.version
+    )
+    test_set_etag = "sha256:" + hashlib.sha256(
+        test_set_artifact.output_paths["test_set"].read_bytes()
+    ).hexdigest()
+    CurationService(
+        service.workspace,
+        job_store=service.store,
+    ).revise_test_case(
+        "pinned-suite",
+        "case-1",
+        {"seed": {"description": "Curated after preflight."}},
+        expected_etag=test_set_etag,
+        change_summary="Change the queued job's active test set.",
+    )
+
+    exit_code = worker_main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "--job-id",
+            started.job.job_id,
+        ]
+    )
+
+    result = json.loads(
+        (
+            Path(job_record.request_path).parent / "result.json"
+        ).read_text(encoding="utf-8")
+    )["run_result"]
+    assert exit_code == 1
+    assert result["state"] == "failed"
+    assert result["error_code"] == "PREFLIGHT_FAILED"
+    assert "changed while the job was queued" in result["error_message"]
+
+
+def test_large_reusable_artifact_can_be_pinned(tmp_path: Path) -> None:
+    workspace = WorkspaceService.create(tmp_path)
+    artifact_dir = (
+        workspace.results_root
+        / "large-suite"
+        / "artifacts"
+        / "test_set"
+        / "v0001"
+    )
+    artifact_dir.mkdir(parents=True)
+    test_set = artifact_dir / "test_set.jsonl"
+    stratification = artifact_dir / "stratification.json"
+    test_set.write_bytes(b"x" * ((16 * 1024 * 1024) + 1))
+    stratification.write_text("{}", encoding="utf-8")
+    test_set_hash = hashlib.sha256(test_set.read_bytes()).hexdigest()
+    stratification_hash = hashlib.sha256(
+        stratification.read_bytes()
+    ).hexdigest()
+    write_json(
+        artifact_dir / "artifact.json",
+        {
+            "schema_version": 1,
+            "artifact_type": "test_set",
+            "version": "v0001",
+            "files": {
+                "test_set": "test_set.jsonl",
+                "stratification": "stratification.json",
+            },
+            "file_hashes": {
+                "test_set": test_set_hash,
+                "stratification": stratification_hash,
+            },
+        },
+    )
+
+    pin = load_artifact_pin(
+        workspace,
+        suite_id="large-suite",
+        stage_name="test_set",
+        version="v0001",
+    )
+
+    assert pin.file_hashes["test_set"] == test_set_hash
+
+
 def test_trace_job_preflight_and_no_credential_execution(
     tmp_path: Path,
 ) -> None:
@@ -545,6 +763,116 @@ def test_trace_job_snapshots_inputs_and_retries_immutably(
     ).read_bytes()
 
 
+def test_trace_retry_reapplies_current_model_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-policy-original",
+        suite_id="trace-suite",
+        run_id="trace-policy-original",
+    )
+    claimed = service.store.claim_next(
+        lease_owner="fixture-manager",
+        lease_seconds=60,
+        max_active_jobs=1,
+    )
+    assert claimed is not None
+    service.store.mark_terminal(
+        claimed.job_id,
+        state=JobState.FAILED,
+        exit_code=1,
+        failed_stage="judge",
+        error_code=ServiceErrorCode.RUN_FAILED.value,
+        error_message="Fixture failure",
+        result={"state": "failed", "exit_code": 1},
+        run_root=None,
+        lease_owner="fixture-manager",
+    )
+    service.planning = RunPlanningService(
+        service.workspace,
+        configs,
+        policy=PreflightPolicy(
+            allowed_model_patterns=("approved/*",),
+        ),
+    )
+
+    with pytest.raises(ServiceError) as blocked:
+        service.retry(
+            started.job.job_id,
+            request_id="trace-policy-retry",
+        )
+
+    assert blocked.value.code == ServiceErrorCode.PREFLIGHT_FAILED
+    assert "current server policy" in str(blocked.value)
+
+
+def test_trace_retry_reapplies_current_session_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    trace_path = tmp_path / "fixtures" / "traces.json"
+    trace_document = json.loads(trace_path.read_text(encoding="utf-8"))
+    spans = trace_document["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    second = deepcopy(spans[0])
+    second["spanId"] = "c" * 16
+    second["attributes"][0]["value"]["stringValue"] = "session-two"
+    spans.append(second)
+    write_json(trace_path, trace_document)
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-size-original",
+        suite_id="trace-suite",
+        run_id="trace-size-original",
+    )
+    claimed = service.store.claim_next(
+        lease_owner="fixture-manager",
+        lease_seconds=60,
+        max_active_jobs=1,
+    )
+    assert claimed is not None
+    service.store.mark_terminal(
+        claimed.job_id,
+        state=JobState.FAILED,
+        exit_code=1,
+        failed_stage="judge",
+        error_code=ServiceErrorCode.RUN_FAILED.value,
+        error_message="Fixture failure",
+        result={"state": "failed", "exit_code": 1},
+        run_root=None,
+        lease_owner="fixture-manager",
+    )
+    service.planning = RunPlanningService(
+        service.workspace,
+        configs,
+        policy=PreflightPolicy(max_prompt_sample_size=1),
+    )
+
+    with pytest.raises(ServiceError) as blocked:
+        service.retry(
+            started.job.job_id,
+            request_id="trace-size-retry",
+        )
+
+    assert blocked.value.code == ServiceErrorCode.PREFLIGHT_FAILED
+    assert "current server limit" in str(blocked.value)
+
+
 def test_trace_worker_cancels_during_import(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -635,6 +963,155 @@ def test_trace_worker_rejects_tampered_input_snapshot(
     assert "OTLP trace input digest mismatch" in (
         result["worker_error"]["error_message"]
     )
+
+
+def test_trace_worker_rejects_changed_parsed_session_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-parser-change",
+        suite_id="trace-suite",
+        run_id="trace-parser-change",
+    )
+    job_dir = service.manager._job_dir(started.job.job_id)
+
+    from assert_ai.core.otel import parse_otel_trace_document
+
+    def duplicate_sessions(
+        document: dict,
+        *,
+        group_by: str,
+    ) -> list[dict]:
+        rows = parse_otel_trace_document(document, group_by=group_by)
+        return [*rows, dict(rows[0])]
+
+    with patch(
+        "assert_ai.services._evaluation_worker.parse_otel_trace_document",
+        side_effect=duplicate_sessions,
+    ):
+        exit_code = worker_main(
+            [
+                "--workspace",
+                str(tmp_path),
+                "--job-id",
+                started.job.job_id,
+            ]
+        )
+
+    result = json.loads(
+        (job_dir / "result.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 1
+    assert result["worker_error"]["error_code"] == "JOB_INTERRUPTED"
+    assert "different session count" in result["worker_error"]["error_message"]
+
+
+def test_trace_worker_rejects_preexisting_run_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-output-race",
+        suite_id="trace-suite",
+        run_id="trace-output-race",
+    )
+    run_root = (
+        tmp_path
+        / "artifacts"
+        / "results"
+        / "trace-suite"
+        / "trace-output-race"
+    )
+    run_root.mkdir(parents=True)
+    sentinel = run_root / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+
+    exit_code = worker_main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "--job-id",
+            started.job.job_id,
+        ]
+    )
+
+    assert exit_code == 1
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert not (run_root / "inference_set.jsonl").exists()
+
+
+def test_trace_worker_uses_policy_capped_concurrency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path, max_concurrency=1)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-concurrency",
+        suite_id="trace-suite",
+        run_id="trace-concurrency",
+    )
+    record = service.store.get(started.job.job_id)
+    request = json.loads(Path(record.request_path).read_text(encoding="utf-8"))
+    captured: dict[str, object] = {}
+
+    def fake_runner(**kwargs: object) -> RunResult:
+        captured.update(kwargs)
+        run_root = (
+            tmp_path
+            / "artifacts"
+            / "results"
+            / "trace-suite"
+            / "trace-concurrency"
+        )
+        return RunResult(
+            state=RunState.COMPLETED,
+            exit_code=0,
+            suite_id="trace-suite",
+            run_id="trace-concurrency",
+            suite_root=run_root.parent,
+            run_root=run_root,
+        )
+
+    with patch(
+        "assert_ai.runner.run_pipeline_document_result",
+        side_effect=fake_runner,
+    ):
+        exit_code = worker_main(
+            [
+                "--workspace",
+                str(tmp_path),
+                "--job-id",
+                started.job.job_id,
+            ]
+        )
+
+    assert request["concurrency"] == 1
+    assert exit_code == 0
+    assert captured["concurrency"] == 1
 
 
 def test_trace_preflight_rejects_environment_files(tmp_path: Path) -> None:
@@ -839,7 +1316,7 @@ def test_failed_snapshot_write_removes_unregistered_job_directory(
 
     with (
         patch(
-            "assert_ai.services.evaluations.write_json",
+            "assert_ai.services.evaluations._write_request_snapshot",
             side_effect=OSError("disk full"),
         ),
         pytest.raises(OSError, match="disk full"),
@@ -890,6 +1367,27 @@ def test_worker_rejects_a_tampered_config_snapshot(
             "max_log_bytes": 4096,
         },
     )
+    request_sha256 = "sha256:" + hashlib.sha256(
+        (job_dir / "request.json").read_bytes()
+    ).hexdigest()
+    JobStore(
+        tmp_path / "artifacts" / "mcp" / "jobs.sqlite3"
+    ).create_or_get(
+        NewJob(
+            job_id=job_id,
+            idempotency_key="tampered-config",
+            request_hash="sha256:" + ("1" * 64),
+            request_sha256=request_sha256,
+            suite_id="suite",
+            run_id="run",
+            config_ref="demo.yaml",
+            config_sha256="sha256:" + ("0" * 64),
+            snapshot_path=str(job_dir / "config.yaml"),
+            request_path=str(job_dir / "request.json"),
+            resource_keys=("run:suite/run",),
+        ),
+        max_queued_jobs=1,
+    )
 
     exit_code = worker_main(
         ["--workspace", str(tmp_path), "--job-id", job_id]
@@ -902,6 +1400,48 @@ def test_worker_rejects_a_tampered_config_snapshot(
     assert result["result_token"] == "token"
     assert result["worker_error"]["error_code"] == "INTERNAL"
     assert "digest mismatch" in result["worker_error"]["error_message"]
+
+
+def test_worker_rejects_coordinated_request_and_config_tampering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "demo.yaml",
+        document=_write_inference_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start("demo.yaml", request_id="bound-request")
+    record = service.store.get(started.job.job_id)
+    snapshot_path = Path(record.snapshot_path)
+    request_path = Path(record.request_path)
+    tampered_snapshot = b"pipeline: {}\n"
+    snapshot_path.write_bytes(tampered_snapshot)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request["config_sha256"] = "sha256:" + hashlib.sha256(
+        tampered_snapshot
+    ).hexdigest()
+    write_json(request_path, request)
+
+    exit_code = worker_main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "--job-id",
+            started.job.job_id,
+        ]
+    )
+
+    result = json.loads(
+        (
+            request_path.parent / "result.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert exit_code == 1
+    assert "job request digest mismatch" in (
+        result["worker_error"]["error_message"]
+    )
 
 
 def test_malformed_worker_result_becomes_a_persisted_failure(
@@ -1192,6 +1732,66 @@ def test_startup_recovery_marks_dead_worker_interrupted(
 
     assert terminal.state is JobState.INTERRUPTED
     assert terminal.error_code == ServiceErrorCode.JOB_INTERRUPTED.value
+
+
+def test_startup_recovery_cleans_up_disabled_job_kinds(
+    tmp_path: Path,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    configs.save_config(
+        "evaluation.yaml",
+        document=_write_inference_fixture(tmp_path),
+    )
+    with patch.object(EvaluationJobManager, "enqueue"):
+        trace = service.start_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+            request_id="disabled-trace",
+            suite_id="trace-suite",
+            run_id="disabled-trace",
+        )
+        evaluation = service.start(
+            "evaluation.yaml",
+            request_id="enabled-evaluation",
+        )
+    claimed = service.store.claim_next(
+        lease_owner="old-trace-manager",
+        lease_seconds=0.01,
+        max_active_jobs=1,
+        job_kinds=("trace_judging",),
+    )
+    assert claimed is not None
+    service.store.mark_running(
+        claimed.job_id,
+        lease_owner="old-trace-manager",
+        pid=2_147_483_647,
+        process_create_time=1,
+        lease_seconds=0.01,
+    )
+    time.sleep(0.02)
+    execute_only = EvaluationJobManager(
+        service.workspace,
+        service.store,
+        job_kinds=("evaluation",),
+        lease_seconds=0.1,
+    )
+
+    with patch.object(EvaluationJobManager, "enqueue"):
+        execute_only._recover_startup()
+
+    assert service.store.get(trace.job.job_id).state is JobState.INTERRUPTED
+    next_job = service.store.claim_next(
+        lease_owner="execute-manager",
+        lease_seconds=30,
+        max_active_jobs=1,
+        job_kinds=("evaluation",),
+    )
+    assert next_job is not None
+    assert next_job.job_id == evaluation.job.job_id
 
 
 def test_startup_recovery_adopts_and_monitors_a_live_worker(

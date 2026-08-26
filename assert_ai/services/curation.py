@@ -40,15 +40,19 @@ from assert_ai.core.io import (
 )
 from assert_ai.core.jsonl_index import JsonlIndexError, scan_jsonl
 from assert_ai.core.runtime_path_policy import RuntimePathError
+from assert_ai.core.test_cases import prepare_test_cases
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.job_store import JobStore
 from assert_ai.services.locking import exclusive_file_lock
+from assert_ai.services.output_identity import (
+    suite_resource_key,
+    validate_output_id,
+)
 from assert_ai.services.result_metadata import write_suite_summary
 
 log = logging.getLogger(__name__)
 
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VERSION_RE = re.compile(r"^v[0-9]{4,}$")
 _LOCK_TIMEOUT_S = 10.0
 _OPERATION_LEASE_S = 60.0
@@ -57,6 +61,16 @@ _MAX_TEST_SET_BYTES = 16_777_216
 _STAGE_FILES: dict[str, tuple[str, ...]] = {
     "systematize": ("taxonomy.json", "systematization.json"),
     "test_set": ("test_set.jsonl", "stratification.json"),
+}
+_STAGE_OUTPUT_FILES: dict[str, dict[str, str]] = {
+    "systematize": {
+        "taxonomy": "taxonomy.json",
+        "systematization": "systematization.json",
+    },
+    "test_set": {
+        "test_set": "test_set.jsonl",
+        "stratification": "stratification.json",
+    },
 }
 
 
@@ -274,6 +288,10 @@ class CurationService:
                         test_set_source.primary_path,
                         test_set_plan.output_paths["test_set"],
                         max_bytes=_MAX_TEST_SET_BYTES,
+                        expected_hash=self._source_file_hash(
+                            test_set_source,
+                            "test_set.jsonl",
+                        ),
                     )
                     self._copy_secondary(
                         test_set_source,
@@ -310,11 +328,11 @@ class CurationService:
                     change_summary=summary,
                 )
             except BaseException:
-                for plan in plans:
-                    discard_artifact_plan(
-                        self._context(suite_id, suite_root),
-                        plan,
-                    )
+                self._discard_unactivated_plans(
+                    suite_id,
+                    suite_root,
+                    plans,
+                )
                 raise
 
     def revise_test_case(
@@ -450,9 +468,10 @@ class CurationService:
                     affected_test_case_ids=ids,
                 )
             except BaseException:
-                discard_artifact_plan(
-                    self._context(suite_id, suite_root),
-                    plan,
+                self._discard_unactivated_plans(
+                    suite_id,
+                    suite_root,
+                    (plan,),
                 )
                 raise
 
@@ -570,6 +589,36 @@ class CurationService:
             warnings=tuple(warnings),
         )
 
+    def _discard_unactivated_plans(
+        self,
+        suite_id: str,
+        suite_root: Path,
+        plans: Sequence[ArtifactPlan],
+    ) -> None:
+        try:
+            latest = self._load_json_object(
+                suite_root / LATEST_FILE,
+                required=False,
+                max_bytes=_MAX_TAXONOMY_BYTES,
+            )
+            active = (
+                latest.get("artifacts")
+                if isinstance(latest, dict)
+                else None
+            )
+        except BaseException:
+            log.exception(
+                "Could not determine whether failed curation plans were "
+                "already activated; preserving them"
+            )
+            return
+        ctx = self._context(suite_id, suite_root)
+        for plan in plans:
+            ref = active.get(plan.stage_name) if isinstance(active, dict) else None
+            if isinstance(ref, dict) and ref.get("version") == plan.version:
+                continue
+            discard_artifact_plan(ctx, plan)
+
     @contextmanager
     def _suite_mutation(
         self,
@@ -583,7 +632,7 @@ class CurationService:
             reject_links=True,
         )
         owner = f"curation:{uuid.uuid4().hex}"
-        resource_keys = (f"suite:{suite_id}",)
+        resource_keys = (suite_resource_key(suite_id),)
         stop_renewal = threading.Event()
         lease_lost = threading.Event()
         renewal_thread: threading.Thread | None = None
@@ -680,11 +729,7 @@ class CurationService:
                 return
 
     def _suite_root(self, suite_id: str) -> Path:
-        if not isinstance(suite_id, str) or not _IDENTIFIER_RE.fullmatch(suite_id):
-            raise ServiceError(
-                ServiceErrorCode.INVALID_ARGUMENT,
-                "suite_id must contain only letters, numbers, '.', '_', or '-'",
-            )
+        suite_id = validate_output_id(suite_id, field_name="suite_id")
         suite_root = self.workspace.path_policy.resolve_managed_output(
             self.workspace.results_root / suite_id,
             field_name="curation suite",
@@ -757,11 +802,6 @@ class CurationService:
                 required=True,
                 max_bytes=_MAX_TAXONOMY_BYTES,
             )
-            if not primary_path.is_file():
-                raise ServiceError(
-                    ServiceErrorCode.NOT_FOUND,
-                    f"Active {stage_name} artifact is missing",
-                )
             if (
                 metadata.get("artifact_type") != stage_name
                 or metadata.get("version") != version
@@ -770,25 +810,12 @@ class CurationService:
                     ServiceErrorCode.CONFIG_INVALID,
                     f"Active {stage_name} artifact metadata is inconsistent",
                 )
+            self._verify_versioned_source(
+                artifact_dir,
+                stage_name=stage_name,
+                metadata=metadata,
+            )
             etag = _file_etag(primary_path)
-            file_hashes = metadata.get("file_hashes")
-            primary_key = (
-                "taxonomy" if stage_name == "systematize" else "test_set"
-            )
-            expected_hash = (
-                file_hashes.get(primary_key)
-                if isinstance(file_hashes, dict)
-                else None
-            )
-            if (
-                isinstance(expected_hash, str)
-                and re.fullmatch(r"[0-9a-f]{64}", expected_hash)
-                and etag != f"sha256:{expected_hash}"
-            ):
-                raise ServiceError(
-                    ServiceErrorCode.CONFIG_INVALID,
-                    f"Active {stage_name} artifact failed its integrity check",
-                )
             return _ArtifactSource(
                 stage_name=stage_name,
                 primary_path=primary_path,
@@ -814,6 +841,49 @@ class CurationService:
             metadata=None,
             etag=_file_etag(primary_path),
         )
+
+    def _verify_versioned_source(
+        self,
+        artifact_dir: Path,
+        *,
+        stage_name: str,
+        metadata: Mapping[str, Any],
+    ) -> None:
+        files = metadata.get("files")
+        file_hashes = metadata.get("file_hashes")
+        expected_files = _STAGE_OUTPUT_FILES[stage_name]
+        if not isinstance(files, dict) or not isinstance(file_hashes, dict):
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                f"Active {stage_name} artifact has incomplete integrity metadata",
+            )
+        for output_key, filename in expected_files.items():
+            expected_hash = file_hashes.get(output_key)
+            if (
+                files.get(output_key) != filename
+                or not isinstance(expected_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+            ):
+                raise ServiceError(
+                    ServiceErrorCode.CONFIG_INVALID,
+                    f"Active {stage_name} artifact has invalid integrity metadata",
+                )
+            path = self.workspace.path_policy.resolve_managed_output(
+                artifact_dir / filename,
+                field_name=f"active {stage_name} artifact file",
+                expected_root=artifact_dir,
+                reject_links=True,
+            )
+            if not path.is_file():
+                raise ServiceError(
+                    ServiceErrorCode.NOT_FOUND,
+                    f"Active {stage_name} artifact is missing: {filename}",
+                )
+            if _file_etag(path) != f"sha256:{expected_hash}":
+                raise ServiceError(
+                    ServiceErrorCode.CONFIG_INVALID,
+                    f"Active {stage_name} artifact failed its integrity check",
+                )
 
     def _load_taxonomy(self, path: Path) -> TaxonomyDocument:
         raw = self._load_json_object(
@@ -913,7 +983,45 @@ class CurationService:
                 ServiceErrorCode.NOT_FOUND,
                 f"Required companion artifact is missing: {name}",
             )
-        self._copy_text(path, destination, max_bytes=_MAX_TEST_SET_BYTES)
+        self._copy_text(
+            path,
+            destination,
+            max_bytes=_MAX_TEST_SET_BYTES,
+            expected_hash=self._source_file_hash(source, name),
+        )
+
+    @staticmethod
+    def _source_file_hash(
+        source: _ArtifactSource,
+        filename: str,
+    ) -> str | None:
+        if source.metadata is None:
+            return None
+        files = source.metadata.get("files")
+        file_hashes = source.metadata.get("file_hashes")
+        if not isinstance(files, dict) or not isinstance(file_hashes, dict):
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                f"Active {source.stage_name} artifact has incomplete integrity metadata",
+            )
+        matching_keys = [
+            key for key, value in files.items() if value == filename
+        ]
+        if len(matching_keys) != 1:
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                f"Active {source.stage_name} artifact has invalid file metadata",
+            )
+        expected_hash = file_hashes.get(matching_keys[0])
+        if (
+            not isinstance(expected_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+        ):
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                f"Active {source.stage_name} artifact has invalid integrity metadata",
+            )
+        return expected_hash
 
     @staticmethod
     def _copy_text(
@@ -921,15 +1029,32 @@ class CurationService:
         destination: Path,
         *,
         max_bytes: int,
+        expected_hash: str | None = None,
     ) -> None:
-        if source.stat().st_size > max_bytes:
+        try:
+            with source.open("rb") as handle:
+                value = handle.read(max_bytes + 1)
+        except OSError as exc:
+            raise ServiceError(
+                ServiceErrorCode.NOT_FOUND,
+                f"Artifact is unavailable: {source.name}",
+            ) from exc
+        if len(value) > max_bytes:
             raise ServiceError(
                 ServiceErrorCode.ARTIFACT_TOO_LARGE,
                 f"Artifact exceeds the {max_bytes}-byte curation limit",
             )
+        if (
+            expected_hash is not None
+            and hashlib.sha256(value).hexdigest() != expected_hash
+        ):
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                f"Active artifact failed its integrity check: {source.name}",
+            )
         try:
-            text = source.read_bytes().decode("utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
+            text = value.decode("utf-8")
+        except UnicodeDecodeError as exc:
             raise ServiceError(
                 ServiceErrorCode.CONFIG_INVALID,
                 f"Artifact is not valid UTF-8: {source.name}",
@@ -1061,6 +1186,17 @@ def _validate_test_case(
             ServiceErrorCode.CONFIG_INVALID,
             f"Test case {test_case_id} type must be prompt or scenario",
         )
+    try:
+        prepare_test_cases(
+            (row,),
+            per_test_case_tools=None,
+            fixed_system_prompt=None,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ServiceError(
+            ServiceErrorCode.CONFIG_INVALID,
+            f"Test case {test_case_id} is invalid: {exc}",
+        ) from exc
     behavior = row_behavior(dict(row))
     if taxonomy_names and behavior and behavior not in taxonomy_names:
         raise ServiceError(

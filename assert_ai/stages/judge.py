@@ -371,6 +371,9 @@ async def run_judge(
                 score_row_filter_skipped["dimension_scales"] = judge_contract["dimension_scales"]
             if dimensions:
                 score_row_filter_skipped["dimensions"] = dimensions
+            trace_refs = row.get("trace_refs")
+            if isinstance(trace_refs, list):
+                score_row_filter_skipped["trace_refs"] = trace_refs
             return {
                 "output_index": output_index,
                 "score_row": score_row_filter_skipped,

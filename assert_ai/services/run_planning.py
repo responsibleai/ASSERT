@@ -36,6 +36,7 @@ from assert_ai.core.security import (
     validate_module_ref,
 )
 from assert_ai.core.workspace import WorkspaceService
+from assert_ai.services.artifact_pins import ArtifactPin, load_artifact_pin
 from assert_ai.services.configs import ConfigService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.stages import STAGES
@@ -161,6 +162,7 @@ class EvaluationPreflight(_ServiceModel):
     sample_sizes: dict[str, int | None] = Field(default_factory=dict)
     target: TargetPreflight | None = None
     stages: tuple[StagePreflight, ...] = ()
+    consumed_artifacts: dict[str, ArtifactPin] = Field(default_factory=dict)
     models: tuple[ModelUse, ...] = ()
     credentials: tuple[CredentialRequirement, ...] = ()
     managed_outputs: dict[str, str] = Field(default_factory=dict)
@@ -290,6 +292,21 @@ class RunPlanningService:
         blocking.extend(credential_issues)
         warnings.extend(credential_warnings)
         stages = _stage_plan(ctx, forced, models)
+        try:
+            consumed_artifacts = _consumed_artifact_pins(
+                self.workspace,
+                suite_id=str(ctx["suite_id"]),
+                stages=stages,
+                artifact_versions=ctx.get("artifact_versions"),
+            )
+        except ServiceError as exc:
+            blocking.append(
+                PreflightIssue(
+                    code=exc.code.value,
+                    message=str(exc),
+                )
+            )
+            consumed_artifacts = {}
         managed_outputs = {
             "artifacts_root": self.workspace.reference(ctx["artifacts_root"]),
             "results_root": self.workspace.reference(ctx["results_dir"]),
@@ -320,6 +337,7 @@ class RunPlanningService:
             sample_sizes=sample_sizes,
             target=target,
             stages=tuple(stages),
+            consumed_artifacts=consumed_artifacts,
             models=tuple(models),
             credentials=tuple(credentials),
             managed_outputs=managed_outputs,
@@ -327,6 +345,53 @@ class RunPlanningService:
             blocking_issues=tuple(_deduplicate_issues(blocking)),
             warnings=tuple(_deduplicate_issues(warnings)),
         )
+
+
+def _consumed_artifact_pins(
+    workspace: WorkspaceService,
+    *,
+    suite_id: str,
+    stages: list[StagePreflight],
+    artifact_versions: Any,
+) -> dict[str, ArtifactPin]:
+    actions = {stage.name: stage.action for stage in stages}
+    enabled = {
+        stage.name
+        for stage in stages
+        if stage.action is not StageAction.DISABLED
+    }
+    required = {
+        stage.name
+        for stage in stages
+        if stage.action is StageAction.REUSE
+    }
+    if {"test_set", "judge"} & enabled and actions.get("systematize") in {
+        None,
+        StageAction.DISABLED,
+    }:
+        required.add("systematize")
+    if "inference" in enabled and actions.get("test_set") in {
+        None,
+        StageAction.DISABLED,
+    }:
+        required.add("test_set")
+
+    refs = artifact_versions if isinstance(artifact_versions, dict) else {}
+    pins: dict[str, ArtifactPin] = {}
+    for stage_name in ("systematize", "test_set"):
+        if stage_name not in required:
+            continue
+        ref = refs.get(stage_name)
+        version = ref.get("version") if isinstance(ref, dict) else None
+        if not isinstance(version, str) or not version:
+            continue
+        pins[stage_name] = load_artifact_pin(
+            workspace,
+            suite_id=suite_id,
+            stage_name=stage_name,
+            version=version,
+        )
+    return pins
 
 
 def _apply_overrides(

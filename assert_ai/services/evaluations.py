@@ -31,6 +31,7 @@ from urllib.parse import quote
 import yaml
 
 from assert_ai.config import parse_model_config
+from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
 from assert_ai.core.io import write_bytes_atomic, write_json, write_text_atomic
 from assert_ai.core.jsonl_index import JsonlIndexError, scan_jsonl
 from assert_ai.core.config_document import PIPELINE_STAGE_ORDER
@@ -42,6 +43,7 @@ from assert_ai.core.security import (
 )
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.core.yaml_io import dump_yaml
+from assert_ai.services.artifact_pins import load_artifact_pin
 from assert_ai.services.configs import ConfigRecord, ConfigService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.job_models import (
@@ -57,6 +59,11 @@ from assert_ai.services.job_models import (
     TraceJudgingPreflight,
 )
 from assert_ai.services.job_store import JobStore
+from assert_ai.services.output_identity import (
+    run_resource_key,
+    suite_resource_key,
+    validate_output_id,
+)
 from assert_ai.services.run_planning import (
     EvaluationOverrides,
     RunPlanningService,
@@ -79,7 +86,6 @@ _MIN_LOG_BYTES = 4096
 _MAX_LOG_BYTES = 16 * 1024 * 1024
 _DEFAULT_MAX_TRACE_INPUT_BYTES = 64 * 1024 * 1024
 _GROUP_BY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
-_OUTPUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SUPPORTED_JOB_KINDS = frozenset({"evaluation", "trace_judging"})
 
 log = logging.getLogger(__name__)
@@ -103,6 +109,7 @@ class _TracePlan:
     session_count: int
     estimated_judge_calls: int
     judge_model: str
+    concurrency: int
     taxonomy_path: Path
     taxonomy_ref: str
     taxonomy_bytes: bytes
@@ -237,10 +244,11 @@ class EvaluationJobManager:
         """Adopt a worker result or mark a dead worker interrupted."""
         if record.state in TERMINAL_JOB_STATES:
             return record
-        if not self.launch_enabled or record.kind not in self.job_kinds:
+        if not self.launch_enabled or record.kind not in _SUPPORTED_JOB_KINDS:
             return record
         if record.state is JobState.QUEUED:
-            self.enqueue()
+            if record.kind in self.job_kinds:
+                self.enqueue()
             return record
         if (
             record.state is JobState.STARTING
@@ -396,9 +404,7 @@ class EvaluationJobManager:
                 self.enqueue()
 
     def _sweep_cancelling_jobs(self) -> None:
-        for record in self.store.list_nonterminal_records(
-            job_kinds=self.job_kinds,
-        ):
+        for record in self.store.list_nonterminal_records():
             if record.state is not JobState.CANCELLING:
                 continue
             try:
@@ -546,15 +552,15 @@ class EvaluationJobManager:
                 next_lease_check: float | None = None
                 has_queued_job = False
                 try:
-                    records = self.store.list_nonterminal_records(
-                        job_kinds=self.job_kinds,
-                    )
+                    records = self.store.list_nonterminal_records()
                 except Exception:  # noqa: BLE001 - daemon boundary
                     log.exception("Could not scan evaluation jobs for recovery")
                     return
                 for record in records:
                     if record.state is JobState.QUEUED:
-                        has_queued_job = True
+                        has_queued_job = (
+                            has_queued_job or record.kind in self.job_kinds
+                        )
                         continue
                     try:
                         current = self.reconcile(record)
@@ -989,13 +995,12 @@ class EvaluationJobManager:
         lease_owner: str | None,
     ) -> JobRecord:
         job_dir = self._job_dir(record.job_id)
-        request = _read_json_file(
+        request = _read_bound_request(
+            record,
             self._job_file(job_dir, "request.json"),
-            max_bytes=_JOB_RESULT_MAX_BYTES,
         )
         if (
-            not isinstance(request, dict)
-            or payload.get("result_token") != request.get("result_token")
+            payload.get("result_token") != request.get("result_token")
         ):
             raise ServiceError(
                 ServiceErrorCode.RUN_FAILED,
@@ -1262,20 +1267,22 @@ class EvaluationService:
         )
         _require_source_etag(initial.source_etag, config.etag)
         _require_ready(initial)
-        suite_id = (
+        suite_id = validate_output_id(
             applied.suite
             or config.document.get("suite")
-            or _new_identity("mcp-suite")
+            or _new_identity("mcp-suite"),
+            field_name="suite_id",
         )
         has_run_stage = any(
             stage.scope == "run"
             and stage.action is not StageAction.DISABLED
             for stage in initial.stages
         )
-        run_id = (
+        run_id = _optional_output_id(
             applied.run
             or config.document.get("run")
-            or (_new_identity("run") if has_run_stage else None)
+            or (_new_identity("run") if has_run_stage else None),
+            field_name="run_id",
         )
         effective_overrides = applied.model_copy(
             update={"suite": suite_id, "run": run_id},
@@ -1738,17 +1745,7 @@ class EvaluationService:
                 ServiceErrorCode.CONFIG_INVALID,
                 "Trace judging requires an enabled pipeline.judge stage",
             )
-        raw_model = judge.get("model") or document.get("default_model")
-        try:
-            judge_model = parse_model_config(
-                raw_model,
-                field_name="pipeline.judge.model",
-            ).name
-        except (TypeError, ValueError) as exc:
-            raise ServiceError(
-                ServiceErrorCode.CONFIG_INVALID,
-                "pipeline.judge.model or default_model is required",
-            ) from exc
+        judge_model = _trace_judge_model(document)
         allowed_patterns = self.planning.policy.allowed_model_patterns
         if allowed_patterns and not any(
             fnmatchcase(judge_model, pattern)
@@ -1759,6 +1756,10 @@ class EvaluationService:
                 "The judge model is not allowed by server policy",
                 details={"model": judge_model},
             )
+        concurrency = _trace_concurrency(
+            document,
+            maximum=self.planning.policy.max_concurrency,
+        )
 
         taxonomy_path = self._trace_taxonomy_path(
             inputs.config,
@@ -1829,6 +1830,7 @@ class EvaluationService:
             session_count=len(parsed_rows),
             estimated_judge_calls=len(parsed_rows) * judge_n,
             judge_model=judge_model,
+            concurrency=concurrency,
             taxonomy_path=taxonomy_path,
             taxonomy_ref=self.workspace.reference(taxonomy_path),
             taxonomy_bytes=taxonomy_bytes,
@@ -1928,6 +1930,7 @@ class EvaluationService:
             taxonomy_etag=plan.taxonomy_etag,
             group_by=plan.group_by,
             session_count=plan.session_count,
+            concurrency=plan.concurrency,
             suite_id=plan.suite_id,
             run_id=plan.run_id,
             request_id=request_id,
@@ -1948,6 +1951,7 @@ class EvaluationService:
         taxonomy_etag: str,
         group_by: str,
         session_count: int,
+        concurrency: int,
         suite_id: str,
         run_id: str,
         request_id: str,
@@ -2001,7 +2005,7 @@ class EvaluationService:
             write_text_atomic(snapshot, yaml_text)
             write_bytes_atomic(trace_snapshot, trace_bytes)
             write_bytes_atomic(taxonomy_snapshot, taxonomy_bytes)
-            write_json(
+            request_sha256 = _write_request_snapshot(
                 request_path,
                 {
                     "schema_version": 1,
@@ -2020,6 +2024,7 @@ class EvaluationService:
                     "taxonomy_sha256": taxonomy_etag,
                     "group_by": group_by,
                     "session_count": session_count,
+                    "concurrency": concurrency,
                     "retry_of": retry_of,
                 },
             )
@@ -2028,13 +2033,14 @@ class EvaluationService:
                     job_id=job_id,
                     idempotency_key=request_id,
                     request_hash=request_hash,
+                    request_sha256=request_sha256,
                     suite_id=suite_id,
                     run_id=run_id,
                     config_ref=config_ref,
                     config_sha256=config_sha256,
                     snapshot_path=str(snapshot),
                     request_path=str(request_path),
-                    resource_keys=(f"run:{suite_id}/{run_id}",),
+                    resource_keys=(run_resource_key(suite_id, run_id),),
                     retry_of=retry_of,
                     kind="trace_judging",
                 ),
@@ -2070,17 +2076,69 @@ class EvaluationService:
             max_bytes=_JOB_SNAPSHOT_MAX_BYTES,
             label="immutable trace taxonomy",
         )
+        _validate_taxonomy_bytes(taxonomy_bytes)
         group_by = _validate_group_by(request.get("group_by"))
+        try:
+            trace_document = json.loads(trace_bytes.decode("utf-8"))
+            if not isinstance(trace_document, dict):
+                raise ValueError("OTLP payload must be an object")
+            parsed_rows = parse_otel_trace_document(
+                trace_document,
+                group_by=group_by,
+            )
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable OTLP trace input is invalid",
+            ) from exc
         session_count = request.get("session_count")
         if (
             isinstance(session_count, bool)
             or not isinstance(session_count, int)
             or session_count < 1
+            or len(parsed_rows) != session_count
         ):
             raise ServiceError(
                 ServiceErrorCode.JOB_INTERRUPTED,
                 "The immutable trace job session count is invalid",
             )
+        maximum_sessions = self.planning.policy.max_prompt_sample_size
+        if session_count > maximum_sessions:
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                f"Trace input contains {session_count} sessions, exceeding "
+                f"the current server limit of {maximum_sessions}",
+            )
+        judge_model = _trace_judge_model(document)
+        allowed_patterns = self.planning.policy.allowed_model_patterns
+        if allowed_patterns and not any(
+            fnmatchcase(judge_model, pattern)
+            for pattern in allowed_patterns
+        ):
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                "The judge model is not allowed by current server policy",
+                details={"model": judge_model},
+            )
+        stored_concurrency = request.get("concurrency")
+        if (
+            isinstance(stored_concurrency, bool)
+            or not isinstance(stored_concurrency, int)
+            or stored_concurrency < 1
+        ):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace job concurrency is invalid",
+            )
+        concurrency = min(
+            stored_concurrency,
+            self.planning.policy.max_concurrency,
+        )
         trace_ref = request.get("trace_ref")
         taxonomy_ref = request.get("taxonomy_ref")
         if not isinstance(trace_ref, str) or not isinstance(taxonomy_ref, str):
@@ -2101,6 +2159,7 @@ class EvaluationService:
             taxonomy_etag=str(request["taxonomy_sha256"]),
             group_by=group_by,
             session_count=session_count,
+            concurrency=concurrency,
             suite_id=original.suite_id,
             run_id=run_id,
             request_id=request_id,
@@ -2157,10 +2216,7 @@ class EvaluationService:
                 ServiceErrorCode.JOB_INTERRUPTED,
                 "The immutable evaluation snapshot is invalid",
             ) from exc
-        request = _read_json_file(
-            request_path,
-            max_bytes=_JOB_RESULT_MAX_BYTES,
-        )
+        request = _read_bound_request(record, request_path)
         if not isinstance(document, dict) or not isinstance(request, dict):
             raise ServiceError(
                 ServiceErrorCode.JOB_INTERRUPTED,
@@ -2168,6 +2224,8 @@ class EvaluationService:
             )
         if (
             request.get("job_id") != record.job_id
+            or request.get("kind", "evaluation") != record.kind
+            or request.get("config_ref") != record.config_ref
             or request.get("config_sha256") != record.config_sha256
             or not isinstance(request.get("strict"), bool)
         ):
@@ -2260,7 +2318,12 @@ class EvaluationService:
             force_stages = [
                 stage.name for stage in plan.stages if stage.forced
             ]
-            write_json(
+            expected_artifacts = _artifact_pins(
+                self.workspace,
+                suite_id=suite_id,
+                plan=plan,
+            )
+            request_sha256 = _write_request_snapshot(
                 request_path,
                 {
                     "schema_version": 1,
@@ -2270,6 +2333,7 @@ class EvaluationService:
                     "config_sha256": config_sha256,
                     "strict": bool(plan.strict),
                     "force_stages": force_stages,
+                    "expected_artifacts": expected_artifacts,
                     "max_log_bytes": self.manager.max_log_bytes,
                     "retry_of": retry_of,
                 },
@@ -2282,14 +2346,17 @@ class EvaluationService:
                 and stage.action is not StageAction.DISABLED
                 for stage in plan.stages
             ):
-                resource_keys.append(f"suite:{suite_id}")
+                resource_keys.append(suite_resource_key(suite_id))
+            if expected_artifacts and suite_resource_key(suite_id) not in resource_keys:
+                resource_keys.append(suite_resource_key(suite_id))
             if run_id is not None:
-                resource_keys.append(f"run:{suite_id}/{run_id}")
+                resource_keys.append(run_resource_key(suite_id, run_id))
             return (
                 NewJob(
                     job_id=job_id,
                     idempotency_key=request_id,
                     request_hash=request_hash,
+                    request_sha256=request_sha256,
                     suite_id=suite_id,
                     run_id=run_id,
                     config_ref=config_ref,
@@ -2673,12 +2740,53 @@ def _new_identity(prefix: str) -> str:
 def _optional_output_id(value: Any, *, field_name: str) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not _OUTPUT_ID_RE.fullmatch(value):
+    return validate_output_id(value, field_name=field_name)
+
+
+def _trace_judge_model(document: dict[str, Any]) -> str:
+    pipeline = document.get("pipeline")
+    judge = pipeline.get("judge") if isinstance(pipeline, dict) else None
+    raw_model = (
+        judge.get("model") if isinstance(judge, dict) else None
+    ) or document.get("default_model")
+    try:
+        return parse_model_config(
+            raw_model,
+            field_name="pipeline.judge.model",
+        ).name
+    except (TypeError, ValueError) as exc:
         raise ServiceError(
-            ServiceErrorCode.INVALID_ARGUMENT,
-            f"{field_name} must contain only letters, numbers, '.', '_', or '-'",
+            ServiceErrorCode.CONFIG_INVALID,
+            "pipeline.judge.model or default_model is required",
+        ) from exc
+
+
+def _trace_concurrency(
+    document: dict[str, Any],
+    *,
+    maximum: int,
+) -> int:
+    pipeline = document.get("pipeline")
+    inference = (
+        pipeline.get("inference")
+        if isinstance(pipeline, dict)
+        else None
+    )
+    configured = (
+        inference.get("concurrency", DEFAULT_INFERENCE_CONCURRENCY)
+        if isinstance(inference, dict)
+        else DEFAULT_INFERENCE_CONCURRENCY
+    )
+    if (
+        isinstance(configured, bool)
+        or not isinstance(configured, int)
+        or configured < 1
+    ):
+        raise ServiceError(
+            ServiceErrorCode.CONFIG_INVALID,
+            "pipeline.inference.concurrency must be a positive integer",
         )
-    return value
+    return min(configured, maximum)
 
 
 def _validate_group_by(value: Any) -> str:
@@ -2776,6 +2884,68 @@ def _read_integrity_snapshot(
             f"The {label} failed its integrity check",
         )
     return value
+
+
+def _read_bound_request(
+    record: JobRecord,
+    path: Path,
+) -> dict[str, Any]:
+    value = _read_integrity_snapshot(
+        path,
+        expected_etag=record.request_sha256,
+        max_bytes=_JOB_RESULT_MAX_BYTES,
+        label="immutable evaluation job request",
+    )
+    try:
+        request = json.loads(value.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ServiceError(
+            ServiceErrorCode.JOB_INTERRUPTED,
+            "The immutable evaluation job request is invalid",
+        ) from exc
+    if not isinstance(request, dict):
+        raise ServiceError(
+            ServiceErrorCode.JOB_INTERRUPTED,
+            "The immutable evaluation job request must contain an object",
+        )
+    return request
+
+
+def _artifact_pins(
+    workspace: WorkspaceService,
+    *,
+    suite_id: str,
+    plan: Any,
+) -> dict[str, dict[str, Any]]:
+    pins: dict[str, dict[str, Any]] = {}
+    for stage_name, expected in plan.consumed_artifacts.items():
+        current = load_artifact_pin(
+            workspace,
+            suite_id=suite_id,
+            stage_name=stage_name,
+            version=expected.version,
+        )
+        if current != expected:
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                f"The preflight-selected {stage_name} artifact changed "
+                "before the job was registered",
+            )
+        pins[stage_name] = expected.model_dump(mode="json")
+    return pins
+
+
+def _write_request_snapshot(
+    path: Path,
+    payload: dict[str, Any],
+) -> str:
+    value = json.dumps(
+        payload,
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
+    write_bytes_atomic(path, value)
+    return _sha256_etag(value)
 
 
 def _validate_taxonomy_bytes(value: bytes) -> None:

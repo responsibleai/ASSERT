@@ -43,6 +43,7 @@ from assert_ai.core.security import (
     sanitize_text,
 )
 from assert_ai.core.workspace import WorkspaceService
+from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.job_store import JobStore
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -95,20 +96,38 @@ def main(argv: list[str] | None = None) -> int:
             expected_root=job_dir,
             reject_links=True,
         )
-        request = _read_request(request_path)
+        store = JobStore(
+            jobs_root.parent / "jobs.sqlite3",
+            path_policy=workspace.path_policy,
+            expected_root=workspace.artifacts_root,
+        )
+        record = store.get(args.job_id)
+        request_bytes = _verified_snapshot(
+            request_path,
+            expected_sha256=record.request_sha256,
+            max_bytes=_MAX_REQUEST_BYTES,
+            label="Evaluation job request",
+        )
+        request = _parse_request(request_bytes)
         if request.get("job_id") != args.job_id:
             raise ValueError("Evaluation job request identity mismatch")
         kind = request.get("kind", "evaluation")
         if kind not in {"evaluation", "trace_judging"}:
             raise ValueError("Unsupported evaluation job kind")
+        if kind != record.kind:
+            raise ValueError("Evaluation job kind does not match its record")
         result_token = _required_string(request, "result_token")
         config_ref = _required_string(request, "config_ref")
+        if config_ref != record.config_ref:
+            raise ValueError("Evaluation config reference does not match its record")
         expected_snapshot_hash = _required_string(
             request,
             "config_sha256",
         )
         if not _SHA256_RE.fullmatch(expected_snapshot_hash):
             raise ValueError("config_sha256 must be a SHA-256 digest")
+        if expected_snapshot_hash != record.config_sha256:
+            raise ValueError("Evaluation config digest does not match its record")
         snapshot_bytes = _read_bytes(
             snapshot_path,
             max_bytes=_MAX_SNAPSHOT_BYTES,
@@ -135,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
         strict = request.get("strict")
         if not isinstance(strict, bool):
             raise ValueError("strict must be a boolean")
+        expected_artifacts = _artifact_pins(
+            request.get("expected_artifacts", {})
+        )
         max_log_bytes = _log_limit(request.get("max_log_bytes"))
         stdout_path = workspace.path_policy.resolve_managed_output(
             job_dir / "stdout.log",
@@ -161,11 +183,6 @@ def main(argv: list[str] | None = None) -> int:
                 expected_root=job_dir,
                 reject_links=True,
             )
-        )
-        store = JobStore(
-            jobs_root.parent / "jobs.sqlite3",
-            path_policy=workspace.path_policy,
-            expected_root=workspace.artifacts_root,
         )
         observer = _JobRunObserver(
             store=store,
@@ -228,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
                         path_policy=workspace.path_policy,
                         control=control,
                         observer=observer,
+                        expected_artifacts=expected_artifacts,
                     )
         payload = {
             "schema_version": 1,
@@ -238,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = result.exit_code
     except Exception as exc:  # noqa: BLE001 - subprocess boundary
         message = sanitize_text(str(exc)) or "Evaluation worker failed"
+        error_code = (
+            exc.code.value
+            if isinstance(exc, ServiceError)
+            else ServiceErrorCode.INTERNAL.value
+        )
         if workspace is not None:
             message = redact_path_prefixes(
                 message,
@@ -252,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
             "schema_version": 1,
             "job_id": str(args.job_id),
             "worker_error": {
-                "error_code": "INTERNAL",
+                "error_code": error_code,
                 "error_message": message,
             },
         }
@@ -279,6 +302,13 @@ def _run_trace_judging(
     suite_id = _required_string(document, "suite")
     run_id = _required_string(document, "run")
     group_by = _required_string(request, "group_by")
+    concurrency = request.get("concurrency")
+    if (
+        isinstance(concurrency, bool)
+        or not isinstance(concurrency, int)
+        or concurrency < 1
+    ):
+        raise ValueError("concurrency must be a positive integer")
     trace_path = workspace.path_policy.resolve_managed_output(
         job_dir / "trace.json",
         field_name="immutable OTLP trace input",
@@ -327,6 +357,23 @@ def _run_trace_judging(
         expected_root=run_root,
         reject_links=True,
     )
+    suite_root.mkdir(parents=True, exist_ok=True)
+    suite_root = workspace.path_policy.resolve_managed_output(
+        suite_root,
+        field_name="trace judge suite root",
+        expected_root=workspace.results_root,
+        reject_links=True,
+    )
+    try:
+        run_root.mkdir(exist_ok=False)
+    except FileExistsError as exc:
+        raise ValueError("Trace judge run output already exists") from exc
+    run_root = workspace.path_policy.resolve_managed_output(
+        run_root,
+        field_name="trace judge run root",
+        expected_root=suite_root,
+        reject_links=True,
+    )
 
     observer.pipeline_started(
         PipelineStarted(
@@ -354,8 +401,40 @@ def _run_trace_judging(
         )
         if not rows:
             raise ValueError("OTLP trace input contains no trace sessions")
+        expected_session_count = request.get("session_count")
+        if (
+            isinstance(expected_session_count, bool)
+            or not isinstance(expected_session_count, int)
+            or expected_session_count < 1
+        ):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace session count is invalid",
+            )
+        if len(rows) != expected_session_count:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace input produced a different session count",
+            )
         control.raise_if_cancelled(stage="trace_import")
-        run_root.mkdir(parents=True, exist_ok=True)
+        run_root = workspace.path_policy.resolve_managed_output(
+            run_root,
+            field_name="trace judge run root",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        inference_path = workspace.path_policy.resolve_managed_output(
+            run_root / "inference_set.jsonl",
+            field_name="trace judge inference set",
+            expected_root=run_root,
+            reject_links=True,
+        )
+        run_taxonomy_path = workspace.path_policy.resolve_managed_output(
+            run_root / "taxonomy.json",
+            field_name="trace judge taxonomy",
+            expected_root=run_root,
+            reject_links=True,
+        )
         write_jsonl(inference_path, rows)
         write_bytes_atomic(run_taxonomy_path, taxonomy_bytes)
         control.raise_if_cancelled(stage="trace_import")
@@ -462,17 +541,21 @@ def _run_trace_judging(
         path_policy=workspace.path_policy,
         control=control,
         observer=_TraceContinuationObserver(observer),
+        concurrency=concurrency,
     )
 
 
 def _verified_snapshot(
     path: Path,
     *,
-    expected_sha256: str,
+    expected_sha256: Any,
     max_bytes: int,
     label: str,
 ) -> bytes:
-    if not _SHA256_RE.fullmatch(expected_sha256):
+    if (
+        not isinstance(expected_sha256, str)
+        or not _SHA256_RE.fullmatch(expected_sha256)
+    ):
         raise ValueError(f"{label} digest is invalid")
     value = _read_bytes(path, max_bytes=max_bytes, label=label)
     actual = "sha256:" + hashlib.sha256(value).hexdigest()
@@ -600,19 +683,46 @@ def _jobs_root(workspace: WorkspaceService) -> Path:
     )
 
 
-def _read_request(path: Path) -> dict[str, Any]:
-    payload = json.loads(
-        _read_bytes(
-            path,
-            max_bytes=_MAX_REQUEST_BYTES,
-            label="Evaluation job request",
-        ).decode("utf-8")
-    )
+def _parse_request(value: bytes) -> dict[str, Any]:
+    payload = json.loads(value.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Evaluation job request must be an object")
     if payload.get("schema_version") != 1:
         raise ValueError("Unsupported evaluation job request schema")
     return payload
+
+
+def _artifact_pins(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        raise ValueError("expected_artifacts must be an object")
+    pins: dict[str, dict[str, Any]] = {}
+    for stage_name, pin in value.items():
+        if (
+            stage_name not in {"systematize", "test_set"}
+            or not isinstance(pin, dict)
+            or not isinstance(pin.get("version"), str)
+            or not re.fullmatch(r"v[0-9]{4,}", pin["version"])
+            or not isinstance(pin.get("metadata_sha256"), str)
+            or not _SHA256_RE.fullmatch(pin["metadata_sha256"])
+            or not isinstance(pin.get("file_hashes"), dict)
+            or not pin["file_hashes"]
+        ):
+            raise ValueError("expected_artifacts is invalid")
+        file_hashes = pin["file_hashes"]
+        if any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            for key, digest in file_hashes.items()
+        ):
+            raise ValueError("expected_artifacts file hashes are invalid")
+        pins[stage_name] = {
+            "version": pin["version"],
+            "metadata_sha256": pin["metadata_sha256"],
+            "file_hashes": dict(file_hashes),
+        }
+    return pins
 
 
 def _required_string(payload: dict[str, Any], key: str) -> str:

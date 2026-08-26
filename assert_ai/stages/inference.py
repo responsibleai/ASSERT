@@ -33,7 +33,6 @@ from assert_ai.core.config_model import (
 from assert_ai.core.io import (
     INFERENCE_SET_FILE,
     append_jsonl_row,
-    get_permissible_flag,
     load_jsonl,
     load_prompt_text,
     load_test_cases,
@@ -42,6 +41,7 @@ from assert_ai.core.io import (
     write_jsonl,
     row_factors,
 )
+from assert_ai.core.test_cases import prepare_test_cases
 from assert_ai.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
 from assert_ai.core.run_control import RunCancelled, RunControl
@@ -55,7 +55,7 @@ from assert_ai.core.session import (
     serialize_response,
 )
 from assert_ai.core.tool_backend import ToolBackendResolver, inspect_tool_module
-from assert_ai.core.tools import load_toolset_file, normalize_tool_defs
+from assert_ai.core.tools import load_toolset_file
 from assert_ai.core.transcript import (
     AddMessageEdit,
     Message as TranscriptMessage,
@@ -439,56 +439,11 @@ def _prepare_test_cases(
     tool_source: str,
     fixed_system_prompt: str | None,
 ) -> list[dict[str, Any]]:
-    """Validate canonical test-case rows and normalize prompt/scenario-specific fields."""
-    test_set: list[dict[str, Any]] = []
-    nested_test_case_fields = {"prompt", "description", "system_prompt", "title", "tools", "state"}
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise ValueError(f"test case at index {index} must be an object")
-
-        kind = row.get("type")
-        if kind not in {"prompt", "scenario"}:
-            raise ValueError(f"test case at index {index} must declare type 'prompt' or 'scenario'")
-
-        test_case_payload = row.get("seed")
-        if not isinstance(test_case_payload, dict):
-            raise ValueError(f"{kind} test case at index {index} requires a test case payload object")
-        test_case_row = dict(row)
-        normalized_payload = dict(test_case_payload)
-        system_prompt = str(normalized_payload.get("system_prompt") or "").strip() or None
-        if system_prompt is None:
-            normalized_payload.pop("system_prompt", None)
-        else:
-            normalized_payload["system_prompt"] = system_prompt
-        if fixed_system_prompt and system_prompt is not None:
-            raise ValueError("target.system_prompt cannot be combined with non-empty test case system_prompt")
-        tools = normalized_payload.get("tools")
-        if tool_source == TOOL_SOURCE_PER_TEST_CASE:
-            if not isinstance(tools, list) or not tools:
-                raise ValueError("test case tools are required when tool_source=per_test_case")
-            normalize_tool_defs(tools)
-        elif tools is not None:
-            raise ValueError("test case tools are only allowed when tool_source=per_test_case")
-        test_case_row["seed"] = normalized_payload
-        if kind == "prompt":
-            invalid_fields = sorted(field for field in nested_test_case_fields if field in row)
-            if invalid_fields:
-                raise ValueError(
-                    f"prompt test case at index {index} must move {', '.join(invalid_fields)} under the test case payload"
-                )
-            if not str(normalized_payload.get("description") or "").strip():
-                raise ValueError(
-                    f"prompt test case at index {index} requires a non-empty test case description"
-                )
-        elif not str(normalized_payload.get("description") or "").strip():
-            raise ValueError(
-                f"scenario test case at index {index} requires a non-empty test case description"
-            )
-        permissible = get_permissible_flag(test_case_row)
-        if permissible is not None:
-            test_case_row["permissible"] = permissible
-        test_set.append(test_case_row)
-    return test_set
+    return prepare_test_cases(
+        rows,
+        per_test_case_tools=(tool_source == TOOL_SOURCE_PER_TEST_CASE),
+        fixed_system_prompt=fixed_system_prompt,
+    )
 
 
 def _build_hosted_session(

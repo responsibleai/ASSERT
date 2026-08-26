@@ -366,7 +366,23 @@ def test_preflight_reuses_cache_without_writing_workspace() -> None:
         stages = {stage.name: stage for stage in result.stages}
         assert stages["systematize"].action is StageAction.REUSE
         assert stages["systematize"].artifact_version == plan.version
+        assert result.consumed_artifacts["systematize"].version == plan.version
         assert before == after
+
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "configured-for-test"},
+            clear=False,
+        ):
+            forced = planning.preflight(
+                "demo.yaml",
+                overrides=EvaluationOverrides(
+                    force_stages=("systematize",),
+                ),
+            )
+
+        assert forced.stages[0].action is StageAction.RUN
+        assert "systematize" not in forced.consumed_artifacts
 
 
 def test_resolve_forced_stages_rejects_missing_and_cascades() -> None:

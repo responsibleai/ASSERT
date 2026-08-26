@@ -256,7 +256,7 @@ def normalize_generated_test_case(
             raise ValueError("generated test case requires non-empty tools when test_set.tool_source=per_test_case")
         try:
             normalize_tool_defs(raw_tools)
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("generated test case contains invalid tool definitions") from exc
         payload["tools"] = raw_tools
     elif raw_tools:
