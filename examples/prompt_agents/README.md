@@ -2,8 +2,8 @@
 
 This directory is a focused gallery for the **Prompt Agent target**: a hosted
 model, a system prompt, and optional tools, with ASSERT owning the tool-call
-loop. All five configs evaluate the same single behavior,
-`harmful_medical_advice`; only the target shape changes.
+loop. All six configs evaluate the same single behavior,
+`harmful_medical_advice`; the target shape and the risk under test change.
 
 For a real agent or multi-agent system, use
 [`target.callable` with `target.trace`](../../docs/targets/callable.md) instead.
@@ -16,11 +16,12 @@ actionable medical advice.
 
 | Config | Target shape |
 |---|---|
-| [`health_assistant.yaml`](health_assistant.yaml) | Hosted model + system prompt. |
-| [`health_assistant_simulated_tools.yaml`](health_assistant_simulated_tools.yaml) | Fixed tool schemas + simulated results. |
-| [`health_assistant_sandbox.yaml`](health_assistant_sandbox.yaml) | Python tool module in a Docker sandbox. |
-| [`health_assistant_generated_tools.yaml`](health_assistant_generated_tools.yaml) | Per-test-case generated tools + simulator. |
-| [`health_assistant_external.yaml`](health_assistant_external.yaml) | Advanced external connector through OpenClaw. |
+| [`modelonly-dosage-guidance-to-elderly-patient`](evals/modelonly-dosage-guidance-to-elderly-patient/eval_config.yaml) | Hosted model + system prompt. |
+| [`simtools-dosage-guidance-to-elderly-patient`](evals/simtools-dosage-guidance-to-elderly-patient/eval_config.yaml) | Fixed tool schemas + simulated results. |
+| [`simtools-fabricated-clinical-fact-as-retrieved`](evals/simtools-fabricated-clinical-fact-as-retrieved/eval_config.yaml) | Fixed tool schemas + simulated results, fabricated-retrieval risk. |
+| [`gentools-dosage-guidance-to-elderly-patient`](evals/gentools-dosage-guidance-to-elderly-patient/eval_config.yaml) | Per-test-case generated tools + simulator. |
+| [`sandbox-dosage-guidance-to-elderly-patient`](evals/sandbox-dosage-guidance-to-elderly-patient/eval_config.yaml) | Python tool module in a Docker sandbox. |
+| [`external-dosage-guidance-to-elderly-patient`](evals/external-dosage-guidance-to-elderly-patient/eval_config.yaml) | Advanced external connector through OpenClaw. |
 
 Shared tool definitions live in [`../agents/`](../agents/).
 
@@ -50,11 +51,12 @@ Docker Desktop is required for the sandbox and external-connector configs.
 ## Run
 
 ```bash
-assert-ai run --config examples/prompt_agents/health_assistant.yaml
-assert-ai run --config examples/prompt_agents/health_assistant_simulated_tools.yaml
-assert-ai run --config examples/prompt_agents/health_assistant_sandbox.yaml
-assert-ai run --config examples/prompt_agents/health_assistant_generated_tools.yaml
-assert-ai run --config examples/prompt_agents/health_assistant_external.yaml
+assert-ai run --config examples/prompt_agents/evals/modelonly-dosage-guidance-to-elderly-patient/eval_config.yaml
+assert-ai run --config examples/prompt_agents/evals/simtools-dosage-guidance-to-elderly-patient/eval_config.yaml
+assert-ai run --config examples/prompt_agents/evals/simtools-fabricated-clinical-fact-as-retrieved/eval_config.yaml
+assert-ai run --config examples/prompt_agents/evals/gentools-dosage-guidance-to-elderly-patient/eval_config.yaml
+assert-ai run --config examples/prompt_agents/evals/sandbox-dosage-guidance-to-elderly-patient/eval_config.yaml
+assert-ai run --config examples/prompt_agents/evals/external-dosage-guidance-to-elderly-patient/eval_config.yaml
 ```
 
 ## Results
