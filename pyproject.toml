@@ -56,6 +56,11 @@ langgraph = [
   "langchain-openai>=1.1.14",
   "langgraph>=1.1.8",
 ]
+maf = [
+  "agent-framework-core>=1.13.0,<2",
+  "agent-framework-openai>=1.12.0,<2",
+  "agent-framework-orchestrations>=1.0.2,<2",
+]
 dspy = [
   # Pinned for the incident-triage demo'
   # optimize_with_gepa.ipynb notebooks, which use dspy.GEPA (Agrawal et al.,
@@ -123,11 +128,12 @@ examples = [
   "openinference-instrumentation-crewai>=0.1.17,<0.1.18",
 ]
 all = [
-  "assert-ai[otel,langgraph,analysis,examples,regression,azure-aad,acs]",
+  "assert-ai[otel,langgraph,maf,analysis,examples,regression,azure-aad,acs]",
 ]
 dev = [
   "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
+  "assert-ai[maf]",
 ]
 
 [project.scripts]
@@ -155,7 +161,7 @@ include-package-data = true
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "assert-ai[otel,langgraph,examples]",
+    "assert-ai[otel,langgraph,maf,examples]",
 ]
 
 [tool.setuptools.packages.find]

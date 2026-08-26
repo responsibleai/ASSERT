@@ -35,6 +35,7 @@ on:
       - 'examples/incident_triage_agent/**'
       - 'examples/langgraph-foundry-hosted/**'
       - 'examples/agents/**'
+      - 'examples/agent_framework_travel_planner/**'
       - 'docs/case-study-*.md'
 
 concurrency:
@@ -63,11 +64,12 @@ jobs:
         # The `otel` extra is required because tests/test_incident_triage_smoke.py
         # imports examples/incident_triage_agent/agent.py, which imports
         # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface, so the
-        # CI install set has to include the demo's optional extras even though
-        # core ASSERT doesn't need them.
+        # examples like that one ship as part of the unit-test surface. The
+        # MAF extra is required by test_agent_framework_travel_planner_smoke.py;
+        # keeping it in this regression job prevents that behavioral suite from
+        # passing by skipping when Agent Framework is absent.
         run: |
-          python -m pip install -e ".[dev,otel]"
+          python -m pip install -e ".[dev,otel,maf]"
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:
