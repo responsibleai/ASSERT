@@ -60,15 +60,12 @@ jobs:
           cache-dependency-path: viewer/package-lock.json
 
       - name: Install Python dependencies
-        # The `otel` extra is required because tests/test_incident_triage_smoke.py
-        # imports examples/incident_triage_agent/agent.py, which imports
-        # opentelemetry at module load time (target.trace.backend: otel). Demo
-        # examples like that one ship as part of the unit-test surface, so the
-        # CI install set has to include the demo's optional extras even though
-        # core ASSERT doesn't need them. MCP v2 is installed explicitly because
-        # it cannot currently share the `examples` extra's MCP v1 dependency.
+        # The base package already includes the OpenTelemetry SDK imported by
+        # the incident-triage smoke test. Do not combine the full `otel` extra
+        # with `mcp`: Phoenix currently brings an MCP v1 dependency, while the
+        # ASSERT MCP server intentionally requires v2.
         run: |
-          python -m pip install -e ".[dev,otel,mcp]"
+          python -m pip install -e ".[dev,mcp]"
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:
