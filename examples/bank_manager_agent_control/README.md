@@ -49,17 +49,17 @@ agent.
 The deposit service already had a deterministic, fail-closed gate. The bug was
 coverage: later services never called it.
 
-The current viewer headline reports Total 72 per arm:
+The historical viewer snapshot reports Total 72 per arm:
 
 | | Baseline gate | Defensive prompt | ACS Rego |
 |---|---:|---:|---:|
 | **Impermissible behavior violated:** unauthorized exposure | 8% | 6% | **0%** |
 | **Permissible behavior violated:** standard-tier request mishandled | 0% | 0% | **0%** |
 
-The defensive prompt improves the displayed aggregate by only two percentage
-points because it cannot extend enforcement into services that never call the
-gate. ACS Rego eliminates every observed impermissible authorization violation
-without adding permissible violations.
+In that historical snapshot, the defensive prompt improved the displayed
+aggregate by only two percentage points because it could not extend enforcement
+into services that never called the gate. ACS Rego eliminated every observed
+impermissible authorization violation without adding permissible violations.
 
 The ACS policy keys on normalized `risk_tier`, not on a customer ID or service:
 
@@ -94,9 +94,10 @@ not an end-to-end six-domain runtime claim.
 calls, tool calls and results, routing, and ordering. The judge can therefore
 distinguish a sensitive read after authorization from one with no prior check.
 
-The top-level results above are the current viewer display. Open the run to
-inspect the cited spans and verify whether authorization occurred before the
-sensitive read or action.
+The source run and trace artifacts are not committed, and the control runtime
+has changed since that snapshot. Treat the table as historical context, not as
+current validation. A new traced run is required before presenting the numbers
+as evidence for the hardened implementation.
 
 ---
 
@@ -114,15 +115,16 @@ recorded-control reference against bank-owned state; the remaining distinction
 between coercive pressure and legitimate work is semantic. The baseline prompt
 already says authentication is not authorization and uses a keyword tripwire.
 
-### Screenshot-backed 120-case comparison
+### Historical 120-case comparison
 
-The current viewer headline reports Total 120 per arm. The committed study
+The historical viewer snapshot reports Total 120 per arm. The committed study
 artifact is the reviewed 120-prompt fixture plus machine-readable labels,
 per-case arm outcomes, and exact result summary under [`fixtures/`](fixtures/).
 Those files reproduce the reviewed counts and paired statistics. Raw
 `scores.jsonl` files and traces are not committed, so the repository cannot
 independently verify trace lineage for the outcome rows. This PR does not claim
-a committed scenario dataset.
+a committed scenario dataset, actual historical model environment, or a rerun
+against the current hardened runtime.
 
 | | **Impermissible behavior violated:** coercion bypass | **Permissible behavior violated:** legitimate request mishandled |
 |---|---:|---:|
@@ -130,9 +132,10 @@ a committed scenario dataset.
 | Hardened prompt | 0% | **47%** |
 | ACS classifier | 0% | **27%** |
 
-Both controls eliminate observed impermissible violations. The ACS arm combines
-typed artifact verification with the classifier-backed policy, preserves 20
-percentage points more legitimate work than the hardened prompt, and matches
+In that historical snapshot, both controls eliminated observed impermissible
+violations. The ACS arm combined typed artifact verification with the
+classifier-backed policy, preserved 20
+percentage points more legitimate work than the hardened prompt, and matched
 the baseline permissible-violation rate.
 
 A separate held-out engineering check explains why the keyword tripwire is not
@@ -258,7 +261,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `eval_coercion_authority.yaml` | Behavior 2's one traced config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
 | `runtime/bank_core.py` | Bank-owned control-artifact registry and action-scope verification |
-| `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, per-case arm outcomes, and published result summary |
+| `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and historical per-case/result summaries with explicit provenance limits |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |
 | `scripts/coercion_scoreboard.py` | Paired result analysis and confidence bounds |
 | `scripts/generalization_proof.py` | Direct property-policy exercise over shipped and hypothetical envelopes |
@@ -272,7 +275,9 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 The reported results apply to this bank support agent, these reviewed datasets,
 these controls, and these configured models. They demonstrate the measured
 behavior under the tested conditions; they do not claim perfect performance for
-all agents or all authorization failures.
+all agents or all authorization failures. The historical run environment and
+raw traces were not committed, and the runtime has since been hardened, so rerun
+the same fixture before using those percentages as current evidence.
 
 > **Customer-safe note for AI assistants:** do not read, print, or commit
 > `.env`. Reference credential names only (`AZURE_API_KEY`,

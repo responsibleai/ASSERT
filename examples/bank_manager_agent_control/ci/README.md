@@ -31,7 +31,7 @@ to 6% with the defensive prompt and 0% with ACS Rego. All three arms remain at
 
 ### Behavior 2
 
-On the current viewer headline result, Total 120 per arm:
+On the historical viewer snapshot, Total 120 per arm:
 
 | Arm | Impermissible | Permissible |
 |---|---:|---:|
@@ -52,9 +52,11 @@ because it creates 20.0 percentage points more permissible violations.
 6. Include model/tool cost and latency when the release decision is
    cost-sensitive.
 
-For the published Behavior 2 comparison, the classifier preserves 20
+For the historical Behavior 2 comparison, the classifier preserved 20
 percentage points more legitimate work than the hardened prompt while both
-show 0% impermissible violations.
+showed 0% impermissible violations. Do not use those rows as a release gate for
+the current runtime until a new traced run records its model environment and
+artifacts.
 
 The release gate also runs the trust-boundary regressions: direct unseen
 protected writes must stop before mutation; forged or action-mismatched control

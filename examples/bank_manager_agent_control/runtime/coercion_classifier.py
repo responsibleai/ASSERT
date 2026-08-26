@@ -351,11 +351,19 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
     invalid = sorted(
         set(verification.get("unknown_references") or [])
         | set(verification.get("wrong_action_references") or [])
+        | set(verification.get("wrong_instance_references") or [])
         | set(verification.get("wrong_subject_references") or [])
         | set(verification.get("out_of_scope_references") or [])
         | set(verification.get("wrong_session_references") or [])
         | set(verification.get("expired_references") or [])
     )
+    artifact_evidence = {
+        "session_id": verification.get("session_id") or "",
+        "action_context": verification.get("action_context") or {},
+        "matched_action_instance_ids": (
+            verification.get("matched_action_instance_ids") or {}
+        ),
+    }
     if verified:
         return {
             "label": "recorded_artifact_verified",
@@ -366,6 +374,7 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
             "cited_references": cited,
             "verified_references": verified,
             "invalid_references": invalid,
+            "artifact_verification": artifact_evidence,
             "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
         }
 
@@ -388,6 +397,7 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         "cited_references": cited,
         "verified_references": verified,
         "invalid_references": invalid,
+        "artifact_verification": artifact_evidence,
         "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
     }
 

@@ -43,6 +43,11 @@ deny_hi := object.get(coercion, "deny_hi", 2)
 invalid_references := object.get(coercion, "invalid_references", [])
 verified_references := object.get(coercion, "verified_references", [])
 artifact_verified := object.get(coercion, "artifact_verified", null)
+cited_references := object.get(coercion, "cited_references", [])
+label := object.get(coercion, "label", null)
+raw_annotation := object.get(coercion, "raw", null)
+artifact_evidence := object.get(coercion, "artifact_verification", null)
+matched_action_instances := object.get(artifact_evidence, "matched_action_instance_ids", null)
 
 tool_name := object.get(object.get(input, "tool", {}), "name", "")
 
@@ -74,17 +79,48 @@ string_array(value) if {
 artifact_verification_consistent if {
 	artifact_verified == false
 	count(verified_references) == 0
+	count(matched_action_instances) == 0
+	label != "recorded_artifact_verified"
 }
 
 artifact_verification_consistent if {
 	artifact_verified == true
 	count(verified_references) > 0
 	count(invalid_references) == 0
+	object.keys(matched_action_instances) == {ref | some ref in verified_references}
+	label == "recorded_artifact_verified"
+}
+
+artifact_evidence_valid if {
+	is_object(artifact_evidence)
+	is_string(object.get(artifact_evidence, "session_id", null))
+	object.get(artifact_evidence, "session_id", "") != ""
+	action_context := object.get(artifact_evidence, "action_context", null)
+	is_object(action_context)
+	is_string(object.get(action_context, "action_family", null))
+	is_string(object.get(action_context, "tool_name", null))
+	is_string(object.get(action_context, "action_instance", null))
+	is_string(object.get(action_context, "subject", null))
+	is_object(matched_action_instances)
+	every _, action_ids in matched_action_instances {
+		string_array(action_ids)
+		count(action_ids) > 0
+	}
+}
+
+reference_sets_consistent if {
+	verified := {ref | some ref in verified_references}
+	invalid := {ref | some ref in invalid_references}
+	cited := {ref | some ref in cited_references}
+	count(verified - cited) == 0
+	count(invalid - cited) == 0
 }
 
 annotation_valid if {
 	object.get(annotations, "coercion_risk", null) != null
 	is_object(coercion)
+	label in {"clean", "ambiguous", "coercive", "recorded_artifact_verified"}
+	is_object(raw_annotation)
 	is_number(score)
 	score >= 0
 	score <= 1
@@ -94,10 +130,12 @@ annotation_valid if {
 	escalate_lo < deny_hi
 	deny_hi <= 1
 	is_boolean(artifact_verified)
-	string_array(object.get(coercion, "cited_references", null))
+	string_array(cited_references)
 	string_array(verified_references)
 	string_array(invalid_references)
+	artifact_evidence_valid
 	artifact_verification_consistent
+	reference_sets_consistent
 }
 
 pre_tool_call_verdict := escalate(

@@ -104,7 +104,7 @@ pipeline:
     model: {name: azure/gpt-5.4, max_tokens: 10000}
 
   test_set:
-    # The published comparison uses the reviewed fixture installed by
+    # The historical comparison uses the reviewed fixture installed by
     # scripts/prepare_powered_coercion.py. Keep generation disabled so every
     # arm runs the exact same 120 prompts.
     enabled: false

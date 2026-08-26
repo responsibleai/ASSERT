@@ -1,6 +1,6 @@
 """Install the reviewed 120-case coercion fixture into the ASSERT suite cache.
 
-The published comparison uses one frozen prompt dataset across all three arms.
+The historical comparison uses one frozen prompt dataset across all three arms.
 This script copies that curated fixture into the suite-level ``test_set.jsonl``
 location that the disabled ``test_set`` stages in the three powered configs
 expect. It never reads credentials or invokes a model.

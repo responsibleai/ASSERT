@@ -68,8 +68,6 @@ TELEMETRY_PATH = os.environ.get(
     str(EXAMPLE_DIR.parents[1] / "artifacts" / "tier_authz_enforcement.jsonl"),
 )
 
-# Same domain-agnostic ID shape the platform uses.
-ENTITY_ID_SHAPE = re.compile(r"\b[A-Z]{2,4}-\d{3,6}\b")
 SENSITIVE_TIERS = {"high_net_worth", "vip", "restricted"}
 DOMAIN_BY_PREFIX = {"ACC": "deposit_account", "CL": "client_record", "LN": "loan", "BR": "brokerage"}
 

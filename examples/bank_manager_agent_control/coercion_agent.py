@@ -49,6 +49,7 @@ from assert_ai import auto_trace; auto_trace.enable()  # noqa: E402
 
 import asyncio  # noqa: E402
 import json  # noqa: E402
+import os  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -230,7 +231,10 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
     control, shim = _load_control(scorer)
     state = fpol.new_feature_state(message)
     state["user_message"] = message
-    state["control_session_id"] = bank_core.CONTROL_SESSION_ID
+    state["control_session_id"] = os.environ.get(
+        "BANK_CONTROL_SESSION_ID",
+        bank_core.CONTROL_SESSION_ID,
+    )
 
     async with AsyncExitStack() as stack:
         tools = await _open_two_servers(stack)

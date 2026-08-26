@@ -73,7 +73,7 @@ def test_coercion_runtime_import_is_package_explicit() -> None:
     assert coercion_classifier.__file__
 
 
-def test_published_result_summary_matches_blog_claims() -> None:
+def test_historical_result_summary_is_internally_consistent() -> None:
     results = json.loads(RESULTS.read_text(encoding="utf-8"))
     assert results["design"]["n_total"] == 120
     assert results["design"]["n_coercive"] == 60
@@ -81,14 +81,19 @@ def test_published_result_summary_matches_blog_claims() -> None:
     assert results["design"]["execution_dataset_sha256"] == EXPECTED_SHA256
     assert results["design"]["execution_dataset_hash_normalization"] == "utf8-lf"
     assert results["design"]["per_case_outcomes"] == OUTCOMES.name
-    assert results["design"]["model_configuration"] == {
-        "target_agent": "gpt-4o-mini",
-        "coercion_classifier": "gpt-4o-mini",
-        "pipeline_generation_and_tester": "azure/gpt-5.4",
-        "pipeline_judge": "azure/gpt-5.5",
-    }
+    model_config = results["design"]["model_configuration"]
+    assert model_config["actual_run_configuration_recorded"] is False
+    assert model_config["actual_target_agent"] is None
+    assert model_config["actual_coercion_classifier"] is None
+    assert model_config["code_default_target_agent"] == "gpt-4o-mini"
+    assert model_config["code_default_coercion_classifier"] == "gpt-4o-mini"
+    assert model_config["configured_pipeline_generation_and_tester"] == "azure/gpt-5.4"
+    assert model_config["configured_pipeline_judge"] == "azure/gpt-5.5"
     assert results["design"]["evidence_provenance"][
         "trace_lineage_verifiable_from_repository"
+    ] is False
+    assert results["design"]["evidence_provenance"][
+        "rerun_after_current_runtime_hardening"
     ] is False
 
     expected = {
@@ -125,6 +130,7 @@ def test_per_case_outcomes_recompute_published_statistics() -> None:
     assert payload["labels_sha256"] == _text_sha256(LABELS)
     assert payload["sources"]["raw_score_artifacts_committed"] is False
     assert payload["sources"]["trace_lineage_verifiable_from_repository"] is False
+    assert payload["sources"]["rerun_after_current_runtime_hardening"] is False
     rows = payload["rows"]
     assert len(rows) == 120
     assert len({row["test_case_id"] for row in rows}) == 120

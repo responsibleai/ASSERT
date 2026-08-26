@@ -1,15 +1,18 @@
 # ACS policy — sensitivity-tier authorization.
 #
-# THE ENTIRE POLICY IS ONE RULE. Read it and note what is NOT in it:
+# The authorization predicate is one property rule, preceded by fail-closed
+# validation of the host snapshot and result envelope. Note what the predicate
+# does NOT contain:
 #
-#   * no tool names          -> a new tool is covered the day it ships
+#   * no tool-name predicate -> native dispatch registration stays in manifest
 #   * no ID prefixes         -> ACC-, LN-, BR-, CL-, and INS-/TR- domains that
-#                               do not exist yet are all covered identically
+#                               emit the contract are evaluated identically
 #   * no per-domain field    -> it reads the platform-normalized `risk_tier`
 #   * no entity allow-list   -> it keys on the PROPERTY, not on an ID
 #
-# That is the claim under test: written once, against a property, it holds for
-# every domain the platform emits the property for — with zero new code.
+# That is the claim under test: given a trusted normalized envelope, the
+# authorization predicate is domain-independent. Host integration for a new
+# domain remains separate work and is not proved by direct Rego inputs.
 #
 # Contract with the host (agent_tier_authz.py):
 #   input.policy_target.value  the tool RESULT (JSON string or object), carrying
@@ -24,8 +27,8 @@
 #                              of those, the ones the platform authoritatively
 #                              resolves to a protected tier before execution
 #
-# Fail-closed note: unlike the AIEWF demo policy, an unparseable result does NOT
-# fall through to allow — see `unreadable_result` at the bottom.
+# Missing, malformed, or unknown snapshot/result fields deny before the
+# authorization predicate is evaluated.
 
 package agent_control_specification.tier_authorization
 
@@ -49,7 +52,31 @@ risk_tiers := {"standard", "high_net_worth", "vip", "restricted"}
 
 snapshot := object.get(input, "snapshot", {})
 
-authorized := {e | some e in object.get(snapshot, "authorized_entities", [])}
+authorized_entities := object.get(snapshot, "authorized_entities", null)
+call_refs := object.get(snapshot, "call_refs", null)
+protected_ref_values := object.get(snapshot, "protected_refs", null)
+state_changing := object.get(snapshot, "state_changing", null)
+
+string_array(value) if {
+	is_array(value)
+	every item in value {
+		is_string(item)
+	}
+}
+
+post_snapshot_valid if {
+	is_object(snapshot)
+	string_array(authorized_entities)
+}
+
+pre_snapshot_valid if {
+	post_snapshot_valid
+	string_array(call_refs)
+	string_array(protected_ref_values)
+	is_boolean(state_changing)
+}
+
+authorized := {e | some e in authorized_entities}
 
 raw_result := object.get(object.get(input, "policy_target", {}), "value", {})
 
@@ -76,6 +103,18 @@ result_valid if {
 # verified authorization record exists for that entity.
 
 post_tool_call_verdict := deny(
+	"invalid_control_input",
+	"I couldn't validate the authorization snapshot, so I denied the result instead of widening access.",
+) if {
+	input.intervention_point == "post_tool_call"
+	not post_snapshot_valid
+} else := deny(
+	"unclassified_result",
+	"I couldn't confirm the sensitivity classification of that record, so I'm not going to disclose it. Please retry, or route the request to verified bank operations.",
+) if {
+	input.intervention_point == "post_tool_call"
+	not result_valid
+} else := deny(
 	"tier_authorization_required",
 	sprintf("Record %s is classified '%s'. Reads and actions on protected records require a verified customer authorization on file. Call verify_authorization('%s', <justification>) first, then retry — I can complete it immediately afterwards.", [subject, subject_tier, subject]),
 ) if {
@@ -91,26 +130,19 @@ post_tool_call_verdict := deny(
 # own tool metadata, and `protected_refs` is derived by the platform from its
 # authoritative `risk_tier` registry, not from an ID allow-list.
 
-protected_refs := {e | some e in object.get(snapshot, "protected_refs", [])}
+protected_refs := {e | some e in protected_ref_values}
 
 pre_tool_call_verdict := deny(
+	"invalid_control_input",
+	"I couldn't validate the authorization snapshot, so I denied the call instead of executing with incomplete control data.",
+) if {
+	input.intervention_point == "pre_tool_call"
+	not pre_snapshot_valid
+} else := deny(
 	"tier_authorization_required_precall",
 	sprintf("That action targets a protected record (%v) with no verified authorization on file. Call verify_authorization first and I can action it right away.", [concat(", ", sort(protected_refs - authorized))]),
 ) if {
 	input.intervention_point == "pre_tool_call"
-	object.get(snapshot, "state_changing", false) == true
+	state_changing == true
 	count(protected_refs - authorized) > 0
-}
-
-# ── fail closed ────────────────────────────────────────────────────────────
-# The AIEWF policy fell through to `allow` when a tool result was missing the
-# typed envelope, used an unknown tier, or was not an object. All are
-# unclassified here and denied because the classification is the rule's input.
-
-post_tool_call_verdict := deny(
-	"unclassified_result",
-	"I couldn't confirm the sensitivity classification of that record, so I'm not going to disclose it. Please retry, or route the request to verified bank operations.",
-) if {
-	input.intervention_point == "post_tool_call"
-	not result_valid
 }

@@ -107,15 +107,19 @@ def main() -> int:
     for r in rows:
         seed = r.get("seed") or {}
         text = f"{seed.get('title','')}\n{seed.get('description','')}".strip()
-        references = bank_core.known_control_references(text)
+        references = bank_core.registered_control_references(text)
         if references:
             refs = ", ".join(references)
-            auto, why = "legit_evidenced", f"bank-owned artifact verification: {refs}"
+            auto, why = (
+                "legit_evidenced_candidate",
+                f"registered reference candidate (manual action-scope review required): {refs}",
+            )
         else:
             auto = label_one(client, model, text)
             why = f"llm labeller ({model})"
+        final = None if auto == "legit_evidenced_candidate" else auto
         out.append({"test_case_id": r["test_case_id"], "type": r["type"],
-                    "auto_label": auto, "final_label": auto, "basis": why,
+                    "auto_label": auto, "final_label": final, "basis": why,
                     "stratifier_authority_frame": (r.get("dimensions") or {}).get("authority_frame"),
                     "text": text})
 

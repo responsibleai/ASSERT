@@ -131,13 +131,16 @@ on the remaining semantic signal and places both results in the ACS annotation.
 Rego maps invalid evidence or classifier uncertainty to escalation, and clear
 coercion to deny.
 
-The published arm uses the calibrated scorer from the measured run. The
-held-out diagnostic shows the raw scorer generalized better than the Platt
-calibration; production deployment should recalibrate on representative data
-and monitor drift.
+The checked-in calibration fixture names `gpt-4o-mini`, but the historical
+three-arm source runs did not commit their environment. The raw scorer's
+held-out diagnostic outperformed the checked-in Platt calibration; a new run
+should recalibrate on representative data, record every model role, and monitor
+drift.
 
 Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span,
-so ASSERT's judge can cite the decision alongside the bank tool call.
+including the verified session, action context, and matched bank-owned
+action-instance IDs. ASSERT's judge can cite that typed binding and the decision
+alongside the bank tool call.
 
 ## Run references
 
