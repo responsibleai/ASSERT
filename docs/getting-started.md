@@ -25,6 +25,8 @@ python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 ```
 
+The second install is required because the flagship target imports LangGraph, LangChain Core, and LangChain OpenAI directly. Those are dependencies of the example agent, not features of the `assert-ai` package.
+
 Edit `.env` with credentials for your provider. Defaults match the example's `azure/...` model. Any LiteLLM provider (OpenAI, Anthropic, Bedrock, Vertex, Ollama, and others) works.
 
 PowerShell (Windows):
@@ -82,7 +84,7 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs the root development group plus `examples/travel_planner_langgraph/requirements.txt`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs the root development group plus `examples/travel_planner_langgraph/requirements.txt` because the container is also the golden-path example environment, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
 
 PowerShell (Windows) — full sequence:
 

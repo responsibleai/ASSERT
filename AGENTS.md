@@ -75,6 +75,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 
@@ -91,6 +92,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[otel]"
+# The flagship target imports LangGraph, LangChain Core, and LangChain OpenAI.
 python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 

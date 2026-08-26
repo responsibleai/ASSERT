@@ -11,7 +11,7 @@ Use this skill before launch, after README or CLI changes, or when feedback sugg
 ## Golden path steps
 
 1. **Install and verify the CLI**
-   - Setup: `python -m pip install -e ".[otel]"` and `python -m pip install -r examples/travel_planner_langgraph/requirements.txt`
+   - Setup: `python -m pip install -e ".[otel]"` for ASSERT tracing, then `python -m pip install -r examples/travel_planner_langgraph/requirements.txt` for the golden-path target agent
    - ASSERT command: `assert-ai --help`
 2. **Write an eval spec**
    - ASSERT command: `assert-ai init --model azure/gpt-5.4 --describe "A customer-support chatbot with order lookup and refund tools" -o eval_config.yaml`
