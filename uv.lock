@@ -433,6 +433,11 @@ azure-aad = [
     { name = "azure-identity" },
 ]
 dev = [
+    { name = "acs-generator" },
+    { name = "agent-control-specification" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
@@ -447,7 +452,7 @@ otel = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "assert-ai", extra = ["acs", "analysis", "otel"] },
+    { name = "assert-ai", extra = ["acs", "analysis"] },
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
@@ -458,6 +463,7 @@ requires-dist = [
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0,<19.18.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
+    { name = "assert-ai", extras = ["analysis", "acs"], marker = "extra == 'dev'" },
     { name = "assert-ai", extras = ["otel", "analysis", "embeddings", "azure-aad", "acs"], marker = "extra == 'all'" },
     { name = "azure-identity", marker = "extra == 'azure-aad'", specifier = ">=1.19.0" },
     { name = "click", specifier = ">=8.0" },
@@ -481,7 +487,7 @@ provides-extras = ["otel", "analysis", "embeddings", "azure-aad", "acs", "all", 
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "assert-ai", extras = ["otel", "analysis", "acs"] },
+    { name = "assert-ai", extras = ["analysis", "acs"] },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-timeout", specifier = ">=2.2.0" },
 ]

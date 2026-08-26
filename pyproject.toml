@@ -79,6 +79,7 @@ all = [
 dev = [
   "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
+  "assert-ai[analysis,acs]",
 ]
 
 [project.scripts]
@@ -106,9 +107,9 @@ include-package-data = true
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.3",
+  "pytest>=9.0.3",
   "pytest-timeout>=2.2.0",
-  "assert-ai[otel,analysis,acs]",
+  "assert-ai[analysis,acs]",
 ]
 
 [tool.setuptools.packages.find]
