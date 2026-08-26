@@ -119,7 +119,7 @@ class JobCatalogEntry(_ServiceModel):
     job_id: str
     state: JobState
     revision: int = Field(ge=0)
-    kind: Literal["evaluation"] = "evaluation"
+    kind: Literal["evaluation", "trace_judging"] = "evaluation"
     retry_of: str | None = None
     config_ref: str
     suite_id: str
@@ -158,3 +158,23 @@ class JobStartResult(_ServiceModel):
 
     job: JobDetail
     created: bool
+
+
+class TraceJudgingPreflight(_ServiceModel):
+    """Pure validation and spend estimate for an imported-trace judge job."""
+
+    schema_version: Literal[1] = 1
+    ready: bool
+    config_ref: str
+    config_etag: str
+    trace_ref: str
+    trace_etag: str
+    trace_size_bytes: int
+    group_by: str
+    session_count: int
+    estimated_judge_calls: int
+    suite_id: str | None = None
+    run_id: str | None = None
+    judge_model: str
+    taxonomy_ref: str
+    warnings: tuple[str, ...] = ()

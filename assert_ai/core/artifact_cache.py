@@ -220,6 +220,24 @@ def prepare_artifact_plan(
         if reusable is not None:
             return reusable
 
+    return allocate_artifact_plan(
+        ctx=ctx,
+        stage_name=stage_name,
+        fingerprint=fingerprint,
+    )
+
+
+def allocate_artifact_plan(
+    *,
+    ctx: dict[str, Any],
+    stage_name: str,
+    fingerprint: ArtifactFingerprint,
+) -> ArtifactPlan:
+    """Reserve a fresh immutable artifact version."""
+    if stage_name not in CACHEABLE_STAGES:
+        raise ValueError(f"unsupported cacheable stage: {stage_name}")
+    suite_root = _managed_suite_root(ctx)
+    stage_root = _artifact_stage_root(ctx, suite_root, stage_name)
     version, artifact_dir = _allocate_version_dir(stage_root)
     return ArtifactPlan(
         stage_name=stage_name,
@@ -522,7 +540,14 @@ def activate_latest_artifacts(
             )
 
 
-def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str, Any]:
+def finalize_artifact_plan(
+    ctx: dict[str, Any],
+    plan: ArtifactPlan,
+    *,
+    provenance: dict[str, Any] | None = None,
+    activate: bool = True,
+    preserve_local_edits: bool = True,
+) -> dict[str, Any]:
     """Write sidecar metadata and update latest/compatibility artifacts."""
 
     suite_root = _managed_suite_root(ctx)
@@ -570,6 +595,8 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
         },
         "file_hashes": file_hashes,
     }
+    if provenance is not None:
+        metadata["provenance"] = _normalize_value(provenance)
     metadata_path = _managed_output_path(
         ctx,
         artifact_dir / ARTIFACT_METADATA_FILE,
@@ -580,8 +607,14 @@ def finalize_artifact_plan(ctx: dict[str, Any], plan: ArtifactPlan) -> dict[str,
     write_json(metadata_path, metadata)
     ref = artifact_ref(ctx=ctx, plan=plan, metadata=metadata)
     ctx.setdefault("artifact_versions", {})[plan.stage_name] = ref
-    update_latest(ctx, plan.stage_name, ref)
-    refresh_compatibility_files(ctx, plan.stage_name, output_paths)
+    if activate:
+        update_latest(ctx, plan.stage_name, ref)
+        refresh_compatibility_files(
+            ctx,
+            plan.stage_name,
+            output_paths,
+            preserve_local_edits=preserve_local_edits,
+        )
     return ref
 
 
@@ -657,6 +690,8 @@ def refresh_compatibility_files(
     ctx: dict[str, Any],
     stage_name: str,
     output_paths: dict[str, Path],
+    *,
+    preserve_local_edits: bool = True,
 ) -> None:
     """Copy selected version outputs back to legacy suite-root filenames.
 
@@ -702,7 +737,10 @@ def refresh_compatibility_files(
             expected_root=suite_root,
             reject_links=True,
         )
-        if _is_local_edit(suite_root, stage_name, dest, path):
+        if (
+            preserve_local_edits
+            and _is_local_edit(suite_root, stage_name, dest, path)
+        ):
             log.warning(
                 "[%s] Preserving local edits to %s: contents differ from the "
                 "cached artifact at %s and do not match any previously cached "
@@ -785,6 +823,14 @@ def _was_cached_artifact(
 
 
 def update_latest(ctx: dict[str, Any], stage_name: str, ref: dict[str, Any]) -> None:
+    update_latest_artifacts(ctx, {stage_name: ref})
+
+
+def update_latest_artifacts(
+    ctx: dict[str, Any],
+    refs: dict[str, dict[str, Any]],
+) -> None:
+    """Atomically activate one or more artifact references."""
     suite_root = _managed_suite_root(ctx)
     latest_path = _managed_output_path(
         ctx,
@@ -801,7 +847,7 @@ def update_latest(ctx: dict[str, Any], stage_name: str, ref: dict[str, Any]) -> 
     if not isinstance(artifacts, dict):
         artifacts = {}
         latest["artifacts"] = artifacts
-    artifacts[stage_name] = ref
+    artifacts.update(refs)
     write_json(latest_path, latest)
 
 

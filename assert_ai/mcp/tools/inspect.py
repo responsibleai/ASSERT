@@ -620,6 +620,19 @@ def _public_suite(
     workspace: WorkspaceService,
 ) -> dict[str, Any]:
     payload = _safe_mapping(summary, workspace=workspace)
+    sources = payload.get("sources")
+    artifact_etags: dict[str, str] = {}
+    if isinstance(sources, dict):
+        for name in ("taxonomy", "test_set"):
+            source = sources.get(name)
+            sha256 = source.get("sha256") if isinstance(source, dict) else None
+            if (
+                isinstance(sha256, str)
+                and len(sha256) == 64
+                and all(character in "0123456789abcdef" for character in sha256)
+            ):
+                artifact_etags[name] = f"sha256:{sha256}"
+    payload["active_artifact_etags"] = artifact_etags
     for key in (
         "artifact_versions",
         "sources",

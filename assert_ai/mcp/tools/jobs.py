@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Persisted evaluation job tools for the ASSERT MCP adapter."""
+"""Persisted job tools for the ASSERT MCP adapter."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ _CANCEL_ANNOTATIONS = ToolAnnotations(
 
 @dataclass(frozen=True, slots=True)
 class JobServices:
-    """Application services and limits shared by evaluation job tools."""
+    """Application services and limits shared by persisted job tools."""
 
     workspace: WorkspaceService
     evaluations: EvaluationService
@@ -58,7 +58,7 @@ def register_job_inspect_tools(
     """Register job discovery and polling for every inspect-capable mode."""
 
     @server.tool(
-        title="List ASSERT evaluation jobs",
+        title="List ASSERT jobs",
         annotations=_READ_ONLY_ANNOTATIONS,
         structured_output=True,
     )
@@ -71,7 +71,7 @@ def register_job_inspect_tools(
         cursor: str | None = None,
         page_size: int | None = None,
     ) -> JobPage:
-        """List persisted evaluation jobs with bounded pagination."""
+        """List persisted jobs with bounded pagination."""
         page = invoke_tool(
             lambda: services.evaluations.list(
                 states=states,
@@ -85,7 +85,7 @@ def register_job_inspect_tools(
         )
 
     @server.tool(
-        title="Get an ASSERT evaluation job",
+        title="Get an ASSERT job",
         annotations=_READ_ONLY_ANNOTATIONS,
         structured_output=True,
     )
@@ -137,8 +137,15 @@ def register_job_execute_tools(
             sanitize_for_mcp(started, workspace=services.workspace)
         )
 
+
+def register_job_control_tools(
+    server: MCPServer,
+    services: JobServices,
+) -> None:
+    """Register cancellation and retry for enabled persisted-job kinds."""
+
     @server.tool(
-        title="Cancel an ASSERT evaluation",
+        title="Cancel an ASSERT job",
         annotations=_CANCEL_ANNOTATIONS,
         structured_output=True,
     )
@@ -157,7 +164,7 @@ def register_job_execute_tools(
         )
 
     @server.tool(
-        title="Retry an ASSERT evaluation",
+        title="Retry an ASSERT job",
         annotations=_START_ANNOTATIONS,
         structured_output=True,
     )

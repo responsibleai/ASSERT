@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import shutil
@@ -19,17 +20,21 @@ import sys
 import threading
 import time
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import quote
 
 import yaml
 
-from assert_ai.core.io import write_json, write_text_atomic
+from assert_ai.config import parse_model_config
+from assert_ai.core.io import write_bytes_atomic, write_json, write_text_atomic
 from assert_ai.core.jsonl_index import JsonlIndexError, scan_jsonl
 from assert_ai.core.config_document import PIPELINE_STAGE_ORDER
+from assert_ai.core.otel import parse_otel_trace_document
 from assert_ai.core.security import (
     redact_path_prefixes,
     sanitize_payload,
@@ -37,7 +42,7 @@ from assert_ai.core.security import (
 )
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.core.yaml_io import dump_yaml
-from assert_ai.services.configs import ConfigService
+from assert_ai.services.configs import ConfigRecord, ConfigService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
 from assert_ai.services.job_models import (
     JobCatalogEntry,
@@ -49,6 +54,7 @@ from assert_ai.services.job_models import (
     JobTerminalResult,
     NewJob,
     TERMINAL_JOB_STATES,
+    TraceJudgingPreflight,
 )
 from assert_ai.services.job_store import JobStore
 from assert_ai.services.run_planning import (
@@ -71,8 +77,37 @@ _CANCELLATION_POLL_SECONDS = 0.1
 _REQUEST_ID_MAX_LENGTH = 200
 _MIN_LOG_BYTES = 4096
 _MAX_LOG_BYTES = 16 * 1024 * 1024
+_DEFAULT_MAX_TRACE_INPUT_BYTES = 64 * 1024 * 1024
+_GROUP_BY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+_OUTPUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SUPPORTED_JOB_KINDS = frozenset({"evaluation", "trace_judging"})
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _TraceInputs:
+    config: ConfigRecord
+    trace_path: Path
+    trace_ref: str
+    trace_bytes: bytes
+    trace_etag: str
+
+
+@dataclass(frozen=True, slots=True)
+class _TracePlan:
+    inputs: _TraceInputs
+    suite_id: str | None
+    run_id: str | None
+    group_by: str
+    session_count: int
+    estimated_judge_calls: int
+    judge_model: str
+    taxonomy_path: Path
+    taxonomy_ref: str
+    taxonomy_bytes: bytes
+    taxonomy_etag: str
+    warnings: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -84,6 +119,7 @@ class EvaluationJobManager:
     max_active_jobs: int = 1
     max_log_bytes: int = 1024 * 1024
     launch_enabled: bool = True
+    job_kinds: tuple[str, ...] = ("evaluation", "trace_judging")
     lease_seconds: float = _LEASE_SECONDS
     cancellation_grace_seconds: float = (
         _DEFAULT_CANCELLATION_GRACE_SECONDS
@@ -142,6 +178,12 @@ class EvaluationJobManager:
             raise ValueError(
                 "cancellation_grace_seconds must be positive"
             )
+        self.job_kinds = tuple(dict.fromkeys(self.job_kinds))
+        if (
+            (self.launch_enabled and not self.job_kinds)
+            or any(kind not in _SUPPORTED_JOB_KINDS for kind in self.job_kinds)
+        ):
+            raise ValueError("job_kinds must contain supported job kinds")
 
     def start(self) -> None:
         """Recover persisted work and then schedule queued jobs."""
@@ -163,6 +205,12 @@ class EvaluationJobManager:
             raise ServiceError(
                 ServiceErrorCode.CAPABILITY_DISABLED,
                 "Evaluation execution is disabled for this service",
+            )
+        current = self.store.get(job_id)
+        if current.kind not in self.job_kinds:
+            raise ServiceError(
+                ServiceErrorCode.CAPABILITY_DISABLED,
+                f"The {current.kind} job kind is not controllable by this server",
             )
         record = self.store.request_cancel(job_id)
         if record.state is JobState.CANCELLING:
@@ -189,7 +237,7 @@ class EvaluationJobManager:
         """Adopt a worker result or mark a dead worker interrupted."""
         if record.state in TERMINAL_JOB_STATES:
             return record
-        if not self.launch_enabled:
+        if not self.launch_enabled or record.kind not in self.job_kinds:
             return record
         if record.state is JobState.QUEUED:
             self.enqueue()
@@ -298,6 +346,7 @@ class EvaluationJobManager:
                         lease_owner=self._owner,
                         lease_seconds=self.lease_seconds,
                         max_active_jobs=self.max_active_jobs,
+                        job_kinds=self.job_kinds,
                     )
                 except Exception:  # noqa: BLE001 - daemon boundary
                     log.exception(
@@ -347,7 +396,9 @@ class EvaluationJobManager:
                 self.enqueue()
 
     def _sweep_cancelling_jobs(self) -> None:
-        for record in self.store.list_nonterminal_records():
+        for record in self.store.list_nonterminal_records(
+            job_kinds=self.job_kinds,
+        ):
             if record.state is not JobState.CANCELLING:
                 continue
             try:
@@ -495,7 +546,9 @@ class EvaluationJobManager:
                 next_lease_check: float | None = None
                 has_queued_job = False
                 try:
-                    records = self.store.list_nonterminal_records()
+                    records = self.store.list_nonterminal_records(
+                        job_kinds=self.job_kinds,
+                    )
                 except Exception:  # noqa: BLE001 - daemon boundary
                     log.exception("Could not scan evaluation jobs for recovery")
                     return
@@ -1164,6 +1217,7 @@ class EvaluationService:
     default_page_size: int = 50
     max_page_size: int = 200
     max_queued_jobs: int = 100
+    max_trace_input_bytes: int = _DEFAULT_MAX_TRACE_INPUT_BYTES
 
     def start(
         self,
@@ -1172,7 +1226,10 @@ class EvaluationService:
         request_id: str,
         overrides: EvaluationOverrides | None = None,
     ) -> JobStartResult:
-        if not self.manager.launch_enabled:
+        if (
+            not self.manager.launch_enabled
+            or "evaluation" not in self.manager.job_kinds
+        ):
             raise ServiceError(
                 ServiceErrorCode.CAPABILITY_DISABLED,
                 "Evaluation execution is disabled for this service",
@@ -1268,6 +1325,143 @@ class EvaluationService:
             created=created.created,
         )
 
+    def preflight_trace_judging(
+        self,
+        config_ref: str,
+        trace_ref: str,
+        *,
+        group_by: str = "session.id",
+        suite_id: str | None = None,
+        run_id: str | None = None,
+    ) -> TraceJudgingPreflight:
+        """Validate a trace import and report its exact judge workload."""
+        inputs = self._trace_inputs(config_ref, trace_ref)
+        resolved_suite = _optional_output_id(
+            suite_id or inputs.config.document.get("suite"),
+            field_name="suite_id",
+        )
+        resolved_run = _optional_output_id(
+            run_id or inputs.config.document.get("run"),
+            field_name="run_id",
+        )
+        plan = self._trace_plan(
+            inputs,
+            group_by=group_by,
+            suite_id=resolved_suite,
+            run_id=resolved_run,
+        )
+        return TraceJudgingPreflight(
+            ready=True,
+            config_ref=inputs.config.config_ref,
+            config_etag=inputs.config.etag,
+            trace_ref=inputs.trace_ref,
+            trace_etag=inputs.trace_etag,
+            trace_size_bytes=len(inputs.trace_bytes),
+            group_by=plan.group_by,
+            session_count=plan.session_count,
+            estimated_judge_calls=plan.estimated_judge_calls,
+            suite_id=plan.suite_id,
+            run_id=plan.run_id,
+            judge_model=plan.judge_model,
+            taxonomy_ref=plan.taxonomy_ref,
+            warnings=plan.warnings,
+        )
+
+    def start_trace_judging(
+        self,
+        config_ref: str,
+        trace_ref: str,
+        *,
+        request_id: str,
+        group_by: str = "session.id",
+        suite_id: str | None = None,
+        run_id: str | None = None,
+    ) -> JobStartResult:
+        """Snapshot and enqueue one persisted OTLP trace-judging job."""
+        if (
+            not self.manager.launch_enabled
+            or "trace_judging" not in self.manager.job_kinds
+        ):
+            raise ServiceError(
+                ServiceErrorCode.CAPABILITY_DISABLED,
+                "Trace judging is disabled for this service",
+            )
+        request_id = _validate_request_id(request_id)
+        inputs = self._trace_inputs(config_ref, trace_ref)
+        requested_suite = _optional_output_id(
+            suite_id,
+            field_name="suite_id",
+        )
+        requested_run = _optional_output_id(
+            run_id,
+            field_name="run_id",
+        )
+        group_by = _validate_group_by(group_by)
+        request_hash = _trace_request_hash(
+            config_ref=inputs.config.config_ref,
+            config_etag=inputs.config.etag,
+            trace_ref=inputs.trace_ref,
+            trace_etag=inputs.trace_etag,
+            group_by=group_by,
+            suite_id=requested_suite,
+            run_id=requested_run,
+        )
+        existing = self.store.get_by_idempotency_key(request_id)
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise ServiceError(
+                    ServiceErrorCode.CONFLICT,
+                    "request_id is already bound to a different trace-judging request",
+                    details={"job_id": existing.job_id},
+                )
+            self.manager.enqueue()
+            return JobStartResult(
+                job=self.get(existing.job_id),
+                created=False,
+            )
+
+        allocated_suite = _optional_output_id(
+            requested_suite
+            or inputs.config.document.get("suite")
+            or _new_identity("trace-suite"),
+            field_name="suite_id",
+        )
+        allocated_run = _optional_output_id(
+            requested_run
+            or inputs.config.document.get("run")
+            or _new_identity("trace-run"),
+            field_name="run_id",
+        )
+        assert allocated_suite is not None
+        assert allocated_run is not None
+        plan = self._trace_plan(
+            inputs,
+            group_by=group_by,
+            suite_id=allocated_suite,
+            run_id=allocated_run,
+        )
+        self._reject_existing_run(allocated_suite, allocated_run)
+        new_job, job_dir = self._prepare_trace_job(
+            plan,
+            request_id=request_id,
+            request_hash=request_hash,
+        )
+        try:
+            created = self.store.create_or_get(
+                new_job,
+                max_queued_jobs=self.max_queued_jobs,
+            )
+        except BaseException:
+            _remove_job_dir(job_dir)
+            raise
+        if not created.created:
+            _remove_job_dir(job_dir)
+        self.manager.enqueue()
+        return JobStartResult(
+            job=self.get(created.record.job_id),
+            created=created.created,
+        )
+
     def cancel(self, job_id: str) -> JobDetail:
         """Request idempotent cooperative cancellation for one job."""
         record = self.manager.cancel(_validate_job_id(job_id))
@@ -1287,10 +1481,17 @@ class EvaluationService:
             )
         job_id = _validate_job_id(job_id)
         request_id = _validate_request_id(request_id)
-        original = self.manager.reconcile(self.store.get(job_id))
+        original = self.store.get(job_id)
+        if original.kind not in self.manager.job_kinds:
+            raise ServiceError(
+                ServiceErrorCode.CAPABILITY_DISABLED,
+                f"The {original.kind} job kind is not controllable by this server",
+            )
+        original = self.manager.reconcile(original)
         request_hash = _retry_request_hash(
             retry_of=original.job_id,
             config_sha256=original.config_sha256,
+            kind=original.kind,
         )
         existing = self.store.get_by_idempotency_key(request_id)
         if existing is not None:
@@ -1313,6 +1514,17 @@ class EvaluationService:
             raise ServiceError(
                 ServiceErrorCode.INVALID_ARGUMENT,
                 "Only failed, cancelled, or interrupted jobs can be retried",
+            )
+        if original.kind == "trace_judging":
+            return self._retry_trace_judging(
+                original,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+        if original.kind != "evaluation":
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The persisted job kind is not supported",
             )
         document, request = self._retry_snapshot(original)
         retry_stage = self._retry_stage(original, document)
@@ -1472,6 +1684,445 @@ class EvaluationService:
             )
         return combined
 
+    def _trace_inputs(
+        self,
+        config_ref: str,
+        trace_ref: str,
+    ) -> _TraceInputs:
+        config = self.configs.get_config(config_ref)
+        if not config.validation.valid:
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                "Trace judge config validation failed",
+                details={
+                    "validation": config.validation.model_dump(mode="json"),
+                },
+            )
+        trace_path = self.workspace.resolve_file(
+            trace_ref,
+            field_name="OTLP trace input",
+        )
+        _reject_environment_file(trace_path)
+        if trace_path.suffix.lower() != ".json":
+            raise ServiceError(
+                ServiceErrorCode.INVALID_ARGUMENT,
+                "OTLP trace input must be a JSON file",
+            )
+        trace_bytes = _read_stable_bytes(
+            trace_path,
+            max_bytes=self.max_trace_input_bytes,
+            label="OTLP trace input",
+        )
+        return _TraceInputs(
+            config=config,
+            trace_path=trace_path,
+            trace_ref=self.workspace.reference(trace_path),
+            trace_bytes=trace_bytes,
+            trace_etag=_sha256_etag(trace_bytes),
+        )
+
+    def _trace_plan(
+        self,
+        inputs: _TraceInputs,
+        *,
+        group_by: str,
+        suite_id: str | None,
+        run_id: str | None,
+    ) -> _TracePlan:
+        group_by = _validate_group_by(group_by)
+        document = inputs.config.document
+        pipeline = document.get("pipeline")
+        judge = pipeline.get("judge") if isinstance(pipeline, dict) else None
+        if not isinstance(judge, dict) or judge.get("enabled", True) is False:
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                "Trace judging requires an enabled pipeline.judge stage",
+            )
+        raw_model = judge.get("model") or document.get("default_model")
+        try:
+            judge_model = parse_model_config(
+                raw_model,
+                field_name="pipeline.judge.model",
+            ).name
+        except (TypeError, ValueError) as exc:
+            raise ServiceError(
+                ServiceErrorCode.CONFIG_INVALID,
+                "pipeline.judge.model or default_model is required",
+            ) from exc
+        allowed_patterns = self.planning.policy.allowed_model_patterns
+        if allowed_patterns and not any(
+            fnmatchcase(judge_model, pattern)
+            for pattern in allowed_patterns
+        ):
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                "The judge model is not allowed by server policy",
+                details={"model": judge_model},
+            )
+
+        taxonomy_path = self._trace_taxonomy_path(
+            inputs.config,
+            suite_id=suite_id,
+        )
+        _reject_environment_file(taxonomy_path)
+        taxonomy_bytes = _read_stable_bytes(
+            taxonomy_path,
+            max_bytes=_JOB_SNAPSHOT_MAX_BYTES,
+            label="Trace judge taxonomy",
+        )
+        _validate_taxonomy_bytes(taxonomy_bytes)
+        try:
+            trace_document = json.loads(inputs.trace_bytes.decode("utf-8"))
+            if not isinstance(trace_document, dict):
+                raise ValueError("OTLP payload must be an object")
+            parsed_rows = parse_otel_trace_document(
+                trace_document,
+                group_by=group_by,
+            )
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ServiceError(
+                ServiceErrorCode.INVALID_ARGUMENT,
+                "OTLP trace input could not be parsed",
+            ) from exc
+        if not parsed_rows:
+            raise ServiceError(
+                ServiceErrorCode.INVALID_ARGUMENT,
+                "OTLP trace input contains no trace sessions",
+            )
+        max_sessions = self.planning.policy.max_prompt_sample_size
+        if len(parsed_rows) > max_sessions:
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                f"Trace input contains {len(parsed_rows)} sessions, exceeding "
+                f"the server limit of {max_sessions}",
+            )
+        empty_sessions = sum(
+            1
+            for row in parsed_rows
+            if not isinstance(row.get("events"), list) or not row["events"]
+        )
+        warnings = (
+            (
+                f"{empty_sessions} imported session(s) contain no "
+                "judgeable transcript events",
+            )
+            if empty_sessions
+            else ()
+        )
+        judge_n = judge.get("n", 1)
+        if (
+            isinstance(judge_n, bool)
+            or not isinstance(judge_n, int)
+            or judge_n < 1
+        ):
+            judge_n = 1
+        return _TracePlan(
+            inputs=inputs,
+            suite_id=suite_id,
+            run_id=run_id,
+            group_by=group_by,
+            session_count=len(parsed_rows),
+            estimated_judge_calls=len(parsed_rows) * judge_n,
+            judge_model=judge_model,
+            taxonomy_path=taxonomy_path,
+            taxonomy_ref=self.workspace.reference(taxonomy_path),
+            taxonomy_bytes=taxonomy_bytes,
+            taxonomy_etag=_sha256_etag(taxonomy_bytes),
+            warnings=warnings,
+        )
+
+    def _trace_taxonomy_path(
+        self,
+        config: ConfigRecord,
+        *,
+        suite_id: str | None,
+    ) -> Path:
+        pipeline = config.document.get("pipeline")
+        judge = pipeline.get("judge") if isinstance(pipeline, dict) else None
+        raw_path = judge.get("taxonomy_path") if isinstance(judge, dict) else None
+        config_path = self.workspace.path_policy.resolve_config_path(
+            config.config_ref,
+            reject_links=True,
+        )
+        if isinstance(raw_path, str) and raw_path.strip():
+            return self.workspace.path_policy.resolve_input(
+                raw_path,
+                base_dir=config_path.parent,
+                field_name="trace judge taxonomy",
+                must_exist=True,
+                file_only=True,
+            )
+        if suite_id is None:
+            raise ServiceError(
+                ServiceErrorCode.PREFLIGHT_FAILED,
+                "Provide suite_id or configure pipeline.judge.taxonomy_path",
+            )
+        suite_root = self.workspace.path_policy.resolve_managed_output(
+            self.workspace.results_root / suite_id,
+            field_name="trace judge suite",
+            expected_root=self.workspace.results_root,
+            reject_links=True,
+        )
+        latest_path = self.workspace.path_policy.resolve_managed_output(
+            suite_root / "latest.json",
+            field_name="trace judge active artifacts",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        latest = _read_json_file(
+            latest_path,
+            max_bytes=_JOB_RESULT_MAX_BYTES,
+        )
+        artifacts = latest.get("artifacts") if isinstance(latest, dict) else None
+        systematize = (
+            artifacts.get("systematize")
+            if isinstance(artifacts, dict)
+            else None
+        )
+        version = (
+            systematize.get("version")
+            if isinstance(systematize, dict)
+            else None
+        )
+        if isinstance(version, str) and re.fullmatch(r"v[0-9]{4,}", version):
+            taxonomy_path = suite_root / "artifacts" / "systematize" / version / "taxonomy.json"
+        else:
+            taxonomy_path = suite_root / "taxonomy.json"
+        resolved = self.workspace.path_policy.resolve_managed_output(
+            taxonomy_path,
+            field_name="trace judge taxonomy",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        if not resolved.is_file():
+            raise ServiceError(
+                ServiceErrorCode.NOT_FOUND,
+                "Trace judge taxonomy was not found",
+            )
+        return resolved
+
+    def _prepare_trace_job(
+        self,
+        plan: _TracePlan,
+        *,
+        request_id: str,
+        request_hash: str,
+        retry_of: str | None = None,
+        base_document: dict[str, Any] | None = None,
+    ) -> tuple[NewJob, Path]:
+        assert plan.suite_id is not None
+        assert plan.run_id is not None
+        return self._prepare_trace_job_values(
+            config_ref=plan.inputs.config.config_ref,
+            base_document=base_document or plan.inputs.config.document,
+            trace_ref=plan.inputs.trace_ref,
+            trace_bytes=plan.inputs.trace_bytes,
+            trace_etag=plan.inputs.trace_etag,
+            taxonomy_ref=plan.taxonomy_ref,
+            taxonomy_bytes=plan.taxonomy_bytes,
+            taxonomy_etag=plan.taxonomy_etag,
+            group_by=plan.group_by,
+            session_count=plan.session_count,
+            suite_id=plan.suite_id,
+            run_id=plan.run_id,
+            request_id=request_id,
+            request_hash=request_hash,
+            retry_of=retry_of,
+        )
+
+    def _prepare_trace_job_values(
+        self,
+        *,
+        config_ref: str,
+        base_document: dict[str, Any],
+        trace_ref: str,
+        trace_bytes: bytes,
+        trace_etag: str,
+        taxonomy_ref: str,
+        taxonomy_bytes: bytes,
+        taxonomy_etag: str,
+        group_by: str,
+        session_count: int,
+        suite_id: str,
+        run_id: str,
+        request_id: str,
+        request_hash: str,
+        retry_of: str | None,
+    ) -> tuple[NewJob, Path]:
+        job_id, job_dir = _allocate_job_dir(self.workspace)
+        try:
+            run_root = self.workspace.path_policy.resolve_managed_output(
+                self.workspace.results_root / suite_id / run_id,
+                field_name="trace judge run",
+                expected_root=self.workspace.results_root,
+                reject_links=True,
+            )
+            run_taxonomy = self.workspace.path_policy.resolve_managed_output(
+                run_root / "taxonomy.json",
+                field_name="trace judge taxonomy snapshot",
+                expected_root=run_root,
+                reject_links=True,
+            )
+            taxonomy_relative = self.workspace.reference(run_taxonomy)
+            effective = deepcopy(base_document)
+            pipeline = effective.get("pipeline")
+            judge = (
+                deepcopy(pipeline.get("judge"))
+                if isinstance(pipeline, dict)
+                and isinstance(pipeline.get("judge"), dict)
+                else None
+            )
+            if judge is None:
+                raise ServiceError(
+                    ServiceErrorCode.CONFIG_INVALID,
+                    "Trace judge snapshot has no judge stage",
+                )
+            judge["enabled"] = True
+            judge["taxonomy_path"] = taxonomy_relative
+            judge.pop("inference_set_path", None)
+            judge.pop("save_dir", None)
+            effective["pipeline"] = {"judge": judge}
+            effective["suite"] = suite_id
+            effective["run"] = run_id
+            effective.pop("artifacts_root", None)
+            effective.pop("results_dir", None)
+            yaml_text = dump_yaml(effective)
+            config_sha256 = _sha256_etag(yaml_text.encode("utf-8"))
+
+            snapshot = job_dir / "config.yaml"
+            request_path = job_dir / "request.json"
+            trace_snapshot = job_dir / "trace.json"
+            taxonomy_snapshot = job_dir / "taxonomy.json"
+            write_text_atomic(snapshot, yaml_text)
+            write_bytes_atomic(trace_snapshot, trace_bytes)
+            write_bytes_atomic(taxonomy_snapshot, taxonomy_bytes)
+            write_json(
+                request_path,
+                {
+                    "schema_version": 1,
+                    "kind": "trace_judging",
+                    "job_id": job_id,
+                    "result_token": secrets.token_hex(32),
+                    "config_ref": config_ref,
+                    "config_sha256": config_sha256,
+                    "strict": False,
+                    "force_stages": ["judge"],
+                    "max_log_bytes": self.manager.max_log_bytes,
+                    "trace_ref": trace_ref,
+                    "trace_sha256": trace_etag,
+                    "trace_size_bytes": len(trace_bytes),
+                    "taxonomy_ref": taxonomy_ref,
+                    "taxonomy_sha256": taxonomy_etag,
+                    "group_by": group_by,
+                    "session_count": session_count,
+                    "retry_of": retry_of,
+                },
+            )
+            return (
+                NewJob(
+                    job_id=job_id,
+                    idempotency_key=request_id,
+                    request_hash=request_hash,
+                    suite_id=suite_id,
+                    run_id=run_id,
+                    config_ref=config_ref,
+                    config_sha256=config_sha256,
+                    snapshot_path=str(snapshot),
+                    request_path=str(request_path),
+                    resource_keys=(f"run:{suite_id}/{run_id}",),
+                    retry_of=retry_of,
+                    kind="trace_judging",
+                ),
+                job_dir,
+            )
+        except BaseException:
+            _remove_job_dir(job_dir)
+            raise
+
+    def _retry_trace_judging(
+        self,
+        original: JobRecord,
+        *,
+        request_id: str,
+        request_hash: str,
+    ) -> JobStartResult:
+        document, request = self._retry_snapshot(original)
+        if request.get("kind") != "trace_judging":
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace job request has an invalid kind",
+            )
+        job_dir = self.manager._job_dir(original.job_id)
+        trace_bytes = _read_integrity_snapshot(
+            self.manager._job_file(job_dir, "trace.json"),
+            expected_etag=request.get("trace_sha256"),
+            max_bytes=self.max_trace_input_bytes,
+            label="immutable OTLP trace input",
+        )
+        taxonomy_bytes = _read_integrity_snapshot(
+            self.manager._job_file(job_dir, "taxonomy.json"),
+            expected_etag=request.get("taxonomy_sha256"),
+            max_bytes=_JOB_SNAPSHOT_MAX_BYTES,
+            label="immutable trace taxonomy",
+        )
+        group_by = _validate_group_by(request.get("group_by"))
+        session_count = request.get("session_count")
+        if (
+            isinstance(session_count, bool)
+            or not isinstance(session_count, int)
+            or session_count < 1
+        ):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace job session count is invalid",
+            )
+        trace_ref = request.get("trace_ref")
+        taxonomy_ref = request.get("taxonomy_ref")
+        if not isinstance(trace_ref, str) or not isinstance(taxonomy_ref, str):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable trace job references are invalid",
+            )
+        run_id = _new_identity("trace-run")
+        self._reject_existing_run(original.suite_id, run_id)
+        new_job, new_job_dir = self._prepare_trace_job_values(
+            config_ref=original.config_ref,
+            base_document=document,
+            trace_ref=trace_ref,
+            trace_bytes=trace_bytes,
+            trace_etag=str(request["trace_sha256"]),
+            taxonomy_ref=taxonomy_ref,
+            taxonomy_bytes=taxonomy_bytes,
+            taxonomy_etag=str(request["taxonomy_sha256"]),
+            group_by=group_by,
+            session_count=session_count,
+            suite_id=original.suite_id,
+            run_id=run_id,
+            request_id=request_id,
+            request_hash=request_hash,
+            retry_of=original.job_id,
+        )
+        try:
+            created = self.store.create_or_get(
+                new_job,
+                max_queued_jobs=self.max_queued_jobs,
+            )
+        except BaseException:
+            _remove_job_dir(new_job_dir)
+            raise
+        if not created.created:
+            _remove_job_dir(new_job_dir)
+        self.manager.enqueue()
+        return JobStartResult(
+            job=self.get(created.record.job_id),
+            created=created.created,
+        )
+
     def _retry_snapshot(
         self,
         record: JobRecord,
@@ -1600,27 +2251,7 @@ class EvaluationService:
         yaml_text: str,
         retry_of: str | None = None,
     ) -> tuple[NewJob, Path]:
-        jobs_root = _jobs_root(self.workspace)
-        jobs_root.mkdir(parents=True, exist_ok=True)
-        jobs_root = _jobs_root(self.workspace)
-        for _ in range(_JOB_ID_RETRIES):
-            job_id = uuid.uuid4().hex
-            job_dir = self.workspace.path_policy.resolve_managed_output(
-                jobs_root / job_id,
-                field_name="evaluation job directory",
-                expected_root=jobs_root,
-                reject_links=True,
-            )
-            try:
-                job_dir.mkdir()
-            except FileExistsError:
-                continue
-            break
-        else:
-            raise ServiceError(
-                ServiceErrorCode.CONFLICT,
-                "Could not allocate a unique evaluation job id",
-            )
+        job_id, job_dir = _allocate_job_dir(self.workspace)
         try:
             snapshot = job_dir / "config.yaml"
             request_path = job_dir / "request.json"
@@ -1792,7 +2423,7 @@ def _catalog_entry(record: JobRecord) -> JobCatalogEntry:
         job_id=record.job_id,
         state=record.state,
         revision=record.revision,
-        kind="evaluation",
+        kind=record.kind,
         retry_of=record.retry_of,
         config_ref=record.config_ref,
         suite_id=record.suite_id,
@@ -1859,10 +2490,11 @@ def _retry_request_hash(
     *,
     retry_of: str,
     config_sha256: str,
+    kind: str,
 ) -> str:
     payload = json.dumps(
         {
-            "operation": "retry_evaluation",
+            "operation": f"retry_{kind}",
             "retry_of": retry_of,
             "config_sha256": config_sha256,
         },
@@ -2036,6 +2668,168 @@ def _validate_job_id(value: str) -> str:
 def _new_identity(prefix: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     return f"{prefix}-{timestamp}-{secrets.token_hex(8)}"
+
+
+def _optional_output_id(value: Any, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _OUTPUT_ID_RE.fullmatch(value):
+        raise ServiceError(
+            ServiceErrorCode.INVALID_ARGUMENT,
+            f"{field_name} must contain only letters, numbers, '.', '_', or '-'",
+        )
+    return value
+
+
+def _validate_group_by(value: Any) -> str:
+    if not isinstance(value, str) or not _GROUP_BY_RE.fullmatch(value):
+        raise ServiceError(
+            ServiceErrorCode.INVALID_ARGUMENT,
+            "group_by must be a 1-128 character OpenTelemetry attribute name",
+        )
+    return value
+
+
+def _trace_request_hash(
+    *,
+    config_ref: str,
+    config_etag: str,
+    trace_ref: str,
+    trace_etag: str,
+    group_by: str,
+    suite_id: str | None,
+    run_id: str | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "operation": "trace_judging",
+            "config_ref": config_ref,
+            "config_etag": config_etag,
+            "trace_ref": trace_ref,
+            "trace_etag": trace_etag,
+            "group_by": group_by,
+            "suite_id": suite_id,
+            "run_id": run_id,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return _sha256_etag(payload)
+
+
+def _sha256_etag(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _read_stable_bytes(
+    path: Path,
+    *,
+    max_bytes: int,
+    label: str,
+) -> bytes:
+    try:
+        before = path.stat()
+        with path.open("rb") as handle:
+            value = handle.read(max_bytes + 1)
+        after = path.stat()
+    except OSError as exc:
+        raise ServiceError(
+            ServiceErrorCode.NOT_FOUND,
+            f"{label} is unavailable",
+        ) from exc
+    if len(value) > max_bytes:
+        raise ServiceError(
+            ServiceErrorCode.ARTIFACT_TOO_LARGE,
+            f"{label} exceeds the {max_bytes}-byte limit",
+        )
+    if (
+        before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise ServiceError(
+            ServiceErrorCode.CONFLICT,
+            f"{label} changed while it was being read",
+        )
+    return value
+
+
+def _read_integrity_snapshot(
+    path: Path,
+    *,
+    expected_etag: Any,
+    max_bytes: int,
+    label: str,
+) -> bytes:
+    if (
+        not isinstance(expected_etag, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_etag)
+    ):
+        raise ServiceError(
+            ServiceErrorCode.JOB_INTERRUPTED,
+            f"The {label} digest is invalid",
+        )
+    value = _read_stable_bytes(path, max_bytes=max_bytes, label=label)
+    if _sha256_etag(value) != expected_etag:
+        raise ServiceError(
+            ServiceErrorCode.JOB_INTERRUPTED,
+            f"The {label} failed its integrity check",
+        )
+    return value
+
+
+def _validate_taxonomy_bytes(value: bytes) -> None:
+    try:
+        taxonomy = json.loads(value.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ServiceError(
+            ServiceErrorCode.CONFIG_INVALID,
+            "Trace judge taxonomy is not valid JSON",
+        ) from exc
+    if (
+        not isinstance(taxonomy, dict)
+        or not isinstance(taxonomy.get("behavior"), dict)
+        or not isinstance(taxonomy.get("behavior_categories"), list)
+    ):
+        raise ServiceError(
+            ServiceErrorCode.CONFIG_INVALID,
+            "Trace judge taxonomy has an invalid structure",
+        )
+
+
+def _reject_environment_file(path: Path) -> None:
+    for part in path.parts:
+        name = part.lower()
+        if name == ".env" or name.startswith(".env.") or name.endswith(".env"):
+            raise ServiceError(
+                ServiceErrorCode.WORKSPACE_VIOLATION,
+                "Environment files cannot be used as trace-judging inputs",
+            )
+
+
+def _allocate_job_dir(
+    workspace: WorkspaceService,
+) -> tuple[str, Path]:
+    jobs_root = _jobs_root(workspace)
+    jobs_root.mkdir(parents=True, exist_ok=True)
+    jobs_root = _jobs_root(workspace)
+    for _ in range(_JOB_ID_RETRIES):
+        job_id = uuid.uuid4().hex
+        job_dir = workspace.path_policy.resolve_managed_output(
+            jobs_root / job_id,
+            field_name="evaluation job directory",
+            expected_root=jobs_root,
+            reject_links=True,
+        )
+        try:
+            job_dir.mkdir()
+        except FileExistsError:
+            continue
+        return job_id, job_dir
+    raise ServiceError(
+        ServiceErrorCode.CONFLICT,
+        "Could not allocate a unique evaluation job id",
+    )
 
 
 def _encode_cursor(created_at: str, job_id: str) -> str:

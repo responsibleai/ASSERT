@@ -11,7 +11,6 @@ import importlib.util
 import json
 import os
 import re
-import time
 from bisect import bisect
 from contextlib import contextmanager
 from copy import deepcopy
@@ -36,6 +35,7 @@ from assert_ai.core.io import write_text_atomic
 from assert_ai.core.runtime_path_policy import RuntimePathError
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.services.errors import ServiceError, ServiceErrorCode
+from assert_ai.services.locking import exclusive_file_lock
 from assert_ai.stages import STAGES
 from assert_ai.stages.test_set import validate_sampling_config
 
@@ -537,7 +537,11 @@ class ConfigService:
             lock_ref,
             reject_links=True,
         )
-        with _exclusive_file_lock(lock_path, timeout_s=_LOCK_TIMEOUT_S):
+        with exclusive_file_lock(
+            lock_path,
+            timeout_s=_LOCK_TIMEOUT_S,
+            conflict_message="Timed out waiting for the config write lock",
+        ):
             yield
 
 
@@ -808,45 +812,3 @@ def _invalid_config_error(report: ConfigValidationReport) -> ServiceError:
         "Config validation failed",
         details={"validation": report.model_dump(mode="json")},
     )
-
-
-@contextmanager
-def _exclusive_file_lock(path: Path, *, timeout_s: float) -> Iterator[None]:
-    deadline = time.monotonic() + timeout_s
-    with path.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
-            handle.flush()
-            os.fsync(handle.fileno())
-        handle.seek(0)
-        while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if time.monotonic() >= deadline:
-                    raise ServiceError(
-                        ServiceErrorCode.CONFLICT,
-                        "Timed out waiting for the config write lock",
-                    ) from exc
-                time.sleep(0.05)
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

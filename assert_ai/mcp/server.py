@@ -25,18 +25,23 @@ from assert_ai.mcp.models import (
 from assert_ai.mcp.resources import register_inspect_resources
 from assert_ai.mcp.tools import (
     AuthorServices,
+    CurationServices,
     InspectServices,
     JobServices,
     ProbeServices,
     register_author_tools,
+    register_curation_tools,
     register_design_tools,
     register_inspect_tools,
+    register_job_control_tools,
     register_job_execute_tools,
     register_job_inspect_tools,
     register_probe_tools,
+    register_trace_tools,
 )
 from assert_ai.services.artifacts import ArtifactRepository
 from assert_ai.services.configs import ConfigService
+from assert_ai.services.curation import CurationService
 from assert_ai.services.evaluations import (
     EvaluationJobManager,
     EvaluationService,
@@ -91,6 +96,7 @@ class ServerOptions:
     max_active_jobs: int = 1
     max_queued_jobs: int = 100
     max_job_log_bytes: int = 1024 * 1024
+    max_trace_input_bytes: int = 64 * 1024 * 1024
     cancellation_grace_seconds: float = 10.0
     max_prompt_sample_size: int = 100_000
     max_scenario_sample_size: int = 100_000
@@ -119,6 +125,10 @@ class ServerOptions:
         if not 4096 <= self.max_job_log_bytes <= 16 * 1024 * 1024:
             raise ValueError(
                 "max_job_log_bytes must be between 4096 and 16777216"
+            )
+        if not 1024 <= self.max_trace_input_bytes <= 64 * 1024 * 1024:
+            raise ValueError(
+                "max_trace_input_bytes must be between 1024 and 67108864"
             )
         if self.cancellation_grace_seconds <= 0:
             raise ValueError(
@@ -168,6 +178,7 @@ class ServerOptions:
         max_active_jobs: int = 1,
         max_queued_jobs: int = 100,
         max_job_log_bytes: int = 1024 * 1024,
+        max_trace_input_bytes: int = 64 * 1024 * 1024,
         cancellation_grace_seconds: float = 10.0,
         max_prompt_sample_size: int = 100_000,
         max_scenario_sample_size: int = 100_000,
@@ -197,6 +208,7 @@ class ServerOptions:
             max_active_jobs=max_active_jobs,
             max_queued_jobs=max_queued_jobs,
             max_job_log_bytes=max_job_log_bytes,
+            max_trace_input_bytes=max_trace_input_bytes,
             cancellation_grace_seconds=cancellation_grace_seconds,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,
@@ -258,15 +270,23 @@ def build_server(options: ServerOptions) -> MCPServer:
         path_policy=options.path_policy,
         expected_root=options.workspace.artifacts_root,
     )
-    execution_enabled = (
-        CapabilityGroup.EXECUTE in options.capability_groups
-    )
+    execution_enabled = CapabilityGroup.EXECUTE in options.capability_groups
+    trace_enabled = CapabilityGroup.TRACE in options.capability_groups
+    jobs_enabled = execution_enabled or trace_enabled
     job_manager = EvaluationJobManager(
         options.workspace,
         job_store,
         max_active_jobs=options.max_active_jobs,
         max_log_bytes=options.max_job_log_bytes,
-        launch_enabled=execution_enabled,
+        launch_enabled=jobs_enabled,
+        job_kinds=tuple(
+            kind
+            for kind, enabled in (
+                ("evaluation", execution_enabled),
+                ("trace_judging", trace_enabled),
+            )
+            if enabled
+        ),
         cancellation_grace_seconds=options.cancellation_grace_seconds,
     )
     evaluations = EvaluationService(
@@ -278,6 +298,7 @@ def build_server(options: ServerOptions) -> MCPServer:
         default_page_size=options.default_page_size,
         max_page_size=options.max_page_size,
         max_queued_jobs=options.max_queued_jobs,
+        max_trace_input_bytes=options.max_trace_input_bytes,
     )
     job_services = JobServices(
         workspace=options.workspace,
@@ -318,6 +339,7 @@ def build_server(options: ServerOptions) -> MCPServer:
                 max_active_jobs=options.max_active_jobs,
                 max_queued_jobs=options.max_queued_jobs,
                 max_job_log_bytes=options.max_job_log_bytes,
+                max_trace_input_bytes=options.max_trace_input_bytes,
                 cancellation_grace_seconds=(
                     options.cancellation_grace_seconds
                 ),
@@ -394,8 +416,25 @@ def build_server(options: ServerOptions) -> MCPServer:
                 max_response_bytes=options.max_response_bytes,
             ),
         )
+    if CapabilityGroup.CURATE in options.capability_groups:
+        register_curation_tools(
+            server,
+            CurationServices(
+                workspace=options.workspace,
+                curation=CurationService(
+                    options.workspace,
+                    job_store=job_store,
+                ),
+                max_response_bytes=options.max_response_bytes,
+            ),
+        )
     if execution_enabled:
         register_job_execute_tools(server, job_services)
+    if jobs_enabled:
+        register_job_control_tools(server, job_services)
+    if trace_enabled:
+        register_trace_tools(server, job_services)
+    if jobs_enabled:
         job_manager.start()
 
     return server

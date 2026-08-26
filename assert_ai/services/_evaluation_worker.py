@@ -14,6 +14,7 @@ import logging
 import re
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -23,7 +24,8 @@ from typing import Any
 import yaml
 
 from assert_ai.core.config_document import PIPELINE_STAGE_ORDER
-from assert_ai.core.io import write_json
+from assert_ai.core.io import write_bytes_atomic, write_json, write_jsonl
+from assert_ai.core.otel import parse_otel_trace_document
 from assert_ai.core.run_control import (
     PipelineFinished,
     PipelineStarted,
@@ -47,6 +49,7 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_REQUEST_BYTES = 1024 * 1024
 _MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
+_MAX_TRACE_BYTES = 64 * 1024 * 1024
 _MIN_LOG_BYTES = 4096
 _MAX_LOG_BYTES = 16 * 1024 * 1024
 _DEFAULT_LOG_BYTES = 1024 * 1024
@@ -95,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
         request = _read_request(request_path)
         if request.get("job_id") != args.job_id:
             raise ValueError("Evaluation job request identity mismatch")
+        kind = request.get("kind", "evaluation")
+        if kind not in {"evaluation", "trace_judging"}:
+            raise ValueError("Unsupported evaluation job kind")
         result_token = _required_string(request, "result_token")
         config_ref = _required_string(request, "config_ref")
         expected_snapshot_hash = _required_string(
@@ -187,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
         ):
             try:
                 control.raise_if_cancelled(
-                    stage=_first_enabled_stage(document)
+                    stage=(
+                        "trace_import"
+                        if kind == "trace_judging"
+                        else _first_enabled_stage(document)
+                    )
                 )
             except RunCancelled as cancelled:
                 result = _cancelled_before_runner(
@@ -197,17 +207,28 @@ def main(argv: list[str] | None = None) -> int:
                     failed_stage=cancelled.stage,
                 )
             else:
-                from assert_ai.runner import run_pipeline_document_result
+                if kind == "trace_judging":
+                    result = _run_trace_judging(
+                        document,
+                        request=request,
+                        job_dir=job_dir,
+                        config_path=config_path,
+                        workspace=workspace,
+                        control=control,
+                        observer=observer,
+                    )
+                else:
+                    from assert_ai.runner import run_pipeline_document_result
 
-                result = run_pipeline_document_result(
-                    document=document,
-                    config_path=str(config_path),
-                    force_stages=force_stages,
-                    strict=strict,
-                    path_policy=workspace.path_policy,
-                    control=control,
-                    observer=observer,
-                )
+                    result = run_pipeline_document_result(
+                        document=document,
+                        config_path=str(config_path),
+                        force_stages=force_stages,
+                        strict=strict,
+                        path_policy=workspace.path_policy,
+                        control=control,
+                        observer=observer,
+                    )
         payload = {
             "schema_version": 1,
             "job_id": args.job_id,
@@ -243,6 +264,330 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stderr.write("Evaluation worker could not resolve its result path\n")
     return exit_code
+
+
+def _run_trace_judging(
+    document: dict[str, Any],
+    *,
+    request: dict[str, Any],
+    job_dir: Path,
+    config_path: Path,
+    workspace: WorkspaceService,
+    control: RunControl,
+    observer: "_JobRunObserver",
+) -> RunResult:
+    suite_id = _required_string(document, "suite")
+    run_id = _required_string(document, "run")
+    group_by = _required_string(request, "group_by")
+    trace_path = workspace.path_policy.resolve_managed_output(
+        job_dir / "trace.json",
+        field_name="immutable OTLP trace input",
+        expected_root=job_dir,
+        reject_links=True,
+    )
+    taxonomy_snapshot = workspace.path_policy.resolve_managed_output(
+        job_dir / "taxonomy.json",
+        field_name="immutable trace taxonomy",
+        expected_root=job_dir,
+        reject_links=True,
+    )
+    trace_bytes = _verified_snapshot(
+        trace_path,
+        expected_sha256=_required_string(request, "trace_sha256"),
+        max_bytes=_MAX_TRACE_BYTES,
+        label="OTLP trace input",
+    )
+    taxonomy_bytes = _verified_snapshot(
+        taxonomy_snapshot,
+        expected_sha256=_required_string(request, "taxonomy_sha256"),
+        max_bytes=_MAX_SNAPSHOT_BYTES,
+        label="Trace taxonomy",
+    )
+    suite_root = workspace.path_policy.resolve_managed_output(
+        workspace.results_root / suite_id,
+        field_name="trace judge suite root",
+        expected_root=workspace.results_root,
+        reject_links=True,
+    )
+    run_root = workspace.path_policy.resolve_managed_output(
+        suite_root / run_id,
+        field_name="trace judge run root",
+        expected_root=suite_root,
+        reject_links=True,
+    )
+    inference_path = workspace.path_policy.resolve_managed_output(
+        run_root / "inference_set.jsonl",
+        field_name="trace judge inference set",
+        expected_root=run_root,
+        reject_links=True,
+    )
+    run_taxonomy_path = workspace.path_policy.resolve_managed_output(
+        run_root / "taxonomy.json",
+        field_name="trace judge taxonomy",
+        expected_root=run_root,
+        reject_links=True,
+    )
+
+    observer.pipeline_started(
+        PipelineStarted(
+            suite_id=suite_id,
+            run_id=run_id,
+            stages=("trace_import", "judge"),
+        )
+    )
+    observer.stage_planned(
+        StagePlanned(
+            name="trace_import",
+            scope="run",
+            action="run",
+        )
+    )
+    observer.stage_started(StageStarted(name="trace_import", scope="run"))
+    started = time.monotonic()
+    try:
+        control.raise_if_cancelled(stage="trace_import")
+        raw_document = json.loads(trace_bytes.decode("utf-8"))
+        if not isinstance(raw_document, dict):
+            raise ValueError("OTLP trace input must contain a JSON object")
+        rows = _normalize_trace_rows(
+            parse_otel_trace_document(raw_document, group_by=group_by)
+        )
+        if not rows:
+            raise ValueError("OTLP trace input contains no trace sessions")
+        control.raise_if_cancelled(stage="trace_import")
+        run_root.mkdir(parents=True, exist_ok=True)
+        write_jsonl(inference_path, rows)
+        write_bytes_atomic(run_taxonomy_path, taxonomy_bytes)
+        control.raise_if_cancelled(stage="trace_import")
+    except RunCancelled:
+        duration = max(0.0, time.monotonic() - started)
+        observer.stage_finished(
+            StageFinished(
+                name="trace_import",
+                scope="run",
+                state="cancelled",
+                duration_seconds=duration,
+            )
+        )
+        result = RunResult(
+            state=RunState.CANCELLED,
+            exit_code=130,
+            suite_id=suite_id,
+            run_id=run_id,
+            suite_root=suite_root,
+            run_root=run_root,
+            failed_stage="trace_import",
+            error_message="Trace import was cancelled",
+        )
+        observer.pipeline_finished(
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+                error_message=result.error_message,
+            )
+        )
+        return result
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        duration = max(0.0, time.monotonic() - started)
+        message = sanitize_text(str(exc)) or "OTLP trace import failed"
+        message = redact_path_prefixes(
+            message,
+            (
+                workspace.root,
+                workspace.configs_root,
+                workspace.artifacts_root,
+                workspace.results_root,
+            ),
+        )
+        observer.stage_finished(
+            StageFinished(
+                name="trace_import",
+                scope="run",
+                state="failed",
+                duration_seconds=duration,
+                summary={"error": message},
+            )
+        )
+        result = RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            suite_id=suite_id,
+            run_id=run_id,
+            suite_root=suite_root,
+            run_root=run_root,
+            failed_stage="trace_import",
+            error_code="RUN_FAILED",
+            error_message=message,
+        )
+        observer.pipeline_finished(
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+                error_code=result.error_code,
+                error_message=result.error_message,
+            )
+        )
+        return result
+
+    duration = max(0.0, time.monotonic() - started)
+    observer.stage_progress(
+        StageProgress(
+            name="trace_import",
+            values={
+                "completed": len(rows),
+                "total": len(rows),
+                "unit": "sessions",
+            },
+        )
+    )
+    observer.stage_finished(
+        StageFinished(
+            name="trace_import",
+            scope="run",
+            state="completed",
+            duration_seconds=duration,
+            summary={"session_count": len(rows)},
+        )
+    )
+
+    from assert_ai.runner import run_pipeline_document_result
+
+    return run_pipeline_document_result(
+        document=document,
+        config_path=str(config_path),
+        force_stages=["judge"],
+        strict=False,
+        path_policy=workspace.path_policy,
+        control=control,
+        observer=_TraceContinuationObserver(observer),
+    )
+
+
+def _verified_snapshot(
+    path: Path,
+    *,
+    expected_sha256: str,
+    max_bytes: int,
+    label: str,
+) -> bytes:
+    if not _SHA256_RE.fullmatch(expected_sha256):
+        raise ValueError(f"{label} digest is invalid")
+    value = _read_bytes(path, max_bytes=max_bytes, label=label)
+    actual = "sha256:" + hashlib.sha256(value).hexdigest()
+    if actual != expected_sha256:
+        raise ValueError(f"{label} digest mismatch")
+    return value
+
+
+def _normalize_trace_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows, 1):
+        metadata = row.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        session_id = str(metadata.get("session_id") or f"session-{index}")
+        raw_refs = metadata.get("trace_refs")
+        trace_refs = _normalize_trace_refs(raw_refs)
+        identity_material = json.dumps(
+            {
+                "session_id": session_id,
+                "trace_refs": trace_refs,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(identity_material).hexdigest()[:12]
+        test_case_id = f"trace_{index:06d}_{digest}"
+        if test_case_id in seen:
+            raise ValueError("Imported trace identities are not unique")
+        seen.add(test_case_id)
+        metadata.update(
+            {
+                "type": "otel_import",
+                "session_id": session_id,
+                "runtime_mode": "otel_traced",
+                "trace_refs": trace_refs,
+            }
+        )
+        events = (
+            row.get("events")
+            if isinstance(row.get("events"), list)
+            else []
+        )
+        normalized.append(
+            {
+                "type": "prompt",
+                "test_case_id": test_case_id,
+                "behavior": "",
+                "target": "otel_import",
+                "tester_model": "",
+                "metadata": metadata,
+                "trace_refs": trace_refs,
+                "events": events,
+                "stop_reason": "trace_empty" if not events else None,
+                "raw": (
+                    row.get("raw")
+                    if isinstance(row.get("raw"), dict)
+                    else {}
+                ),
+            }
+        )
+    return normalized
+
+
+def _normalize_trace_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        trace_id = item.get("trace_id")
+        span_ids = item.get("span_ids")
+        if not isinstance(trace_id, str) or not trace_id:
+            continue
+        refs.append(
+            {
+                "trace_id": trace_id,
+                "span_ids": [
+                    span_id
+                    for span_id in (
+                        span_ids if isinstance(span_ids, list) else []
+                    )
+                    if isinstance(span_id, str) and span_id
+                ],
+            }
+        )
+    return refs
+
+
+class _TraceContinuationObserver:
+    """Forward runner events after the trace-import pipeline start."""
+
+    def __init__(self, delegate: "_JobRunObserver") -> None:
+        self._delegate = delegate
+
+    def pipeline_started(self, event: PipelineStarted) -> None:
+        del event
+
+    def stage_planned(self, event: StagePlanned) -> None:
+        self._delegate.stage_planned(event)
+
+    def stage_started(self, event: StageStarted) -> None:
+        self._delegate.stage_started(event)
+
+    def stage_progress(self, event: StageProgress) -> None:
+        self._delegate.stage_progress(event)
+
+    def stage_finished(self, event: StageFinished) -> None:
+        self._delegate.stage_finished(event)
+
+    def pipeline_finished(self, event: PipelineFinished) -> None:
+        self._delegate.pipeline_finished(event)
 
 
 def _jobs_root(workspace: WorkspaceService) -> Path:

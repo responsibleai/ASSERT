@@ -64,6 +64,7 @@ class ServerLimits(BaseModel):
     max_active_jobs: int
     max_queued_jobs: int
     max_job_log_bytes: int
+    max_trace_input_bytes: int
     cancellation_grace_seconds: float
     max_prompt_sample_size: int
     max_scenario_sample_size: int
@@ -209,6 +210,37 @@ class ConfigDesignResult(_McpModel):
     persisted: Literal[False] = False
 
 
+class TestCaseRevisionInput(_McpModel):
+    """Partial revision for one stable test-case identity."""
+
+    test_case_id: str = Field(min_length=1, max_length=255)
+    updates: dict[str, Any]
+
+
+class CuratedArtifactResult(_McpModel):
+    """One immutable artifact version created by curation."""
+
+    artifact_type: str
+    version: str
+    etag: str
+    source_etag: str
+    source_version: str | None = None
+    artifact_ref: str
+    metadata_ref: str
+
+
+class CurationToolResult(_McpModel):
+    """Result of an atomic suite curation operation."""
+
+    schema_version: Literal[1] = 1
+    suite_id: str
+    change_summary: str
+    artifacts: tuple[CuratedArtifactResult, ...]
+    invalidated_stages: tuple[str, ...]
+    affected_test_case_ids: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
 class SuiteCatalogItem(_McpModel):
     """Lightweight suite metadata."""
 
@@ -245,6 +277,7 @@ class SuiteResult(_McpModel):
     updated_at: str | None = None
     run_count: int
     latest_run: dict[str, Any] | None = None
+    active_artifact_etags: dict[str, str] = Field(default_factory=dict)
     resources: dict[str, str] = Field(default_factory=dict)
 
 

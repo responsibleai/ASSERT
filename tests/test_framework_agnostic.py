@@ -117,6 +117,11 @@ class TestOTelParser(unittest.TestCase):
             self.assertIn("raw", row)
             self.assertEqual(row["metadata"]["runtime_mode"], "otel_traced")
             self.assertEqual(row["metadata"]["type"], "otel_import")
+            self.assertTrue(row["metadata"]["trace_refs"])
+            self.assertEqual(
+                row["raw"]["trace_refs"],
+                row["metadata"]["trace_refs"],
+            )
 
 
 class TestFlattenAttributes(unittest.TestCase):

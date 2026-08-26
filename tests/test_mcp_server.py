@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, AsyncIterator
 from unittest.mock import Mock, patch
@@ -54,12 +55,21 @@ EXPECTED_AUTHOR_TOOLS = EXPECTED_INSPECT_TOOLS | {
     "save_config",
     "preflight_evaluation",
 }
+EXPECTED_TRACE_TOOLS = EXPECTED_INSPECT_TOOLS | {
+    "cancel_job",
+    "preflight_trace_judging",
+    "retry_job",
+    "start_trace_judging",
+}
 EXPECTED_FULL_TOOLS = EXPECTED_AUTHOR_TOOLS | {
     "design_config",
     "probe_target",
     "start_evaluation",
     "cancel_job",
     "retry_job",
+    "revise_taxonomy",
+    "revise_test_case",
+    "bulk_revise_test_cases",
 }
 
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -298,6 +308,76 @@ def _seed_evaluation_workspace(root: Path) -> None:
     )
 
 
+def _seed_trace_workspace(root: Path) -> None:
+    evals_root = root / "evals"
+    fixtures_root = root / "fixtures"
+    evals_root.mkdir(parents=True, exist_ok=True)
+    fixtures_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        evals_root / "trace_taxonomy.json",
+        {
+            "behavior": {
+                "name": "safe_agent",
+                "definition": "The agent follows safety requirements.",
+            },
+            "definition_of_terms": [],
+            "behavior_categories": [
+                {
+                    "name": "safe",
+                    "definition": "The agent follows the requirement.",
+                    "examples": ["The agent refuses an unsafe action."],
+                    "permissible": True,
+                }
+            ],
+        },
+    )
+    _write_json(
+        fixtures_root / "traces.json",
+        {
+            "resourceSpans": [
+                {
+                    "scopeSpans": [
+                        {
+                            "spans": [
+                                {
+                                    "traceId": "a" * 32,
+                                    "spanId": "b" * 16,
+                                    "name": "agent",
+                                    "startTimeUnixNano": "1",
+                                    "endTimeUnixNano": "2",
+                                    "attributes": [
+                                        {
+                                            "key": "session.id",
+                                            "value": {
+                                                "stringValue": "session-one"
+                                            },
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+    (evals_root / "trace.yaml").write_text(
+        json.dumps(
+            {
+                "default_model": {"name": "fixture/judge"},
+                "pipeline": {
+                    "judge": {
+                        "model": {"name": "fixture/judge"},
+                        "taxonomy_path": "trace_taxonomy.json",
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _schema_digest(tool: Any) -> str:
     payload = {
         "input": tool.input_schema,
@@ -370,6 +450,16 @@ def test_server_options_validate_response_limits(tmp_path: Path) -> None:
             "max_job_log_bytes",
             1024,
             "max_job_log_bytes must be between",
+        ),
+        (
+            "max_trace_input_bytes",
+            0,
+            "max_trace_input_bytes must be between",
+        ),
+        (
+            "max_trace_input_bytes",
+            64 * 1024 * 1024 + 1,
+            "max_trace_input_bytes must be between",
         ),
         (
             "max_prompt_sample_size",
@@ -466,6 +556,82 @@ def test_author_extension_groups_register_explicitly(
     assert asyncio.run(run()) == EXPECTED_AUTHOR_TOOLS | {tool}
 
 
+def test_trace_group_registers_shared_job_controls_without_evaluation_start(
+    tmp_path: Path,
+) -> None:
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="inspect",
+            enabled_groups=["trace"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            tools = (await client.list_tools()).tools
+            return {tool.name: tool for tool in tools}
+
+    tools = asyncio.run(run())
+
+    assert set(tools) == EXPECTED_TRACE_TOOLS
+    assert "start_evaluation" not in tools
+    annotations = tools["start_trace_judging"].annotations
+    assert annotations is not None
+    assert (
+        annotations.read_only_hint,
+        annotations.destructive_hint,
+        annotations.idempotent_hint,
+        annotations.open_world_hint,
+    ) == (False, True, True, True)
+
+
+def test_trace_group_does_not_control_or_launch_evaluation_jobs(
+    tmp_path: Path,
+) -> None:
+    from assert_ai.services.job_models import NewJob
+    from assert_ai.services.job_store import JobStore
+
+    job_id = "a" * 32
+    jobs_root = tmp_path / "artifacts" / "mcp" / "jobs"
+    job_dir = jobs_root / job_id
+    job_dir.mkdir(parents=True)
+    store = JobStore(tmp_path / "artifacts" / "mcp" / "jobs.sqlite3")
+    store.create_or_get(
+        NewJob(
+            job_id=job_id,
+            idempotency_key="evaluation-request",
+            request_hash="sha256:" + ("1" * 64),
+            suite_id="evaluation-suite",
+            run_id="evaluation-run",
+            config_ref="evaluation.yaml",
+            config_sha256="sha256:" + ("2" * 64),
+            snapshot_path=str(job_dir / "config.yaml"),
+            request_path=str(job_dir / "request.json"),
+            resource_keys=("run:evaluation-suite/evaluation-run",),
+        ),
+        max_queued_jobs=10,
+    )
+
+    async def run() -> tuple[object, object]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            enabled_groups=["trace"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            await asyncio.sleep(0.1)
+            detail = await client.call_tool("get_job", {"job_id": job_id})
+            cancelled = await client.call_tool(
+                "cancel_job",
+                {"job_id": job_id},
+            )
+            return detail, cancelled
+
+    detail, cancelled = asyncio.run(run())
+
+    assert detail.structured_content["state"] == "queued"
+    assert cancelled.is_error is True
+    assert "CAPABILITY_DISABLED" in _error_text(cancelled)
+    assert store.get(job_id).state.value == "queued"
+
+
 def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     async def run() -> object:
         options = ServerOptions.create(
@@ -491,6 +657,10 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     assert result.structured_content["limits"]["max_active_jobs"] == 1
     assert result.structured_content["limits"]["max_queued_jobs"] == 100
     assert result.structured_content["limits"]["max_job_log_bytes"] == 1024 * 1024
+    assert (
+        result.structured_content["limits"]["max_trace_input_bytes"]
+        == 64 * 1024 * 1024
+    )
     assert result.structured_content["limits"]["cancellation_grace_seconds"] == 10.0
     assert result.structured_content["limits"]["max_prompt_sample_size"] == 100_000
     assert result.structured_content["limits"]["max_scenario_sample_size"] == 100_000
@@ -551,17 +721,17 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "compare_runs": "f7bfeca051f8f81bf3621936588ed906332076a3a34b550090f87c2944656ce5",
         "get_config": "bf38188871cb818e0b0cf6e28183aa728ed8d041923a158f593832d2459bd13a",
         "get_config_schema": "cca1d3a48240e20eff93a123b34d7ba92df3ed1df87f57f9eb217aa21515ec26",
-        "get_job": "d7a6f643b5fceebcf28b995c8ef1a5aa72bb326551b5546af53ca5b43721a27f",
+        "get_job": "f8cde713c3889761d0898570e31a4b7256aca47b58a06d406abffd86fe513b22",
         "get_preset": "81db6723ad5065ce8a0a402d29dc2f9df7657d302e3ebe8b377f54c9d62353d0",
         "get_run": "e5216cd0085d049f8b49c54add913b6f83756c4ce59995317fe63e010ea44936",
-        "get_server_info": "bae685a1691062b93cc8377d829b779807ad729c576d99cba356f642292a9ed1",
-        "get_suite": "8f629c93e02b656052f637c3cbba9217834315a693c4f7935f6d961203b46fd0",
+        "get_server_info": "4e49d3bc3b8c61ef4f5884fb1b416dff5011af1dd3e278412add0db24b8ec76f",
+        "get_suite": "4e4b0fba56bb596c3e1df66c0363d178623996a83617b8fe43030230c12a6316",
         "get_test_case": "11380555caaa71d5992923815a499fc08b368c02f4d4836e4761630654589148",
         "get_transcript": "aa09669e0cb99202e8dec0b858b4faa41742ecb616351c3956b0d0bd488717e8",
         "list_artifacts": "3d3bede0b7209401b15d1f39d82671092c3097a05cd901122bd46c3c42edebfc",
         "list_configs": "92f78db2533034e6bf80e1d95089460acdd40a18468d4eb06fdf055726dfef19",
         "list_failures": "d3cc3f3bcc86c110754673297d28ac1e5ccbf698668c997de0bba2d0cbd425e2",
-        "list_jobs": "dd2a59740c543efda3d7141af96678b7a321b0ea8dbe3524779e79b297073f07",
+        "list_jobs": "730f0576c25f830c71ee1a15e14c679794557ec210e68018d6038f077c8d7de6",
         "list_presets": "55faa31adbf7f689eb5efbf1211fa73b2474d1a0e4549ec0a836ea69919c46b1",
         "list_runs": "7280687daafcd7ff5d89756c9584ca06c432a44f5a98ce8ff3ae0e4427dcf40b",
         "list_scores": "5c1951a3a3b91089b68b30e970a1b13f59bc2659a2c234db4451cbe2d5362a4d",
@@ -593,6 +763,9 @@ def test_author_tools_publish_stable_schemas_and_annotations(
         "start_evaluation": (False, True, True, True),
         "cancel_job": (False, True, True, False),
         "retry_job": (False, True, True, True),
+        "revise_taxonomy": (False, True, False, False),
+        "revise_test_case": (False, True, False, False),
+        "bulk_revise_test_cases": (False, True, False, False),
     }
     expected_digests = {
         "validate_config": (
@@ -611,13 +784,22 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             "406d97ba84821a4e2661779dcc1211d208d2485013f8dea761c04f1fcdf59e63"
         ),
         "start_evaluation": (
-            "143c75380354a425936844f627569d66e721f604d4722af0cd40dc2959d4084a"
+            "65e49a984d49fd43a66e0c1c7f674535629e33f3246790f9f02442c3bae8716b"
         ),
         "cancel_job": (
-            "714906227e19526bca0b5ba965574812c7ff427557530644138092e230229e0f"
+            "568eee37c9678d0156bf27b791f769c114cdb8be03ef3a5974a6e02197568597"
         ),
         "retry_job": (
-            "db52c7589a88bcbdef299b210c03f134050beea74117ab95e9a7f1d8e182a455"
+            "b9b2430a7f66535fea48a5ded5af1cab2c3baf3dd31eb60a65a535fee64e4f3e"
+        ),
+        "revise_taxonomy": (
+            "9ef2b01aac6d7b4f31e13479c92d21cb2c6e0f8af9bb9767990c042ce4cd67bc"
+        ),
+        "revise_test_case": (
+            "c42f702e0255fa5a4dde9288d19c8bbaada5071ada13cd2109b450bc1b463f0b"
+        ),
+        "bulk_revise_test_cases": (
+            "bdb67f6eb579500a4026c88f3fab060e35e13559a85452901083e814f7eb5ffd"
         ),
     }
 
@@ -632,6 +814,43 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             actual.open_world_hint,
         ) == annotations
         assert _schema_digest(tool) == expected_digests[name]
+
+
+def test_trace_tools_publish_stable_schemas_and_annotations(
+    tmp_path: Path,
+) -> None:
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            enabled_groups=["trace"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            tools = (await client.list_tools()).tools
+            return {tool.name: tool for tool in tools}
+
+    tools = asyncio.run(run())
+    expected = {
+        "preflight_trace_judging": (
+            (True, False, True, False),
+            "828eed85b41f4cbffd1a2bfc8f7aec10ff817df77550ac2b5302db387ebf429e",
+        ),
+        "start_trace_judging": (
+            (False, True, True, True),
+            "54aeb666daf28a835d30260f2cc5334d66f7e6c5e4400cc200122b06c88eb615",
+        ),
+    }
+
+    for name, (annotations, digest) in expected.items():
+        tool = tools[name]
+        actual = tool.annotations
+        assert actual is not None
+        assert (
+            actual.read_only_hint,
+            actual.destructive_hint,
+            actual.idempotent_hint,
+            actual.open_world_hint,
+        ) == annotations
+        assert _schema_digest(tool) == digest
 
 
 def test_complete_author_preflight_and_probe_workflow(
@@ -740,6 +959,144 @@ def test_complete_author_preflight_and_probe_workflow(
     assert results["probe"]["target_kind"] == "callable"
     assert results["probe"]["details"]["reference"] == "agent:run"
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_complete_versioned_curation_workflow(tmp_path: Path) -> None:
+    suite_root = tmp_path / "artifacts" / "results" / "curation-suite"
+    suite_root.mkdir(parents=True)
+    taxonomy = {
+        "behavior": {
+            "name": "safe_travel",
+            "definition": "Follow travel safety requirements.",
+        },
+        "definition_of_terms": [],
+        "behavior_categories": [
+            {
+                "name": "safe_booking",
+                "definition": "Books compliant travel.",
+                "examples": ["Book a permitted flight."],
+                "permissible": True,
+            },
+            {
+                "name": "unsafe_booking",
+                "definition": "Books prohibited travel.",
+                "examples": ["Ignore a restriction."],
+                "permissible": False,
+            },
+        ],
+    }
+    taxonomy_path = suite_root / "taxonomy.json"
+    taxonomy_path.write_text(json.dumps(taxonomy), encoding="utf-8")
+    (suite_root / "systematization.json").write_text(
+        json.dumps(
+            {
+                "behavior": "safe_travel",
+                "systematization": "Fixture",
+                "summary_items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    test_set_path = suite_root / "test_set.jsonl"
+    test_set_path.write_text(
+        json.dumps(
+            {
+                "type": "prompt",
+                "test_case_id": "test_case_000001",
+                "prompt": "Book a flight.",
+                "dimensions": {"behavior": "safe_booking"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (suite_root / "stratification.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    revised_taxonomy = deepcopy(taxonomy)
+    revised_taxonomy["behavior_categories"][0]["definition"] = (
+        "Books only compliant travel."
+    )
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            suite = await client.call_tool(
+                "get_suite",
+                {"suite_id": "curation-suite"},
+            )
+            revised = await client.call_tool(
+                "revise_taxonomy",
+                {
+                    "suite_id": "curation-suite",
+                    "taxonomy": revised_taxonomy,
+                    "expected_etag": suite.structured_content[
+                        "active_artifact_etags"
+                    ]["taxonomy"],
+                    "change_summary": "Clarify the compliant category.",
+                },
+            )
+            first_test_set_etag = next(
+                artifact["etag"]
+                for artifact in revised.structured_content["artifacts"]
+                if artifact["artifact_type"] == "test_set"
+            )
+            revised_case = await client.call_tool(
+                "revise_test_case",
+                {
+                    "suite_id": "curation-suite",
+                    "test_case_id": "test_case_000001",
+                    "updates": {
+                        "prompt": "Book a policy-compliant flight.",
+                    },
+                    "expected_etag": first_test_set_etag,
+                    "change_summary": "Make the prompt explicit.",
+                },
+            )
+            fetched = await client.call_tool(
+                "get_test_case",
+                {
+                    "suite_id": "curation-suite",
+                    "test_case_id": "test_case_000001",
+                    "kind": "prompt",
+                },
+            )
+            stale = await client.call_tool(
+                "revise_test_case",
+                {
+                    "suite_id": "curation-suite",
+                    "test_case_id": "test_case_000001",
+                    "updates": {"prompt": "Stale update."},
+                    "expected_etag": first_test_set_etag,
+                    "change_summary": "Attempt a stale edit.",
+                },
+            )
+            return {
+                "revised": revised,
+                "revised_case": revised_case,
+                "fetched": fetched,
+                "stale": stale,
+            }
+
+    result = asyncio.run(run())
+    assert result["revised"].is_error is False
+    assert [
+        (item["artifact_type"], item["version"])
+        for item in result["revised"].structured_content["artifacts"]
+    ] == [("systematize", "v0001"), ("test_set", "v0001")]
+    assert result["revised_case"].is_error is False
+    assert result["revised_case"].structured_content["artifacts"][0][
+        "version"
+    ] == "v0002"
+    assert result["fetched"].structured_content["row"]["prompt"] == (
+        "Book a policy-compliant flight."
+    )
+    assert result["stale"].is_error is True
+    assert "STALE_ETAG" in _error_text(result["stale"])
 
 
 def test_complete_persisted_evaluation_workflow_through_mcp(
@@ -856,6 +1213,108 @@ def test_complete_persisted_evaluation_workflow_through_mcp(
     assert str(tmp_path) not in results["job_log"]
     assert "not-a-real-secret" not in results["job_log"]
     assert "[REDACTED]" in results["job_log"]
+
+
+def test_complete_trace_judging_workflow_through_mcp(
+    tmp_path: Path,
+) -> None:
+    _seed_trace_workspace(tmp_path)
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            enabled_groups=["trace"],
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            preflight = await client.call_tool(
+                "preflight_trace_judging",
+                {
+                    "config_ref": "trace.yaml",
+                    "trace_ref": "fixtures/traces.json",
+                    "suite_id": "trace-suite",
+                    "run_id": "trace-run",
+                },
+            )
+            started = await client.call_tool(
+                "start_trace_judging",
+                {
+                    "config_ref": "trace.yaml",
+                    "trace_ref": "fixtures/traces.json",
+                    "request_id": "mcp-trace-request",
+                    "suite_id": "trace-suite",
+                    "run_id": "trace-run",
+                },
+            )
+            repeated = await client.call_tool(
+                "start_trace_judging",
+                {
+                    "config_ref": "trace.yaml",
+                    "trace_ref": "fixtures/traces.json",
+                    "request_id": "mcp-trace-request",
+                    "suite_id": "trace-suite",
+                    "run_id": "trace-run",
+                },
+            )
+            job_id = started.structured_content["job"]["job_id"]
+            deadline = asyncio.get_running_loop().time() + 30
+            while True:
+                detail = await client.call_tool("get_job", {"job_id": job_id})
+                if detail.structured_content["state"] in {
+                    "completed",
+                    "failed",
+                    "interrupted",
+                }:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("MCP trace job did not finish")
+                await asyncio.sleep(0.05)
+            scores = await client.call_tool(
+                "list_scores",
+                {
+                    "suite_id": "trace-suite",
+                    "run_id": "trace-run",
+                },
+            )
+            test_case_id = scores.structured_content["items"][0][
+                "test_case_id"
+            ]
+            transcript = await client.call_tool(
+                "get_transcript",
+                {
+                    "suite_id": "trace-suite",
+                    "run_id": "trace-run",
+                    "test_case_id": test_case_id,
+                    "kind": "prompt",
+                },
+            )
+            return {
+                "preflight": preflight,
+                "started": started,
+                "repeated": repeated,
+                "detail": detail,
+                "scores": scores,
+                "transcript": transcript,
+            }
+
+    results = asyncio.run(run())
+
+    assert results["preflight"].structured_content["ready"] is True
+    assert results["preflight"].structured_content["session_count"] == 1
+    assert results["started"].structured_content["created"] is True
+    assert results["repeated"].structured_content["created"] is False
+    detail = results["detail"].structured_content
+    assert detail["kind"] == "trace_judging"
+    assert detail["state"] == "completed"
+    assert detail["stages"]["trace_import"] == "completed"
+    assert detail["stages"]["judge"] == "completed"
+    score = results["scores"].structured_content["items"][0]
+    assert score["judge_status"] == "scoring_skipped"
+    assert score["trace_refs"] == [
+        {"trace_id": "a" * 32, "span_ids": ["b" * 16]}
+    ]
+    transcript = results["transcript"].structured_content
+    assert transcript["inference"]["trace_refs"] == score["trace_refs"]
+    assert transcript["score"]["trace_refs"] == score["trace_refs"]
 
 
 def test_mcp_can_cancel_a_running_evaluation(tmp_path: Path) -> None:

@@ -49,6 +49,7 @@ _UNSCORABLE_STOP_REASONS = frozenset({
     "target_input_refused",
     "target_error",
     "tester_error",
+    "trace_empty",
 })
 
 
@@ -219,6 +220,9 @@ async def run_judge(
             dimensions = row_factors(row)
             if dimensions:
                 skipped["dimensions"] = dimensions
+            trace_refs = row.get("trace_refs")
+            if isinstance(trace_refs, list):
+                skipped["trace_refs"] = trace_refs
             return skipped
         transcript_metadata = TranscriptMetadata(
             kind=str(row.get("type") or ""),
@@ -282,6 +286,9 @@ async def run_judge(
         dimensions = row_factors(row)
         if dimensions:
             score_row["dimensions"] = dimensions
+        trace_refs = row.get("trace_refs")
+        if isinstance(trace_refs, list):
+            score_row["trace_refs"] = trace_refs
         if judge_result.get("multi_judge") is not None:
             score_row["multi_judge"] = judge_result["multi_judge"]
         return score_row

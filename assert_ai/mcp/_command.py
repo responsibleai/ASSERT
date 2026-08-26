@@ -145,6 +145,13 @@ def mcp() -> None:
     help="Maximum retained bytes for each worker stdout/stderr log.",
 )
 @click.option(
+    "--max-trace-input-bytes",
+    type=click.IntRange(min=1024, max=64 * 1024 * 1024),
+    default=64 * 1024 * 1024,
+    show_default=True,
+    help="Maximum size of one imported OTLP JSON trace file.",
+)
+@click.option(
     "--cancellation-grace-seconds",
     type=click.FloatRange(min=0.1),
     default=10.0,
@@ -199,6 +206,7 @@ def serve(
     max_active_jobs: int,
     max_queued_jobs: int,
     max_job_log_bytes: int,
+    max_trace_input_bytes: int,
     cancellation_grace_seconds: float,
     max_prompt_sample_size: int,
     max_scenario_sample_size: int,
@@ -234,6 +242,7 @@ def serve(
             max_active_jobs=max_active_jobs,
             max_queued_jobs=max_queued_jobs,
             max_job_log_bytes=max_job_log_bytes,
+            max_trace_input_bytes=max_trace_input_bytes,
             cancellation_grace_seconds=cancellation_grace_seconds,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,

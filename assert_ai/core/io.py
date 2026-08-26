@@ -52,6 +52,11 @@ def append_jsonl_row(path: Path, row: Dict[str, Any]) -> None:
 
 def write_text_atomic(path: Path, text: str) -> None:
     """Atomically replace a UTF-8 text file after flushing its contents."""
+    write_bytes_atomic(path, text.encode("utf-8"))
+
+
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Atomically replace a file after flushing its exact bytes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_name: str | None = None
     try:
@@ -62,7 +67,7 @@ def write_text_atomic(path: Path, text: str) -> None:
             suffix=".tmp",
             delete=False,
         ) as handle:
-            handle.write(text.encode("utf-8"))
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
             tmp_name = handle.name

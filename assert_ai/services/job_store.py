@@ -25,7 +25,7 @@ from assert_ai.services.job_models import (
 )
 
 _BUSY_TIMEOUT_MS = 5_000
-_JOB_STORE_SCHEMA_VERSION = 2
+_JOB_STORE_SCHEMA_VERSION = 3
 _ACTIVE_STATES = (
     JobState.STARTING.value,
     JobState.RUNNING.value,
@@ -84,6 +84,12 @@ CREATE TABLE IF NOT EXISTS resource_locks(
     acquired_at TEXT NOT NULL,
     lease_expires_at TEXT NOT NULL,
     FOREIGN KEY(job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS operation_locks(
+    resource_key TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL
 );
 """
 
@@ -276,6 +282,7 @@ class JobStore:
         lease_owner: str,
         lease_seconds: float,
         max_active_jobs: int,
+        job_kinds: Sequence[str] = (),
     ) -> JobRecord | None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
@@ -287,6 +294,10 @@ class JobStore:
         now = _now()
         expires_at = _after(lease_seconds)
         with self._transaction() as connection:
+            connection.execute(
+                "DELETE FROM operation_locks WHERE lease_expires_at <= ?",
+                (now,),
+            )
             active = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM jobs WHERE state IN (?, ?, ?)",
@@ -295,14 +306,26 @@ class JobStore:
             )
             if active >= max_active_jobs:
                 return None
-            candidates = connection.execute(
-                """
-                SELECT * FROM jobs
-                WHERE state = ?
-                ORDER BY created_at, job_id
-                """,
-                (JobState.QUEUED.value,),
-            ).fetchall()
+            kinds = tuple(dict.fromkeys(job_kinds))
+            if kinds:
+                kind_placeholders = ", ".join("?" for _ in kinds)
+                candidates = connection.execute(
+                    f"""
+                    SELECT * FROM jobs
+                    WHERE state = ? AND kind IN ({kind_placeholders})
+                    ORDER BY created_at, job_id
+                    """,
+                    (JobState.QUEUED.value, *kinds),
+                ).fetchall()
+            else:
+                candidates = connection.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE state = ?
+                    ORDER BY created_at, job_id
+                    """,
+                    (JobState.QUEUED.value,),
+                ).fetchall()
             for row in candidates:
                 record = _record(row)
                 if not self._resources_available(
@@ -356,6 +379,131 @@ class JobStore:
                 assert claimed is not None
                 return _record(claimed)
         return None
+
+    def acquire_operation_locks(
+        self,
+        resource_keys: Sequence[str],
+        *,
+        owner: str,
+        lease_seconds: float,
+    ) -> bool:
+        """Reserve resources against job claims for one short operation."""
+        keys = tuple(dict.fromkeys(resource_keys))
+        if not keys:
+            raise ValueError("at least one resource key is required")
+        if not owner:
+            raise ValueError("owner is required")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        self.initialize()
+        now = _now()
+        expires_at = _after(lease_seconds)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._transaction() as connection:
+            connection.execute(
+                "DELETE FROM operation_locks WHERE lease_expires_at <= ?",
+                (now,),
+            )
+            active_job = any(
+                self._operation_conflicts_with_active_job(
+                    connection,
+                    resource_key,
+                )
+                for resource_key in keys
+            )
+            active_operation = connection.execute(
+                f"""
+                SELECT 1 FROM operation_locks
+                WHERE resource_key IN ({placeholders})
+                LIMIT 1
+                """,
+                keys,
+            ).fetchone()
+            if active_job or active_operation is not None:
+                return False
+            connection.executemany(
+                """
+                INSERT INTO operation_locks(
+                    resource_key, owner, acquired_at, lease_expires_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    (resource_key, owner, now, expires_at)
+                    for resource_key in keys
+                ),
+            )
+        return True
+
+    def release_operation_locks(
+        self,
+        *,
+        owner: str,
+        resource_keys: Sequence[str] = (),
+    ) -> None:
+        """Release operation locks owned by one caller."""
+        if not owner:
+            raise ValueError("owner is required")
+        self.initialize()
+        keys = tuple(dict.fromkeys(resource_keys))
+        with self._transaction() as connection:
+            if keys:
+                placeholders = ", ".join("?" for _ in keys)
+                connection.execute(
+                    f"""
+                    DELETE FROM operation_locks
+                    WHERE owner = ? AND resource_key IN ({placeholders})
+                    """,
+                    (owner, *keys),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM operation_locks WHERE owner = ?",
+                    (owner,),
+                )
+
+    def renew_operation_locks(
+        self,
+        resource_keys: Sequence[str],
+        *,
+        owner: str,
+        lease_seconds: float,
+    ) -> bool:
+        """Extend unexpired operation locks when every key is still owned."""
+        keys = tuple(dict.fromkeys(resource_keys))
+        if not keys:
+            raise ValueError("at least one resource key is required")
+        if not owner:
+            raise ValueError("owner is required")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        self.initialize()
+        now = _now()
+        expires_at = _after(lease_seconds)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._transaction() as connection:
+            owned = connection.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM operation_locks
+                WHERE owner = ?
+                  AND lease_expires_at > ?
+                  AND resource_key IN ({placeholders})
+                """,
+                (owner, now, *keys),
+            ).fetchone()
+            if owned is None or int(owned["count"]) != len(keys):
+                return False
+            changed = connection.execute(
+                f"""
+                UPDATE operation_locks
+                SET lease_expires_at = ?
+                WHERE owner = ?
+                  AND lease_expires_at > ?
+                  AND resource_key IN ({placeholders})
+                """,
+                (expires_at, owner, now, *keys),
+            ).rowcount
+            return changed == len(keys)
 
     def mark_running(
         self,
@@ -602,20 +750,33 @@ class JobStore:
             )
             return self._get_in_transaction(connection, job_id)
 
-    def list_nonterminal_records(self) -> tuple[JobRecord, ...]:
+    def list_nonterminal_records(
+        self,
+        *,
+        job_kinds: Sequence[str] = (),
+    ) -> tuple[JobRecord, ...]:
         """Return every queued or active job for deterministic recovery."""
         if not self.exists:
             return ()
         self.initialize()
         placeholders = ", ".join("?" for _ in TERMINAL_JOB_STATES)
+        values: list[str] = [
+            state.value for state in TERMINAL_JOB_STATES
+        ]
+        kinds = tuple(dict.fromkeys(job_kinds))
+        kind_clause = ""
+        if kinds:
+            kind_placeholders = ", ".join("?" for _ in kinds)
+            kind_clause = f" AND kind IN ({kind_placeholders})"
+            values.extend(kinds)
         with self._connection() as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM jobs
-                WHERE state NOT IN ({placeholders})
+                WHERE state NOT IN ({placeholders}){kind_clause}
                 ORDER BY created_at, job_id
                 """,
-                tuple(state.value for state in TERMINAL_JOB_STATES),
+                tuple(values),
             ).fetchall()
         return tuple(_record(row) for row in rows)
 
@@ -772,6 +933,7 @@ class JobStore:
                         if version not in {
                             0,
                             1,
+                            2,
                             _JOB_STORE_SCHEMA_VERSION,
                         }:
                             raise ServiceError(
@@ -861,7 +1023,62 @@ class JobStore:
             """,
             resource_keys,
         ).fetchone()
-        return row is None
+        if row is not None:
+            return False
+        operation_keys = tuple(
+            dict.fromkeys(
+                (
+                    *resource_keys,
+                    *(
+                        f"suite:{suite_id}"
+                        for suite_id in (
+                            _suite_id_from_resource_key(key)
+                            for key in resource_keys
+                        )
+                        if suite_id is not None
+                    ),
+                )
+            )
+        )
+        operation_placeholders = ", ".join("?" for _ in operation_keys)
+        operation = connection.execute(
+            f"""
+            SELECT 1 FROM operation_locks
+            WHERE resource_key IN ({operation_placeholders})
+            LIMIT 1
+            """,
+            operation_keys,
+        ).fetchone()
+        return operation is None
+
+    @staticmethod
+    def _operation_conflicts_with_active_job(
+        connection: sqlite3.Connection,
+        resource_key: str,
+    ) -> bool:
+        if resource_key.startswith("suite:"):
+            suite_id = resource_key.removeprefix("suite:")
+            row = connection.execute(
+                """
+                SELECT 1 FROM resource_locks
+                WHERE resource_key = ? OR resource_key LIKE ?
+                LIMIT 1
+                """,
+                (
+                    resource_key,
+                    f"run:{suite_id}/%",
+                ),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT 1 FROM resource_locks
+                WHERE resource_key = ?
+                LIMIT 1
+                """,
+                (resource_key,),
+            ).fetchone()
+        return row is not None
 
     @staticmethod
     def _get_in_transaction(
@@ -951,6 +1168,16 @@ class JobStore:
                     (job_id, job_id, overflow),
                 )
         return sequence
+
+
+def _suite_id_from_resource_key(resource_key: str) -> str | None:
+    if resource_key.startswith("suite:"):
+        return resource_key.removeprefix("suite:")
+    if resource_key.startswith("run:"):
+        value = resource_key.removeprefix("run:")
+        suite_id, separator, _ = value.partition("/")
+        return suite_id if separator and suite_id else None
+    return None
 
 
 def _record(row: sqlite3.Row) -> JobRecord:

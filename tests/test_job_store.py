@@ -23,6 +23,7 @@ def _new_job(
     run_id: str | None = None,
     resource_keys: tuple[str, ...] = (),
     retry_of: str | None = None,
+    kind: str = "evaluation",
 ) -> NewJob:
     return NewJob(
         job_id=f"job-{suffix}",
@@ -36,6 +37,7 @@ def _new_job(
         request_path=f"artifacts/mcp/jobs/job-{suffix}/request.json",
         resource_keys=resource_keys,
         retry_of=retry_of,
+        kind=kind,
     )
 
 
@@ -399,12 +401,154 @@ def test_v1_store_is_migrated_before_a_mutating_operation(
     assert cancelled.state is JobState.CANCELLED
     assert cancelled.retry_of is None
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(jobs)")
         }
     assert "retry_of" in columns
+
+
+def test_operation_lock_blocks_job_claim_until_released(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    assert store.acquire_operation_locks(
+        ("suite:suite-one",),
+        owner="curator",
+        lease_seconds=30,
+    )
+    store.create_or_get(
+        _new_job(
+            "one",
+            resource_keys=("suite:suite-one",),
+        ),
+        max_queued_jobs=10,
+    )
+
+    assert (
+        store.claim_next(
+            lease_owner="manager",
+            lease_seconds=30,
+            max_active_jobs=1,
+        )
+        is None
+    )
+    store.release_operation_locks(
+        owner="curator",
+        resource_keys=("suite:suite-one",),
+    )
+    assert (
+        store.claim_next(
+            lease_owner="manager",
+            lease_seconds=30,
+            max_active_jobs=1,
+        )
+        is not None
+    )
+
+
+def test_operation_lock_renewal_requires_current_owner(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    resource_keys = ("suite:suite-one",)
+    assert store.acquire_operation_locks(
+        resource_keys,
+        owner="curator",
+        lease_seconds=30,
+    )
+
+    assert not store.renew_operation_locks(
+        resource_keys,
+        owner="other-curator",
+        lease_seconds=30,
+    )
+    assert store.renew_operation_locks(
+        resource_keys,
+        owner="curator",
+        lease_seconds=30,
+    )
+
+    store.release_operation_locks(
+        owner="curator",
+        resource_keys=resource_keys,
+    )
+    assert not store.renew_operation_locks(
+        resource_keys,
+        owner="curator",
+        lease_seconds=30,
+    )
+
+
+def test_job_claim_and_recovery_can_filter_job_kinds(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.create_or_get(_new_job("evaluation"), max_queued_jobs=10)
+    store.create_or_get(
+        _new_job("trace", kind="trace_judging"),
+        max_queued_jobs=10,
+    )
+
+    claimed = store.claim_next(
+        lease_owner="trace-manager",
+        lease_seconds=30,
+        max_active_jobs=2,
+        job_kinds=("trace_judging",),
+    )
+    visible = store.list_nonterminal_records(
+        job_kinds=("trace_judging",),
+    )
+
+    assert claimed is not None
+    assert claimed.job_id == "job-trace"
+    assert {record.job_id for record in visible} == {"job-trace"}
+    assert store.get("job-evaluation").state is JobState.QUEUED
+
+
+def test_operation_lock_conflicts_with_active_job_resource(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.create_or_get(
+        _new_job(
+            "one",
+            resource_keys=("suite:suite-one",),
+        ),
+        max_queued_jobs=10,
+    )
+    assert store.claim_next(
+        lease_owner="manager",
+        lease_seconds=30,
+        max_active_jobs=1,
+    )
+
+    assert not store.acquire_operation_locks(
+        ("suite:suite-one",),
+        owner="curator",
+        lease_seconds=30,
+    )
+
+
+def test_suite_operation_lock_conflicts_with_active_run_resource(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.create_or_get(
+        _new_job(
+            "one",
+            resource_keys=("run:suite-one/run-one",),
+        ),
+        max_queued_jobs=10,
+    )
+    assert store.claim_next(
+        lease_owner="manager",
+        lease_seconds=30,
+        max_active_jobs=1,
+    )
+
+    assert not store.acquire_operation_locks(
+        ("suite:suite-one",),
+        owner="curator",
+        lease_seconds=30,
+    )
 
 
 def test_event_retention_prefers_lifecycle_events(tmp_path: Path) -> None:

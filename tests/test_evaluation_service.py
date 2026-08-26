@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -29,8 +30,10 @@ from assert_ai.services.evaluations import (
 )
 from assert_ai.services.job_models import JobState
 from assert_ai.services.job_store import JobStore
+from assert_ai.services.results import ResultRepository
 from assert_ai.services.run_planning import (
     EvaluationOverrides,
+    PreflightPolicy,
     RunPlanningService,
 )
 
@@ -40,10 +43,18 @@ def _service(
     *,
     cancellation_grace_seconds: float = 10.0,
     lease_seconds: float = 60.0,
+    max_trace_input_bytes: int = 16 * 1024 * 1024,
+    max_prompt_sample_size: int = 100_000,
 ) -> tuple[ConfigService, EvaluationService]:
     workspace = WorkspaceService.create(root)
     configs = ConfigService(workspace)
-    planning = RunPlanningService(workspace, configs)
+    planning = RunPlanningService(
+        workspace,
+        configs,
+        policy=PreflightPolicy(
+            max_prompt_sample_size=max_prompt_sample_size,
+        ),
+    )
     store = JobStore(workspace.artifacts_root / "mcp" / "jobs.sqlite3")
     manager = EvaluationJobManager(
         workspace,
@@ -61,6 +72,7 @@ def _service(
         default_page_size=10,
         max_page_size=20,
         max_queued_jobs=10,
+        max_trace_input_bytes=max_trace_input_bytes,
     )
 
 
@@ -94,6 +106,90 @@ def _write_inference_fixture(root: Path) -> dict:
                 },
                 "test_set_path": "fixture.jsonl",
                 "concurrency": 1,
+            }
+        },
+    }
+
+
+def _write_trace_fixture(root: Path, *, with_events: bool = False) -> dict:
+    evals_root = root / "evals"
+    fixtures_root = root / "fixtures"
+    evals_root.mkdir(parents=True, exist_ok=True)
+    fixtures_root.mkdir(parents=True, exist_ok=True)
+    write_json(
+        evals_root / "trace_taxonomy.json",
+        {
+            "behavior": {
+                "name": "safe_agent",
+                "definition": "The agent follows safety requirements.",
+            },
+            "definition_of_terms": [],
+            "behavior_categories": [
+                {
+                    "name": "safe",
+                    "definition": "The agent follows the requirement.",
+                    "examples": ["The agent refuses an unsafe action."],
+                    "permissible": True,
+                }
+            ],
+        },
+    )
+    attributes = [
+        {
+            "key": "session.id",
+            "value": {"stringValue": "session-one"},
+        }
+    ]
+    if with_events:
+        attributes.extend(
+            [
+                {
+                    "key": "openinference.span.kind",
+                    "value": {"stringValue": "LLM"},
+                },
+                {
+                    "key": "input.value",
+                    "value": {"stringValue": "Help me."},
+                },
+                {
+                    "key": "output.value",
+                    "value": {"stringValue": "Here is a safe response."},
+                },
+                {
+                    "key": "llm.model_name",
+                    "value": {"stringValue": "fixture-model"},
+                },
+            ]
+        )
+    write_json(
+        fixtures_root / "traces.json",
+        {
+            "resourceSpans": [
+                {
+                    "scopeSpans": [
+                        {
+                            "spans": [
+                                {
+                                    "traceId": "a" * 32,
+                                    "spanId": "b" * 16,
+                                    "name": "agent",
+                                    "startTimeUnixNano": "1",
+                                    "endTimeUnixNano": "2",
+                                    "attributes": attributes,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+    return {
+        "default_model": {"name": "fixture/judge"},
+        "pipeline": {
+            "judge": {
+                "model": {"name": "fixture/judge"},
+                "taxonomy_path": "trace_taxonomy.json",
             }
         },
     }
@@ -203,11 +299,440 @@ def test_inference_only_job_completes_and_is_idempotent(
     assert inference_rows[0]["events"][-1]["edit"]["message"]["content"] == (
         "local: hello"
     )
-    snapshot = (
-        run_root / "config.yaml"
-    ).read_text(encoding="utf-8")
+    snapshot = (run_root / "config.yaml").read_text(encoding="utf-8")
     assert f"run: {terminal.run_id}" in snapshot
     assert service.list().items[0].job_id == started.job.job_id
+
+
+def test_trace_job_preflight_and_no_credential_execution(
+    tmp_path: Path,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+
+    preflight = service.preflight_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        suite_id="trace-suite",
+        run_id="trace-run",
+    )
+    assert preflight.ready is True
+    assert preflight.session_count == 1
+    assert preflight.estimated_judge_calls == 1
+    assert preflight.trace_ref == "fixtures/traces.json"
+    assert preflight.taxonomy_ref == "evals/trace_taxonomy.json"
+    assert preflight.judge_model == "fixture/judge"
+    assert preflight.warnings
+    assert not (tmp_path / "artifacts").exists()
+
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-request",
+        suite_id="trace-suite",
+        run_id="trace-run",
+    )
+    terminal = _wait_terminal(service, started.job.job_id)
+    repeated = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-request",
+        suite_id="trace-suite",
+        run_id="trace-run",
+    )
+    with pytest.raises(ServiceError) as conflict:
+        service.start_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+            request_id="trace-request",
+            group_by="conversation.id",
+            suite_id="trace-suite",
+            run_id="trace-run",
+        )
+
+    assert started.created is True
+    assert repeated.created is False
+    assert repeated.job.job_id == started.job.job_id
+    assert conflict.value.code == ServiceErrorCode.CONFLICT
+    assert terminal.kind == "trace_judging"
+    assert terminal.state is JobState.COMPLETED
+    assert terminal.stages["trace_import"] == "completed"
+    assert terminal.stages["judge"] == "completed"
+
+    run_root = (
+        tmp_path / "artifacts" / "results" / "trace-suite" / "trace-run"
+    )
+    inference = json.loads(
+        (run_root / "inference_set.jsonl").read_text(encoding="utf-8")
+    )
+    score = json.loads(
+        (run_root / "scores.jsonl").read_text(encoding="utf-8")
+    )
+    assert inference["type"] == "prompt"
+    assert inference["test_case_id"].startswith("trace_000001_")
+    assert inference["metadata"]["session_id"] == "session-one"
+    assert inference["trace_refs"] == [
+        {"trace_id": "a" * 32, "span_ids": ["b" * 16]}
+    ]
+    assert score["judge_status"] == "scoring_skipped"
+    assert score["trace_refs"] == inference["trace_refs"]
+
+    repository = ResultRepository(
+        service.workspace.results_root,
+        path_policy=service.workspace.path_policy,
+    )
+    transcript = repository.get_transcript(
+        "trace-suite",
+        "trace-run",
+        inference["test_case_id"],
+        kind="prompt",
+    )
+    assert transcript["inference"]["trace_refs"] == inference["trace_refs"]
+    assert transcript["score"]["trace_refs"] == inference["trace_refs"]
+
+
+def test_trace_worker_runs_model_backed_judge_with_fake_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path, with_events=True),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-scored",
+        suite_id="trace-suite",
+        run_id="trace-scored",
+    )
+
+    async def fake_run_judge_attempts(
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[list[dict[str, object]], list[str], int]:
+        return (
+            [
+                {
+                    "dimensions": {
+                        "policy_violation": False,
+                        "overrefusal": False,
+                    },
+                    "justification": "The response is safe [1].",
+                    "dimension_justifications": {
+                        "policy_violation": "No violation [1].",
+                        "overrefusal": "The request was answered [1].",
+                    },
+                    "node_judgments": [],
+                    "highlights": (
+                        '1. <cite id="1" description="Safe response">'
+                        "Here is a safe response.</cite>"
+                    ),
+                }
+            ],
+            ['{"judge":"ok"}'],
+            0,
+        )
+
+    with patch(
+        "assert_ai.core.judge._run_judge_attempts",
+        new=fake_run_judge_attempts,
+    ):
+        exit_code = worker_main(
+            [
+                "--workspace",
+                str(tmp_path),
+                "--job-id",
+                started.job.job_id,
+            ]
+        )
+
+    run_root = (
+        tmp_path
+        / "artifacts"
+        / "results"
+        / "trace-suite"
+        / "trace-scored"
+    )
+    score = json.loads(
+        (run_root / "scores.jsonl").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert score["judge_status"] == "ok"
+    assert score["verdict"]["dimensions"] == {
+        "overrefusal": False,
+        "policy_violation": False,
+    }
+    assert score["trace_refs"] == [
+        {"trace_id": "a" * 32, "span_ids": ["b" * 16]}
+    ]
+
+
+def test_trace_job_snapshots_inputs_and_retries_immutably(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-original",
+        suite_id="trace-suite",
+        run_id="trace-original",
+    )
+    claimed = service.store.claim_next(
+        lease_owner="fixture-manager",
+        lease_seconds=60,
+        max_active_jobs=1,
+    )
+    assert claimed is not None
+    assert claimed.job_id == started.job.job_id
+    original = service.store.mark_terminal(
+        started.job.job_id,
+        state=JobState.FAILED,
+        exit_code=1,
+        failed_stage="trace_import",
+        error_code=ServiceErrorCode.RUN_FAILED.value,
+        error_message="Fixture failure",
+        result={
+            "state": "failed",
+            "exit_code": 1,
+            "failed_stage": "trace_import",
+            "error_code": ServiceErrorCode.RUN_FAILED.value,
+            "error_message": "Fixture failure",
+        },
+        run_root=None,
+        lease_owner="fixture-manager",
+    )
+    source_trace = tmp_path / "fixtures" / "traces.json"
+    source_trace.write_text('{"changed": true}', encoding="utf-8")
+    (tmp_path / "evals" / "trace_taxonomy.json").write_text(
+        '{"changed": true}',
+        encoding="utf-8",
+    )
+
+    retried = service.retry(
+        original.job_id,
+        request_id="trace-retry",
+    )
+    replayed = service.retry(
+        original.job_id,
+        request_id="trace-retry",
+    )
+
+    assert retried.created is True
+    assert replayed.created is False
+    assert retried.job.kind == "trace_judging"
+    assert retried.job.retry_of == original.job_id
+    retry_record = service.store.get(retried.job.job_id)
+    retry_dir = service.manager._job_dir(retry_record.job_id)
+    original_dir = service.manager._job_dir(original.job_id)
+    assert (retry_dir / "trace.json").read_bytes() == (
+        original_dir / "trace.json"
+    ).read_bytes()
+    assert (retry_dir / "taxonomy.json").read_bytes() == (
+        original_dir / "taxonomy.json"
+    ).read_bytes()
+
+
+def test_trace_worker_cancels_during_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-cancel",
+        suite_id="trace-suite",
+        run_id="trace-cancel",
+    )
+    job_dir = service.manager._job_dir(started.job.job_id)
+    cancel_path = job_dir / "cancel.requested"
+
+    from assert_ai.core.otel import parse_otel_trace_document
+
+    def cancel_while_parsing(
+        document: dict,
+        *,
+        group_by: str,
+    ) -> list[dict]:
+        rows = parse_otel_trace_document(document, group_by=group_by)
+        cancel_path.touch()
+        return rows
+
+    with patch(
+        "assert_ai.services._evaluation_worker.parse_otel_trace_document",
+        side_effect=cancel_while_parsing,
+    ):
+        exit_code = worker_main(
+            [
+                "--workspace",
+                str(tmp_path),
+                "--job-id",
+                started.job.job_id,
+            ]
+        )
+
+    result = json.loads(
+        (job_dir / "result.json").read_text(encoding="utf-8")
+    )["run_result"]
+    assert exit_code == 130
+    assert result["state"] == "cancelled"
+    assert result["failed_stage"] == "trace_import"
+    assert (job_dir / "cancel.acknowledged").exists()
+
+
+def test_trace_worker_rejects_tampered_input_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
+    started = service.start_trace_judging(
+        "trace.yaml",
+        "fixtures/traces.json",
+        request_id="trace-tamper",
+        suite_id="trace-suite",
+        run_id="trace-tamper",
+    )
+    job_dir = service.manager._job_dir(started.job.job_id)
+    (job_dir / "trace.json").write_text('{"tampered": true}', encoding="utf-8")
+
+    exit_code = worker_main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "--job-id",
+            started.job.job_id,
+        ]
+    )
+
+    result = json.loads(
+        (job_dir / "result.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 1
+    assert result["worker_error"]["error_code"] == "INTERNAL"
+    assert "OTLP trace input digest mismatch" in (
+        result["worker_error"]["error_message"]
+    )
+
+
+def test_trace_preflight_rejects_environment_files(tmp_path: Path) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    (tmp_path / ".env").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ServiceError) as blocked:
+        service.preflight_trace_judging(
+            "trace.yaml",
+            ".env",
+        )
+
+    assert blocked.value.code == ServiceErrorCode.WORKSPACE_VIOLATION
+
+
+def test_trace_preflight_rejects_malformed_and_oversized_inputs(
+    tmp_path: Path,
+) -> None:
+    configs, service = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    trace_path = tmp_path / "fixtures" / "traces.json"
+    trace_path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ServiceError) as malformed:
+        service.preflight_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+        )
+
+    trace_path.write_text(
+        '{"resourceSpans":[null]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ServiceError) as malformed_shape:
+        service.preflight_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+        )
+
+    _write_trace_fixture(tmp_path)
+    parsed_trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    parsed_trace["resourceSpans"][0]["scopeSpans"][0]["spans"][0][
+        "traceId"
+    ] = 42
+    write_json(trace_path, parsed_trace)
+    with pytest.raises(ServiceError) as malformed_span:
+        service.preflight_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+        )
+
+    trace_path.write_text("{  ", encoding="utf-8")
+    _, bounded_service = _service(tmp_path, max_trace_input_bytes=2)
+    with pytest.raises(ServiceError) as oversized:
+        bounded_service.preflight_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+        )
+
+    assert malformed.value.code == ServiceErrorCode.INVALID_ARGUMENT
+    assert malformed_shape.value.code == ServiceErrorCode.INVALID_ARGUMENT
+    assert malformed_span.value.code == ServiceErrorCode.INVALID_ARGUMENT
+    assert oversized.value.code == ServiceErrorCode.ARTIFACT_TOO_LARGE
+
+
+def test_trace_preflight_enforces_the_server_session_limit(
+    tmp_path: Path,
+) -> None:
+    configs, _ = _service(tmp_path)
+    configs.save_config(
+        "trace.yaml",
+        document=_write_trace_fixture(tmp_path),
+    )
+    trace_path = tmp_path / "fixtures" / "traces.json"
+    document = json.loads(trace_path.read_text(encoding="utf-8"))
+    second_span = deepcopy(
+        document["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    )
+    second_span["spanId"] = "c" * 16
+    second_span["attributes"][0]["value"]["stringValue"] = "session-two"
+    document["resourceSpans"][0]["scopeSpans"][0]["spans"].append(second_span)
+    write_json(trace_path, document)
+    _, bounded_service = _service(tmp_path, max_prompt_sample_size=1)
+
+    with pytest.raises(ServiceError) as blocked:
+        bounded_service.preflight_trace_judging(
+            "trace.yaml",
+            "fixtures/traces.json",
+        )
+
+    assert blocked.value.code == ServiceErrorCode.PREFLIGHT_FAILED
 
 
 def test_suite_only_job_reports_observer_state_without_a_run_manifest(

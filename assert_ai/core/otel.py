@@ -137,21 +137,56 @@ def parse_otel_traces(
         }
     """
     spans = _parse_otlp_json(Path(path))
+    return _inference_rows_from_spans(spans, group_by=group_by)
+
+
+def parse_otel_trace_document(
+    document: dict[str, Any],
+    *,
+    group_by: str = "session.id",
+) -> list[dict[str, Any]]:
+    """Parse an already-snapshotted OTLP JSON document into inference rows."""
+    spans = _parse_otlp_document(document)
+    return _inference_rows_from_spans(spans, group_by=group_by)
+
+
+def _inference_rows_from_spans(
+    spans: list[OTelSpan],
+    *,
+    group_by: str,
+) -> list[dict[str, Any]]:
     grouped = _group_spans(spans, group_by)
 
     rows = []
     for session_id, session_spans in grouped.items():
         session_spans.sort(key=lambda s: s.start_time_ns)
         events, aggregate = _spans_to_events(session_spans)
+        trace_spans: dict[str, list[str]] = {}
+        for span in session_spans:
+            if span.trace_id:
+                trace_spans.setdefault(span.trace_id, [])
+                if span.span_id:
+                    trace_spans[span.trace_id].append(span.span_id)
+        trace_refs = [
+            {
+                "trace_id": trace_id,
+                "span_ids": list(dict.fromkeys(span_ids)),
+            }
+            for trace_id, span_ids in sorted(trace_spans.items())
+        ]
 
         rows.append({
             "metadata": {
                 "type": "otel_import",
                 "session_id": session_id,
                 "runtime_mode": "otel_traced",
+                "trace_refs": trace_refs,
             },
             "events": events,
-            "raw": aggregate,
+            "raw": {
+                **aggregate,
+                "trace_refs": trace_refs,
+            },
         })
 
     return rows
@@ -166,24 +201,122 @@ def _parse_otlp_json(path: Path) -> list[OTelSpan]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Malformed JSON in OTLP trace file {path}: {exc}") from exc
 
+    if not isinstance(data, dict):
+        raise ValueError(f"OTLP trace file must contain a JSON object: {path}")
+    return _parse_otlp_document(data)
+
+
+def _parse_otlp_document(data: dict[str, Any]) -> list[OTelSpan]:
+    """Parse one decoded OTLP JSON document."""
     spans: list[OTelSpan] = []
-    for resource_span in data.get("resourceSpans", []):
-        for scope_span in resource_span.get("scopeSpans", []):
-            for raw in scope_span.get("spans", []):
-                attrs = _flatten_attributes(raw.get("attributes", []))
-                spans.append(OTelSpan(
-                    trace_id=raw.get("traceId", ""),
-                    span_id=raw.get("spanId", ""),
-                    parent_span_id=raw.get("parentSpanId"),
-                    name=raw.get("name", ""),
-                    kind=_classify_span_kind(attrs),
-                    start_time_ns=int(raw.get("startTimeUnixNano", 0)),
-                    end_time_ns=int(raw.get("endTimeUnixNano", 0)),
-                    attributes=attrs,
-                    status=raw.get("status", {}).get("code", "OK"),
-                    events=raw.get("events", []) or [],
-                ))
+    resource_spans = _otel_array(data.get("resourceSpans", []), "resourceSpans")
+    for resource_index, resource_span in enumerate(resource_spans):
+        resource = _otel_object(
+            resource_span,
+            f"resourceSpans[{resource_index}]",
+        )
+        scope_spans = _otel_array(
+            resource.get("scopeSpans", []),
+            f"resourceSpans[{resource_index}].scopeSpans",
+        )
+        for scope_index, scope_span in enumerate(scope_spans):
+            scope = _otel_object(
+                scope_span,
+                f"resourceSpans[{resource_index}].scopeSpans[{scope_index}]",
+            )
+            raw_spans = _otel_array(
+                scope.get("spans", []),
+                (
+                    f"resourceSpans[{resource_index}]."
+                    f"scopeSpans[{scope_index}].spans"
+                ),
+            )
+            for span_index, raw_span in enumerate(raw_spans):
+                location = (
+                    f"resourceSpans[{resource_index}]."
+                    f"scopeSpans[{scope_index}].spans[{span_index}]"
+                )
+                raw = _otel_object(raw_span, location)
+                attributes = _otel_array(
+                    raw.get("attributes") or [],
+                    f"{location}.attributes",
+                )
+                status = _otel_object(
+                    raw.get("status") or {},
+                    f"{location}.status",
+                )
+                events = _otel_array(
+                    raw.get("events") or [],
+                    f"{location}.events",
+                )
+                attrs = _flatten_attributes(attributes)
+                spans.append(
+                    OTelSpan(
+                        trace_id=_otel_string(
+                            raw.get("traceId", ""),
+                            f"{location}.traceId",
+                        ),
+                        span_id=_otel_string(
+                            raw.get("spanId", ""),
+                            f"{location}.spanId",
+                        ),
+                        parent_span_id=_otel_optional_string(
+                            raw.get("parentSpanId"),
+                            f"{location}.parentSpanId",
+                        ),
+                        name=_otel_string(
+                            raw.get("name", ""),
+                            f"{location}.name",
+                        ),
+                        kind=_classify_span_kind(attrs),
+                        start_time_ns=_otel_integer(
+                            raw.get("startTimeUnixNano", 0),
+                            f"{location}.startTimeUnixNano",
+                        ),
+                        end_time_ns=_otel_integer(
+                            raw.get("endTimeUnixNano", 0),
+                            f"{location}.endTimeUnixNano",
+                        ),
+                        attributes=attrs,
+                        status=status.get("code", "OK"),
+                        events=events,
+                    )
+                )
     return spans
+
+
+def _otel_array(value: Any, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"OTLP field {field_name} must be an array")
+    return value
+
+
+def _otel_object(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"OTLP field {field_name} must be an object")
+    return value
+
+
+def _otel_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"OTLP field {field_name} must be a string")
+    return value
+
+
+def _otel_optional_string(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _otel_string(value, field_name)
+
+
+def _otel_integer(value: Any, field_name: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    raise ValueError(
+        f"OTLP field {field_name} must be a non-negative integer"
+    )
 
 
 def _classify_span_kind(attrs: dict[str, Any]) -> str:
@@ -211,9 +344,13 @@ def _classify_span_kind(attrs: dict[str, Any]) -> str:
 def _flatten_attributes(attrs: list[dict]) -> dict[str, Any]:
     """Convert OTLP attribute array [{key, value}] to flat dict."""
     result: dict[str, Any] = {}
-    for attr in attrs:
+    for index, attr in enumerate(attrs):
+        if not isinstance(attr, dict):
+            raise ValueError(f"OTLP attribute {index} must be an object")
         key = attr.get("key", "")
         value = attr.get("value", {})
+        if not isinstance(key, str) or not isinstance(value, dict):
+            raise ValueError(f"OTLP attribute {index} has an invalid key or value")
         if "stringValue" in value:
             result[key] = value["stringValue"]
         elif "intValue" in value:
@@ -223,14 +360,26 @@ def _flatten_attributes(attrs: list[dict]) -> dict[str, Any]:
         elif "boolValue" in value:
             result[key] = value["boolValue"]
         elif "arrayValue" in value:
+            array_value = value["arrayValue"]
+            if not isinstance(array_value, dict):
+                raise ValueError(
+                    f"OTLP attribute {index} has an invalid arrayValue"
+                )
+            values = array_value.get("values", [])
+            if not isinstance(values, list):
+                raise ValueError(
+                    f"OTLP attribute {index} arrayValue.values must be an array"
+                )
             result[key] = [
-                _extract_value(v) for v in value["arrayValue"].get("values", [])
+                _extract_value(v) for v in values
             ]
     return result
 
 
 def _extract_value(value_obj: dict) -> Any:
     """Extract a scalar value from an OTLP Value object."""
+    if not isinstance(value_obj, dict):
+        raise ValueError("OTLP array attribute values must be objects")
     for key in ("stringValue", "intValue", "doubleValue", "boolValue"):
         if key in value_obj:
             return value_obj[key]
