@@ -68,7 +68,8 @@ Every eval starts from a risk, and you choose where it comes from. Clarity is re
 ASSERT needs **Python 3.11+**. If you want Clarity's discovery step, you also need **Python 3.12+** and an IDE with MCP support — VS Code + Copilot agent mode, Claude Code, or Cursor — because Clarity runs as an MCP server and can't be driven from a bare terminal.
 
 ```bash
-pip install -e ".[otel,langgraph]"   # install ASSERT
+pip install -e ".[otel]"   # install ASSERT + local trace collection
+pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env                 # add your provider key
 assert-ai --help                     # verify
 ```
@@ -174,7 +175,8 @@ The same skill ships for three assistants, plus the workflows it follows:
 
 ```bash
 python -m pip install --upgrade pip      # requires pip >= 24.1
-pip install -e ".[otel,langgraph]"       # install
+pip install -e ".[otel]"                 # install ASSERT + tracing
+pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env                     # add your provider key
 assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
 ```

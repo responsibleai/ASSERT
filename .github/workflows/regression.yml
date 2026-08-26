@@ -67,7 +67,7 @@ jobs:
         # CI install set has to include the demo's optional extras even though
         # core ASSERT doesn't need them.
         run: |
-          python -m pip install -e ".[dev,otel]"
+          python -m pip install -e ".[dev,otel,analysis,acs]"
 
       - name: Check the behavior library
         # Guards two things the reference library cannot enforce by itself:

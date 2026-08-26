@@ -20,7 +20,8 @@ bash (macOS / Linux):
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[otel]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 ```
 
@@ -32,7 +33,8 @@ PowerShell (Windows):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[otel]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 ```
 
@@ -80,7 +82,7 @@ artifacts/results/travel-planner-langgraph-v1/demo-1/
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/microsoft/ASSERT)
 
-The repo includes a minimal dev container for the LangGraph quickstart. It installs `.[otel,langgraph,dev]`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
+The repo includes a minimal dev container for the LangGraph quickstart. It installs the root development group plus `examples/travel_planner_langgraph/requirements.txt`, copies `.env.example` to `.env` if needed, and forwards Phoenix on port `6006`. After container setup, add your provider credentials to `.env` and run the same `assert-ai run` command.
 
 PowerShell (Windows) — full sequence:
 
@@ -88,7 +90,8 @@ PowerShell (Windows) — full sequence:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[otel]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 Copy-Item .env.example .env
 
 phoenix serve  # optional

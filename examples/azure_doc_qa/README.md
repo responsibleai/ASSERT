@@ -59,7 +59,8 @@ Each risk gets its own suite under `evals/`, so the two are measured independent
 
 ```bash
 # From the repo root
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[otel]"
+python -m pip install -r examples/azure_doc_qa/requirements.txt
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)

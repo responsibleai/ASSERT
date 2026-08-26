@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-# matplotlib is a base dependency of assert-ai (see pyproject.toml).
+# Install optional script dependencies from scripts/requirements.txt.
 import matplotlib
 
 matplotlib.use("Agg")

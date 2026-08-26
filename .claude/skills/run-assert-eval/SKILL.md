@@ -102,12 +102,13 @@ runs*, or *watch a live run*.
    ```
    python -m pip install "assert-ai[otel]"
    ```
-   Add route-specific extras as needed, for example `assert-ai[otel,langgraph]`
-   for LangGraph. `target.endpoint` needs `aiohttp`, which ships transitively via
-   `litellm`'s own dependency — no separate extra to install. Use
-   `pip install -e ".[otel,langgraph]"` **only** when the working directory is a
-   clone of the ASSERT repo itself; inside a customer repo it installs the wrong
-   package.
+  The target project owns its agent framework dependencies. For repository
+  examples, install the adjacent `requirements.txt`; for a customer project,
+  use that project's existing dependency manifest. `target.endpoint` needs
+  `aiohttp`, which ships transitively via `litellm`'s own dependency — no
+  separate extra to install. Use `pip install -e ".[otel]"` **only** when the
+  working directory is a clone of the ASSERT repo itself; inside a customer
+  repo it installs the wrong package.
 
 2. **Clarity MCP server available** (needed only for Path A): the `clarity-agent`
    MCP tools (`run_clarity`, `write_protocol_document`, `record_failure`,

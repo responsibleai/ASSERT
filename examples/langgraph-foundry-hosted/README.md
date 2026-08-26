@@ -68,8 +68,8 @@ langgraph-foundry-hosted/
 - **Model deployment** in Foundry (e.g. `gpt-5.4`)
 - **Azure CLI** signed in: `az login`
 - **Azure Developer CLI** (`azd`) for deployment
-- **`assert-ai`** installed (from the repo root: `pip install -e ".[otel,langgraph]"`)
-  to run the evaluation
+- **`assert-ai`** installed from the repo root with `pip install -e ".[otel]"`;
+  this example's framework dependencies install from its `requirements.txt`
 
 ## Environment variables
 

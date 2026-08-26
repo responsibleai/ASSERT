@@ -158,7 +158,8 @@ def embed_texts_hf(model: str, texts: List[str]) -> np.ndarray:
         return np_mod.zeros((0, 1))
     if SentenceTransformer is None:
         raise RuntimeError(
-            "sentence_transformers not available; install it or use --embed-backend openai"
+            "sentence_transformers not available; install assert-ai[embeddings] "
+            "or use --embed-backend openai"
         )
     st_model = SentenceTransformer(model)
     vecs = st_model.encode(

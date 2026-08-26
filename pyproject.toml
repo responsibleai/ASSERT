@@ -32,7 +32,6 @@ classifiers = [
 dependencies = [
   "click>=8.0",
   "litellm>=1.84.1,<2",
-  "matplotlib>=3.10.8",
   "opentelemetry-api>=1.39.0",
   "opentelemetry-sdk>=1.39.0",
   "pydantic>=2.0",
@@ -51,28 +50,13 @@ otel = [
   "arize-phoenix-otel>=0.15.0",
   "openinference-instrumentation-langchain>=0.1.62",
 ]
-langgraph = [
-  "langchain-core>=1.6.0",
-  "langchain-openai>=1.1.14",
-  "langgraph>=1.1.8",
-]
-dspy = [
-  "dspy>=3.0.4,<4",
-]
 analysis = [
-  "markdown-it-py>=3.0.0",
   "numpy>=2.0.0",
   "openai>=1.30.0",
-  "openpyxl>=3.1.5",
   "pandas>=2.2.0",
-  "requests>=2.33.0",
-  "scikit-learn>=1.5.0",
-  "seaborn>=0.13.0",
-  "sentence-transformers>=3.0.0",
 ]
-regression = [
-  "scipy>=1.11.0",
-  "numpy>=2.0.0",
+embeddings = [
+  "sentence-transformers>=3.0.0",
 ]
 # Optional Entra ID / Managed Identity auth for Azure OpenAI calls.
 # Lets users on `az login`, system-assigned MI, or user-assigned MI skip
@@ -89,29 +73,8 @@ acs = [
   "acs-generator>=0.3.1b0",
   "agent-control-specification>=0.3.1b0",
 ]
-examples = [
-  "autogen-agentchat>=0.7.5",
-  "autogen-ext>=0.7.5",
-  "dspy>=3.0.4,<4",
-  "haystack-ai>=2.28.0",
-  "instructor>=1.15.1",
-  "langchain-mcp-adapters>=0.2.2",
-  "llama-index>=0.14.21",
-  "llama-index-core>=0.14.21",
-  "llama-index-llms-openai>=0.7.5",
-  "openai-agents>=0.14.5",
-  "pydantic-ai>=0.8.1",
-  "smolagents>=1.22.0",
-  # Framework-specific OpenInference instrumentors used by the
-  # examples/phoenix_auto_trace/* demos. `assert_ai.auto_trace.enable()`
-  # auto-loads every installed `openinference-instrumentation-*` package.
-  "openinference-instrumentation-openai>=0.1.45",
-  "openinference-instrumentation-litellm>=0.1.30",
-  "openinference-instrumentation-dspy>=0.1.41",
-  "openinference-instrumentation-crewai>=1.1.14",
-]
 all = [
-  "assert-ai[otel,langgraph,analysis,examples,regression,azure-aad,acs]",
+  "assert-ai[otel,analysis,embeddings,azure-aad,acs]",
 ]
 dev = [
   "pytest>=9.0.3",
@@ -144,7 +107,8 @@ include-package-data = true
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "assert-ai[otel,langgraph,examples]",
+  "pytest-timeout>=2.2.0",
+  "assert-ai[otel,analysis,acs]",
 ]
 
 [tool.setuptools.packages.find]

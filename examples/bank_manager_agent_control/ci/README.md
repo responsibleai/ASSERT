@@ -11,7 +11,8 @@ fork of ASSERT.
 There, the banking agent simply does:
 
 ```bash
-pip install "assert-ai[acs,langgraph,otel,examples]"
+pip install "assert-ai[acs,otel]"
+pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
 and adds an ASSERT safety-regression gate to CI. The gate replays a committed ASSERT run,

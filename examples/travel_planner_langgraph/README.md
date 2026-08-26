@@ -109,7 +109,8 @@ From the repo root:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[otel,langgraph]"
+python -m pip install -e ".[otel]"
+python -m pip install -r examples/travel_planner_langgraph/requirements.txt
 cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 phoenix serve  # optional trace UI

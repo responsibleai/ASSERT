@@ -93,6 +93,7 @@ jobs:
         run: |
           pip install uv
           uv pip install --system -e ".[all,dev]"
+          uv pip install --system -r examples/travel_planner_langgraph/requirements.txt
 
       - name: Start Phoenix collector
         # Run a real Phoenix server so localhost:4317 (OTLP gRPC) accepts the
