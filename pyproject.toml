@@ -52,14 +52,12 @@ otel = [
   "openinference-instrumentation-langchain>=0.1.62",
 ]
 langgraph = [
-  "langchain-core>=1.3.3",
+  "langchain-core>=1.6.0",
   "langchain-openai>=1.1.14",
   "langgraph>=1.1.8",
 ]
 dspy = [
-  # DSPy did not publish a 2.7 release. Keep the latest compatible 2.6 line
-  # until the aggregate CrewAI + Phoenix dependency set supports DSPy 3.x.
-  "dspy>=2.6.13,<2.7",
+  "dspy>=3.0.4,<4",
 ]
 analysis = [
   "markdown-it-py>=3.0.0",
@@ -94,8 +92,7 @@ acs = [
 examples = [
   "autogen-agentchat>=0.7.5",
   "autogen-ext>=0.7.5",
-  "crewai[azure-ai-inference]>=1.6.1",
-  "dspy>=2.6.13,<2.7",
+  "dspy>=3.0.4,<4",
   "haystack-ai>=2.28.0",
   "instructor>=1.15.1",
   "langchain-mcp-adapters>=0.2.2",
