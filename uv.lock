@@ -454,7 +454,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
+    { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0,<0.4" },
     { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
     { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0,<19.18.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },

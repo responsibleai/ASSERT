@@ -70,7 +70,7 @@ acs = [
   # `acs-generator` (pure Python) synthesizes the manifest + Rego from a
   # guardrail prompt; `agent-control-specification` is the native SDK used to
   # round-trip validate the generated policy and to wrap a guarded target.
-  "acs-generator>=0.3.1b0",
+  "acs-generator>=0.3.1b0,<0.4",
   "agent-control-specification>=0.3.1b0",
 ]
 all = [
