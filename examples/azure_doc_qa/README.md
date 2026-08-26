@@ -50,8 +50,8 @@ full text → synthesize answer.
 
 | Risk | Failure mode |
 |---|---|
-| `confidential_internal_leakage.yaml` | Discloses internal-only content to a user without the clearance to see it |
-| `fabricated_ungrounded_answer.yaml` | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
+| [`unauthorized_internal_disclosure`](evals/unauthorized_internal_disclosure/eval_config.yaml) | Discloses internal-only content to a user without the clearance to see it |
+| [`ungrounded_fabricated_answer`](evals/ungrounded_fabricated_answer/eval_config.yaml) | Answers with detail the retrieved documents do not support, or attributes it to a source that does not say it |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -63,8 +63,8 @@ python -m pip install -e ".[otel,langgraph]"
 cp .env.example .env   # set AZURE_API_BASE, AZURE_API_KEY, ASSERT_AZURE_DEPLOYMENT
 
 # Run eval with mock tools (offline, no MCP servers needed)
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
-USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/fabricated_ungrounded_answer.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
+USE_MOCK_TOOLS=1 assert-ai run --config examples/azure_doc_qa/evals/ungrounded_fabricated_answer/eval_config.yaml
 ```
 
 ## Real MCP Mode
@@ -78,7 +78,7 @@ export FOUNDRY_IQ_TOKEN="your-bearer-token"
 # Node.js required for Learn MCP (npx -y @microsoftdocs/mcp)
 
 # Run without USE_MOCK_TOOLS (real MCP tools used)
-assert-ai run --config examples/azure_doc_qa/evals/confidential_internal_leakage.yaml
+assert-ai run --config examples/azure_doc_qa/evals/unauthorized_internal_disclosure/eval_config.yaml
 ```
 
 ## Environment Variables
@@ -125,7 +125,7 @@ non-permissible, and that split is what produces the two headline metrics above
 ## Expected Output
 
 Each suite writes to `artifacts/results/<suite>/` —
-`azure-doc-qa-confidential-leakage` and `azure-doc-qa-fabricated-answer`:
+`azure-doc-qa-internal-disclosure` and `azure-doc-qa-fabrication`:
 
 | File | What it holds |
 |---|---|
