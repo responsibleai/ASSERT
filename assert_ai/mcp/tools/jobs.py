@@ -34,6 +34,12 @@ _START_ANNOTATIONS = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=True,
 )
+_CANCEL_ANNOTATIONS = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +130,50 @@ def register_job_execute_tools(
                 config_ref,
                 request_id=request_id,
                 overrides=overrides,
+            ),
+            workspace=services.workspace,
+        )
+        return JobStartResult.model_validate(
+            sanitize_for_mcp(started, workspace=services.workspace)
+        )
+
+    @server.tool(
+        title="Cancel an ASSERT evaluation",
+        annotations=_CANCEL_ANNOTATIONS,
+        structured_output=True,
+    )
+    @adapt_tool_errors(
+        services.workspace,
+        max_response_bytes=services.max_response_bytes,
+    )
+    def cancel_job(job_id: str) -> JobDetail:
+        """Request cooperative cancellation with process-tree escalation."""
+        job = invoke_tool(
+            lambda: services.evaluations.cancel(job_id),
+            workspace=services.workspace,
+        )
+        return JobDetail.model_validate(
+            sanitize_for_mcp(job, workspace=services.workspace)
+        )
+
+    @server.tool(
+        title="Retry an ASSERT evaluation",
+        annotations=_START_ANNOTATIONS,
+        structured_output=True,
+    )
+    @adapt_tool_errors(
+        services.workspace,
+        max_response_bytes=services.max_response_bytes,
+    )
+    def retry_job(
+        job_id: str,
+        request_id: str,
+    ) -> JobStartResult:
+        """Retry a terminal job from its earliest unsafe stage."""
+        started = invoke_tool(
+            lambda: services.evaluations.retry(
+                job_id,
+                request_id=request_id,
             ),
             workspace=services.workspace,
         )

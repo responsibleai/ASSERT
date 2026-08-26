@@ -25,8 +25,12 @@ from assert_ai.services.job_models import (
 )
 
 _BUSY_TIMEOUT_MS = 5_000
-_JOB_STORE_SCHEMA_VERSION = 1
-_ACTIVE_STATES = (JobState.STARTING.value, JobState.RUNNING.value)
+_JOB_STORE_SCHEMA_VERSION = 2
+_ACTIVE_STATES = (
+    JobState.STARTING.value,
+    JobState.RUNNING.value,
+    JobState.CANCELLING.value,
+)
 _MAX_EVENTS_PER_JOB = 1000
 
 _SCHEMA = """
@@ -35,6 +39,7 @@ CREATE TABLE IF NOT EXISTS jobs(
     idempotency_key TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL,
     kind TEXT NOT NULL,
+    retry_of TEXT,
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
     started_at TEXT,
@@ -151,17 +156,19 @@ class JobStore:
                 connection.execute(
                     """
                     INSERT INTO jobs(
-                        job_id, idempotency_key, request_hash, kind, state,
+                        job_id, idempotency_key, request_hash, kind, retry_of,
+                        state,
                         created_at, suite_id, run_id, config_ref,
                         config_sha256, snapshot_path, request_path,
                         resource_keys_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         new_job.job_id,
                         new_job.idempotency_key,
                         new_job.request_hash,
                         new_job.kind,
+                        new_job.retry_of,
                         JobState.QUEUED.value,
                         created_at,
                         new_job.suite_id,
@@ -202,6 +209,7 @@ class JobStore:
     def get(self, job_id: str) -> JobRecord:
         if not self.exists:
             raise ServiceError(ServiceErrorCode.NOT_FOUND, "Job not found")
+        self.initialize()
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM jobs WHERE job_id = ?",
@@ -217,6 +225,7 @@ class JobStore:
     ) -> JobRecord | None:
         if not self.exists:
             return None
+        self.initialize()
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM jobs WHERE idempotency_key = ?",
@@ -235,6 +244,7 @@ class JobStore:
             raise ValueError("limit must be positive")
         if not self.exists:
             return ()
+        self.initialize()
         conditions: list[str] = []
         values: list[Any] = []
         if states:
@@ -273,12 +283,13 @@ class JobStore:
             raise ValueError("max_active_jobs must be positive")
         if not self.exists:
             return None
+        self.initialize()
         now = _now()
         expires_at = _after(lease_seconds)
         with self._transaction() as connection:
             active = int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM jobs WHERE state IN (?, ?)",
+                    "SELECT COUNT(*) FROM jobs WHERE state IN (?, ?, ?)",
                     _ACTIVE_STATES,
                 ).fetchone()[0]
             )
@@ -355,9 +366,25 @@ class JobStore:
         process_create_time: float,
         lease_seconds: float,
     ) -> JobRecord:
+        self.initialize()
         now = _now()
         expires_at = _after(lease_seconds)
         with self._transaction() as connection:
+            current = self._get_in_transaction(connection, job_id)
+            if (
+                current.lease_owner != lease_owner
+                or current.state
+                not in {JobState.STARTING, JobState.CANCELLING}
+            ):
+                raise ServiceError(
+                    ServiceErrorCode.CONFLICT,
+                    "Job can no longer attach its evaluation worker",
+                )
+            next_state = (
+                JobState.CANCELLING
+                if current.state is JobState.CANCELLING
+                else JobState.RUNNING
+            )
             changed = connection.execute(
                 """
                 UPDATE jobs
@@ -367,13 +394,13 @@ class JobStore:
                 WHERE job_id = ? AND state = ? AND lease_owner = ?
                 """,
                 (
-                    JobState.RUNNING.value,
+                    next_state.value,
                     now,
                     pid,
                     process_create_time,
                     expires_at,
                     job_id,
-                    JobState.STARTING.value,
+                    current.state.value,
                     lease_owner,
                 ),
             ).rowcount
@@ -393,8 +420,12 @@ class JobStore:
             self._append_event(
                 connection,
                 job_id,
-                "running",
-                {"state": JobState.RUNNING.value, "pid": pid},
+                (
+                    "running"
+                    if next_state is JobState.RUNNING
+                    else "cancelling_worker_started"
+                ),
+                {"state": next_state.value, "pid": pid},
                 timestamp=now,
             )
             return self._get_in_transaction(connection, job_id)
@@ -406,6 +437,7 @@ class JobStore:
         lease_owner: str,
         lease_seconds: float,
     ) -> bool:
+        self.initialize()
         expires_at = _after(lease_seconds)
         with self._transaction() as connection:
             changed = connection.execute(
@@ -413,7 +445,7 @@ class JobStore:
                 UPDATE jobs
                 SET lease_expires_at = ?
                 WHERE job_id = ? AND lease_owner = ?
-                    AND state IN (?, ?)
+                    AND state IN (?, ?, ?)
                 """,
                 (
                     expires_at,
@@ -421,6 +453,7 @@ class JobStore:
                     lease_owner,
                     JobState.STARTING.value,
                     JobState.RUNNING.value,
+                    JobState.CANCELLING.value,
                 ),
             ).rowcount
             if changed != 1:
@@ -434,6 +467,157 @@ class JobStore:
                 (expires_at, job_id),
             )
             return True
+
+    def request_cancel(self, job_id: str) -> JobRecord:
+        """Persist an idempotent cancellation request."""
+        self.initialize()
+        now = _now()
+        with self._transaction() as connection:
+            current = self._get_in_transaction(connection, job_id)
+            if current.state is JobState.CANCELLED:
+                return current
+            if current.state in TERMINAL_JOB_STATES:
+                raise ServiceError(
+                    ServiceErrorCode.JOB_NOT_CANCELLABLE,
+                    f"Job is already {current.state.value}",
+                )
+            if current.state is JobState.CANCELLING:
+                return current
+            if current.state is JobState.QUEUED:
+                result = {
+                    "state": JobState.CANCELLED.value,
+                    "exit_code": 130,
+                    "failed_stage": None,
+                    "error_code": None,
+                    "error_message": None,
+                }
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET state = ?, cancel_requested_at = ?, ended_at = ?,
+                        exit_code = ?, result_json = ?,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        revision = revision + 1
+                    WHERE job_id = ? AND state = ?
+                    """,
+                    (
+                        JobState.CANCELLED.value,
+                        now,
+                        now,
+                        130,
+                        _json(result),
+                        job_id,
+                        JobState.QUEUED.value,
+                    ),
+                )
+                self._append_event(
+                    connection,
+                    job_id,
+                    "cancelled",
+                    {
+                        "state": JobState.CANCELLED.value,
+                        "exit_code": 130,
+                    },
+                    timestamp=now,
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET state = ?, cancel_requested_at = ?,
+                        revision = revision + 1
+                    WHERE job_id = ? AND state IN (?, ?)
+                    """,
+                    (
+                        JobState.CANCELLING.value,
+                        now,
+                        job_id,
+                        JobState.STARTING.value,
+                        JobState.RUNNING.value,
+                    ),
+                )
+                self._append_event(
+                    connection,
+                    job_id,
+                    "cancel_requested",
+                    {"state": JobState.CANCELLING.value},
+                    timestamp=now,
+                )
+            return self._get_in_transaction(connection, job_id)
+
+    def adopt_lease(
+        self,
+        job_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: float,
+    ) -> JobRecord | None:
+        """Claim an expired active-job lease during startup recovery."""
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        self.initialize()
+        now = _now()
+        expires_at = _after(lease_seconds)
+        with self._transaction() as connection:
+            changed = connection.execute(
+                """
+                UPDATE jobs
+                SET lease_owner = ?, lease_expires_at = ?,
+                    revision = revision + 1
+                WHERE job_id = ?
+                    AND state IN (?, ?, ?)
+                    AND (
+                        lease_expires_at IS NULL
+                        OR lease_expires_at <= ?
+                        OR lease_owner = ?
+                    )
+                """,
+                (
+                    lease_owner,
+                    expires_at,
+                    job_id,
+                    JobState.STARTING.value,
+                    JobState.RUNNING.value,
+                    JobState.CANCELLING.value,
+                    now,
+                    lease_owner,
+                ),
+            ).rowcount
+            if changed != 1:
+                return None
+            connection.execute(
+                """
+                UPDATE resource_locks
+                SET lease_expires_at = ?
+                WHERE job_id = ?
+                """,
+                (expires_at, job_id),
+            )
+            self._append_event(
+                connection,
+                job_id,
+                "manager_recovered",
+                {"state": self._get_in_transaction(connection, job_id).state.value},
+                timestamp=now,
+            )
+            return self._get_in_transaction(connection, job_id)
+
+    def list_nonterminal_records(self) -> tuple[JobRecord, ...]:
+        """Return every queued or active job for deterministic recovery."""
+        if not self.exists:
+            return ()
+        self.initialize()
+        placeholders = ", ".join("?" for _ in TERMINAL_JOB_STATES)
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM jobs
+                WHERE state NOT IN ({placeholders})
+                ORDER BY created_at, job_id
+                """,
+                tuple(state.value for state in TERMINAL_JOB_STATES),
+            ).fetchall()
+        return tuple(_record(row) for row in rows)
 
     def mark_terminal(
         self,
@@ -450,6 +634,7 @@ class JobStore:
     ) -> JobRecord:
         if state not in TERMINAL_JOB_STATES:
             raise ValueError("terminal state required")
+        self.initialize()
         now = _now()
         with self._transaction() as connection:
             current = self._get_in_transaction(connection, job_id)
@@ -514,6 +699,7 @@ class JobStore:
         event_type: str,
         payload: dict[str, Any],
     ) -> int:
+        self.initialize()
         with self._transaction() as connection:
             self._get_in_transaction(connection, job_id)
             return self._append_event(
@@ -585,12 +771,28 @@ class JobStore:
                         )
                         if version not in {
                             0,
+                            1,
                             _JOB_STORE_SCHEMA_VERSION,
                         }:
                             raise ServiceError(
                                 ServiceErrorCode.INTERNAL,
                                 "Unsupported job store schema version",
                             )
+                        columns = {
+                            str(row["name"])
+                            for row in connection.execute(
+                                "PRAGMA table_info(jobs)"
+                            ).fetchall()
+                        }
+                        if "retry_of" not in columns:
+                            try:
+                                connection.execute(
+                                    "ALTER TABLE jobs "
+                                    "ADD COLUMN retry_of TEXT"
+                                )
+                            except sqlite3.OperationalError as exc:
+                                if "duplicate column" not in str(exc).lower():
+                                    raise
                         connection.execute(
                             "PRAGMA user_version = "
                             f"{_JOB_STORE_SCHEMA_VERSION}"
@@ -707,15 +909,47 @@ class JobStore:
                 _json(payload),
             ),
         )
-        cutoff = sequence - _MAX_EVENTS_PER_JOB
-        if cutoff > 0:
+        count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        )
+        excess = count - _MAX_EVENTS_PER_JOB
+        if excess > 0:
             connection.execute(
                 """
                 DELETE FROM job_events
-                WHERE job_id = ? AND sequence <= ?
+                WHERE job_id = ? AND sequence IN (
+                    SELECT sequence FROM job_events
+                    WHERE job_id = ?
+                        AND event_type IN ('heartbeat', 'stage_progress')
+                    ORDER BY sequence
+                    LIMIT ?
+                )
                 """,
-                (job_id, cutoff),
+                (job_id, job_id, excess),
             )
+            remaining = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()[0]
+            )
+            overflow = remaining - _MAX_EVENTS_PER_JOB
+            if overflow > 0:
+                connection.execute(
+                    """
+                    DELETE FROM job_events
+                    WHERE job_id = ? AND sequence IN (
+                        SELECT sequence FROM job_events
+                        WHERE job_id = ?
+                        ORDER BY sequence
+                        LIMIT ?
+                    )
+                    """,
+                    (job_id, job_id, overflow),
+                )
         return sequence
 
 
@@ -725,6 +959,7 @@ def _record(row: sqlite3.Row) -> JobRecord:
         idempotency_key=str(row["idempotency_key"]),
         request_hash=str(row["request_hash"]),
         kind=str(row["kind"]),
+        retry_of=_optional_str(row["retry_of"]),
         state=JobState(str(row["state"])),
         created_at=str(row["created_at"]),
         started_at=_optional_str(row["started_at"]),

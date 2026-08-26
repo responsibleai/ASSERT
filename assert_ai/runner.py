@@ -48,6 +48,17 @@ from assert_ai.core.model_client import (
     UsageAccumulator,
     track_usage,
 )
+from assert_ai.core.run_control import (
+    PipelineFinished,
+    PipelineStarted,
+    RunCancelled,
+    RunControl,
+    RunObserver,
+    StageFinished,
+    StagePlanned,
+    StageProgress,
+    StageStarted,
+)
 from assert_ai.core.runtime_safety import (
     ManifestHeartbeat,
     PipelineWatchdog,
@@ -68,6 +79,7 @@ if TYPE_CHECKING:
     from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
+_OBSERVER_PROGRESS_INTERVAL_SECONDS = 0.5
 
 
 def _set_nested(raw: dict[str, Any], path: list[str], value: Any) -> None:
@@ -699,6 +711,8 @@ def run_pipeline(
     overrides: list[str] | None = None,
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
 ) -> int:
     """Execute configured stages and return the legacy process exit code."""
     return run_pipeline_result(
@@ -708,6 +722,8 @@ def run_pipeline(
         overrides=overrides,
         concurrency=concurrency,
         path_policy=path_policy,
+        control=control,
+        observer=observer,
     ).exit_code
 
 
@@ -719,6 +735,8 @@ def run_pipeline_result(
     overrides: list[str] | None = None,
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
 ) -> RunResult:
     """Execute configured stages and return a structured terminal outcome."""
     try:
@@ -729,7 +747,25 @@ def run_pipeline_result(
             overrides=overrides,
             concurrency=concurrency,
             path_policy=path_policy,
+            control=control,
+            observer=observer,
         )
+    except RunCancelled as exc:
+        result = RunResult(
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=exc.stage,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+            ),
+        )
+        return result
     except Exception:  # noqa: BLE001
         log.error("[runner] Unexpected pipeline setup error", exc_info=True)
         return RunResult(
@@ -748,6 +784,8 @@ def run_pipeline_document_result(
     strict: bool = False,
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
 ) -> RunResult:
     """Execute an immutable config document using its original path as a base."""
     try:
@@ -758,7 +796,25 @@ def run_pipeline_document_result(
             concurrency=concurrency,
             path_policy=path_policy,
             config_document=document,
+            control=control,
+            observer=observer,
         )
+    except RunCancelled as exc:
+        result = RunResult(
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=exc.stage,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+            ),
+        )
+        return result
     except Exception:  # noqa: BLE001
         log.error("[runner] Unexpected pipeline setup error", exc_info=True)
         return RunResult(
@@ -778,6 +834,8 @@ def _run_pipeline_result(
     concurrency: int | None = None,
     path_policy: RuntimePathPolicy | None = None,
     config_document: dict[str, Any] | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
 ) -> RunResult:
     """Execute configured stages.
 
@@ -822,6 +880,17 @@ def _run_pipeline_result(
             error_code="CONFIG_INVALID",
             error_message=_result_error_message(str(exc), path_policy=path_policy),
         )
+
+    ctx["_run_control"] = control
+    _notify_observer(
+        observer,
+        "pipeline_started",
+        PipelineStarted(
+            suite_id=ctx.get("suite_id"),
+            run_id=ctx.get("run_id"),
+            stages=tuple(name for name, _ in ctx["stages"]),
+        ),
+    )
 
     # CLI --concurrency wins over the YAML-resolved value so a single run can be
     # widened or narrowed without editing the config. We mutate the live
@@ -879,10 +948,18 @@ def _run_pipeline_result(
 
     stages_to_run: list[tuple[str, Any, dict[str, Any]]] = []
     for stage_name, raw_cfg in ctx["stages"]:
-        if not raw_cfg.get("enabled", True):
-            continue
-
         module = STAGES[stage_name]
+        if not raw_cfg.get("enabled", True):
+            _notify_observer(
+                observer,
+                "stage_planned",
+                StagePlanned(
+                    name=stage_name,
+                    scope=module.SCOPE,
+                    action="disabled",
+                ),
+            )
+            continue
 
         if module.SCOPE == "suite":
             if cache_supported and is_cacheable_stage(stage_name):
@@ -904,6 +981,15 @@ def _run_pipeline_result(
                         f"[{stage_name}] Reused artifact {plan.version} "
                         f"(input hashes match, use --force-stage {stage_name} to regenerate)"
                     )
+                    _notify_observer(
+                        observer,
+                        "stage_planned",
+                        StagePlanned(
+                            name=stage_name,
+                            scope=module.SCOPE,
+                            action="reused",
+                        ),
+                    )
                     continue
                 # Force cacheable stages to write into their versioned artifact
                 # directory regardless of any save_dir/save_path the user set
@@ -921,8 +1007,26 @@ def _run_pipeline_result(
                     log.info(
                         f"[{stage_name}] Skipped (output exists, use --force-stage {stage_name} to regenerate)"
                     )
+                    _notify_observer(
+                        observer,
+                        "stage_planned",
+                        StagePlanned(
+                            name=stage_name,
+                            scope=module.SCOPE,
+                            action="skipped",
+                        ),
+                    )
                     continue
 
+        _notify_observer(
+            observer,
+            "stage_planned",
+            StagePlanned(
+                name=stage_name,
+                scope=module.SCOPE,
+                action="pending",
+            ),
+        )
         stages_to_run.append((stage_name, module, raw_cfg))
 
     run_root = Path(ctx["run_root"]) if ctx.get("run_root") else None
@@ -1005,10 +1109,12 @@ def _run_pipeline_result(
             check_interval_s=60.0,
         )
         heartbeat.attach_watchdog(watchdog)
-        ctx["_heartbeat"] = heartbeat
         ctx["_watchdog"] = watchdog
         heartbeat.start()
         watchdog.start()
+    progress = _RunProgress(heartbeat=heartbeat, observer=observer)
+    if heartbeat is not None or observer is not None:
+        ctx["_heartbeat"] = progress
 
     try:
         return _run_stages_inner(
@@ -1023,6 +1129,9 @@ def _run_pipeline_result(
             stage_usage=stage_usage,
             heartbeat=heartbeat,
             watchdog=watchdog,
+            control=control,
+            observer=observer,
+            progress=progress,
         )
     finally:
         if heartbeat is not None:
@@ -1044,12 +1153,16 @@ def _run_stages_inner(
     stage_usage: dict[str, dict[str, Any]],
     heartbeat: ManifestHeartbeat | None,
     watchdog: PipelineWatchdog | None,
+    control: RunControl | None,
+    observer: RunObserver | None,
+    progress: "_RunProgress",
 ) -> RunResult:
     """Stage execution loop. Extracted so the outer function can manage
     heartbeat/watchdog lifecycle in a single try/finally."""
     failed_stage: str | None = None
     failed_error_code: str | None = None
     failed_error_message: str | None = None
+    cancelled = False
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -1069,6 +1182,11 @@ def _run_stages_inner(
         _print_stage_start(stage_name, ctx, raw_cfg)
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
+        _notify_observer(
+            observer,
+            "stage_started",
+            StageStarted(name=stage_name, scope=module.SCOPE),
+        )
         # Tick the watchdog so it doesn't fire mid-stage on the previous
         # stage's idle clock, and reset the heartbeat's progress payload
         # so a stage that doesn't report progress (e.g. systematize, test_set)
@@ -1076,9 +1194,8 @@ def _run_stages_inner(
         # in the manifest.
         if watchdog is not None:
             watchdog.tick()
-        if heartbeat is not None:
-            heartbeat.clear_progress()
-            heartbeat.set_progress(stage=stage_name)
+        progress.clear_progress()
+        progress.set_progress(stage=stage_name)
         # Pass the per-stage "was this forced" flag through ctx so stages
         # like inference/judge can distinguish a real cache-mismatch warning
         # from a redundant one (the user already opted into discarding via
@@ -1087,6 +1204,8 @@ def _run_stages_inner(
         ctx["_stage_forced"] = stage_name in requested_force_stages
         usage_acc: UsageAccumulator | None = None
         try:
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
             with track_usage() as usage_acc:
                 # run_stage_coro replaces asyncio.run with bounded teardown:
                 # if the stage's event loop can't shut down its default
@@ -1100,9 +1219,13 @@ def _run_stages_inner(
                     module.run(ctx, raw_cfg),
                     cleanup_timeout_s=300.0,
                 ) or {}
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
             stage_summary = (stage_result or {}).get("_summary")
             if isinstance(stage_summary, dict):
                 ctx["_stage_summaries"][stage_name] = stage_summary
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
             _refresh_stage_indexes(ctx, stage_name, stage_result)
             stage_errored_count = int(
                 (stage_summary or {}).get("errored_count", 0) or 0
@@ -1133,8 +1256,15 @@ def _run_stages_inner(
                     )
                     ctx["_suite_summary_blocked"] = True
                 else:
+                    if control is not None:
+                        control.raise_if_cancelled(stage=stage_name)
                     finalize_artifact_plan(ctx, artifact_plans[stage_name])
             ok = True
+        except RunCancelled:
+            ok = False
+            cancelled = True
+            stage_error_code = None
+            stage_error_message = None
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
             # Classified LLM errors already carry a clean, actionable message.
             # Print just that message; suppress the multi-screen litellm/httpx
@@ -1184,12 +1314,19 @@ def _run_stages_inner(
         # that owned it.
         if watchdog is not None:
             watchdog.tick()
-        if heartbeat is not None:
-            heartbeat.clear_progress()
+        progress.clear_progress()
 
         if manifest is not None and module.SCOPE == "run":
-            manifest.stages[stage_name] = "completed" if ok else "failed"
-            manifest.status = "running" if ok else "failed"
+            manifest.stages[stage_name] = (
+                "completed"
+                if ok
+                else ("cancelled" if cancelled else "failed")
+            )
+            manifest.status = (
+                "running"
+                if ok
+                else ("cancelled" if cancelled else "failed")
+            )
             existing_timing = manifest.stage_timings.get(stage_name) or {}
             existing_timing["ended_at"] = datetime.now(timezone.utc).isoformat()
             existing_timing["duration_secs"] = round(elapsed, 3)
@@ -1207,6 +1344,26 @@ def _run_stages_inner(
         if ok and module.SCOPE == "suite":
             _write_suite_metadata(ctx)
             _refresh_suite_summary(ctx, rebuild_indexes=True)
+
+        _notify_observer(
+            observer,
+            "stage_finished",
+            StageFinished(
+                name=stage_name,
+                scope=module.SCOPE,
+                state=(
+                    "completed"
+                    if ok
+                    else ("cancelled" if cancelled else "failed")
+                ),
+                duration_seconds=round(elapsed, 3),
+                summary=(
+                    dict(stage_result.get("_summary") or {})
+                    if isinstance(stage_result, dict)
+                    else {}
+                ),
+            ),
+        )
 
         if not ok:
             failed_stage = stage_name
@@ -1235,7 +1392,9 @@ def _run_stages_inner(
         except Exception:  # noqa: BLE001
             log.debug("Failed to write metrics.json", exc_info=True)
 
-    if failed_stage is None:
+    if cancelled:
+        log.info(f"Pipeline cancelled ({total_elapsed:.1f}s)")
+    elif failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
             _log_run_headline(run_root)
@@ -1259,7 +1418,11 @@ def _run_stages_inner(
 
     if manifest is not None:
         manifest.ended_at = datetime.now(timezone.utc).isoformat()
-        manifest.status = "completed" if failed_stage is None else "failed"
+        manifest.status = (
+            "cancelled"
+            if cancelled
+            else ("completed" if failed_stage is None else "failed")
+        )
         _record_run_artifacts(manifest, ctx, run_root)
         _write_active_manifest(manifest, run_root, heartbeat)
         _refresh_run_summary(
@@ -1267,24 +1430,128 @@ def _run_stages_inner(
             manifest,
             stage_usage=stage_usage,
             elapsed_s=total_elapsed,
-            rebuild_indexes=failed_stage is None,
+            rebuild_indexes=failed_stage is None and not cancelled,
         )
-    _refresh_suite_summary(ctx, rebuild_indexes=failed_stage is None)
+    _refresh_suite_summary(
+        ctx,
+        rebuild_indexes=failed_stage is None and not cancelled,
+    )
 
-    if failed_stage is None:
-        return _run_result_from_context(
+    if cancelled:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=failed_stage,
+        )
+    elif failed_stage is None:
+        result = _run_result_from_context(
             ctx,
             state=RunState.COMPLETED,
             exit_code=0,
         )
-    return _run_result_from_context(
-        ctx,
-        state=RunState.FAILED,
-        exit_code=1,
-        failed_stage=failed_stage,
-        error_code=failed_error_code or "RUN_FAILED",
-        error_message=failed_error_message or f"Pipeline failed at {failed_stage}",
+    else:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            failed_stage=failed_stage,
+            error_code=failed_error_code or "RUN_FAILED",
+            error_message=failed_error_message or f"Pipeline failed at {failed_stage}",
+        )
+    _notify_observer(
+        observer,
+        "pipeline_finished",
+        PipelineFinished(
+            state=result.state.value,
+            exit_code=result.exit_code,
+            failed_stage=result.failed_stage,
+            error_code=result.error_code,
+            error_message=result.error_message,
+        ),
     )
+    return result
+
+
+class _RunProgress:
+    """Fan progress updates out to manifests and run observers."""
+
+    def __init__(
+        self,
+        *,
+        heartbeat: ManifestHeartbeat | None,
+        observer: RunObserver | None,
+    ) -> None:
+        self._heartbeat = heartbeat
+        self._observer = observer
+        self._last_observer_update = 0.0
+        self._pending_observer_event: StageProgress | None = None
+
+    def set_progress(self, **fields: Any) -> None:
+        if self._heartbeat is not None:
+            self._heartbeat.set_progress(**fields)
+        stage = fields.get("stage")
+        if isinstance(stage, str) and stage:
+            event = StageProgress(name=stage, values=dict(fields))
+            now = time.monotonic()
+            completed = fields.get("completed")
+            total = fields.get("total")
+            terminal_update = (
+                isinstance(completed, int)
+                and not isinstance(completed, bool)
+                and isinstance(total, int)
+                and not isinstance(total, bool)
+                and completed >= total
+            )
+            if (
+                self._last_observer_update == 0.0
+                or terminal_update
+                or now - self._last_observer_update
+                >= _OBSERVER_PROGRESS_INTERVAL_SECONDS
+            ):
+                self._emit_observer_progress(event, now=now)
+            else:
+                self._pending_observer_event = event
+
+    def clear_progress(self) -> None:
+        if self._pending_observer_event is not None:
+            self._emit_observer_progress(
+                self._pending_observer_event,
+                now=time.monotonic(),
+            )
+        if self._heartbeat is not None:
+            self._heartbeat.clear_progress()
+
+    def _emit_observer_progress(
+        self,
+        event: StageProgress,
+        *,
+        now: float,
+    ) -> None:
+        _notify_observer(
+            self._observer,
+            "stage_progress",
+            event,
+        )
+        self._last_observer_update = now
+        self._pending_observer_event = None
+
+
+def _notify_observer(
+    observer: RunObserver | None,
+    method_name: str,
+    event: Any,
+) -> None:
+    if observer is None:
+        return
+    try:
+        getattr(observer, method_name)(event)
+    except Exception:  # noqa: BLE001 - diagnostics must not fail a run
+        log.warning(
+            "Run observer failed while handling %s",
+            method_name,
+            exc_info=True,
+        )
 
 
 def _run_result_from_context(

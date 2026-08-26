@@ -24,6 +24,7 @@ from assert_ai.core.judge import (
     run_transcript_judge as run_llm_judge,
 )
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
+from assert_ai.core.run_control import RunCancelled, RunControl
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from assert_ai.viewer_read_model import build_run_viewer_artifacts
 
@@ -98,6 +99,7 @@ async def run_judge(
     disabled_dimensions: list[str] | None = None,
     forced: bool = False,
     heartbeat: Any = None,
+    run_control: RunControl | None = None,
     path_policy: RuntimePathPolicy | None = None,
     config_path: Path | None = None,
     managed_output_root: Path | None = None,
@@ -297,10 +299,17 @@ async def run_judge(
         """
         output_index, row = item
         try:
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="judge")
+            score = await score_row(row)
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="judge")
             return {
                 "output_index": output_index,
-                "score_row": await score_row(row),
+                "score_row": score,
             }
+        except RunCancelled:
+            raise
         except LLMContentFilterError as exc:
             # Adversarial-eval workloads routinely send transcripts the
             # judge's content filter will reject (XPIA payloads, PII
@@ -476,6 +485,8 @@ async def run_judge(
             )
         except Exception:  # noqa: BLE001
             heartbeat = None
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="judge")
     errors: list[Exception] = []
     written_rows = 0
     for completed_task in asyncio.as_completed(tasks):
@@ -504,6 +515,8 @@ async def run_judge(
                 )
             except Exception:  # noqa: BLE001
                 heartbeat = None
+        if run_control is not None:
+            run_control.raise_if_cancelled(stage="judge")
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
@@ -513,6 +526,8 @@ async def run_judge(
             field_name="judge output directory",
             expected_root=managed_output_root,
         )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="judge")
     build_run_viewer_artifacts(out_dir)
     # Per-row failures should not kill the stage as long as *some* rows
     # succeeded. The errors are surfaced via judge_failures in the
@@ -598,6 +613,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         disabled_dimensions=disabled_dimensions,
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
+        run_control=ctx.get("_run_control") if isinstance(ctx, dict) else None,
         path_policy=ctx.get("path_policy"),
         config_path=Path(ctx["config_path"]),
         managed_output_root=Path(ctx["run_root"]),

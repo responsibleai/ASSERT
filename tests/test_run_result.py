@@ -8,9 +8,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from assert_ai.core.model_client import LLMInputError
+from assert_ai.core.run_control import RunCancelled, RunControl
 from assert_ai.core.run_result import RunState
 from assert_ai.core.workspace import WorkspaceService
 from assert_ai.runner import (
@@ -195,3 +197,91 @@ def test_unexpected_setup_failure_is_returned_not_raised() -> None:
         assert result.exit_code == 1
         assert result.error_code == "INTERNAL"
         assert result.error_message == "Unexpected pipeline setup error"
+
+
+def test_cooperative_cancellation_writes_terminal_manifest_and_events(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    results = tmp_path / "results"
+    config_path.write_text(
+        "\n".join(
+            [
+                "suite: suite-a",
+                "run: run-a",
+                f"results_dir: {results}",
+                "pipeline:",
+                "  inference:",
+                "    target:",
+                "      callable: agent:run",
+                "    test_set_path: fixture.jsonl",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class Observer:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, object]] = []
+
+        def pipeline_started(self, event: object) -> None:
+            self.events.append(("pipeline_started", event))
+
+        def stage_planned(self, event: object) -> None:
+            self.events.append(("stage_planned", event))
+
+        def stage_started(self, event: object) -> None:
+            self.events.append(("stage_started", event))
+
+        def stage_progress(self, event: object) -> None:
+            self.events.append(("stage_progress", event))
+
+        def stage_finished(self, event: object) -> None:
+            self.events.append(("stage_finished", event))
+
+        def pipeline_finished(self, event: object) -> None:
+            self.events.append(("pipeline_finished", event))
+
+    observer = Observer()
+    with patch("assert_ai.stages.inference.run") as stage:
+        result = run_pipeline_result(
+            config=str(config_path),
+            control=RunControl(cancel_requested=lambda: True),
+            observer=observer,
+        )
+
+    assert result.state is RunState.CANCELLED
+    assert result.exit_code == 130
+    assert result.failed_stage == "inference"
+    stage.assert_not_called()
+    manifest = json.loads(
+        (results / "suite-a" / "run-a" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["status"] == "cancelled"
+    assert manifest["stages"]["inference"] == "cancelled"
+    assert [name for name, _ in observer.events] == [
+        "pipeline_started",
+        "stage_planned",
+        "stage_started",
+        "stage_progress",
+        "stage_finished",
+        "pipeline_finished",
+    ]
+
+
+def test_run_control_acknowledges_cancellation_once() -> None:
+    acknowledged: list[str | None] = []
+    control = RunControl(
+        cancel_requested=lambda: True,
+        cancel_acknowledged=acknowledged.append,
+    )
+
+    with pytest.raises(RunCancelled):
+        control.raise_if_cancelled(stage="inference")
+    with pytest.raises(RunCancelled):
+        control.raise_if_cancelled(stage="judge")
+
+    assert acknowledged == ["inference"]

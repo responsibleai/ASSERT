@@ -190,12 +190,28 @@ class RunPlanningService:
         overrides: EvaluationOverrides | None = None,
     ) -> EvaluationPreflight:
         record = self.configs.get_config(config_ref)
-        effective = deepcopy(record.document)
+        return self.preflight_document(
+            record.config_ref,
+            record.document,
+            source_etag=record.etag,
+            overrides=overrides,
+        )
+
+    def preflight_document(
+        self,
+        config_ref: str,
+        document: dict[str, Any],
+        *,
+        source_etag: str,
+        overrides: EvaluationOverrides | None = None,
+    ) -> EvaluationPreflight:
+        """Preflight an immutable document using a managed logical base path."""
+        effective = deepcopy(document)
         applied = overrides or EvaluationOverrides()
         _apply_overrides(effective, applied)
         validation = self.configs.validate_document(
             effective,
-            config_ref=record.config_ref,
+            config_ref=config_ref,
         )
         blocking = [
             _validation_issue(issue)
@@ -207,8 +223,8 @@ class RunPlanningService:
         ]
         if not validation.valid:
             return EvaluationPreflight(
-                config_ref=record.config_ref,
-                source_etag=record.etag,
+                config_ref=config_ref,
+                source_etag=source_etag,
                 effective_document=effective,
                 validation=validation,
                 ready=False,
@@ -218,8 +234,8 @@ class RunPlanningService:
             )
 
         config_path = self.workspace.path_policy.resolve_config_path(
-            record.config_ref,
-            must_exist=True,
+            config_ref,
+            must_exist=False,
             reject_links=True,
         )
         try:
@@ -235,8 +251,8 @@ class RunPlanningService:
                 message=str(exc),
             )
             return EvaluationPreflight(
-                config_ref=record.config_ref,
-                source_etag=record.etag,
+                config_ref=config_ref,
+                source_etag=source_etag,
                 effective_document=effective,
                 validation=validation,
                 ready=False,
@@ -288,8 +304,8 @@ class RunPlanningService:
         sample_sizes = _sample_sizes(effective)
         estimate = _estimate_model_calls(stages)
         return EvaluationPreflight(
-            config_ref=record.config_ref,
-            source_etag=record.etag,
+            config_ref=config_ref,
+            source_etag=source_etag,
             effective_document=effective,
             validation=validation,
             ready=not blocking,

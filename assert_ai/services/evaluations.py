@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import secrets
+import signal
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,11 @@ from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import quote
 
+import yaml
+
 from assert_ai.core.io import write_json, write_text_atomic
+from assert_ai.core.jsonl_index import JsonlIndexError, scan_jsonl
+from assert_ai.core.config_document import PIPELINE_STAGE_ORDER
 from assert_ai.core.security import (
     redact_path_prefixes,
     sanitize_payload,
@@ -54,9 +59,15 @@ from assert_ai.services.run_planning import (
 
 _CURSOR_VERSION = 1
 _JOB_RESULT_MAX_BYTES = 1024 * 1024
+_JOB_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024
 _JOB_ID_RETRIES = 5
 _LEASE_SECONDS = 60.0
 _LEASE_RENEW_SECONDS = 15.0
+_DEFAULT_CANCELLATION_GRACE_SECONDS = 10.0
+_PROCESS_EXIT_TIMEOUT_SECONDS = 5.0
+_RECOVERY_POLL_SECONDS = 0.25
+_MAX_RECOVERY_SLEEP_SECONDS = 30.0
+_CANCELLATION_POLL_SECONDS = 0.1
 _REQUEST_ID_MAX_LENGTH = 200
 _MIN_LOG_BYTES = 4096
 _MAX_LOG_BYTES = 16 * 1024 * 1024
@@ -74,6 +85,9 @@ class EvaluationJobManager:
     max_log_bytes: int = 1024 * 1024
     launch_enabled: bool = True
     lease_seconds: float = _LEASE_SECONDS
+    cancellation_grace_seconds: float = (
+        _DEFAULT_CANCELLATION_GRACE_SECONDS
+    )
     _owner: str = field(
         default_factory=lambda: uuid.uuid4().hex,
         init=False,
@@ -98,6 +112,21 @@ class EvaluationJobManager:
         init=False,
         repr=False,
     )
+    _monitored_jobs: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
+    _cancellation_jobs: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
+    _recovery: threading.Thread | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.max_active_jobs < 1:
@@ -109,6 +138,37 @@ class EvaluationJobManager:
             )
         if self.lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if self.cancellation_grace_seconds <= 0:
+            raise ValueError(
+                "cancellation_grace_seconds must be positive"
+            )
+
+    def start(self) -> None:
+        """Recover persisted work and then schedule queued jobs."""
+        if not self.launch_enabled:
+            return
+        with self._lock:
+            if self._recovery is not None and self._recovery.is_alive():
+                return
+            self._recovery = threading.Thread(
+                target=self._recover_startup,
+                name="assert-mcp-job-recovery",
+                daemon=True,
+            )
+            self._recovery.start()
+
+    def cancel(self, job_id: str) -> JobRecord:
+        """Persist cancellation and enforce it outside the request thread."""
+        if not self.launch_enabled:
+            raise ServiceError(
+                ServiceErrorCode.CAPABILITY_DISABLED,
+                "Evaluation execution is disabled for this service",
+            )
+        record = self.store.request_cancel(job_id)
+        if record.state is JobState.CANCELLING:
+            self._write_cancel_marker(record)
+            self._ensure_cancellation(record)
+        return record
 
     def enqueue(self) -> None:
         """Wake a short-lived scheduler without holding an MCP request open."""
@@ -129,16 +189,55 @@ class EvaluationJobManager:
         """Adopt a worker result or mark a dead worker interrupted."""
         if record.state in TERMINAL_JOB_STATES:
             return record
+        if not self.launch_enabled:
+            return record
         if record.state is JobState.QUEUED:
             self.enqueue()
             return record
+        if (
+            record.state is JobState.STARTING
+            and record.pid is None
+            and record.lease_owner == self._owner
+            and not _lease_expired(record.lease_expires_at)
+        ):
+            return record
+        adopted_worker = False
+        if record.lease_owner != self._owner:
+            if not _lease_expired(record.lease_expires_at):
+                return record
+            adopted = self.store.adopt_lease(
+                record.job_id,
+                lease_owner=self._owner,
+                lease_seconds=self.lease_seconds,
+            )
+            if adopted is None:
+                return self.store.get(record.job_id)
+            record = adopted
+            adopted_worker = True
+        elif _lease_expired(record.lease_expires_at):
+            adopted = self.store.adopt_lease(
+                record.job_id,
+                lease_owner=self._owner,
+                lease_seconds=self.lease_seconds,
+            )
+            if adopted is not None:
+                record = adopted
+                adopted_worker = True
+        process_alive = (
+            record.pid is not None
+            and record.process_create_time is not None
+            and _process_matches(
+                record.pid,
+                record.process_create_time,
+            )
+        )
         result = self._read_result(record)
-        if result is not None:
+        if result is not None and not process_alive:
             try:
                 return self._adopt_result(
                     record,
                     result,
-                    lease_owner=None,
+                    lease_owner=self._owner,
                 )
             except Exception as exc:  # noqa: BLE001 - persisted boundary
                 log.exception(
@@ -148,20 +247,26 @@ class EvaluationJobManager:
                 return self._mark_internal_failure(
                     record,
                     exc,
-                    lease_owner=None,
+                    lease_owner=self._owner,
                 )
-        if record.state is JobState.STARTING and record.pid is None:
-            if not _lease_expired(record.lease_expires_at):
-                return record
-        if (
-            record.pid is not None
-            and record.process_create_time is not None
-            and _process_matches(
-                record.pid,
-                record.process_create_time,
-            )
-        ):
+        if process_alive:
+            if adopted_worker:
+                self._ensure_recovered_monitor(record)
+            if record.state is JobState.CANCELLING:
+                try:
+                    self._write_cancel_marker(record)
+                    self._ensure_cancellation(record)
+                except Exception:
+                    log.exception(
+                        "Could not enforce cancellation for evaluation job %s",
+                        record.job_id,
+                    )
             return record
+        if record.state is JobState.CANCELLING:
+            return self._mark_cancelled_without_result(
+                record,
+                lease_owner=self._owner,
+            )
         return self.store.mark_terminal(
             record.job_id,
             state=JobState.INTERRUPTED,
@@ -173,6 +278,7 @@ class EvaluationJobManager:
             ),
             result=None,
             run_root=record.run_root,
+            lease_owner=self._owner,
         )
 
     def _schedule(self) -> None:
@@ -180,6 +286,13 @@ class EvaluationJobManager:
             while True:
                 with self._lock:
                     self._schedule_requested = False
+                try:
+                    self._sweep_cancelling_jobs()
+                except Exception:  # noqa: BLE001 - daemon boundary
+                    log.exception(
+                        "Evaluation scheduler could not sweep cancelling jobs"
+                    )
+                    return
                 try:
                     claimed = self.store.claim_next(
                         lease_owner=self._owner,
@@ -214,6 +327,7 @@ class EvaluationJobManager:
                     continue
                 with self._lock:
                     self._processes[claimed.job_id] = process
+                    self._monitored_jobs.add(claimed.job_id)
                 monitor = threading.Thread(
                     target=self._monitor,
                     args=(claimed.job_id, process),
@@ -231,6 +345,18 @@ class EvaluationJobManager:
                     self._scheduler = None
             if restart:
                 self.enqueue()
+
+    def _sweep_cancelling_jobs(self) -> None:
+        for record in self.store.list_nonterminal_records():
+            if record.state is not JobState.CANCELLING:
+                continue
+            try:
+                self.reconcile(record)
+            except Exception:  # noqa: BLE001 - scheduler boundary
+                log.exception(
+                    "Could not reconcile cancelling evaluation job %s",
+                    record.job_id,
+                )
 
     def _launch(self, record: JobRecord) -> subprocess.Popen[bytes]:
         env = os.environ.copy()
@@ -311,21 +437,29 @@ class EvaluationJobManager:
                 )
                 return
             record = self.store.get(job_id)
+            if record.state in TERMINAL_JOB_STATES:
+                return
             payload = self._read_result(record)
             if payload is None:
-                self.store.mark_terminal(
-                    job_id,
-                    state=JobState.FAILED,
-                    exit_code=process.returncode,
-                    failed_stage=None,
-                    error_code=ServiceErrorCode.RUN_FAILED.value,
-                    error_message=(
-                        "Evaluation worker exited without a valid result"
-                    ),
-                    result=None,
-                    run_root=None,
-                    lease_owner=self._owner,
-                )
+                if record.state is JobState.CANCELLING:
+                    self._mark_cancelled_without_result(
+                        record,
+                        lease_owner=self._owner,
+                    )
+                else:
+                    self.store.mark_terminal(
+                        job_id,
+                        state=JobState.FAILED,
+                        exit_code=process.returncode,
+                        failed_stage=None,
+                        error_code=ServiceErrorCode.RUN_FAILED.value,
+                        error_message=(
+                            "Evaluation worker exited without a valid result"
+                        ),
+                        result=None,
+                        run_root=None,
+                        lease_owner=self._owner,
+                    )
             else:
                 self._adopt_result(
                     record,
@@ -352,7 +486,402 @@ class EvaluationJobManager:
         finally:
             with self._lock:
                 self._processes.pop(job_id, None)
+                self._monitored_jobs.discard(job_id)
             self.enqueue()
+
+    def _recover_startup(self) -> None:
+        try:
+            while self.launch_enabled:
+                next_lease_check: float | None = None
+                has_queued_job = False
+                try:
+                    records = self.store.list_nonterminal_records()
+                except Exception:  # noqa: BLE001 - daemon boundary
+                    log.exception("Could not scan evaluation jobs for recovery")
+                    return
+                for record in records:
+                    if record.state is JobState.QUEUED:
+                        has_queued_job = True
+                        continue
+                    try:
+                        current = self.reconcile(record)
+                    except Exception:  # noqa: BLE001 - persisted boundary
+                        log.exception(
+                            "Could not recover evaluation job %s",
+                            record.job_id,
+                        )
+                        continue
+                    if (
+                        current.state not in TERMINAL_JOB_STATES
+                        and current.lease_owner != self._owner
+                    ):
+                        lease_wait = _lease_seconds_remaining(
+                            current.lease_expires_at
+                        )
+                        next_lease_check = (
+                            lease_wait
+                            if next_lease_check is None
+                            else min(next_lease_check, lease_wait)
+                        )
+                if has_queued_job:
+                    self.enqueue()
+                if next_lease_check is None:
+                    return
+                time.sleep(
+                    min(
+                        _MAX_RECOVERY_SLEEP_SECONDS,
+                        max(_RECOVERY_POLL_SECONDS, next_lease_check),
+                    )
+                )
+        finally:
+            with self._lock:
+                if self._recovery is threading.current_thread():
+                    self._recovery = None
+
+    def _ensure_recovered_monitor(self, record: JobRecord) -> None:
+        if record.pid is None or record.process_create_time is None:
+            return
+        with self._lock:
+            if record.job_id in self._monitored_jobs:
+                return
+            self._monitored_jobs.add(record.job_id)
+        monitor = threading.Thread(
+            target=self._monitor_recovered,
+            args=(
+                record.job_id,
+                record.pid,
+                record.process_create_time,
+            ),
+            name=f"assert-mcp-recovered-{record.job_id[:8]}",
+            daemon=True,
+        )
+        monitor.start()
+
+    def _monitor_recovered(
+        self,
+        job_id: str,
+        pid: int,
+        process_create_time: float,
+    ) -> None:
+        poll_seconds = min(
+            _LEASE_RENEW_SECONDS,
+            max(0.05, self.lease_seconds / 3),
+        )
+        try:
+            while _process_matches(pid, process_create_time):
+                time.sleep(poll_seconds)
+                if not self.store.renew_lease(
+                    job_id,
+                    lease_owner=self._owner,
+                    lease_seconds=self.lease_seconds,
+                ):
+                    return
+            record = self.store.get(job_id)
+            if record.state in TERMINAL_JOB_STATES:
+                return
+            payload = self._read_result(record)
+            if payload is not None:
+                self._adopt_result(
+                    record,
+                    payload,
+                    lease_owner=self._owner,
+                )
+            elif record.state is JobState.CANCELLING:
+                self._mark_cancelled_without_result(
+                    record,
+                    lease_owner=self._owner,
+                )
+            else:
+                self.store.mark_terminal(
+                    job_id,
+                    state=JobState.INTERRUPTED,
+                    exit_code=record.exit_code,
+                    failed_stage=record.failed_stage,
+                    error_code=ServiceErrorCode.JOB_INTERRUPTED.value,
+                    error_message=(
+                        "Evaluation worker exited without a terminal result"
+                    ),
+                    result=None,
+                    run_root=record.run_root,
+                    lease_owner=self._owner,
+                )
+        except Exception:  # noqa: BLE001 - daemon boundary
+            log.exception(
+                "Could not monitor recovered evaluation job %s",
+                job_id,
+            )
+        finally:
+            with self._lock:
+                self._monitored_jobs.discard(job_id)
+            self.enqueue()
+
+    def _ensure_cancellation(self, record: JobRecord) -> None:
+        with self._lock:
+            if record.job_id in self._cancellation_jobs:
+                return
+            self._cancellation_jobs.add(record.job_id)
+        thread = threading.Thread(
+            target=self._enforce_cancellation,
+            args=(record.job_id,),
+            name=f"assert-mcp-cancel-{record.job_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _enforce_cancellation(self, job_id: str) -> None:
+        observation_deadline = (
+            time.monotonic() + self.cancellation_grace_seconds
+        )
+        teardown_deadline: float | None = None
+        try:
+            while True:
+                record = self.store.get(job_id)
+                if record.state in TERMINAL_JOB_STATES:
+                    return
+                process_alive = (
+                    record.pid is not None
+                    and record.process_create_time is not None
+                    and _process_matches(
+                        record.pid,
+                        record.process_create_time,
+                    )
+                )
+                if not process_alive:
+                    current = self.reconcile(record)
+                    if current.state in TERMINAL_JOB_STATES:
+                        return
+                    time.sleep(
+                        (
+                            _CANCELLATION_POLL_SECONDS
+                            if current.lease_owner == self._owner
+                            else _cancellation_wait_seconds(current)
+                        )
+                    )
+                    continue
+
+                now = time.monotonic()
+                if (
+                    teardown_deadline is None
+                    and self._cancellation_acknowledged(record)
+                ):
+                    teardown_deadline = (
+                        now + _PROCESS_EXIT_TIMEOUT_SECONDS
+                    )
+                deadline = (
+                    teardown_deadline
+                    if teardown_deadline is not None
+                    else observation_deadline
+                )
+                if now < deadline:
+                    time.sleep(
+                        min(_CANCELLATION_POLL_SECONDS, deadline - now)
+                    )
+                    continue
+
+                if record.lease_owner != self._owner:
+                    if not _lease_expired(record.lease_expires_at):
+                        time.sleep(_cancellation_wait_seconds(record))
+                        continue
+                    adopted = self.store.adopt_lease(
+                        record.job_id,
+                        lease_owner=self._owner,
+                        lease_seconds=self.lease_seconds,
+                    )
+                    if adopted is None:
+                        time.sleep(_CANCELLATION_POLL_SECONDS)
+                        continue
+                    record = adopted
+                if (
+                    record.pid is None
+                    or record.process_create_time is None
+                    or not _process_matches(
+                        record.pid,
+                        record.process_create_time,
+                    )
+                ):
+                    continue
+                self.store.append_event(
+                    job_id,
+                    "termination_escalated",
+                    {"state": JobState.CANCELLING.value},
+                )
+                _terminate_process_tree(
+                    record.pid,
+                    record.process_create_time,
+                    timeout_seconds=_PROCESS_EXIT_TIMEOUT_SECONDS,
+                )
+                settle_deadline = (
+                    time.monotonic() + _PROCESS_EXIT_TIMEOUT_SECONDS
+                )
+                while time.monotonic() < settle_deadline:
+                    current = self.store.get(job_id)
+                    if current.state in TERMINAL_JOB_STATES:
+                        return
+                    if (
+                        current.pid is None
+                        or current.process_create_time is None
+                        or not _process_matches(
+                            current.pid,
+                            current.process_create_time,
+                        )
+                    ):
+                        payload = self._read_result(current)
+                        if payload is not None:
+                            self._adopt_result(
+                                current,
+                                payload,
+                                lease_owner=self._owner,
+                            )
+                        else:
+                            self._mark_cancelled_without_result(
+                                current,
+                                lease_owner=self._owner,
+                            )
+                        return
+                    time.sleep(0.05)
+                current = self.store.get(job_id)
+                if (
+                    current.state not in TERMINAL_JOB_STATES
+                    and current.pid is not None
+                    and current.process_create_time is not None
+                    and _process_matches(
+                        current.pid,
+                        current.process_create_time,
+                    )
+                ):
+                    raise RuntimeError(
+                        "Evaluation worker remained alive after termination"
+                    )
+                self.reconcile(current)
+                return
+        except Exception:  # noqa: BLE001 - daemon boundary
+            log.exception(
+                "Could not enforce cancellation for evaluation job %s",
+                job_id,
+            )
+        finally:
+            with self._lock:
+                self._cancellation_jobs.discard(job_id)
+            self.enqueue()
+
+    def _cancellation_acknowledged(self, record: JobRecord) -> bool:
+        marker = self._job_file(
+            self._job_dir(record.job_id),
+            "cancel.acknowledged",
+        )
+        return marker.is_file()
+
+    def _write_cancel_marker(self, record: JobRecord) -> None:
+        job_dir = self._job_dir(record.job_id)
+        marker = self._job_file(job_dir, "cancel.requested")
+        write_text_atomic(
+            marker,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "job_id": record.job_id,
+                    "requested_at": record.cancel_requested_at,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n",
+        )
+
+    def _mark_cancelled_without_result(
+        self,
+        record: JobRecord,
+        *,
+        lease_owner: str | None = None,
+    ) -> JobRecord:
+        failed_stage = record.failed_stage or _active_stage_from_events(
+            self.store.list_events(record.job_id, limit=1000)
+        )
+        if failed_stage is None:
+            acknowledgement = _read_json_file(
+                self._job_file(
+                    self._job_dir(record.job_id),
+                    "cancel.acknowledged",
+                ),
+                max_bytes=_JOB_RESULT_MAX_BYTES,
+            )
+            if isinstance(acknowledgement, dict):
+                acknowledged_stage = acknowledgement.get("stage")
+                if isinstance(acknowledged_stage, str):
+                    failed_stage = acknowledged_stage
+        try:
+            run_root = self._write_cancelled_manifest(
+                record,
+                failed_stage=failed_stage,
+            )
+        except Exception:  # noqa: BLE001 - terminal persistence wins
+            log.exception(
+                "Could not write cancelled manifest for evaluation job %s",
+                record.job_id,
+            )
+            run_root = record.run_root
+        result = {
+            "state": JobState.CANCELLED.value,
+            "exit_code": 130,
+            "failed_stage": failed_stage,
+            "error_code": None,
+            "error_message": (
+                "Evaluation stopped after cancellation was requested"
+            ),
+        }
+        return self.store.mark_terminal(
+            record.job_id,
+            state=JobState.CANCELLED,
+            exit_code=130,
+            failed_stage=failed_stage,
+            error_code=None,
+            error_message=result["error_message"],
+            result=result,
+            run_root=run_root,
+            lease_owner=lease_owner,
+        )
+
+    def _write_cancelled_manifest(
+        self,
+        record: JobRecord,
+        *,
+        failed_stage: str | None,
+    ) -> str | None:
+        if record.run_id is None:
+            return record.run_root
+        suite_root = self.workspace.path_policy.resolve_managed_output(
+            self.workspace.results_root / record.suite_id,
+            field_name="cancelled job suite root",
+            expected_root=self.workspace.results_root,
+            reject_links=True,
+        )
+        run_root = self.workspace.path_policy.resolve_managed_output(
+            suite_root / record.run_id,
+            field_name="cancelled job run root",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        manifest_path = self.workspace.path_policy.resolve_managed_output(
+            run_root / "manifest.json",
+            field_name="cancelled job manifest",
+            expected_root=run_root,
+            reject_links=True,
+        )
+        manifest = _read_json_file(
+            manifest_path,
+            max_bytes=_JOB_RESULT_MAX_BYTES,
+        )
+        if not isinstance(manifest, dict):
+            return str(run_root) if run_root.is_dir() else record.run_root
+        manifest["status"] = "cancelled"
+        manifest["ended_at"] = datetime.now(timezone.utc).isoformat()
+        manifest["heartbeat_at"] = manifest["ended_at"]
+        stages = manifest.get("stages")
+        if isinstance(stages, dict) and failed_stage is not None:
+            if stages.get(failed_stage) == "running":
+                stages[failed_stage] = "cancelled"
+        write_json(manifest_path, manifest)
+        return str(run_root)
 
     def _mark_internal_failure(
         self,
@@ -493,11 +1022,12 @@ class EvaluationJobManager:
                 ServiceErrorCode.RUN_FAILED,
                 "Evaluation worker returned a mismatched run id",
             )
-        may_omit_identity = (
-            state is JobState.FAILED
-            and failed_stage is None
-            and result_suite_id is None
-            and result_run_id is None
+        identity_omitted = (
+            result_suite_id is None and result_run_id is None
+        )
+        may_omit_identity = identity_omitted and (
+            state is JobState.CANCELLED
+            or (state is JobState.FAILED and failed_stage is None)
         )
         if not may_omit_identity and (
             result_suite_id != record.suite_id
@@ -528,11 +1058,20 @@ class EvaluationJobManager:
                 ServiceErrorCode.RUN_FAILED,
                 "Evaluation worker returned an inconsistent exit code",
             )
-        run_root = (
-            self._validated_run_root(record, raw_result)
-            if result_suite_id is not None
-            else None
-        )
+        if result_suite_id is not None:
+            run_root = self._validated_run_root(record, raw_result)
+        elif state is JobState.CANCELLED:
+            run_root_value = self._write_cancelled_manifest(
+                record,
+                failed_stage=failed_stage,
+            )
+            run_root = (
+                Path(run_root_value)
+                if run_root_value is not None
+                else None
+            )
+        else:
+            run_root = None
         public_result = {
             "state": state_value,
             "exit_code": exit_code,
@@ -729,6 +1268,111 @@ class EvaluationService:
             created=created.created,
         )
 
+    def cancel(self, job_id: str) -> JobDetail:
+        """Request idempotent cooperative cancellation for one job."""
+        record = self.manager.cancel(_validate_job_id(job_id))
+        return self._detail(record)
+
+    def retry(
+        self,
+        job_id: str,
+        *,
+        request_id: str,
+    ) -> JobStartResult:
+        """Create an idempotent retry from an immutable terminal snapshot."""
+        if not self.manager.launch_enabled:
+            raise ServiceError(
+                ServiceErrorCode.CAPABILITY_DISABLED,
+                "Evaluation execution is disabled for this service",
+            )
+        job_id = _validate_job_id(job_id)
+        request_id = _validate_request_id(request_id)
+        original = self.manager.reconcile(self.store.get(job_id))
+        request_hash = _retry_request_hash(
+            retry_of=original.job_id,
+            config_sha256=original.config_sha256,
+        )
+        existing = self.store.get_by_idempotency_key(request_id)
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise ServiceError(
+                    ServiceErrorCode.CONFLICT,
+                    "request_id is already bound to a different evaluation request",
+                    details={"job_id": existing.job_id},
+                )
+            self.manager.enqueue()
+            return JobStartResult(
+                job=self.get(existing.job_id),
+                created=False,
+            )
+        if original.state not in {
+            JobState.FAILED,
+            JobState.CANCELLED,
+            JobState.INTERRUPTED,
+        }:
+            raise ServiceError(
+                ServiceErrorCode.INVALID_ARGUMENT,
+                "Only failed, cancelled, or interrupted jobs can be retried",
+            )
+        document, request = self._retry_snapshot(original)
+        retry_stage = self._retry_stage(original, document)
+
+        run_id = _new_identity("run") if original.run_id is not None else None
+        overrides = EvaluationOverrides.model_validate(
+            {
+                "suite": original.suite_id,
+                "run": run_id,
+                "force_stages": [retry_stage],
+                "strict": bool(request.get("strict", False)),
+            }
+        )
+        plan = self.planning.preflight_document(
+            original.config_ref,
+            document,
+            source_etag=original.config_sha256,
+            overrides=overrides,
+        )
+        _require_ready(plan)
+        if plan.suite_id != original.suite_id or plan.run_id != run_id:
+            raise ServiceError(
+                ServiceErrorCode.INTERNAL,
+                "Retry preflight did not preserve allocated evaluation identity",
+            )
+        if run_id is not None:
+            self._reject_existing_run(original.suite_id, run_id)
+
+        yaml_text = dump_yaml(plan.effective_document)
+        config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(yaml_text.encode("utf-8")).hexdigest()
+        )
+        new_job, job_dir = self._prepare_job(
+            config_ref=original.config_ref,
+            request_id=request_id,
+            request_hash=request_hash,
+            config_sha256=config_sha256,
+            suite_id=original.suite_id,
+            run_id=run_id,
+            plan=plan,
+            yaml_text=yaml_text,
+            retry_of=original.job_id,
+        )
+        try:
+            created = self.store.create_or_get(
+                new_job,
+                max_queued_jobs=self.max_queued_jobs,
+            )
+        except BaseException:
+            _remove_job_dir(job_dir)
+            raise
+        if not created.created:
+            _remove_job_dir(job_dir)
+        self.manager.enqueue()
+        return JobStartResult(
+            job=self.get(created.record.job_id),
+            created=created.created,
+        )
+
     def get(self, job_id: str) -> JobDetail:
         record = self.manager.reconcile(self.store.get(_validate_job_id(job_id)))
         return self._detail(record)
@@ -828,6 +1472,121 @@ class EvaluationService:
             )
         return combined
 
+    def _retry_snapshot(
+        self,
+        record: JobRecord,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        job_dir = self.manager._job_dir(record.job_id)
+        snapshot_path = self.manager._job_file(job_dir, "config.yaml")
+        request_path = self.manager._job_file(job_dir, "request.json")
+        try:
+            if snapshot_path.stat().st_size > _JOB_SNAPSHOT_MAX_BYTES:
+                raise ServiceError(
+                    ServiceErrorCode.JOB_INTERRUPTED,
+                    "The immutable evaluation snapshot exceeds its size limit",
+                )
+            snapshot_bytes = snapshot_path.read_bytes()
+        except OSError as exc:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable evaluation snapshot is unavailable",
+            ) from exc
+        actual_hash = (
+            "sha256:" + hashlib.sha256(snapshot_bytes).hexdigest()
+        )
+        if actual_hash != record.config_sha256:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable evaluation snapshot failed its integrity check",
+            )
+        try:
+            document = yaml.safe_load(snapshot_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable evaluation snapshot is invalid",
+            ) from exc
+        request = _read_json_file(
+            request_path,
+            max_bytes=_JOB_RESULT_MAX_BYTES,
+        )
+        if not isinstance(document, dict) or not isinstance(request, dict):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable evaluation job inputs are invalid",
+            )
+        if (
+            request.get("job_id") != record.job_id
+            or request.get("config_sha256") != record.config_sha256
+            or not isinstance(request.get("strict"), bool)
+        ):
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The immutable evaluation job inputs failed their integrity check",
+            )
+        return document, request
+
+    def _retry_stage(
+        self,
+        record: JobRecord,
+        document: dict[str, Any],
+    ) -> str:
+        pipeline = document.get("pipeline")
+        configured = [
+            stage
+            for stage in PIPELINE_STAGE_ORDER
+            if isinstance(pipeline, dict)
+            and isinstance(pipeline.get(stage), dict)
+            and pipeline[stage].get("enabled", True)
+        ]
+        if not configured:
+            raise ServiceError(
+                ServiceErrorCode.JOB_INTERRUPTED,
+                "The evaluation snapshot has no enabled stage to retry",
+            )
+        candidate = (
+            record.failed_stage
+            if record.failed_stage in configured
+            else _active_stage_from_events(
+                self.store.list_events(record.job_id, limit=1000)
+            )
+        )
+        if candidate not in configured:
+            candidate = configured[0]
+
+        candidates = [candidate]
+        suite_root = self.workspace.path_policy.resolve_managed_output(
+            self.workspace.results_root / record.suite_id,
+            field_name="retry suite root",
+            expected_root=self.workspace.results_root,
+            reject_links=True,
+        )
+        retry_index = PIPELINE_STAGE_ORDER.index(candidate)
+        if (
+            "test_set" in configured
+            and PIPELINE_STAGE_ORDER.index("test_set") < retry_index
+        ):
+            test_set = suite_root / "test_set.jsonl"
+            if not _valid_jsonl(test_set):
+                candidates.append("test_set")
+        if (
+            record.run_id is not None
+            and "inference" in configured
+            and PIPELINE_STAGE_ORDER.index("inference") < retry_index
+        ):
+            run_root = self.workspace.path_policy.resolve_managed_output(
+                suite_root / record.run_id,
+                field_name="retry source run",
+                expected_root=suite_root,
+                reject_links=True,
+            )
+            if not _valid_jsonl(run_root / "inference_set.jsonl"):
+                candidates.append("inference")
+        return min(
+            candidates,
+            key=PIPELINE_STAGE_ORDER.index,
+        )
+
     def _prepare_job(
         self,
         *,
@@ -839,6 +1598,7 @@ class EvaluationService:
         run_id: str | None,
         plan: Any,
         yaml_text: str,
+        retry_of: str | None = None,
     ) -> tuple[NewJob, Path]:
         jobs_root = _jobs_root(self.workspace)
         jobs_root.mkdir(parents=True, exist_ok=True)
@@ -880,6 +1640,7 @@ class EvaluationService:
                     "strict": bool(plan.strict),
                     "force_stages": force_stages,
                     "max_log_bytes": self.manager.max_log_bytes,
+                    "retry_of": retry_of,
                 },
             )
             resource_keys = []
@@ -905,6 +1666,7 @@ class EvaluationService:
                     snapshot_path=str(snapshot),
                     request_path=str(request_path),
                     resource_keys=tuple(resource_keys),
+                    retry_of=retry_of,
                 ),
                 job_dir,
             )
@@ -937,33 +1699,60 @@ class EvaluationService:
 
     def _detail(self, record: JobRecord) -> JobDetail:
         manifest = self._manifest(record)
-        heartbeat_at = _optional_text(manifest.get("heartbeat_at"))
+        event_projection = _event_projection(
+            self.store.list_events(record.job_id, limit=1000)
+        )
+        heartbeat_at = (
+            event_projection["heartbeat_at"]
+            or _optional_text(manifest.get("heartbeat_at"))
+        )
+        stages = (
+            dict(manifest.get("stages") or {})
+            if isinstance(manifest.get("stages"), dict)
+            else {}
+        )
+        stages.update(event_projection["stages"])
+        stage_timings = (
+            dict(manifest.get("stage_timings") or {})
+            if isinstance(manifest.get("stage_timings"), dict)
+            else {}
+        )
+        for stage_name, timing in event_projection["stage_timings"].items():
+            existing = dict(stage_timings.get(stage_name) or {})
+            existing.update(timing)
+            stage_timings[stage_name] = existing
+        manifest_progress = (
+            dict(manifest.get("progress") or {})
+            if isinstance(manifest.get("progress"), dict)
+            else {}
+        )
         terminal_result = (
             JobTerminalResult.model_validate(record.result)
             if record.result is not None
             else None
         )
+        if (
+            terminal_result is not None
+            and terminal_result.failed_stage is not None
+        ):
+            stages.setdefault(
+                terminal_result.failed_stage,
+                (
+                    "cancelled"
+                    if terminal_result.state == "cancelled"
+                    else "failed"
+                ),
+            )
         return JobDetail(
             **_catalog_entry(record).model_dump(),
             request_id=record.idempotency_key,
             config_sha256=record.config_sha256,
+            cancel_requested_at=record.cancel_requested_at,
             heartbeat_at=heartbeat_at,
             heartbeat_age_seconds=_heartbeat_age(heartbeat_at),
-            stages=(
-                dict(manifest.get("stages") or {})
-                if isinstance(manifest.get("stages"), dict)
-                else {}
-            ),
-            stage_timings=(
-                dict(manifest.get("stage_timings") or {})
-                if isinstance(manifest.get("stage_timings"), dict)
-                else {}
-            ),
-            progress=(
-                dict(manifest.get("progress") or {})
-                if isinstance(manifest.get("progress"), dict)
-                else {}
-            ),
+            stages=stages,
+            stage_timings=stage_timings,
+            progress=event_projection["progress"] or manifest_progress,
             terminal_result=terminal_result,
             error_code=record.error_code,
             error_message=record.error_message,
@@ -1004,6 +1793,7 @@ def _catalog_entry(record: JobRecord) -> JobCatalogEntry:
         state=record.state,
         revision=record.revision,
         kind="evaluation",
+        retry_of=record.retry_of,
         config_ref=record.config_ref,
         suite_id=record.suite_id,
         run_id=record.run_id,
@@ -1063,6 +1853,123 @@ def _request_hash(
         sort_keys=True,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _retry_request_hash(
+    *,
+    retry_of: str,
+    config_sha256: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "operation": "retry_evaluation",
+            "retry_of": retry_of,
+            "config_sha256": config_sha256,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _active_stage_from_events(
+    events: Sequence[dict[str, Any]],
+) -> str | None:
+    active: str | None = None
+    terminal_stage: str | None = None
+    for event in events:
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        event_type = event.get("event_type")
+        if event_type == "pipeline_finished":
+            failed_stage = payload.get("failed_stage")
+            if isinstance(failed_stage, str) and failed_stage:
+                terminal_stage = failed_stage
+            continue
+        name = payload.get("name")
+        if not isinstance(name, str):
+            continue
+        if event_type == "stage_started":
+            active = name
+        elif event_type == "stage_finished":
+            if payload.get("state") in {"cancelled", "failed"}:
+                terminal_stage = name
+            if active == name:
+                active = None
+    return terminal_stage or active
+
+
+def _valid_jsonl(path: Path) -> bool:
+    try:
+        scan = scan_jsonl(path, allow_trailing_partial=False)
+    except (JsonlIndexError, OSError):
+        return False
+    if not scan.records:
+        return False
+    identities: set[tuple[str, str]] = set()
+    for record in scan.records:
+        kind = record.row.get("type")
+        test_case_id = record.row.get("test_case_id")
+        if (
+            not isinstance(kind, str)
+            or not kind
+            or not isinstance(test_case_id, str)
+            or not test_case_id
+        ):
+            return False
+        identity = (kind, test_case_id)
+        if identity in identities:
+            return False
+        identities.add(identity)
+    return True
+
+
+def _event_projection(
+    events: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    stages: dict[str, str] = {}
+    stage_timings: dict[str, dict[str, Any]] = {}
+    progress: dict[str, Any] = {}
+    heartbeat_at: str | None = None
+    for event in events:
+        event_type = event.get("event_type")
+        timestamp = event.get("timestamp")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if isinstance(timestamp, str):
+            heartbeat_at = timestamp
+        name = payload.get("name")
+        if event_type == "stage_planned" and isinstance(name, str):
+            action = payload.get("action")
+            if isinstance(action, str):
+                stages[name] = action
+        elif event_type == "stage_started" and isinstance(name, str):
+            stages[name] = "running"
+            stage_timings.setdefault(name, {})["started_at"] = timestamp
+        elif event_type == "stage_progress" and isinstance(name, str):
+            values = payload.get("values")
+            if isinstance(values, dict):
+                progress = dict(values)
+        elif event_type == "stage_finished" and isinstance(name, str):
+            state = payload.get("state")
+            if isinstance(state, str):
+                stages[name] = state
+            timing = stage_timings.setdefault(name, {})
+            timing["ended_at"] = timestamp
+            duration = payload.get("duration_seconds")
+            if isinstance(duration, (int, float)) and not isinstance(
+                duration, bool
+            ):
+                timing["duration_secs"] = duration
+            progress = {}
+    return {
+        "stages": stages,
+        "stage_timings": stage_timings,
+        "progress": progress,
+        "heartbeat_at": heartbeat_at,
+    }
 
 
 def _require_ready(plan: Any) -> None:
@@ -1224,16 +2131,91 @@ def _process_create_time(pid: int) -> float:
 def _terminate_failed_launch(process: subprocess.Popen[bytes]) -> None:
     try:
         if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-    except (OSError, subprocess.SubprocessError):
+            _terminate_process_tree(
+                process.pid,
+                _process_create_time(process.pid),
+                timeout_seconds=_PROCESS_EXIT_TIMEOUT_SECONDS,
+            )
+    except (OSError, subprocess.SubprocessError, ValueError):
         log.exception(
             "Could not terminate partially launched evaluation worker %s",
             process.pid,
+        )
+
+
+def _terminate_process_tree(
+    pid: int,
+    create_time: float,
+    *,
+    timeout_seconds: float,
+) -> None:
+    """Terminate one identity-verified worker and all descendants."""
+    import psutil
+
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    try:
+        process = psutil.Process(pid)
+        if (
+            not process.is_running()
+            or abs(process.create_time() - create_time) >= 0.01
+        ):
+            return
+        descendants = process.children(recursive=True)
+    except psutil.Error:
+        return
+
+    if os.name != "nt":
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            log.warning(
+                "Could not terminate evaluation process group %s",
+                pid,
+                exc_info=True,
+            )
+            for child in descendants:
+                try:
+                    child.terminate()
+                except psutil.Error:
+                    pass
+            try:
+                process.terminate()
+            except psutil.Error:
+                pass
+    else:
+        for child in descendants:
+            try:
+                child.terminate()
+            except psutil.Error:
+                pass
+        try:
+            process.terminate()
+        except psutil.Error:
+            pass
+
+    targets = [*descendants, process]
+    _, alive = psutil.wait_procs(targets, timeout=timeout_seconds)
+    if not alive:
+        return
+
+    if os.name != "nt":
+        if process in alive and _process_matches(pid, create_time):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+    for remaining in alive:
+        try:
+            remaining.kill()
+        except psutil.Error:
+            pass
+    _, still_alive = psutil.wait_procs(alive, timeout=timeout_seconds)
+    if still_alive:
+        raise RuntimeError(
+            "Evaluation process tree did not exit after forced termination"
         )
 
 
@@ -1260,6 +2242,31 @@ def _lease_expired(value: str | None) -> bool:
         return parsed <= datetime.now(timezone.utc)
     except (TypeError, ValueError):
         return True
+
+
+def _lease_seconds_remaining(value: str | None) -> float:
+    if value is None:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return max(
+        0.0,
+        (parsed - datetime.now(timezone.utc)).total_seconds(),
+    )
+
+
+def _cancellation_wait_seconds(record: JobRecord) -> float:
+    lease_wait = _lease_seconds_remaining(record.lease_expires_at)
+    if lease_wait <= 0:
+        return _CANCELLATION_POLL_SECONDS
+    return min(
+        _MAX_RECOVERY_SLEEP_SECONDS,
+        max(_CANCELLATION_POLL_SECONDS, lease_wait),
+    )
 
 
 def _heartbeat_age(value: str | None) -> float | None:

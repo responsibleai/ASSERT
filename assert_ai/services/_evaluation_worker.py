@@ -15,14 +15,33 @@ import re
 import sys
 import threading
 from collections.abc import Iterator
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from assert_ai.core.config_document import PIPELINE_STAGE_ORDER
 from assert_ai.core.io import write_json
-from assert_ai.core.security import redact_path_prefixes, sanitize_text
+from assert_ai.core.run_control import (
+    PipelineFinished,
+    PipelineStarted,
+    RunCancelled,
+    RunControl,
+    StageFinished,
+    StagePlanned,
+    StageProgress,
+    StageStarted,
+)
+from assert_ai.core.run_result import RunResult, RunState
+from assert_ai.core.security import (
+    redact_path_prefixes,
+    sanitize_payload,
+    sanitize_text,
+)
 from assert_ai.core.workspace import WorkspaceService
+from assert_ai.services.job_store import JobStore
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -123,22 +142,72 @@ def main(argv: list[str] | None = None) -> int:
             expected_root=job_dir,
             reject_links=True,
         )
+        cancel_path = workspace.path_policy.resolve_managed_output(
+            job_dir / "cancel.requested",
+            field_name="evaluation cancellation marker",
+            expected_root=job_dir,
+            reject_links=True,
+        )
+        cancel_acknowledged_path = (
+            workspace.path_policy.resolve_managed_output(
+                job_dir / "cancel.acknowledged",
+                field_name="evaluation cancellation acknowledgement",
+                expected_root=job_dir,
+                reject_links=True,
+            )
+        )
+        store = JobStore(
+            jobs_root.parent / "jobs.sqlite3",
+            path_policy=workspace.path_policy,
+            expected_root=workspace.artifacts_root,
+        )
+        observer = _JobRunObserver(
+            store=store,
+            job_id=args.job_id,
+            workspace=workspace,
+        )
+        control = RunControl.from_marker(
+            cancel_path,
+            cancel_acknowledged=lambda stage: (
+                _acknowledge_cancellation(
+                    cancel_acknowledged_path,
+                    store=store,
+                    job_id=args.job_id,
+                    stage=stage,
+                )
+            ),
+        )
         with (
             _BoundedTextLog(stdout_path, max_bytes=max_log_bytes) as stdout,
             _BoundedTextLog(stderr_path, max_bytes=max_log_bytes) as stderr,
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
             _capture_worker_logs(stderr),
+            observer,
         ):
-            from assert_ai.runner import run_pipeline_document_result
+            try:
+                control.raise_if_cancelled(
+                    stage=_first_enabled_stage(document)
+                )
+            except RunCancelled as cancelled:
+                result = _cancelled_before_runner(
+                    document,
+                    workspace=workspace,
+                    observer=observer,
+                    failed_stage=cancelled.stage,
+                )
+            else:
+                from assert_ai.runner import run_pipeline_document_result
 
-            result = run_pipeline_document_result(
-                document=document,
-                config_path=str(config_path),
-                force_stages=force_stages,
-                strict=strict,
-                path_policy=workspace.path_policy,
-            )
+                result = run_pipeline_document_result(
+                    document=document,
+                    config_path=str(config_path),
+                    force_stages=force_stages,
+                    strict=strict,
+                    path_policy=workspace.path_policy,
+                    control=control,
+                    observer=observer,
+                )
         payload = {
             "schema_version": 1,
             "job_id": args.job_id,
@@ -206,6 +275,128 @@ def _required_string(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{key} must be a non-empty string")
     return value
+
+
+def _acknowledge_cancellation(
+    path: Path,
+    *,
+    store: JobStore,
+    job_id: str,
+    stage: str | None,
+) -> None:
+    acknowledged_at = datetime.now(timezone.utc).isoformat()
+    write_json(
+        path,
+        {
+            "schema_version": 1,
+            "job_id": job_id,
+            "acknowledged_at": acknowledged_at,
+            "stage": stage,
+        },
+    )
+    store.append_event(
+        job_id,
+        "cancel_observed",
+        {
+            "state": "cancelling",
+            "stage": stage,
+            "acknowledged_at": acknowledged_at,
+        },
+    )
+
+
+def _first_enabled_stage(document: dict[str, Any]) -> str | None:
+    pipeline = document.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return None
+    for stage_name in PIPELINE_STAGE_ORDER:
+        stage = pipeline.get(stage_name)
+        if isinstance(stage, dict) and stage.get("enabled", True):
+            return stage_name
+    return None
+
+
+def _cancelled_before_runner(
+    document: dict[str, Any],
+    *,
+    workspace: WorkspaceService,
+    observer: "_JobRunObserver",
+    failed_stage: str | None,
+) -> RunResult:
+    suite_id = document.get("suite")
+    run_id = document.get("run")
+    suite_id = suite_id if isinstance(suite_id, str) else None
+    run_id = run_id if isinstance(run_id, str) else None
+    suite_root = None
+    if suite_id is not None:
+        suite_root = workspace.path_policy.resolve_managed_output(
+            workspace.results_root / suite_id,
+            field_name="cancelled evaluation suite root",
+            expected_root=workspace.results_root,
+            reject_links=True,
+        )
+    run_root = (
+        workspace.path_policy.resolve_managed_output(
+            suite_root / run_id,
+            field_name="cancelled evaluation run root",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        if suite_root is not None and run_id is not None
+        else None
+    )
+    stages = tuple(
+        stage_name
+        for stage_name in PIPELINE_STAGE_ORDER
+        if isinstance(document.get("pipeline"), dict)
+        and isinstance(document["pipeline"].get(stage_name), dict)
+        and document["pipeline"][stage_name].get("enabled", True)
+    )
+    observer.pipeline_started(
+        PipelineStarted(
+            suite_id=suite_id,
+            run_id=run_id,
+            stages=stages,
+        )
+    )
+    if failed_stage is not None:
+        scope = (
+            "suite"
+            if failed_stage in {"systematize", "test_set"}
+            else "run"
+        )
+        observer.stage_planned(
+            StagePlanned(
+                name=failed_stage,
+                scope=scope,
+                action="pending",
+            )
+        )
+        observer.stage_finished(
+            StageFinished(
+                name=failed_stage,
+                scope=scope,
+                state="cancelled",
+                duration_seconds=0.0,
+            )
+        )
+    result = RunResult(
+        state=RunState.CANCELLED,
+        exit_code=130,
+        suite_id=suite_id,
+        run_id=run_id,
+        suite_root=suite_root,
+        run_root=run_root,
+        failed_stage=failed_stage,
+    )
+    observer.pipeline_finished(
+        PipelineFinished(
+            state=result.state.value,
+            exit_code=result.exit_code,
+            failed_stage=result.failed_stage,
+        )
+    )
+    return result
 
 
 def _read_bytes(path: Path, *, max_bytes: int, label: str) -> bytes:
@@ -326,6 +517,98 @@ class _BoundedBinaryLog:
 
     def fileno(self) -> int:
         return self._text_log.fileno()
+
+
+class _JobRunObserver:
+    """Persist runner lifecycle events and a suite-only heartbeat."""
+
+    def __init__(
+        self,
+        *,
+        store: JobStore,
+        job_id: str,
+        workspace: WorkspaceService,
+        heartbeat_seconds: float = 15.0,
+    ) -> None:
+        self._store = store
+        self._job_id = job_id
+        self._workspace = workspace
+        self._heartbeat_seconds = heartbeat_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_JobRunObserver":
+        self._thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="assert-mcp-job-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def pipeline_started(self, event: PipelineStarted) -> None:
+        self._append("pipeline_started", event)
+
+    def stage_planned(self, event: StagePlanned) -> None:
+        self._append("stage_planned", event)
+
+    def stage_started(self, event: StageStarted) -> None:
+        self._append("stage_started", event)
+
+    def stage_progress(self, event: StageProgress) -> None:
+        self._append("stage_progress", event)
+
+    def stage_finished(self, event: StageFinished) -> None:
+        self._append("stage_finished", event)
+
+    def pipeline_finished(self, event: PipelineFinished) -> None:
+        self._append("pipeline_finished", event)
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(self._heartbeat_seconds):
+            self._append("heartbeat", {"state": "running"})
+
+    def _append(self, event_type: str, event: object) -> None:
+        try:
+            raw = asdict(event) if hasattr(event, "__dataclass_fields__") else event
+            payload = sanitize_payload(raw)
+            if not isinstance(payload, dict):
+                payload = {}
+            payload = _redact_payload_paths(payload, self._workspace)
+            self._store.append_event(
+                self._job_id,
+                event_type,
+                payload,
+            )
+        except Exception:  # noqa: BLE001 - diagnostic boundary
+            logging.getLogger(__name__).exception(
+                "Could not persist evaluation job event %s",
+                event_type,
+            )
+
+
+def _redact_payload_paths(
+    payload: dict[str, Any],
+    workspace: WorkspaceService,
+) -> dict[str, Any]:
+    serialized = json.dumps(payload, ensure_ascii=False)
+    redacted = redact_path_prefixes(
+        serialized,
+        (
+            workspace.root,
+            workspace.configs_root,
+            workspace.artifacts_root,
+            workspace.results_root,
+        ),
+    )
+    parsed = json.loads(redacted)
+    return parsed if isinstance(parsed, dict) else {}
 
 
 @contextlib.contextmanager

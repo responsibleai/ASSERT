@@ -91,6 +91,7 @@ class ServerOptions:
     max_active_jobs: int = 1
     max_queued_jobs: int = 100
     max_job_log_bytes: int = 1024 * 1024
+    cancellation_grace_seconds: float = 10.0
     max_prompt_sample_size: int = 100_000
     max_scenario_sample_size: int = 100_000
     allowed_model_patterns: tuple[str, ...] = ()
@@ -118,6 +119,10 @@ class ServerOptions:
         if not 4096 <= self.max_job_log_bytes <= 16 * 1024 * 1024:
             raise ValueError(
                 "max_job_log_bytes must be between 4096 and 16777216"
+            )
+        if self.cancellation_grace_seconds <= 0:
+            raise ValueError(
+                "cancellation_grace_seconds must be positive"
             )
         if self.max_prompt_sample_size < 1:
             raise ValueError("max_prompt_sample_size must be positive")
@@ -163,6 +168,7 @@ class ServerOptions:
         max_active_jobs: int = 1,
         max_queued_jobs: int = 100,
         max_job_log_bytes: int = 1024 * 1024,
+        cancellation_grace_seconds: float = 10.0,
         max_prompt_sample_size: int = 100_000,
         max_scenario_sample_size: int = 100_000,
         allowed_model_patterns: Iterable[str] = (),
@@ -191,6 +197,7 @@ class ServerOptions:
             max_active_jobs=max_active_jobs,
             max_queued_jobs=max_queued_jobs,
             max_job_log_bytes=max_job_log_bytes,
+            cancellation_grace_seconds=cancellation_grace_seconds,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,
             allowed_model_patterns=tuple(allowed_model_patterns),
@@ -260,6 +267,7 @@ def build_server(options: ServerOptions) -> MCPServer:
         max_active_jobs=options.max_active_jobs,
         max_log_bytes=options.max_job_log_bytes,
         launch_enabled=execution_enabled,
+        cancellation_grace_seconds=options.cancellation_grace_seconds,
     )
     evaluations = EvaluationService(
         options.workspace,
@@ -310,6 +318,9 @@ def build_server(options: ServerOptions) -> MCPServer:
                 max_active_jobs=options.max_active_jobs,
                 max_queued_jobs=options.max_queued_jobs,
                 max_job_log_bytes=options.max_job_log_bytes,
+                cancellation_grace_seconds=(
+                    options.cancellation_grace_seconds
+                ),
                 max_prompt_sample_size=options.max_prompt_sample_size,
                 max_scenario_sample_size=options.max_scenario_sample_size,
                 model_allowlist_enabled=bool(options.allowed_model_patterns),
@@ -385,7 +396,7 @@ def build_server(options: ServerOptions) -> MCPServer:
         )
     if execution_enabled:
         register_job_execute_tools(server, job_services)
-        job_manager.enqueue()
+        job_manager.start()
 
     return server
 

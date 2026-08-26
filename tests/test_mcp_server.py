@@ -58,6 +58,8 @@ EXPECTED_FULL_TOOLS = EXPECTED_AUTHOR_TOOLS | {
     "design_config",
     "probe_target",
     "start_evaluation",
+    "cancel_job",
+    "retry_job",
 }
 
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -489,6 +491,7 @@ def test_get_server_info_protocol_round_trip(tmp_path: Path) -> None:
     assert result.structured_content["limits"]["max_active_jobs"] == 1
     assert result.structured_content["limits"]["max_queued_jobs"] == 100
     assert result.structured_content["limits"]["max_job_log_bytes"] == 1024 * 1024
+    assert result.structured_content["limits"]["cancellation_grace_seconds"] == 10.0
     assert result.structured_content["limits"]["max_prompt_sample_size"] == 100_000
     assert result.structured_content["limits"]["max_scenario_sample_size"] == 100_000
     assert result.structured_content["limits"]["model_allowlist_enabled"] is True
@@ -548,17 +551,17 @@ def test_all_tools_publish_stable_schemas_and_read_only_annotations(
         "compare_runs": "f7bfeca051f8f81bf3621936588ed906332076a3a34b550090f87c2944656ce5",
         "get_config": "bf38188871cb818e0b0cf6e28183aa728ed8d041923a158f593832d2459bd13a",
         "get_config_schema": "cca1d3a48240e20eff93a123b34d7ba92df3ed1df87f57f9eb217aa21515ec26",
-        "get_job": "76794436d4665712dfbd226a4c44738f1b4e8ab6ff3ed3f7eb184311f1f60cb0",
+        "get_job": "d7a6f643b5fceebcf28b995c8ef1a5aa72bb326551b5546af53ca5b43721a27f",
         "get_preset": "81db6723ad5065ce8a0a402d29dc2f9df7657d302e3ebe8b377f54c9d62353d0",
         "get_run": "e5216cd0085d049f8b49c54add913b6f83756c4ce59995317fe63e010ea44936",
-        "get_server_info": "51e1d08335b4c8c6cb5eb70b6857563ab2dead550347f83dac64d89d8d417069",
+        "get_server_info": "bae685a1691062b93cc8377d829b779807ad729c576d99cba356f642292a9ed1",
         "get_suite": "8f629c93e02b656052f637c3cbba9217834315a693c4f7935f6d961203b46fd0",
         "get_test_case": "11380555caaa71d5992923815a499fc08b368c02f4d4836e4761630654589148",
         "get_transcript": "aa09669e0cb99202e8dec0b858b4faa41742ecb616351c3956b0d0bd488717e8",
         "list_artifacts": "3d3bede0b7209401b15d1f39d82671092c3097a05cd901122bd46c3c42edebfc",
         "list_configs": "92f78db2533034e6bf80e1d95089460acdd40a18468d4eb06fdf055726dfef19",
         "list_failures": "d3cc3f3bcc86c110754673297d28ac1e5ccbf698668c997de0bba2d0cbd425e2",
-        "list_jobs": "4570a8790f6f5c42fa015c49056111f4b7f00744a2300e3a79af9a68f08d2530",
+        "list_jobs": "dd2a59740c543efda3d7141af96678b7a321b0ea8dbe3524779e79b297073f07",
         "list_presets": "55faa31adbf7f689eb5efbf1211fa73b2474d1a0e4549ec0a836ea69919c46b1",
         "list_runs": "7280687daafcd7ff5d89756c9584ca06c432a44f5a98ce8ff3ae0e4427dcf40b",
         "list_scores": "5c1951a3a3b91089b68b30e970a1b13f59bc2659a2c234db4451cbe2d5362a4d",
@@ -588,6 +591,8 @@ def test_author_tools_publish_stable_schemas_and_annotations(
         "design_config": (True, False, False, True),
         "probe_target": (True, False, False, True),
         "start_evaluation": (False, True, True, True),
+        "cancel_job": (False, True, True, False),
+        "retry_job": (False, True, True, True),
     }
     expected_digests = {
         "validate_config": (
@@ -606,7 +611,13 @@ def test_author_tools_publish_stable_schemas_and_annotations(
             "406d97ba84821a4e2661779dcc1211d208d2485013f8dea761c04f1fcdf59e63"
         ),
         "start_evaluation": (
-            "b594f1ef3510f31503960291e7ed5b57967876b5c5d4d628b0d5ee86cc000c0c"
+            "143c75380354a425936844f627569d66e721f604d4722af0cd40dc2959d4084a"
+        ),
+        "cancel_job": (
+            "714906227e19526bca0b5ba965574812c7ff427557530644138092e230229e0f"
+        ),
+        "retry_job": (
+            "db52c7589a88bcbdef299b210c03f134050beea74117ab95e9a7f1d8e182a455"
         ),
     }
 
@@ -845,6 +856,155 @@ def test_complete_persisted_evaluation_workflow_through_mcp(
     assert str(tmp_path) not in results["job_log"]
     assert "not-a-real-secret" not in results["job_log"]
     assert "[REDACTED]" in results["job_log"]
+
+
+def test_mcp_can_cancel_a_running_evaluation(tmp_path: Path) -> None:
+    _seed_evaluation_workspace(tmp_path)
+    (tmp_path / "agent.py").write_text(
+        "import time\n"
+        "def run(message, *, history=None):\n"
+        "    del history\n"
+        "    time.sleep(1)\n"
+        "    return message\n",
+        encoding="utf-8",
+    )
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+            cancellation_grace_seconds=3,
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            started = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "cancel-through-mcp",
+                },
+            )
+            job_id = started.structured_content["job"]["job_id"]
+            deadline = asyncio.get_running_loop().time() + 15
+            while True:
+                detail = await client.call_tool(
+                    "get_job",
+                    {"job_id": job_id},
+                )
+                if detail.structured_content["state"] == "running":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("MCP evaluation did not start")
+                await asyncio.sleep(0.05)
+            cancelling = await client.call_tool(
+                "cancel_job",
+                {"job_id": job_id},
+            )
+            while True:
+                detail = await client.call_tool(
+                    "get_job",
+                    {"job_id": job_id},
+                )
+                if detail.structured_content["state"] == "cancelled":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("MCP evaluation did not cancel")
+                await asyncio.sleep(0.05)
+            return {
+                "cancelling": cancelling.structured_content,
+                "terminal": detail.structured_content,
+            }
+
+    results = asyncio.run(run())
+
+    assert results["cancelling"]["state"] == "cancelling"
+    assert results["cancelling"]["cancel_requested_at"] is not None
+    assert results["terminal"]["state"] == "cancelled"
+    assert results["terminal"]["terminal_result"]["exit_code"] == 130
+    assert results["terminal"]["stages"]["inference"] == "cancelled"
+
+
+def test_mcp_retry_is_idempotent_and_records_provenance(
+    tmp_path: Path,
+) -> None:
+    _seed_evaluation_workspace(tmp_path)
+    config_path = tmp_path / "evals" / "job.yaml"
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["pipeline"]["inference"]["test_set_path"] = "missing.jsonl"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+
+    async def run() -> dict[str, Any]:
+        options = ServerOptions.create(
+            workspace_root=tmp_path,
+            mode="full",
+        )
+        async with Client(build_server(options), raise_exceptions=True) as client:
+            started = await client.call_tool(
+                "start_evaluation",
+                {
+                    "config_ref": "job.yaml",
+                    "request_id": "retry-original",
+                },
+            )
+            original_id = started.structured_content["job"]["job_id"]
+            deadline = asyncio.get_running_loop().time() + 20
+            while True:
+                original = await client.call_tool(
+                    "get_job",
+                    {"job_id": original_id},
+                )
+                if original.structured_content["state"] == "failed":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("Original MCP evaluation did not fail")
+                await asyncio.sleep(0.05)
+            retried = await client.call_tool(
+                "retry_job",
+                {
+                    "job_id": original_id,
+                    "request_id": "retry-attempt",
+                },
+            )
+            repeated = await client.call_tool(
+                "retry_job",
+                {
+                    "job_id": original_id,
+                    "request_id": "retry-attempt",
+                },
+            )
+            retry_id = retried.structured_content["job"]["job_id"]
+            deadline = asyncio.get_running_loop().time() + 20
+            while True:
+                retry_detail = await client.call_tool(
+                    "get_job",
+                    {"job_id": retry_id},
+                )
+                if retry_detail.structured_content["state"] == "failed":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("Retried MCP evaluation did not fail")
+                await asyncio.sleep(0.05)
+            not_cancellable = await client.call_tool(
+                "cancel_job",
+                {"job_id": original_id},
+            )
+            return {
+                "original_id": original_id,
+                "retried": retried,
+                "repeated": repeated,
+                "not_cancellable": not_cancellable,
+            }
+
+    results = asyncio.run(run())
+
+    retried = results["retried"].structured_content
+    repeated = results["repeated"].structured_content
+    assert retried["created"] is True
+    assert retried["job"]["retry_of"] == results["original_id"]
+    assert repeated["created"] is False
+    assert repeated["job"]["job_id"] == retried["job"]["job_id"]
+    assert '"code":"JOB_NOT_CANCELLABLE"' in _error_text(
+        results["not_cancellable"]
+    )
 
 
 def test_design_config_returns_an_unpersisted_draft(tmp_path: Path) -> None:

@@ -12,6 +12,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# Public job responses remain API-v1 compatible. Persisted SQLite migrations
+# use their own independent schema version in job_store.py.
 JOB_SCHEMA_VERSION = 1
 
 
@@ -46,6 +48,7 @@ class JobRecord:
     idempotency_key: str
     request_hash: str
     kind: str
+    retry_of: str | None
     state: JobState
     created_at: str
     started_at: str | None
@@ -85,6 +88,7 @@ class NewJob:
     snapshot_path: str
     request_path: str
     resource_keys: tuple[str, ...]
+    retry_of: str | None = None
     kind: str = "evaluation"
 
 
@@ -116,6 +120,7 @@ class JobCatalogEntry(_ServiceModel):
     state: JobState
     revision: int = Field(ge=0)
     kind: Literal["evaluation"] = "evaluation"
+    retry_of: str | None = None
     config_ref: str
     suite_id: str
     run_id: str | None = None
@@ -136,6 +141,7 @@ class JobDetail(JobCatalogEntry):
 
     request_id: str
     config_sha256: str
+    cancel_requested_at: str | None = None
     heartbeat_at: str | None = None
     heartbeat_age_seconds: float | None = Field(default=None, ge=0)
     stages: dict[str, Any] = Field(default_factory=dict)

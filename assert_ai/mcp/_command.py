@@ -145,6 +145,13 @@ def mcp() -> None:
     help="Maximum retained bytes for each worker stdout/stderr log.",
 )
 @click.option(
+    "--cancellation-grace-seconds",
+    type=click.FloatRange(min=0.1),
+    default=10.0,
+    show_default=True,
+    help="Grace period before an unresponsive worker tree is terminated.",
+)
+@click.option(
     "--max-prompt-sample-size",
     type=click.IntRange(min=1),
     default=100_000,
@@ -192,6 +199,7 @@ def serve(
     max_active_jobs: int,
     max_queued_jobs: int,
     max_job_log_bytes: int,
+    cancellation_grace_seconds: float,
     max_prompt_sample_size: int,
     max_scenario_sample_size: int,
     allowed_model_patterns: tuple[str, ...],
@@ -226,6 +234,7 @@ def serve(
             max_active_jobs=max_active_jobs,
             max_queued_jobs=max_queued_jobs,
             max_job_log_bytes=max_job_log_bytes,
+            cancellation_grace_seconds=cancellation_grace_seconds,
             max_prompt_sample_size=max_prompt_sample_size,
             max_scenario_sample_size=max_scenario_sample_size,
             allowed_model_patterns=allowed_model_patterns,

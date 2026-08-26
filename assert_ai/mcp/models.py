@@ -64,6 +64,7 @@ class ServerLimits(BaseModel):
     max_active_jobs: int
     max_queued_jobs: int
     max_job_log_bytes: int
+    cancellation_grace_seconds: float
     max_prompt_sample_size: int
     max_scenario_sample_size: int
     model_allowlist_enabled: bool = False
@@ -100,6 +101,7 @@ class ServerInfo(BaseModel):
     protocol_notes: list[str] = Field(
         default_factory=lambda: [
             "Long evaluations use ASSERT job polling rather than one blocking MCP request.",
+            "Cancellation is cooperative before identity-checked process-tree termination.",
             "Resource and artifact identifiers are opaque and contain no host paths.",
         ]
     )

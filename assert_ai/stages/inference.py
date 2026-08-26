@@ -44,6 +44,7 @@ from assert_ai.core.io import (
 )
 from assert_ai.core.model_client import GenerateOptions, Message, ModelResponse, build_llm_call_trace, generate, to_jsonable
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
+from assert_ai.core.run_control import RunCancelled, RunControl
 from assert_ai.core.session import (
     CallableSession,
     ExternalSession,
@@ -1124,6 +1125,7 @@ async def run_inference(
     strict: bool = False,
     forced: bool = False,
     heartbeat: Any = None,
+    run_control: RunControl | None = None,
     rewrite_test_set_path: bool = True,
 ) -> dict[str, Any]:
     """Run all test-case inferences and write the transcript artifact."""
@@ -1289,6 +1291,8 @@ async def run_inference(
         """
         output_index, test_case_row = test_case
         try:
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="inference")
             kind = test_case_row["type"]
             if kind == "prompt":
                 transcript = await _run_prompt_test_case(
@@ -1312,7 +1316,11 @@ async def run_inference(
                 )
             else:
                 raise ValueError(f"unsupported test case type: {kind}")
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="inference")
             return {"output_index": output_index, "inference_row": transcript.to_dict()}
+        except RunCancelled:
+            raise
         except LLMContentFilterError as exc:
             # Adversarial-eval test cases (XPIA, PII, security attacks) can
             # legitimately trip the tester or target model's content
@@ -1417,6 +1425,8 @@ async def run_inference(
                 )
             except Exception:  # noqa: BLE001
                 heartbeat = None
+        if run_control is not None:
+            run_control.raise_if_cancelled(stage="inference")
         idx = result["output_index"]
         test_case_row = test_cases[idx]
         kind = test_case_row.get("type", "")
@@ -1519,6 +1529,8 @@ async def run_inference(
             field_name="inference output directory",
             expected_root=managed_output_root,
         )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="inference")
     build_run_viewer_artifacts(out_dir)
 
     return {
@@ -1584,6 +1596,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         strict=cfg.get("strict", False),
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
+        run_control=ctx.get("_run_control") if isinstance(ctx, dict) else None,
         rewrite_test_set_path=rewrite_test_set_path,
     )
     target_obj = ctx["target"]
