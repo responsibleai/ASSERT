@@ -68,7 +68,9 @@ class SystematizationConvertStageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("A single conversation may trigger multiple behavior_categories.", GUIDELINE_PROMPT)
         self.assertIn("Expand patterns via slot values", GUIDELINE_PROMPT)
         self.assertIn("`behavior.definition` must capture the overall scope", GUIDELINE_PROMPT)
-        self.assertIn("4–8 concrete text snippets", GUIDELINE_PROMPT)
+        self.assertIn("provider-safe", GUIDELINE_PROMPT)
+        self.assertIn("square-bracket placeholders", GUIDELINE_PROMPT)
+        self.assertNotIn("Prefer 6–8 examples", GUIDELINE_PROMPT)
         self.assertIn("slot_components", GUIDELINE_PROMPT)
 
     async def test_run_systematization_to_taxonomy_writes_policy(self) -> None:
@@ -323,6 +325,56 @@ class SystematizationConvertTruncationDetectionTest(unittest.IsolatedAsyncioTest
                     save_path=str(tmp_path / "taxonomy.json"),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
                 )
+
+    async def test_content_filter_stops_retry_and_writes_specific_diagnostic(self) -> None:
+        attempts = 0
+        partial_text = '{"behavior":{"name":"hate_speech_generation"'
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            nonlocal attempts
+            del prompt, schema_name, json_schema, options
+            attempts += 1
+            return ModelResponse(
+                model=model,
+                text=partial_text,
+                finish_reason="content_filter",
+                response_id="chatcmpl-content-filtered",
+                api_mode="chat_completion",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            systematization_path = self._write_fixture(tmp_path)
+            diagnostics_dir = tmp_path / "diagnostics"
+            with (
+                patch(
+                    "assert_ai.stages.systematization_convert.generate_structured",
+                    new=fake_generate_structured,
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "provider content filter.*Full response diagnostic",
+                ),
+            ):
+                await run_systematization_to_taxonomy(
+                    systematization_path=str(systematization_path),
+                    save_path=str(tmp_path / "taxonomy.json"),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                    diagnostics_dir=str(diagnostics_dir),
+                )
+
+            self.assertEqual(attempts, 1)
+            diagnostic_files = list(
+                (diagnostics_dir / "systematization_convert").glob("*.json")
+            )
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "content_filtered")
+            self.assertEqual(
+                diagnostic["response_metadata"]["finish_reason"],
+                "content_filter",
+            )
+            self.assertEqual(diagnostic["llm_call"]["derived"]["content"], partial_text)
 
     async def test_chat_completions_length_truncation_raises_clear_error(self) -> None:
         async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):

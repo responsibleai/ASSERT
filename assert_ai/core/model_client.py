@@ -301,6 +301,11 @@ _TRUNCATED_FINISH_REASONS: frozenset[str] = frozenset({
     "max_output_tokens",
 })
 
+_CONTENT_FILTER_FINISH_REASONS: frozenset[str] = frozenset({
+    "content_filter",
+    "content_filtered",
+})
+
 
 def is_truncated_response(response: "ModelResponse") -> bool:
     """Return True iff *response* hit the model's output token limit.
@@ -316,6 +321,20 @@ def is_truncated_response(response: "ModelResponse") -> bool:
     incomplete = getattr(response, "incomplete_details", None)
     incomplete_reason = _get_value(incomplete, "reason")
     return isinstance(incomplete_reason, str) and incomplete_reason in _TRUNCATED_FINISH_REASONS
+
+
+def is_content_filtered_response(response: "ModelResponse") -> bool:
+    """Return True when the provider stopped generation for content policy."""
+
+    reason = getattr(response, "finish_reason", None)
+    if isinstance(reason, str) and reason in _CONTENT_FILTER_FINISH_REASONS:
+        return True
+    incomplete = getattr(response, "incomplete_details", None)
+    incomplete_reason = _get_value(incomplete, "reason")
+    return (
+        isinstance(incomplete_reason, str)
+        and incomplete_reason in _CONTENT_FILTER_FINISH_REASONS
+    )
 
 
 def build_json_schema_response_format(

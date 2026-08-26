@@ -20,6 +20,7 @@ from assert_ai.core.llm_diagnostics import llm_failure_error
 from assert_ai.core.model_client import (
     GenerateOptions,
     generate_structured,
+    is_content_filtered_response,
     is_truncated_response,
 )
 
@@ -155,6 +156,20 @@ async def run_systematization(
             reasoning_effort=model_cfg.reasoning_effort,
         ),
     )
+    if is_content_filtered_response(response):
+        raise llm_failure_error(
+            response,
+            diagnostics_dir=diagnostic_root,
+            stage="systematization",
+            reason="content_filtered",
+            attempt=1,
+            message=(
+                "systematization response was stopped by the provider content filter "
+                "before the structured document completed. This is not a token or quota "
+                "failure. ASSERT requests masked, provider-safe examples; if this persists, "
+                "use a model deployment approved for this evaluation content."
+            ),
+        )
     if is_truncated_response(response):
         finish_reason = getattr(response, "finish_reason", None)
         raise llm_failure_error(

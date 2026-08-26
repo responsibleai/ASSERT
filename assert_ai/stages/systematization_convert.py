@@ -24,6 +24,7 @@ from assert_ai.core.llm_diagnostics import llm_failure_error
 from assert_ai.core.model_client import (
     GenerateOptions,
     generate_structured,
+    is_content_filtered_response,
     is_truncated_response,
 )
 from assert_ai.stages.systematize import taxonomy_schema
@@ -186,6 +187,7 @@ async def run_systematization_to_taxonomy(
     last_text = ""
     last_response = None
     last_attempt = 0
+    content_filtered = False
     for _attempt in range(_MAX_PARSE_ATTEMPTS):
         response = await generate_structured(
             model_cfg.name,
@@ -200,6 +202,10 @@ async def run_systematization_to_taxonomy(
         )
         last_response = response
         last_attempt = _attempt + 1
+        if is_content_filtered_response(response):
+            content_filtered = True
+            last_text = response.text or ""
+            break
         if isinstance(response.parsed, dict) and response.parsed:
             taxonomy_payload = response.parsed
             break
@@ -212,6 +218,20 @@ async def run_systematization_to_taxonomy(
             )
 
     if not isinstance(taxonomy_payload, dict) or not taxonomy_payload:
+        if last_response is not None and content_filtered:
+            raise llm_failure_error(
+                last_response,
+                diagnostics_dir=diagnostic_root,
+                stage="systematization_convert",
+                reason="content_filtered",
+                attempt=last_attempt,
+                message=(
+                    "systematization_convert response was stopped by the provider content "
+                    "filter before the taxonomy JSON completed. This is not a token or quota "
+                    "failure. ASSERT requests masked, provider-safe examples; if this persists, "
+                    "use a model deployment approved for this evaluation content."
+                ),
+            )
         if last_response is not None and is_truncated_response(last_response):
             finish_reason = getattr(last_response, "finish_reason", None)
             raise llm_failure_error(

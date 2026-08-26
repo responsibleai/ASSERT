@@ -101,6 +101,8 @@ class SystematizationStageTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("## Background Behavior of Interest\nHarmful advice", prompt)
             self.assertIn("concise summary of key synthesis decisions", prompt)
             self.assertNotIn("verbose details of key synthesis decisions", prompt)
+            self.assertIn("provider-safe", prompt)
+            self.assertIn("square-bracket placeholders", prompt)
             return ModelResponse(model=model, parsed=SYSTEMATIZATION_DOCUMENT)
 
         with TemporaryDirectory() as tmp_dir:
@@ -208,6 +210,46 @@ class SystematizationTruncationDetectionTest(unittest.IsolatedAsyncioTestCase):
                     save_path=str(out_path),
                     model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=10000),
                 )
+
+    async def test_content_filter_raises_specific_error_and_diagnostic(self) -> None:
+        partial_text = '{"behavior":"hate_speech_generation","scope":"partial'
+
+        async def fake_generate_structured(model, prompt, *, schema_name, json_schema, options):
+            del prompt, schema_name, json_schema, options
+            return ModelResponse(
+                model=model,
+                text=partial_text,
+                finish_reason="content_filter",
+                response_id="chatcmpl-systematization-filtered",
+                api_mode="chat_completion",
+            )
+
+        with TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir) / "systematization.json"
+            diagnostics_dir = Path(tmp_dir) / "diagnostics"
+            with (
+                patch("assert_ai.stages.systematization.generate_structured", new=fake_generate_structured),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "provider content filter.*Full response diagnostic",
+                ),
+            ):
+                await run_systematization(
+                    behavior="hate_speech_generation",
+                    behavior_text="Hate speech generation",
+                    save_path=str(out_path),
+                    model_cfg=ModelConfig(name="azure/gpt-5.4", max_tokens=8000),
+                    diagnostics_dir=str(diagnostics_dir),
+                )
+
+            diagnostic_files = list((diagnostics_dir / "systematization").glob("*.json"))
+            self.assertEqual(len(diagnostic_files), 1)
+            diagnostic = json.loads(diagnostic_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["reason"], "content_filtered")
+            self.assertEqual(
+                diagnostic["response_metadata"]["finish_reason"],
+                "content_filter",
+            )
 
     async def test_non_truncation_parse_failure_keeps_original_error(self) -> None:
         """Prior to issue #131, the parse-failure path raised this exact message.

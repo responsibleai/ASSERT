@@ -1015,6 +1015,26 @@ class IsTruncatedResponseTest(unittest.TestCase):
         self.assertFalse(model_client.is_truncated_response(response))
 
 
+class IsContentFilteredResponseTest(unittest.TestCase):
+    def test_chat_completions_content_filter_finish_reason(self) -> None:
+        response = model_client.ModelResponse(
+            text="partial",
+            finish_reason="content_filter",
+        )
+        self.assertTrue(model_client.is_content_filtered_response(response))
+
+    def test_falls_back_to_incomplete_details_reason(self) -> None:
+        response = model_client.ModelResponse(
+            text="partial",
+            incomplete_details={"reason": "content_filtered"},
+        )
+        self.assertTrue(model_client.is_content_filtered_response(response))
+
+    def test_normal_stop_is_not_content_filtered(self) -> None:
+        response = model_client.ModelResponse(text="full", finish_reason="stop")
+        self.assertFalse(model_client.is_content_filtered_response(response))
+
+
 class NormalizeUsageZeroTokenDiagnosticsTest(unittest.TestCase):
     """Zero-token usage warrants a debug log so issue #131-style mystery
     '1 call · 0 in / 0 out' rows can be traced back to provider responses."""

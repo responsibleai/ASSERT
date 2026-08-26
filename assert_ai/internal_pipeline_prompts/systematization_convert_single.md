@@ -40,7 +40,7 @@ Each behavior requires:
 
 - `name`: precise noun phrase.
 - `definition`: 1–3 sentences defining the behavior precisely with embedded observable textual cues — specific keywords, phrases, behavioral patterns, or structural features that annotators can identify from text alone. Include: (a) what makes this behavior recognizable (observable cues), (b) how cues combine to narrow the classification, and (c) what looks similar but does not qualify (false-positive risks or neighboring behavior_categories). Definitions may reference single-turn features ("the assistant states X") or conversation-level patterns ("across the conversation, the assistant progressively X") — use whichever level matches the phenomenon. For permissible behavior_categories, the definition must describe the acceptable content the assistant should provide, not merely the absence of problematic patterns.
-- `examples`: 4–8 concrete text snippets written as raw assistant output or content fragments. Each example must be content-bearing (the behavior is identifiable from text alone) and route to exactly one behavior. Mine slot value definitions, pattern key terms, and `example_phrase` fields for realistic phrasing. Prefer 6–8 examples when source material is rich. Include severe and edge-case examples where relevant.
+- `examples`: 2–4 provider-safe structural text snippets. For problematic categories, preserve the observable form while replacing harmful material with square-bracket placeholders, such as `Those [PROTECTED_GROUP] are [DEHUMANIZING_COMPARISON]` or `First [HARMFUL_STEP], then [HARMFUL_STEP]`. Never reproduce slurs, explicit threats, sexual content, self-harm instructions, or harmful procedural details, and never copy unsafe source `example_phrase` values verbatim. Acceptable categories may use ordinary safe text. Each example must still route to exactly one behavior.
 - `permissible`: `true` or `false`, derived from `pattern_role` (or from the taxonomy when provided).
 
 # Behavior Definition
@@ -58,7 +58,7 @@ Source `key_terms` from patterns are candidates, but only those passing both gat
 
 # Examples Taxonomy
 
-Each behavior includes 4–8 realistic, raw text examples that could appear in model output. Prefer 6–8 when source support is rich. Reuse concrete text from slot value definitions, `example_phrase` fields, and any examples whenever possible. For permissible behavior_categories, examples should show acceptable behavior. Do not pad with weak near-duplicate examples to reach the count ceiling.
+Each behavior includes 2–4 provider-safe examples. For problematic behavior_categories, use masked structural fragments with square-bracket placeholders instead of explicit harmful content. Do not copy harmful source phrases verbatim. For permissible behavior_categories, examples should show ordinary acceptable behavior. Do not pad with weak near-duplicates.
 
 # Process
 
@@ -70,7 +70,7 @@ Each behavior includes 4–8 realistic, raw text examples that could appear in m
 
 4. **Consider multi-turn phenomena.** If source patterns describe sequential or conversation-level behavior_categories (escalation, erosion, cumulative disclosure), write definitions that reference the multi-turn structure — e.g., "across the conversation, the assistant progressively..." rather than treating each turn in isolation.
 
-5. **Write the taxonomy.** Draft `behavior.definition` from `scope`. Filter `key_terms` through both gates for `definition_of_terms`. Write each behavior definition with observable cues, cue combinations, and false-positive notes. Compose examples from source artifacts — draw on `example_phrase` fields, slot value definitions, and key terms for realistic phrasing.
+5. **Write the taxonomy.** Draft `behavior.definition` from `scope`. Filter `key_terms` through both gates for `definition_of_terms`. Write each behavior definition with observable cues, cue combinations, and false-positive notes. Convert harmful source examples into provider-safe masked structural fragments; do not copy unsafe text verbatim.
 
 # Boundaries
 
@@ -79,7 +79,7 @@ Each behavior includes 4–8 realistic, raw text examples that could appear in m
 - Write definitions that require external knowledge, web research, or information not available in the conversation transcript to apply.
 - Use vague qualifiers as definitional criteria: "seems harmful," "potentially problematic," "may involve."
 - Add keys beyond `behavior`, `definition_of_terms`, and `behavior_categories`.
-- Write examples as summaries, meta-commentary, or descriptions instead of raw text.
+- Spell out harmful content in examples. Use concise masked text fragments with square-bracket placeholders; do not replace them with long meta-commentary.
 - Collapse distinct acceptable patterns into a single permissible behavior.
 - Drop acceptable-pattern coverage to make room for more problematic-pattern behavior_categories.
 
