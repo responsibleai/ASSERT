@@ -71,7 +71,7 @@ Policy Agent) binary on PATH.
 Install ASSERT with the extras this example uses:
 
 ```bash
-pip install "assert-ai[acs,otel]"
+python -m pip install -e ".[acs,otel]"
 pip install -r examples/bank_manager_agent_control/requirements.txt
 ```
 
