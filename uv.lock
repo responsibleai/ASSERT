@@ -15,27 +15,27 @@ resolution-markers = [
 
 [[package]]
 name = "acs-generator"
-version = "0.3.1b0"
+version = "0.4.0b0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jsonschema" },
+    { name = "agent-control-specification" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/a8/0163e8ef3be2ab828328ebb876793448a7edff6dc2fee448fd5619c2fab1/acs_generator-0.3.1b0.tar.gz", hash = "sha256:30cc30fbe021ec90306f81a79a360d6a5c6995ad0588d2d24ac36b05aba5169d", size = 26938, upload-time = "2026-06-02T23:47:43.066Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/39/ab5f28e01151033cd8b99ff76a7272fd0fe6a9bfe33d7e2059497e252ebd/acs_generator-0.4.0b0.tar.gz", hash = "sha256:f9202b4e542e6e458dc23a0146b2c48a145c492901098a088388085e6c6ca655", size = 37073, upload-time = "2026-08-03T17:18:35.879Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/0f/dce29a050b34492f9212643990a24ccef49b1f7cc2f76d68813223fa4f25/acs_generator-0.3.1b0-py3-none-any.whl", hash = "sha256:d5ac9aa06a1c1249deb7257c99809c135264c54fbdbfccdf56b620e679cd7377", size = 30136, upload-time = "2026-06-02T23:47:44.049Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/c2/02882a84ef34c71357101530593a77b4f6235261c5181d38a72ae97030a2/acs_generator-0.4.0b0-py3-none-any.whl", hash = "sha256:810a1321e55cffbbbf065d712dc2417670431db375f0a09265bfb1582fdbd886", size = 40391, upload-time = "2026-08-03T17:18:36.859Z" },
 ]
 
 [[package]]
 name = "agent-control-specification"
-version = "0.3.1b0"
+version = "0.3.1b1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/1d/1c7ddb9c64c602c30054489772bf8c2e67b58d934d8fd6ad7df0f076fd4c/agent_control_specification-0.3.1b0.tar.gz", hash = "sha256:2dbf77f25c5768d8321401b6a9c85660900f525e777d37fd9bbbdec7704153ac", size = 270604, upload-time = "2026-06-02T23:44:52.361Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/41/40ae2a5e014b7473b9310f3eb286250b7795aa513c676afbf75d6d888229/agent_control_specification-0.3.1b1.tar.gz", hash = "sha256:560a717b51bb808984c7fd1391de0890eb68c1c114dbe91d96381c49ec98257e", size = 358205, upload-time = "2026-08-03T17:18:43.381Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/00/de60f8d82694adbf588d203057fcde7610d345c0270a33044230f4ed6883/agent_control_specification-0.3.1b0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c45ffb572f42247e4c9317539cddbab3eb9009bfce3eccc865fdc764760c60c7", size = 2104993, upload-time = "2026-06-04T18:50:35.085Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/96/2f4c6e9045dd08b51c5d904455899741f65ffc3200ee5928737ff969b850/agent_control_specification-0.3.1b1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a0eea57016fc4cf3c620d92b81ad8c7b1376aa2865991a561ea6a427cb1451be", size = 3445414, upload-time = "2026-08-03T17:18:44.774Z" },
 ]
 
 [[package]]
@@ -4405,8 +4405,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "acs-generator", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
-    { name = "agent-control-specification", marker = "extra == 'acs'", specifier = ">=0.3.1b0" },
+    { name = "acs-generator", marker = "extra == 'acs'", specifier = "==0.4.0b0" },
+    { name = "agent-control-specification", marker = "extra == 'acs'", specifier = "==0.3.1b1" },
     { name = "arize-phoenix", marker = "extra == 'otel'", specifier = ">=15.0.0,<19.18" },
     { name = "arize-phoenix-otel", marker = "extra == 'otel'", specifier = ">=0.15.0" },
     { name = "autogen-agentchat", marker = "extra == 'examples'", specifier = ">=0.7.5" },

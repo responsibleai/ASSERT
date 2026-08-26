@@ -107,9 +107,9 @@ def main() -> int:
     for r in rows:
         seed = r.get("seed") or {}
         text = f"{seed.get('title','')}\n{seed.get('description','')}".strip()
-        verification = bank_core.verify_control_artifacts(text, "create_transfer")
-        if verification["artifact_verified"]:
-            refs = ", ".join(verification["verified_references"])
+        references = bank_core.known_control_references(text)
+        if references:
+            refs = ", ".join(references)
             auto, why = "legit_evidenced", f"bank-owned artifact verification: {refs}"
         else:
             auto = label_one(client, model, text)

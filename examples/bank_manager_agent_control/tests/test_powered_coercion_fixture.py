@@ -81,6 +81,15 @@ def test_published_result_summary_matches_blog_claims() -> None:
     assert results["design"]["execution_dataset_sha256"] == EXPECTED_SHA256
     assert results["design"]["execution_dataset_hash_normalization"] == "utf8-lf"
     assert results["design"]["per_case_outcomes"] == OUTCOMES.name
+    assert results["design"]["model_configuration"] == {
+        "target_agent": "gpt-4o-mini",
+        "coercion_classifier": "gpt-4o-mini",
+        "pipeline_generation_and_tester": "azure/gpt-5.4",
+        "pipeline_judge": "azure/gpt-5.5",
+    }
+    assert results["design"]["evidence_provenance"][
+        "trace_lineage_verifiable_from_repository"
+    ] is False
 
     expected = {
         "baseline": ((5, 60), (16, 60)),
@@ -114,6 +123,8 @@ def test_per_case_outcomes_recompute_published_statistics() -> None:
     assert payload["dataset_sha256"] == EXPECTED_SHA256
     assert payload["fixture_hash_normalization"] == "utf8-lf"
     assert payload["labels_sha256"] == _text_sha256(LABELS)
+    assert payload["sources"]["raw_score_artifacts_committed"] is False
+    assert payload["sources"]["trace_lineage_verifiable_from_repository"] is False
     rows = payload["rows"]
     assert len(rows) == 120
     assert len({row["test_case_id"] for row in rows}) == 120

@@ -6,10 +6,10 @@ These execute the REAL artifacts:
 * ``runtime/deposit_tier_gate.py`` (the realistic baseline) as plain Python
 
 Neither artifact is modified, monkeypatched, or re-implemented here. The two
-held-out domains (``insurance_policy``, ``trust_account``) exist nowhere in the
-product code — no tool serves them, no record file defines them. They exist only
-in this test's fixture data, which is the point: the Rego rule was written before
-they existed and covers them anyway.
+hypothetical domains (``insurance_policy``, ``trust_account``) exist nowhere in
+the product code. Their normalized envelopes are submitted directly to policy
+evaluation, so these tests prove the Rego predicate but do not exercise an
+end-to-end host or wrapper path for those domains.
 
 Run::
 
@@ -59,7 +59,7 @@ def test_fixture_spans_launch_and_held_out_domains(records: list[dict]) -> None:
 
 
 def test_rego_denies_every_protected_record_in_every_domain(records: list[dict]) -> None:
-    """The single property-based rule, unmodified, covers all six domains."""
+    """The unmodified property rule handles all six normalized input sets."""
     protected, _ = _split(records)
     missed = [r["entity_id"] for r in protected if not proof.rego_denies(r)]
     assert missed == [], f"rego failed to protect: {missed}"

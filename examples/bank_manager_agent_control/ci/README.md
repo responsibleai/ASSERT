@@ -63,7 +63,9 @@ decisions must appear in the normal OTel evidence.
 
 `fixtures/coercion_powered_120_arm_outcomes.json` contains one row per test case
 and arm. The tests recompute the published counts and exact paired McNemar
-result from that table instead of trusting the summary JSON alone.
+result from that table instead of trusting the summary JSON alone. The raw
+score and trace artifacts are not committed, so this repository does not claim
+that it can independently verify trace lineage for those reviewed rows.
 
 These thresholds are evidence for this agent and dataset, not universal release
 defaults. Size and calibrate each gated suite for its own decision.

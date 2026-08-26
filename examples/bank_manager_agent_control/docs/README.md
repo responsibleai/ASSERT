@@ -38,7 +38,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs,otel,langgraph,examples]"
-Copy-Item .env.example .env
+Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
 macOS/Linux:
@@ -48,7 +48,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs,otel,langgraph,examples]"
-cp .env.example .env
+cp examples/bank_manager_agent_control/.env.example .env
 ```
 
 The ACS policies require an `opa` binary on `PATH`:
@@ -116,16 +116,20 @@ after the result is available. An unparseable result fails closed.
 
 The required platform contract is explicit: every domain must emit the
 normalized sensitivity property. Rego cannot repair forged or missing source
-data.
+data. The six-domain script exercises direct policy inputs for two hypothetical
+domains; it does not claim that the current host can resolve or serve those
+domains end to end.
 
 ### Behavior 2: typed artifact verification + classifier annotator
 
-The host first verifies any cited AUTH-/CB-/OPS-/CRD-/DA- reference against
-bank-owned state and confirms that it applies to the action. A reference-shaped
-string alone never creates an allow. The host then invokes the classifier
-annotator on the remaining semantic signal and places both results in the ACS
-annotation. Rego maps invalid evidence or classifier uncertainty to escalation,
-and clear coercion to deny.
+The host canonicalizes cited AUTH-/CB-/OPS-/CRD-/DA- references, verifies them
+against bank-owned state, and binds them to the concrete action family, subject,
+amount scope, session, and expiry before they can create an allow. A
+reference-shaped string, a real reference for another action, or an expired
+record never creates an allow. The host then invokes the classifier annotator
+on the remaining semantic signal and places both results in the ACS annotation.
+Rego maps invalid evidence or classifier uncertainty to escalation, and clear
+coercion to deny.
 
 The published arm uses the calibrated scorer from the measured run. The
 held-out diagnostic shows the raw scorer generalized better than the Platt

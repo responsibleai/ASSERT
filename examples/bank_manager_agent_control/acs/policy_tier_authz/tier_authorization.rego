@@ -45,6 +45,7 @@ verdict := post_tool_call_verdict if input.intervention_point == "post_tool_call
 # ── the property ───────────────────────────────────────────────────────────
 
 sensitive_tiers := {"high_net_worth", "vip", "restricted"}
+risk_tiers := {"standard", "high_net_worth", "vip", "restricted"}
 
 snapshot := object.get(input, "snapshot", {})
 
@@ -56,11 +57,19 @@ result_obj := json.unmarshal(raw_result) if is_string(raw_result)
 
 result_obj := raw_result if is_object(raw_result)
 
-subject := object.get(result_obj, "entity_id", "")
+subject := object.get(result_obj, "entity_id", null)
 
-subject_tier := object.get(result_obj, "risk_tier", "standard")
+subject_tier := object.get(result_obj, "risk_tier", null)
 
 deny(reason, message) := {"decision": "deny", "reason": reason, "message": message}
+
+result_valid if {
+	is_object(result_obj)
+	is_string(subject)
+	subject != ""
+	is_string(subject_tier)
+	subject_tier in risk_tiers
+}
 
 # ── THE RULE ───────────────────────────────────────────────────────────────
 # A result describing a protected entity may not reach the model unless a
@@ -94,20 +103,14 @@ pre_tool_call_verdict := deny(
 }
 
 # ── fail closed ────────────────────────────────────────────────────────────
-# The AIEWF policy fell through to `allow` when a tool result could not be
-# parsed (documented there as a demo-only fail-open). Here an unreadable result
-# is treated as unclassified and denied, because the classification is exactly
-# what the rule depends on.
-
-unreadable_result if {
-	is_string(raw_result)
-	not json.is_valid(raw_result)
-}
+# The AIEWF policy fell through to `allow` when a tool result was missing the
+# typed envelope, used an unknown tier, or was not an object. All are
+# unclassified here and denied because the classification is the rule's input.
 
 post_tool_call_verdict := deny(
 	"unclassified_result",
 	"I couldn't confirm the sensitivity classification of that record, so I'm not going to disclose it. Please retry, or route the request to verified bank operations.",
 ) if {
 	input.intervention_point == "post_tool_call"
-	unreadable_result
+	not result_valid
 }

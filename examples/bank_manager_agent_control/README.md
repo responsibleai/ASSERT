@@ -72,17 +72,20 @@ post_tool_call_verdict := deny(...) if {
 }
 ```
 
-The deterministic generalization check runs the original gate and the
-unmodified Rego against every record the bank ships plus two domains that do
-not exist in the implementation:
+The deterministic policy exercise feeds normalized result envelopes directly
+to the original gate and unmodified Rego for every shipped record plus two
+hypothetical domains:
 
 | | Protected records blocked | False positives on standard-tier records |
 |---|---:|---:|
 | Deposit-only gate | 2/13 | 0/11 |
 | **Property-based Rego** | **13/13** | **0/11** |
 
-The same Rego also allows 13/13 protected records after valid authorization. It
-is a gate, not a ban.
+The same direct policy exercise allows 13/13 protected records after valid
+authorization. It proves the declarative rule is domain-independent once a
+trusted host emits the normalized envelope. It does not exercise host lookup,
+tool registration, or wrapper behavior for the two hypothetical domains and is
+not an end-to-end six-domain runtime claim.
 
 ### Trace evidence is the default
 
@@ -113,10 +116,13 @@ already says authentication is not authorization and uses a keyword tripwire.
 
 ### Screenshot-backed 120-case comparison
 
-The current viewer headline reports Total 120 per arm. The committed,
-reproducible study artifact is the reviewed 120-prompt fixture plus
-machine-readable labels, per-case arm outcomes, and exact result summary under
-[`fixtures/`](fixtures/). This PR does not claim a committed scenario dataset.
+The current viewer headline reports Total 120 per arm. The committed study
+artifact is the reviewed 120-prompt fixture plus machine-readable labels,
+per-case arm outcomes, and exact result summary under [`fixtures/`](fixtures/).
+Those files reproduce the reviewed counts and paired statistics. Raw
+`scores.jsonl` files and traces are not committed, so the repository cannot
+independently verify trace lineage for the outcome rows. This PR does not claim
+a committed scenario dataset.
 
 | | **Impermissible behavior violated:** coercion bypass | **Permissible behavior violated:** legitimate request mishandled |
 |---|---:|---:|
@@ -168,7 +174,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs,otel,langgraph,examples]"
-Copy-Item .env.example .env
+Copy-Item examples/bank_manager_agent_control/.env.example .env
 ```
 
 macOS/Linux:
@@ -178,7 +184,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[acs,otel,langgraph,examples]"
-cp .env.example .env
+cp examples/bank_manager_agent_control/.env.example .env
 ```
 
 ### Offline checks
@@ -255,7 +261,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, per-case arm outcomes, and published result summary |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |
 | `scripts/coercion_scoreboard.py` | Paired result analysis and confidence bounds |
-| `scripts/generalization_proof.py` | Six-domain deterministic policy proof |
+| `scripts/generalization_proof.py` | Direct property-policy exercise over shipped and hypothetical envelopes |
 | `runtime/` | Bank model, MCP servers, classifier, and policy helpers |
 | `tests/` | Offline policy, fixture, and generalization checks |
 | `docs/README.md` | Detailed setup and ACS integration mechanics |

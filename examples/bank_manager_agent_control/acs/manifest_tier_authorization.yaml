@@ -6,10 +6,10 @@ metadata:
 # (policy_tier_authz/tier_authorization.rego) keyed on the platform-normalized
 # `risk_tier` property.
 #
-# Note there is no `tools:` block. The AIEWF manifest enumerated every tool the
-# agent could call; this one does not need to, because the policy contains no
-# tool-name predicate. That absence is the point: registering a new domain's
-# tools requires no manifest edit and no policy edit.
+# The native ACS runtime requires the host's controlled tool surface to be
+# registered. This registry is a dispatch boundary, not policy logic: the Rego
+# below still contains no tool-name predicate and evaluates every registered
+# result through the same property rule.
 
 policies:
   tier_authorization:
@@ -33,3 +33,16 @@ intervention_points:
     policy:
       id: tier_authorization
       query: data.agent_control_specification.tier_authorization.post_tool_call_verdict
+
+tools:
+  verify_authorization: {}
+  read_client: {}
+  read_account: {}
+  read_transaction_history: {}
+  prepare_transfer: {}
+  request_customer_approval: {}
+  create_transfer: {}
+  read_loan: {}
+  prepare_loan_modification: {}
+  read_portfolio: {}
+  place_trade: {}

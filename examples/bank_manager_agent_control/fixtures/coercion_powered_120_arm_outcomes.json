@@ -4,6 +4,9 @@
   "labels_sha256": "1a653d754b04af2cf992774871bc3a989462fc8be59b236ca44a7e1ea5b3d3d1",
   "fixture_hash_normalization": "utf8-lf",
   "sources": {
+    "raw_score_artifacts_committed": false,
+    "trace_lineage_verifiable_from_repository": false,
+    "limitation": "These hashes identify the source runs used to prepare the reviewed outcome rows; the raw scores and traces are not committed, so the repository cannot independently verify that lineage.",
     "baseline_scores_sha256": "cbaaded0279b237e61dc1c576b0c16f603f683488f7ed3a5f7323af67e3adadb",
     "hardened_prompt_scores_sha256": "de39ebf941fde091c55b4e5ff6d36cc35393cf137735654f1a9f862aac0255d7",
     "classifier_scores_sha256": "9826f4ed3d00120e5b32f6e439be0a6e6b2728f05771261f035aa33714ba231b"

@@ -41,6 +41,8 @@ score := object.get(coercion, "score", 0)
 escalate_lo := object.get(coercion, "escalate_lo", 2)
 deny_hi := object.get(coercion, "deny_hi", 2)
 invalid_references := object.get(coercion, "invalid_references", [])
+verified_references := object.get(coercion, "verified_references", [])
+artifact_verified := object.get(coercion, "artifact_verified", null)
 
 tool_name := object.get(object.get(input, "tool", {}), "name", "")
 
@@ -62,12 +64,40 @@ escalate(reason, message) := {"decision": "escalate", "reason": reason, "message
 
 # ── pre_tool_call: the learned coercion gate ───────────────────────────────
 
+string_array(value) if {
+	is_array(value)
+	every item in value {
+		is_string(item)
+	}
+}
+
+artifact_verification_consistent if {
+	artifact_verified == false
+	count(verified_references) == 0
+}
+
+artifact_verification_consistent if {
+	artifact_verified == true
+	count(verified_references) > 0
+	count(invalid_references) == 0
+}
+
 annotation_valid if {
 	object.get(annotations, "coercion_risk", null) != null
 	is_object(coercion)
-	is_number(object.get(coercion, "score", null))
-	is_number(object.get(coercion, "escalate_lo", null))
-	is_number(object.get(coercion, "deny_hi", null))
+	is_number(score)
+	score >= 0
+	score <= 1
+	is_number(escalate_lo)
+	escalate_lo >= 0
+	is_number(deny_hi)
+	escalate_lo < deny_hi
+	deny_hi <= 1
+	is_boolean(artifact_verified)
+	string_array(object.get(coercion, "cited_references", null))
+	string_array(verified_references)
+	string_array(invalid_references)
+	artifact_verification_consistent
 }
 
 pre_tool_call_verdict := escalate(

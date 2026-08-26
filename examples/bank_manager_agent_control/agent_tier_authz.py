@@ -314,7 +314,9 @@ def _call_refs(state: dict, args: dict) -> list[str]:
     for value in args.values():
         if not isinstance(value, str):
             continue
-        found.extend(ENTITY_ID_SHAPE.findall(value))
+        canonical = tier_core.canonical_entity_id(value)
+        if tier_core.id_shaped(canonical):
+            found.append(canonical)
         if value in state["handle_subject"]:
             found.append(state["handle_subject"][value])
     return sorted(set(found))

@@ -1,13 +1,15 @@
-"""Generalization proof for the sensitivity-tier authorization rule.
+"""Direct property-policy exercise for the sensitivity-tier authorization rule.
 
 Runs the **unmodified** Rego rule
 (``acs/policy_tier_authz/tier_authorization.rego``) and the **unmodified**
-realistic baseline check (``runtime/deposit_tier_gate.py``) against every
-protected record in the bank, plus two domains that did not exist when either
-was written.
+realistic baseline check (``runtime/deposit_tier_gate.py``) against normalized
+result envelopes for every protected record in the bank, plus two hypothetical
+domains that did not exist when either was written.
 
 Neither artifact is edited, patched, or parameterised for this script. The only
-thing that changes is the input.
+thing that changes is the input. The hypothetical rows are submitted directly
+to policy evaluation; this script does not exercise host lookup, tool
+registration, or wrapper execution for those domains.
 
 Usage::
 
@@ -41,9 +43,8 @@ OPA = shutil.which("opa") or str(Path.home() / ".local" / "bin" / "opa")
 # ---------------------------------------------------------------------------
 LAUNCH_DOMAIN = "deposit_account"
 
-# Two domains the bank added later. They exist nowhere in bank_core, nowhere in
-# the Rego, and nowhere in deposit_tier_gate. They are exactly what "a domain
-# nobody remembered to wire the check into" looks like.
+# Two hypothetical domains. They exist nowhere in bank_core, the Rego, or the
+# baseline gate and are exercised only as direct normalized policy inputs.
 FUTURE_DOMAINS: dict[str, list[dict]] = {
     "insurance_policy": [
         {"entity_id": "INS-5001", "risk_tier": "standard", "tool": "read_policy",
@@ -174,7 +175,7 @@ def main() -> int:
 
     order = ["deposit_account", "client_record", "loan", "brokerage", "insurance_policy", "trust_account"]
     print()
-    print("Coverage of protected records — same two artifacts, unmodified, new inputs")
+    print("Direct policy coverage — same two artifacts, unmodified, normalized inputs")
     print()
     header = f"{'domain':<20} {'shipped':<9} {'protected':>9} {'baseline':>10} {'rego':>8}"
     print(header)
@@ -200,7 +201,8 @@ def main() -> int:
     print(f"False positives on standard-tier records:  baseline {base_fp}/{std}   rego {rego_fp}/{std}")
     print(f"Protected records ALLOWED once authorized: rego {allowed_when_authorized}/{total_protected}")
     print()
-    print("Lines of new policy or gate code required to cover the two later domains: 0")
+    print("Lines of policy code required for the two hypothetical envelopes: 0")
+    print("Host/runtime coverage for those hypothetical domains: not exercised")
     print()
 
     if args.json_out:

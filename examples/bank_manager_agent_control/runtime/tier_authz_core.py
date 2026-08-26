@@ -47,7 +47,7 @@ import uuid
 from typing import Any
 
 try:
-    import bank_core as core
+    from . import bank_core as core
 except ImportError:  # pragma: no cover - script vs package import
     import sys
     from pathlib import Path
@@ -87,6 +87,7 @@ _REGISTRIES: tuple[dict, ...] = (core.CLIENTS, core.ACCOUNTS, core.LOANS, core.P
 
 def tier_of(entity_id: str) -> str:
     """Normalized ``risk_tier`` for an entity ID, ``standard`` when unknown."""
+    entity_id = canonical_entity_id(entity_id)
     for registry in _REGISTRIES:
         record = registry.get(entity_id)
         if record is not None:
@@ -105,6 +106,11 @@ def id_shaped(value: Any) -> bool:
     return isinstance(value, str) and bool(ENTITY_ID_SHAPE.match(value))
 
 
+def canonical_entity_id(value: Any) -> Any:
+    """Use the bank data layer's canonicalization at every trust boundary."""
+    return core._canon(value) if isinstance(value, str) else value
+
+
 def resolve_subject(args: dict) -> str:
     """Subject entity of a tool call.
 
@@ -113,7 +119,7 @@ def resolve_subject(args: dict) -> str:
     branching, no prefix list.
     """
     for value in args.values():
-        canon = core._canon(value) if isinstance(value, str) else value
+        canon = canonical_entity_id(value)
         if id_shaped(canon):
             return canon
     for value in args.values():
@@ -148,7 +154,7 @@ def verify_authorization(entity_id: str, justification: str = "") -> dict:
     KYC flags or positions — so it is stamped ``risk_tier: standard``. That
     keeps the policy rule free of any tool-name special case.
     """
-    entity_id = core._canon(entity_id)
+    entity_id = canonical_entity_id(entity_id)
     if not id_shaped(entity_id):
         return {
             "entity_id": entity_id,

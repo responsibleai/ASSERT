@@ -196,11 +196,15 @@ def _wrap_tool(tool, control, state, shim):
         args = dict(kwargs)
         snapshot = {
             **fpol.pre_call_snapshot(state, tool_name, args),
-            # The `from: $.snapshot.user_message` path in the manifest resolves
-            # against this. ACS is stateless; the host supplies turn context.
             "user_message": state["user_message"],
             "control_artifact_verification": bank_core.verify_control_artifacts(
-                state["user_message"], tool_name
+                state["user_message"],
+                tool_name,
+                args,
+                state["control_session_id"],
+                transfer_context=state["transfer_context"].get(
+                    args.get("transfer_id", "")
+                ),
             ),
         }
         try:
@@ -226,6 +230,7 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
     control, shim = _load_control(scorer)
     state = fpol.new_feature_state(message)
     state["user_message"] = message
+    state["control_session_id"] = bank_core.CONTROL_SESSION_ID
 
     async with AsyncExitStack() as stack:
         tools = await _open_two_servers(stack)

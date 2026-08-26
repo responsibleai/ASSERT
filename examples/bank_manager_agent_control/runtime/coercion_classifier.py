@@ -351,6 +351,10 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
     invalid = sorted(
         set(verification.get("unknown_references") or [])
         | set(verification.get("wrong_action_references") or [])
+        | set(verification.get("wrong_subject_references") or [])
+        | set(verification.get("out_of_scope_references") or [])
+        | set(verification.get("wrong_session_references") or [])
+        | set(verification.get("expired_references") or [])
     )
     if verified:
         return {
