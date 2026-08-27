@@ -137,24 +137,18 @@ def init(
     The assistant asks clarifying questions about your agent/system,
     eval goals, and constraints, then proposes a complete eval.yaml.
     """
-    from dotenv import load_dotenv
+    from assert_ai.core.environment import bootstrap_environment
+
+    bootstrap_environment(env_file=env_file if env_file.exists() else None)
+
     from rich.console import Console
     from rich.syntax import Syntax
 
     from assert_ai.init._design_agent import run_design_loop
     from assert_ai.init._emit import emit_config
 
-    # Load env vars for LLM credentials
-    if env_file.exists():
-        load_dotenv(env_file, override=False)
+    from assert_ai.core.azure_auth import log_resolved_azure_auth_mode
 
-    # Refresh the Azure auth mode now that ``.env`` has populated the
-    # environment so the init LLM call respects the dotenv-supplied
-    # ``ASSERT_AZURE_USE_AAD`` / ``AZURE_API_KEY`` rather than whichever
-    # state was frozen at module import.
-    from assert_ai.core.azure_auth import log_resolved_azure_auth_mode, refresh_azure_auth_mode
-
-    refresh_azure_auth_mode(force=True)
     # Emit the resolved auth-mode line AFTER refresh so it reflects the
     # value the upcoming LLM call will use, and AFTER the parent ``cli``
     # group has configured logging so ``--quiet``/``--output json`` apply.

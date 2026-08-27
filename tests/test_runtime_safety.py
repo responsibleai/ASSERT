@@ -380,6 +380,24 @@ def test_heartbeat_swallows_write_errors(
     assert call_count[0] >= 2, "heartbeat should have retried despite errors"
 
 
+def test_heartbeat_does_not_rewrite_a_terminal_manifest(
+    tmp_path: Path,
+) -> None:
+    manifest = _StubManifest(status="failed")
+    writes: list[str] = []
+    heartbeat = ManifestHeartbeat(
+        manifest,
+        tmp_path,
+        lambda current, _: writes.append(current.status),
+        interval_s=10,
+    )
+
+    heartbeat.start()
+    heartbeat.stop(write_final=True)
+
+    assert writes == []
+
+
 # ---------------------------------------------------------------------------
 # PipelineWatchdog
 # ---------------------------------------------------------------------------

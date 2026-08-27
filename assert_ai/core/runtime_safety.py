@@ -153,8 +153,15 @@ class ManifestHeartbeat:
         self._stop.set()
         self._thread.join(timeout=5.0)
         self._thread = None
-        if write_final:
+        if (
+            write_final
+            and getattr(self._manifest, "status", None) == "running"
+        ):
             self._safe_write()
+
+    def write_now(self) -> bool:
+        """Serialize an immediate manifest write with heartbeat writes."""
+        return self._safe_write()
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval_s):

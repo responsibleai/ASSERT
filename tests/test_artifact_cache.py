@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import hashlib
 import logging
 import shutil
 import unittest
@@ -13,6 +14,7 @@ from assert_ai.core.artifact_cache import (
     activate_latest_artifacts,
     artifact_ref,
     discard_artifact_plan,
+    file_sha256,
     finalize_artifact_plan,
     hash_payload,
     override_cacheable_output_paths,
@@ -62,6 +64,14 @@ class ArtifactCacheTest(unittest.TestCase):
             hash_payload({"b": [2, {"d": 4, "c": 3}], "a": 1}),
             hash_payload({"a": 1, "b": [2, {"c": 3, "d": 4}]}),
         )
+
+    def test_file_sha256_hashes_across_streaming_chunks(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "large.jsonl"
+            payload = (b"0123456789abcdef" * 65537) + b"tail"
+            path.write_bytes(payload)
+
+            self.assertEqual(file_sha256(path), hashlib.sha256(payload).hexdigest())
 
     def test_prepare_reuses_latest_matching_artifact(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -198,6 +208,47 @@ class ArtifactCacheTest(unittest.TestCase):
             recovered = recovery_ctx.get("artifact_versions", {}).get("systematize")
             self.assertIsNotNone(recovered)
             self.assertEqual(recovered["version"], v0001_plan.version)
+
+    def test_activate_latest_without_repair_does_not_write_recovered_state(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ctx = self._ctx(root)
+            raw_cfg = {
+                "model": {"name": "azure/gpt-5.4"},
+                "behavior_category_count": 2,
+            }
+            v0001_plan = self._finalize_policy(ctx, raw_cfg)
+
+            changed_ctx = self._ctx(root)
+            changed_ctx["behavior"] = "Changed behavior text."
+            v0002_plan = self._finalize_policy(changed_ctx, raw_cfg)
+            shutil.rmtree(v0002_plan.artifact_dir)
+
+            suite_root = Path(ctx["suite_root"])
+            latest_path = suite_root / "latest.json"
+            compatibility_path = suite_root / "taxonomy.json"
+            compatibility_path.write_text(
+                '{"sentinel":"leave-unchanged"}',
+                encoding="utf-8",
+            )
+            latest_before = latest_path.read_bytes()
+            compatibility_before = compatibility_path.read_bytes()
+
+            recovery_ctx = self._ctx(root)
+            activate_latest_artifacts(recovery_ctx, repair=False)
+
+            recovered = recovery_ctx.get("artifact_versions", {}).get(
+                "systematize"
+            )
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["version"], v0001_plan.version)
+            self.assertEqual(latest_path.read_bytes(), latest_before)
+            self.assertEqual(
+                compatibility_path.read_bytes(),
+                compatibility_before,
+            )
 
     def test_activate_latest_skips_stage_when_no_valid_version_remains(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -344,7 +395,16 @@ class ArtifactCacheTest(unittest.TestCase):
             self.assertIsNone(_resolve_ref_path(suite_root, "artifacts/../../escape"))
             inside = _resolve_ref_path(suite_root, "artifacts/systematize/v0001/taxonomy.json")
             assert inside is not None
-            self.assertEqual(inside, suite_root / "artifacts" / "systematize" / "v0001" / "taxonomy.json")
+            self.assertEqual(
+                inside,
+                (
+                    suite_root
+                    / "artifacts"
+                    / "systematize"
+                    / "v0001"
+                    / "taxonomy.json"
+                ).resolve(),
+            )
 
     def test_override_cacheable_output_paths_redirects_user_save_dir(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -964,4 +1024,3 @@ class RefreshCompatibilityFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

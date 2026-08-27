@@ -219,6 +219,7 @@ def run_design_loop(
     max_turns: int,
     console: Console,
     no_color: bool,
+    save_draft_on_failure: bool = True,
 ) -> str | None:
     """Run the design agent conversation loop.
 
@@ -302,7 +303,7 @@ def run_design_loop(
                     )
             except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
                 log.error("LLM error: %s", exc)
-                if best_draft and best_errors:
+                if save_draft_on_failure and best_draft and best_errors:
                     _save_draft(best_draft, best_errors, console)
                     return None
                 return best_draft
@@ -420,13 +421,13 @@ def run_design_loop(
 
         # Exhausted turn budget.
         log.warning("Reached maximum turns (%d).", max_turns)
-        if best_draft:
+        if save_draft_on_failure and best_draft:
             _save_draft(best_draft, best_errors, console)
         return best_draft if best_draft and not best_errors else None
 
     except KeyboardInterrupt:
         console.print("")
-        if best_draft:
+        if save_draft_on_failure and best_draft:
             _save_draft(best_draft, best_errors, console)
             log.info("Interrupted. Draft saved.")
         else:

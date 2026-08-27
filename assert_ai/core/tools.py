@@ -24,6 +24,11 @@ def _normalize_parameter_schema(param: Dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_tool_def(tool_def: Dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(tool_def, dict):
+        raise ValueError("tool definitions must be objects")
+    name = tool_def.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("tool definitions require a non-empty string name")
     if "input_schema" in tool_def:
         schema = deepcopy(tool_def["input_schema"])
         if not isinstance(schema, dict):
@@ -34,20 +39,23 @@ def normalize_tool_def(tool_def: Dict[str, Any]) -> dict[str, Any]:
         schema.setdefault("properties", {})
         schema.setdefault("required", [])
         return {
-            "name": tool_def["name"],
+            "name": name,
             "description": tool_def.get("description", ""),
             "input_schema": schema,
         }
 
     props: dict[str, Any] = {}
     required: list[str] = []
-    for param in tool_def.get("parameters", []):
+    parameters = tool_def.get("parameters", [])
+    if not isinstance(parameters, list):
+        raise ValueError("tool parameters must be a list")
+    for param in parameters:
         if not isinstance(param, dict) or "name" not in param:
             raise ValueError("tool parameters must be objects with a 'name'")
         props[param["name"]] = _normalize_parameter_schema(param)
         required.append(param["name"])
     return {
-        "name": tool_def["name"],
+        "name": name,
         "description": tool_def.get("description", ""),
         "input_schema": {
             "type": "object",
@@ -59,6 +67,8 @@ def normalize_tool_def(tool_def: Dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_tool_defs(item_tools: List[Dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(item_tools, list):
+        raise ValueError("tool definitions must be a list")
     return [normalize_tool_def(tool_def) for tool_def in item_tools]
 
 

@@ -50,6 +50,37 @@ def append_jsonl_row(path: Path, row: Dict[str, Any]) -> None:
         os.fsync(handle.fileno())
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    """Atomically replace a UTF-8 text file after flushing its contents."""
+    write_bytes_atomic(path, text.encode("utf-8"))
+
+
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Atomically replace a file after flushing its exact bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+            tmp_name = handle.name
+        os.replace(tmp_name, path)
+        tmp_name = None
+    finally:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_name: str | None = None

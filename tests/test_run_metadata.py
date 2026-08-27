@@ -242,6 +242,37 @@ class RunnerManifestTest(unittest.TestCase):
             saved_config = root / "results" / "suite-a" / "run-a" / "config.yaml"
             self.assertTrue(saved_config.exists())
             self.assertEqual(saved_config.read_text(encoding="utf-8"), cfg_path.read_text(encoding="utf-8"))
+            run_summary = json.loads(
+                (
+                    root
+                    / "results"
+                    / "suite-a"
+                    / "run-a"
+                    / "run_summary.json"
+                ).read_text(encoding="utf-8")
+            )
+            suite_summary = json.loads(
+                (
+                    root
+                    / "results"
+                    / "suite-a"
+                    / "suite_summary.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(run_summary["state"], "completed")
+            self.assertEqual(run_summary["current_stage"], "judge")
+            self.assertEqual(run_summary["counts"]["scores"]["total"], 0)
+            self.assertTrue(
+                (
+                    root
+                    / "results"
+                    / "suite-a"
+                    / "run-a"
+                    / "scores.index.json"
+                ).exists()
+            )
+            self.assertEqual(suite_summary["run_count"], 1)
+            self.assertEqual(suite_summary["latest_run"]["run_id"], "run-a")
 
     def test_run_pipeline_records_pid_host_and_heartbeat(self) -> None:
         """Manifest carries pid/host/heartbeat_at so the viewer can detect abandoned runs."""

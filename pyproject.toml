@@ -94,6 +94,13 @@ acs = [
   "acs-generator>=0.3.1b0",
   "agent-control-specification>=0.3.1b0",
 ]
+mcp = [
+  # OpenAI Agents currently requires mcp<2, so this extra is intentionally
+  # separate from `examples` and the `all` meta-extra. psutil is required for
+  # isolated target-probe cleanup and worker process-tree cancellation.
+  "mcp>=2,<3",
+  "psutil>=6,<8",
+]
 examples = [
   "autogen-agentchat>=0.7.5",
   "autogen-ext>=0.7.5",
@@ -132,6 +139,7 @@ dev = [
 
 [project.scripts]
 assert-ai = "assert_ai.cli:cli"
+assert-ai-mcp = "assert_ai.mcp._command:serve"
 
 [project.urls]
 Homepage = "https://github.com/responsibleai/ASSERT"
@@ -142,6 +150,18 @@ Documentation = "https://github.com/responsibleai/ASSERT#readme"
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "mcp" },
+    { extra = "examples" },
+  ],
+  [
+    { extra = "mcp" },
+    { extra = "all" },
+  ],
+]
 
 [tool.setuptools]
 include-package-data = true

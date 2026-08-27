@@ -33,9 +33,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 from .cassettes import CassettePathError, cassette_path
 from .mediator import ActionMediator
@@ -142,6 +145,25 @@ def _resolve(base: Path | None, value: str) -> Path:
     return p
 
 
+def _resolve_setup_input(
+    base: Path,
+    value: str | Path,
+    *,
+    path_policy: RuntimePathPolicy | None,
+    field_name: str,
+    file_only: bool,
+) -> Path:
+    if path_policy is None:
+        return _resolve(base, str(value))
+    return path_policy.resolve_input(
+        value,
+        base_dir=base,
+        field_name=field_name,
+        must_exist=True,
+        file_only=file_only,
+    )
+
+
 def _load_target(data: Any) -> TargetSpec:
     if not isinstance(data, Mapping):
         raise SetupError("`target:` must be a mapping with at least `kind:`")
@@ -242,14 +264,26 @@ def _validate_replay_cassettes(
             ) from exc
 
 
-def load_setup(path: str | Path) -> MediationSetup:
+def load_setup(
+    path: str | Path,
+    *,
+    path_policy: RuntimePathPolicy | None = None,
+) -> MediationSetup:
     """Load a setup file and everything it references.
 
     Every referenced path is resolved relative to the setup file and checked to
     exist. A typo'd mock path fails at setup, not silently mid-eval as a call
     that quietly falls through to a different response.
     """
-    setup_path = Path(path)
+    setup_path = Path(path).expanduser()
+    if path_policy is not None:
+        setup_path = path_policy.resolve_input(
+            setup_path,
+            base_dir=path_policy.config_root,
+            field_name="pipeline.inference.target.sandbox",
+            must_exist=True,
+            file_only=True,
+        )
     if not setup_path.exists():
         raise SetupError(f"setup file not found: {setup_path}")
     data = yaml.safe_load(setup_path.read_text()) or {}
@@ -266,24 +300,60 @@ def load_setup(path: str | Path) -> MediationSetup:
     policy_ref = data.get("policy")
     if not policy_ref:
         raise SetupError("setup file requires `policy:` (the pass/mock/block enforcement file)")
-    policy_path = _resolve(base, str(policy_ref))
+    policy_path = _resolve_setup_input(
+        base,
+        str(policy_ref),
+        path_policy=path_policy,
+        field_name="pipeline.inference.target.sandbox.policy",
+        file_only=True,
+    )
     if not policy_path.exists():
         raise SetupError(f"policy file not found: {policy_path}")
     policy = MediationPolicy.from_yaml(policy_path)
 
     cassette_dir: Path | None = None
     if data.get("cassettes"):
-        cassette_dir = _resolve(base, str(data["cassettes"]))
+        cassette_dir = _resolve_setup_input(
+            base,
+            str(data["cassettes"]),
+            path_policy=path_policy,
+            field_name="pipeline.inference.target.sandbox.cassettes",
+            file_only=False,
+        )
         if not cassette_dir.is_dir():
             raise SetupError(f"cassette dir not found: {cassette_dir}")
 
     mocks_ref = data.get("mocks")
     mocks_path: Path | None = None
     if mocks_ref:
-        mocks_path = _resolve(base, str(mocks_ref))
+        mocks_path = _resolve_setup_input(
+            base,
+            str(mocks_ref),
+            path_policy=path_policy,
+            field_name="pipeline.inference.target.sandbox.mocks",
+            file_only=True,
+        )
         if not mocks_path.exists():
             raise SetupError(f"mock file not found: {mocks_path}")
         mocks = MockLibrary.from_yaml(mocks_path)
+        if path_policy is not None and mocks.cassette_dir is not None:
+            mock_cassette_dir = _resolve_setup_input(
+                mocks_path.parent,
+                mocks.cassette_dir,
+                path_policy=path_policy,
+                field_name=(
+                    "pipeline.inference.target.sandbox.mocks.cassette_dir"
+                ),
+                file_only=False,
+            )
+            if not mock_cassette_dir.is_dir():
+                raise SetupError(
+                    f"cassette dir not found: {mock_cassette_dir}"
+                )
+            mocks = MockLibrary(
+                mocks.rules,
+                cassette_dir=mock_cassette_dir,
+            )
         if cassette_dir and mocks.cassette_dir is not None:
             if cassette_dir.resolve() != mocks.cassette_dir.resolve():
                 raise SetupError(

@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 from assert_ai.config import parse_model_config, reject_unknown_keys, resolve_stage_paths
 from assert_ai.core.async_utils import gather_limited
+from assert_ai.core.run_control import RunCancelled, RunControl
 from assert_ai.core.config_model import (
     DEFAULT_GENERATION_MAX_TOKENS,
     DEFAULT_GENERATION_TEMPERATURE,
@@ -255,7 +256,7 @@ def normalize_generated_test_case(
             raise ValueError("generated test case requires non-empty tools when test_set.tool_source=per_test_case")
         try:
             normalize_tool_defs(raw_tools)
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("generated test case contains invalid tool definitions") from exc
         payload["tools"] = raw_tools
     elif raw_tools:
@@ -957,6 +958,7 @@ async def _generate_records(
     sampling: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
+    run_control: RunControl | None = None,
 ) -> dict[str, Any]:
     """Call the LLM once per covering-array tuple and return records.
 
@@ -1003,6 +1005,8 @@ async def _generate_records(
         slug = slugify(str(job.behavior.get("name") or ""))
         behavior_name = str(job.behavior.get("name") or "")
         try:
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="test_set")
             prompt = build_generation_prompt(
                 kind=kind,
                 taxonomy=taxonomy,
@@ -1028,6 +1032,8 @@ async def _generate_records(
                     call_label=f"test_set:{kind}:{slug}",
                 ),
             )
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="test_set")
             payload = response.parsed
             if not isinstance(payload, dict) or not isinstance(payload.get("test_set"), list):
                 raise ValueError(f"{kind} test-case generation returned invalid test_set payload")
@@ -1063,6 +1069,8 @@ async def _generate_records(
                     )
                 )
             return {"order": job.order, "records": records}
+        except RunCancelled:
+            raise
         except LLMAuthError:
             raise
         except (LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
@@ -1126,6 +1134,7 @@ async def run_test_set(
     stratification: dict[str, Any] | None = None,
     seed: int = 0,
     concurrency: int = 8,
+    run_control: RunControl | None = None,
 ) -> dict[str, Any]:
     """Generate prompt and/or scenario test_set."""
     if prompt is None and scenario is None:
@@ -1168,6 +1177,7 @@ async def run_test_set(
             sampling=cfg.get("sampling"),
             seed=seed,
             concurrency=concurrency,
+            run_control=run_control,
         )
         for kind, cfg in kinds_cfgs
     ])
@@ -1175,6 +1185,8 @@ async def run_test_set(
     all_records = [rec for r in results for rec in r["records"]]
     errored_count = sum(int(r.get("errored_count", 0)) for r in results)
     all_records = normalize_test_case_rows(all_records)
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="test_set")
     write_jsonl(out_path, all_records)
 
     # --- Coverage check -------------------------------------------------------
@@ -1275,6 +1287,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             "scenario",
             "validators",
             "validator_model",
+            "enabled",
+            "file_path",
         },
     )
     if "validators" in raw_cfg or "validator_model" in raw_cfg:
@@ -1335,8 +1349,13 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         path_cfg,
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=Path(ctx["suite_root"]),
     )
     taxonomy_path = cfg["taxonomy_path"]
+    run_control = ctx.get("_run_control")
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="test_set")
     stratification_dir = Path(cfg["save_path"]).parent
     stratification_result = await run_stratification(
         taxonomy_path=taxonomy_path,
@@ -1348,6 +1367,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=stratify_model_cfg.reasoning_effort if stratify_model_cfg is not None else None,
         temperature=stratify_model_cfg.temperature if stratify_model_cfg is not None else None,
     )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="test_set")
     stratification_path = Path(stratification_result["stratification_path"])
     raw_stratification = json.loads(stratification_path.read_text(encoding="utf-8"))
 
@@ -1367,6 +1388,7 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         target=ctx.get("target"),
         tool_source=tool_source,
         stratification=raw_stratification,
+        run_control=run_control,
     )
     return {
         "test_set_path": result["test_set_path"],

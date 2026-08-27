@@ -167,6 +167,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         {"save_dir": save_dir},
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=Path(ctx["suite_root"]),
     )
 
     behavior_name = ctx.get("behavior_name") or "behavior"
@@ -185,6 +187,9 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
         reasoning_effort=model_cfg.reasoning_effort,
     )
     sys_path = str(Path(cfg["save_dir"]) / "systematization.json")
+    run_control = ctx.get("_run_control")
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="systematize")
     log.debug(f"systematize: model={model_cfg.name}, behavior_category_count={behavior_category_count}, web_search={web_search}")
     log.info("[systematize] [1/2] Researching behavior taxonomy...")
     async with log_heartbeat("[systematize] [1/2] Researching behavior taxonomy"):
@@ -196,6 +201,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             web_search=web_search,
             context=context,
         )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="systematize")
     log.info("[systematize] [1/2] Behavior taxonomy complete")
 
     taxonomy_path_str = str(Path(cfg["save_dir"]) / "taxonomy.json")
@@ -213,6 +220,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, Any]:
             model_cfg=convert_model_cfg,
             behavior_category_count_hint=behavior_category_count,
         )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="systematize")
 
     return {
         "systematize_dir": cfg["save_dir"],

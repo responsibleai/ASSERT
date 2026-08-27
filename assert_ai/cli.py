@@ -20,17 +20,12 @@ from rich.console import Console
 from rich.table import Table
 
 from assert_ai.core.config_model import DEFAULT_INFERENCE_CONCURRENCY
-from assert_ai.core.io import load_json, load_jsonl, get_permissible_flag, row_behavior
-from assert_ai.core.judge import get_verdict_dimension, infer_judge_status, is_valid_event_flag
 from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric, label_run_status, label_stage, label_stage_status, label_status
 from assert_ai.logging_config import configure_logging
-from assert_ai.results import (
-    compute_dimension_summary,
-    compute_policy_violation_by_permissibility,
-    detect_dimensions,
-    has_permissibility_split_data,
-)
+from assert_ai.results import has_permissibility_split_data
+from assert_ai.services.errors import ServiceError, ServiceErrorCode
+from assert_ai.services.results import ResultRepository, RunReference
 from assert_ai.stages import STAGE_NAMES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -455,28 +450,6 @@ def _complete_metric(_: click.Context, __: click.Parameter, incomplete: str) -> 
     return [CompletionItem(name) for name in items if not incomplete or name.startswith(incomplete)]
 
 
-def _current_stage_status(manifest: dict[str, Any] | None) -> tuple[str, str]:
-    if isinstance(manifest, dict):
-        manifest_status = manifest.get("status")
-        if isinstance(manifest_status, str) and manifest_status:
-            stages = manifest.get("stages")
-            if isinstance(stages, dict):
-                for stage_name, stage_status in stages.items():
-                    if stage_status == "running":
-                        return manifest_status, str(stage_name)
-            return manifest_status, "-"
-
-    return "unknown", "-"
-
-
-def _detect_dimensions(rows: Iterable[dict[str, Any]]) -> list[str]:
-    return detect_dimensions(rows)
-
-
-def _compute_dimension_summary(rows: Iterable[dict[str, Any]], metric: str) -> dict[str, Any]:
-    return compute_dimension_summary(rows, metric)
-
-
 def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     derived_rate_key = _DERIVED_PERMISSIBILITY_RATE_KEYS.get(metric)
     if derived_rate_key is not None:
@@ -492,346 +465,105 @@ def _dimension_rate(metrics: dict[str, Any], metric: str) -> float | None:
     return float(rate) if isinstance(rate, (int, float)) else None
 
 
-def _resolve_compare_metric(metric: str | None, run_summaries: Iterable[dict[str, Any]]) -> str:
-    if metric:
-        return metric
-    summaries = list(run_summaries)
-    if summaries and all(
-        has_permissibility_split_data(
-            run_summary.get("prompt_metrics") or {},
-            run_summary.get("scenario_metrics") or {},
-        )
-        for run_summary in summaries
-    ):
-        return _POLICY_VIOLATION_NOT_PERMISSIBLE
-    return DEFAULT_COMPARE_METRIC
-
-
-def _available_compare_metrics(run_summaries: Iterable[dict[str, Any]]) -> set[str]:
-    available: set[str] = set()
-    for run_summary in run_summaries:
-        available.update(_detect_dimensions(run_summary.get("prompt_rows") or []))
-        if has_permissibility_split_data(
-            run_summary.get("prompt_metrics") or {},
-            run_summary.get("scenario_metrics") or {},
-        ):
-            available.update(_DERIVED_PERMISSIBILITY_RATE_KEYS)
-    return available
-
-
-def _reject_ordinal_compare(run_summaries: Iterable[dict[str, Any]], metric: str) -> None:
-    for run_summary in run_summaries:
-        for key in ("prompt_metrics", "scenario_metrics"):
-            metrics = run_summary.get(key)
-            dimensions = metrics.get("dimensions") if isinstance(metrics, dict) else None
-            summary = dimensions.get(metric) if isinstance(dimensions, dict) else None
-            if isinstance(summary, dict) and summary.get("kind") == "ordinal":
-                _error(
-                    f"Metric '{metric}' uses ordered grades and has no violation-rate delta. "
-                    "Use 'assert-ai results status' or the viewer for its grade distribution."
-                )
-
-
-def _compute_prompt_metrics(
-    rows: list[dict[str, Any]],
-    behavior_categories: Iterable[dict[str, Any]] = (),
-) -> dict[str, Any] | None:
-    if not rows:
-        return None
-
-    scored_rows = [row for row in rows if infer_judge_status(row) == "ok"]
-    scored_total = len(scored_rows)
-    judge_failures = len(rows) - scored_total
-
-    dimensions: dict[str, dict[str, Any]] = {}
-    for dim in _detect_dimensions(scored_rows):
-        dimensions[dim] = _compute_dimension_summary(scored_rows, dim)
-
-    target = next(
-        (
-            row.get("target")
-            for row in rows
-            if isinstance(row.get("target"), str) and row.get("target")
-        ),
-    ) or "-"
-    judge_model = next(
-        (
-            row.get("judge_model")
-            for row in rows
-            if isinstance(row.get("judge_model"), str) and row.get("judge_model")
-        ),
-    ) or "-"
-    permissibility_split = compute_policy_violation_by_permissibility(
-        scored_rows,
-        behavior_categories,
-    )
-
-    metrics: dict[str, Any] = {
-        "total": len(rows),
-        "scored_total": scored_total,
-        "judge_failures": judge_failures,
-        "judge_failure_rate": judge_failures / len(rows) if rows else 0.0,
-        "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
-        "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
-        "dimensions": dimensions,
-        "target": target,
-        "judge_model": judge_model,
-    }
-
-    if permissibility_split["permissible"] is not None:
-        permissible = permissibility_split["permissible"]
-        not_permissible = permissibility_split["not_permissible"]
-        assert not_permissible is not None
-        metrics.update(
-            {
-                "permissible_policy_violation_rate": permissible["rate"],
-                "not_permissible_policy_violation_rate": not_permissible["rate"],
-                "policy_violation_on_permissible": permissible,
-                "policy_violation_on_not_permissible": not_permissible,
-            }
-        )
-
-    return metrics
-
-
-def _compute_scenario_metrics(
-    rows: list[dict[str, Any]],
-    behavior_categories: Iterable[dict[str, Any]] = (),
-) -> dict[str, Any] | None:
-    if not rows:
-        return None
-
-    scored_rows = [row for row in rows if infer_judge_status(row) == "ok"]
-    scored_total = len(scored_rows)
-    judge_failures = len(rows) - scored_total
-
-    dimensions: dict[str, dict[str, Any]] = {}
-    for dim in _detect_dimensions(scored_rows):
-        dimensions[dim] = _compute_dimension_summary(scored_rows, dim)
-
-    target = next(
-        (
-            row.get("target")
-            for row in rows
-            if isinstance(row.get("target"), str) and row.get("target")
-        ),
-        None,
-    ) or "-"
-    tester_model = next(
-        (
-            row.get("tester_model")
-            for row in rows
-            if isinstance(row.get("tester_model"), str) and row.get("tester_model")
-        ),
-        None,
-    ) or "-"
-    judge_model = next(
-        (
-            row.get("judge_model")
-            for row in rows
-            if isinstance(row.get("judge_model"), str) and row.get("judge_model")
-        ),
-    ) or "-"
-
-    permissibility_split = compute_policy_violation_by_permissibility(
-        scored_rows,
-        behavior_categories,
-    )
-
-    metrics: dict[str, Any] = {
-        "total": len(rows),
-        "scored_total": scored_total,
-        "judge_failures": judge_failures,
-        "judge_failure_rate": judge_failures / len(rows) if rows else 0.0,
-        "policy_violation_rate": _dimension_rate({"dimensions": dimensions}, "policy_violation"),
-        "overrefusal_rate": _dimension_rate({"dimensions": dimensions}, "overrefusal"),
-        "dimensions": dimensions,
-        "target": target,
-        "tester_model": tester_model,
-        "judge_model": judge_model,
-    }
-
-    if permissibility_split["permissible"] is not None:
-        permissible = permissibility_split["permissible"]
-        not_permissible = permissibility_split["not_permissible"]
-        assert not_permissible is not None
-        metrics.update(
-            {
-                "permissible_policy_violation_rate": permissible["rate"],
-                "not_permissible_policy_violation_rate": not_permissible["rate"],
-                "policy_violation_on_permissible": permissible,
-                "policy_violation_on_not_permissible": not_permissible,
-            }
-        )
-
-    return metrics
-
-
-def _load_behavior_categories(suite_dir: Path) -> list[dict[str, Any]]:
-    taxonomy = load_json(suite_dir / "taxonomy.json")
-    behavior_categories = (taxonomy or {}).get("behavior_categories")
-    if not isinstance(behavior_categories, list):
-        return []
-    return [entry for entry in behavior_categories if isinstance(entry, dict)]
-
-
 def _load_run_summary(run_dir: Path) -> dict[str, Any] | None:
-    manifest = load_json(run_dir / "manifest.json")
-    score_rows = load_jsonl(run_dir / "scores.jsonl")
-    behavior_categories = _load_behavior_categories(run_dir.parent)
-    prompt_rows = [row for row in score_rows if not row.get("tester_model")]
-    scenario_rows = [row for row in score_rows if row.get("tester_model")]
-
-    stages = (manifest or {}).get("stages", {})
-    has_scores = isinstance(stages, dict) and stages.get("judge") is not None
-    has_data = bool(prompt_rows or scenario_rows)
-    if not has_data and not has_scores:
-        return None
-    if not has_data and (manifest or {}).get("status") == "failed":
-        return None
-
-    status, current_stage = _current_stage_status(manifest)
+    repository = ResultRepository(run_dir.parent.parent)
+    try:
+        detail = repository.load_run_detail(
+            run_dir.parent.name,
+            run_dir.name,
+        )
+    except ServiceError as exc:
+        if exc.code == ServiceErrorCode.NOT_FOUND:
+            return None
+        _error(f"{exc.code}: {exc}")
+    quality = detail.get("quality") or {}
+    manifest = {
+        "status": detail.get("state"),
+        "started_at": detail.get("started_at"),
+        "ended_at": detail.get("ended_at"),
+        "stages": detail.get("stages") or {},
+        "stage_timings": detail.get("stage_timings") or {},
+    }
     return {
         "run_id": run_dir.name,
         "path": str(run_dir),
         "manifest": manifest,
-        "status": status,
-        "current_stage": current_stage,
-        "started_at": (manifest or {}).get("started_at"),
-        "ended_at": (manifest or {}).get("ended_at"),
-        "prompt_metrics": _compute_prompt_metrics(prompt_rows, behavior_categories),
-        "scenario_metrics": _compute_scenario_metrics(scenario_rows, behavior_categories),
-        "prompt_rows": prompt_rows,
-        "scenario_rows": scenario_rows,
+        "status": detail.get("state") or "unknown",
+        "current_stage": detail.get("current_stage") or "-",
+        "started_at": detail.get("started_at"),
+        "ended_at": detail.get("ended_at"),
+        "prompt_metrics": quality.get("prompt"),
+        "scenario_metrics": quality.get("scenario"),
     }
 
 
-def _count_test_case_types(path: Path) -> tuple[int, int]:
-    rows = load_jsonl(path)
-    prompt_count = 0
-    scenario_count = 0
-    for row in rows:
-        row_type = row.get("type")
-        if row_type == "prompt":
-            prompt_count += 1
-        elif row_type == "scenario":
-            scenario_count += 1
-    return prompt_count, scenario_count
-
-
 def _load_suite_summary(suite_dir: Path) -> dict[str, Any] | None:
-    suite_meta = load_json(suite_dir / "suite.json")
-    taxonomy = load_json(suite_dir / "taxonomy.json")
-    if suite_meta is None and taxonomy is None:
-        return None
-
-    run_summaries = []
-    for child in sorted(suite_dir.iterdir()) if suite_dir.exists() else []:
-        if not child.is_dir():
-            continue
-        run_summary = _load_run_summary(child)
-        if run_summary is not None:
-            run_summaries.append(run_summary)
-
-    has_results = any(
-        (run_summary.get("prompt_metrics") is not None) or (run_summary.get("scenario_metrics") is not None)
-        for run_summary in run_summaries
-    )
-    prompt_test_case_count, scenario_test_case_count = _count_test_case_types(suite_dir / "test_set.jsonl")
-
-    created_at = (suite_meta or {}).get("created_at")
-
-    behavior_name = suite_dir.name
-    behavior_block = (taxonomy or {}).get("behavior")
-    if isinstance(behavior_block, dict) and isinstance(behavior_block.get("name"), str) and behavior_block.get("name"):
-        behavior_name = behavior_block["name"]
-
-    if has_results:
-        status = "has_results"
-    elif prompt_test_case_count or scenario_test_case_count:
-        status = "test_set_ready"
-    else:
-        status = "systematized"
+    repository = ResultRepository(suite_dir.parent)
+    try:
+        detail = repository.get_suite(suite_dir.name)
+        run_summaries: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            page = repository.list_run_catalog_entries(
+                suite_dir.name,
+                cursor=cursor,
+            )
+            run_summaries.extend(page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+    except ServiceError as exc:
+        if exc.code == ServiceErrorCode.NOT_FOUND:
+            return None
+        _error(f"{exc.code}: {exc}")
+    behavior = detail.get("behavior") or {}
+    counts = detail.get("test_case_counts") or {}
 
     return {
         "suite_id": suite_dir.name,
         "path": str(suite_dir),
-        "behavior_name": behavior_name,
-        "behavior_category_count": len((taxonomy or {}).get("behavior_categories") or []),
-        "prompt_test_case_count": prompt_test_case_count,
-        "scenario_test_case_count": scenario_test_case_count,
+        "behavior_name": behavior.get("name") or suite_dir.name,
+        "behavior_category_count": int(
+            detail.get("behavior_category_count") or 0
+        ),
+        "prompt_test_case_count": int(counts.get("prompt") or 0),
+        "scenario_test_case_count": int(counts.get("scenario") or 0),
         "run_count": len(run_summaries),
         "runs": run_summaries,
-        "status": status,
-        "created_at": created_at,
-        "has_systematization": (suite_dir / "systematization.json").exists(),
+        "status": detail.get("status") or "unknown",
+        "created_at": detail.get("created_at"),
+        "has_systematization": "taxonomy" in (detail.get("sources") or {}),
     }
 
 
 def _load_all_suites(results_dir: Path) -> list[dict[str, Any]]:
-    if not results_dir.exists():
-        return []
-    suites = []
-    for child in sorted(results_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        suite_summary = _load_suite_summary(child)
-        if suite_summary is not None:
-            suites.append(suite_summary)
-    suites.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    repository = ResultRepository(results_dir)
+    suites: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        page = repository.list_suite_catalog_entries(cursor=cursor)
+        suites.extend(
+            {
+                **entry,
+                "path": str(results_dir / str(entry["suite_id"])),
+                "runs": [],
+            }
+            for entry in page.items
+        )
+        cursor = page.next_cursor
+        if cursor is None:
+            break
     return suites
 
 
-def _row_metric_value(
-    row: dict[str, Any],
-    metric: str,
-    behavior_categories: Iterable[dict[str, Any]] = (),
-) -> bool | int | None:
+def _comparison_metric_text(metrics: dict[str, Any], metric: str) -> str:
     if metric in _DERIVED_PERMISSIBILITY_RATE_KEYS:
-        split = compute_policy_violation_by_permissibility([row], behavior_categories)
-        bucket = "not_permissible" if metric == _POLICY_VIOLATION_NOT_PERMISSIBLE else "permissible"
-        summary = split.get(bucket)
-        if not isinstance(summary, dict) or not summary.get("count"):
-            return None
-        return bool(summary.get("flagged_count"))
-    value = get_verdict_dimension(row.get("verdict"), metric)
-    return value if is_valid_event_flag(value) else None
-
-
-def _behavior_category_metric_map(
-    rows: Iterable[dict[str, Any]],
-    metric: str,
-    behavior_categories: Iterable[dict[str, Any]] = (),
-) -> dict[str, dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = {}
-    categories = list(behavior_categories)
-    for row in rows:
-        if infer_judge_status(row) != "ok":
-            continue
-        value = _row_metric_value(row, metric, categories)
-        if not is_valid_event_flag(value):
-            continue
-        behavior_category = row_behavior(row)
-        bucket = grouped.setdefault(
-            behavior_category,
-            {
-                "true_count": 0,
-                "count": 0,
-                "permissible": get_permissible_flag(row),
-            },
-        )
-        bucket["true_count"] += int(bool(value))
-        bucket["count"] += 1
-    result = {}
-    for behavior_category, bucket in grouped.items():
-        if bucket["count"] <= 0:
-            continue
-        result[behavior_category] = {
-            "rate": bucket["true_count"] / bucket["count"],
-            "count": bucket["count"],
-            "permissible": bucket["permissible"],
-        }
-    return result
+        return _fmt_percent(_dimension_rate(metrics, metric))
+    dimensions = metrics.get("dimensions")
+    summary = dimensions.get(metric) if isinstance(dimensions, dict) else None
+    if not isinstance(summary, dict):
+        return "-"
+    return _fmt_dimension_summary(summary)[0]
 
 
 @click.group(
@@ -885,8 +617,10 @@ def cli(ctx: click.Context, verbose: bool, quiet: bool, log_file: Path | None, o
 
 # -- init (design an eval config with an LLM assistant) ---------------------
 from assert_ai.init._command import init  # noqa: E402
+from assert_ai.mcp._command import mcp  # noqa: E402
 
 cli.add_command(init)
+cli.add_command(mcp)
 
 
 @cli.command(short_help="Run a pipeline from a YAML config")
@@ -960,12 +694,12 @@ def run(
             log_file=log_file,
             json_output=(output_format == "json"),
         )
+    from assert_ai.core.environment import bootstrap_environment
+
+    bootstrap_environment(discover_from_cwd=True)
     runner = _load_runner_module()
-    # Emit the resolved Azure auth mode AFTER runner.py has loaded ``.env``
-    # and called ``refresh_azure_auth_mode(force=True)`` — so the log reflects
-    # the value that azure/* requests will actually use — and AFTER subcommand
-    # logging flags have been applied (above), so ``--quiet`` silences it and
-    # ``--output json`` formats it as JSON.
+    # Emit the resolved Azure auth mode after explicit environment bootstrap
+    # and subcommand logging configuration.
     from assert_ai.core.azure_auth import log_resolved_azure_auth_mode
     log_resolved_azure_auth_mode()
     rc = runner.run_pipeline(
@@ -1336,84 +1070,44 @@ def _run_within_suite_compare(
     as_json: bool,
     no_color: bool,
 ) -> None:
-    """Original within-suite comparison logic."""
-
     results_root = _resolve_results_dir(results_dir)
-    suite_dir = results_root / suite
-    if not suite_dir.exists():
-        _error(f"Suite not found: {suite}")
-
-    run_summaries: list[dict[str, Any]] = []
-    for run_id in runs:
-        run_summary = _load_run_summary(suite_dir / run_id)
-        if run_summary is None:
-            _error(f"Run not found or unreadable: {suite}/{run_id}")
-        run_summaries.append(run_summary)
-
-    metric = _resolve_compare_metric(metric, run_summaries)
-    available_metrics = _available_compare_metrics(run_summaries)
-    if metric not in available_metrics:
-        _error(f"Metric '{metric}' was not found in the compared prompt judgments. Available: {sorted(available_metrics)}")
-    _reject_ordinal_compare(run_summaries, metric)
-
-    behavior_category_deltas: list[dict[str, Any]] = []
-    if all(run_summary.get("prompt_rows") for run_summary in run_summaries):
-        behavior_categories = _load_behavior_categories(suite_dir)
-        first_map = _behavior_category_metric_map(
-            run_summaries[0]["prompt_rows"],
-            metric,
-            behavior_categories,
+    repository = ResultRepository(results_root)
+    try:
+        comparison = repository.compare_runs(
+            [RunReference(suite, run_id) for run_id in runs],
+            metric=metric,
+            behavior_limit=limit,
         )
-        last_map = _behavior_category_metric_map(
-            run_summaries[-1]["prompt_rows"],
-            metric,
-            behavior_categories,
-        )
-        for behavior_category in sorted(set(first_map) | set(last_map)):
-            first = first_map.get(behavior_category)
-            last = last_map.get(behavior_category)
-            if first is None or last is None:
-                continue
-            behavior_category_deltas.append(
-                {
-                    "behavior_category": behavior_category,
-                    "permissible": first.get("permissible"),
-                    "first_rate": first["rate"],
-                    "last_rate": last["rate"],
-                    "delta": last["rate"] - first["rate"],
-                    "first_count": first["count"],
-                    "last_count": last["count"],
-                }
-            )
-        behavior_category_deltas.sort(key=lambda row: abs(row["delta"]), reverse=True)
-        if limit >= 0:
-            behavior_category_deltas = behavior_category_deltas[:limit]
+    except ServiceError as exc:
+        _error(f"{exc.code}: {exc}")
 
-    run_rows = []
-    for run_summary in run_summaries:
-        prompt_metrics = run_summary.get("prompt_metrics") or {}
-        scenario_metrics = run_summary.get("scenario_metrics") or {}
-        run_rows.append(
-            {
-                "run_id": run_summary["run_id"],
-                "status": run_summary["status"],
-                "started_at": run_summary.get("started_at"),
-                "prompt": prompt_metrics,
-                "scenario": scenario_metrics,
-            }
-        )
+    metric = comparison["metric"]
+    run_rows = [
+        {
+            "run_id": row["run_id"],
+            "status": row["state"],
+            "started_at": row.get("started_at"),
+            "prompt": (row.get("quality") or {}).get("prompt") or {},
+            "scenario": (row.get("quality") or {}).get("scenario") or {},
+            "structural": row.get("structural") or {},
+        }
+        for row in comparison["runs"]
+    ]
 
     payload = {
         "suite_id": suite,
         "metric": metric,
         "runs": run_rows,
-        "behavior_category_deltas": behavior_category_deltas,
+        "dimension_deltas": comparison["dimension_deltas"],
+        "behavior_category_deltas": comparison["behavior_category_deltas"],
+        "warnings": comparison["warnings"],
     }
     if as_json:
         _echo_json(payload)
         return
 
     console = _console(no_color=no_color)
+    metric_kind = comparison["dimension_deltas"][metric]["kind"]
     table = Table(
         title=f"Run Comparison ({suite}, {_metric_label(metric)})",
         box=None,
@@ -1425,8 +1119,8 @@ def _run_within_suite_compare(
     table.add_column("Status", style="white", no_wrap=True)
     table.add_column("Started", style="dim", no_wrap=True)
     table.add_column("Target", style="white")
-    table.add_column(f"Prompt {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
-    table.add_column(f"Scenario {_metric_label(metric).lower()} rate", style="white", no_wrap=True)
+    table.add_column(f"Prompt {_metric_label(metric).lower()}", style="white", no_wrap=True)
+    table.add_column(f"Scenario {_metric_label(metric).lower()}", style="white", no_wrap=True)
     table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
     for row in payload["runs"]:
         prompt_metrics = row["prompt"] or {}
@@ -1442,12 +1136,13 @@ def _run_within_suite_compare(
             label_run_status(row["status"] if isinstance(row.get("status"), str) else None),
             _format_timestamp(row.get("started_at")),
             str(target_model),
-            _fmt_percent(_dimension_rate(prompt_metrics, metric)),
-            _fmt_percent(_dimension_rate(scenario_metrics, metric)),
+            _comparison_metric_text(prompt_metrics, metric),
+            _comparison_metric_text(scenario_metrics, metric),
             _fmt_percent(fail_rate),
         )
     console.print(table)
 
+    behavior_category_deltas = payload["behavior_category_deltas"]
     if behavior_category_deltas:
         delta_table = Table(
             title=f"Top behavior category deltas ({_metric_label(metric).lower()}: {runs[0]} -> {runs[-1]})",
@@ -1464,12 +1159,22 @@ def _run_within_suite_compare(
         for row in behavior_category_deltas:
             delta_table.add_row(
                 row["behavior_category"],
-                str(bool(row["permissible"])),
+                (
+                    str(bool(row["permissible"]))
+                    if row.get("permissible") is not None
+                    else "-"
+                ),
                 _fmt_percent(row["first_rate"]),
                 _fmt_percent(row["last_rate"]),
                 _fmt_percent(row["delta"]),
             )
         console.print(delta_table)
+    elif metric_kind == "ordinal":
+        console.print(
+            "Ordinal comparisons report grade distributions in --json output."
+        )
+    for warning in comparison["warnings"]:
+        console.print(f"Warning: {warning}", style="yellow")
 
 
 @results.command("compare-suites", short_help="Compare runs across different suites (e.g., approach A vs B vs C)")
@@ -1515,8 +1220,7 @@ def results_compare_suites(
         _error("Provide at least two SUITE/RUN arguments to compare.")
 
     results_root = _resolve_results_dir(results_dir)
-    run_summaries: list[dict[str, Any]] = []
-    labels: list[str] = []
+    refs: list[RunReference] = []
 
     for suite_run in suite_runs:
         parts = suite_run.strip("/").split("/")
@@ -1527,68 +1231,21 @@ def results_compare_suites(
         else:
             _error(f"Invalid format: '{suite_run}'. Use SUITE/RUN (e.g., my-suite/run-1).")
             return  # unreachable, for type checker
+        refs.append(RunReference(suite_id, run_id))
 
-        run_dir = results_root / suite_id / run_id
-        if not run_dir.exists():
-            _error(f"Not found: {suite_id}/{run_id}")
-        run_summary = _load_run_summary(run_dir)
-        if run_summary is None:
-            _error(f"No scores in {suite_id}/{run_id}")
-        run_summary["suite_id"] = suite_id
-        run_summaries.append(run_summary)
-        labels.append(f"{suite_id}/{run_id}")
+    repository = ResultRepository(results_root)
+    try:
+        comparison = repository.compare_runs(refs, metric=metric)
+    except ServiceError as exc:
+        _error(f"{exc.code}: {exc}")
 
-    metric = _resolve_compare_metric(metric, run_summaries)
-    _reject_ordinal_compare(run_summaries, metric)
-
-    # Count structural visibility from inference rows
-    structural: list[dict[str, Any]] = []
-    for i, suite_run in enumerate(suite_runs):
-        parts = suite_run.strip("/").split("/")
-        suite_id = parts[0]
-        run_id = parts[1] if len(parts) > 1 else "run-1"
-        inference_set_path = results_root / suite_id / run_id / "inference_set.jsonl"
-        inference_rows = load_jsonl(inference_set_path)
-        total_events = sum(len(r.get("events", [])) for r in inference_rows)
-        tool_events = sum(
-            1 for r in inference_rows
-            for e in r.get("events", [])
-            if e.get("edit", {}).get("type") == "tool_call"
-        )
-        msg_events = sum(
-            1 for r in inference_rows
-            for e in r.get("events", [])
-            if e.get("edit", {}).get("type") == "add_message"
-        )
-        with_tools = sum(
-            1 for r in inference_rows
-            if any(e.get("edit", {}).get("type") == "tool_call" for e in r.get("events", []))
-        )
-        structural.append({
-            "label": labels[i],
-            "inference_rows": len(inference_rows),
-            "total_events": total_events,
-            "msg_events": msg_events,
-            "tool_events": tool_events,
-            "with_tools": with_tools,
-        })
-
+    metric = comparison["metric"]
     if as_json:
-        run_rows = []
-        for i, run_summary in enumerate(run_summaries):
-            prompt_metrics = run_summary.get("prompt_metrics") or {}
-            run_rows.append({
-                "label": labels[i],
-                "suite_id": run_summary["suite_id"],
-                "run_id": run_summary["run_id"],
-                "status": run_summary["status"],
-                "prompt": prompt_metrics,
-                "structural": structural[i],
-            })
-        _echo_json({"metric": metric, "runs": run_rows})
+        _echo_json(comparison)
         return
 
     console = _console(no_color=no_color)
+    metric_kind = comparison["dimension_deltas"][metric]["kind"]
 
     # Table 1: Judge quality
     table = Table(
@@ -1602,23 +1259,26 @@ def results_compare_suites(
     table.add_column("Total", style="white", no_wrap=True)
     table.add_column("Scored", style="white", no_wrap=True)
     table.add_column(label_metric("judge_failure_rate"), style="white", no_wrap=True)
-    table.add_column(f"{_metric_label(metric)} rate", style="white", no_wrap=True)
-    table.add_column("Pass rate", style="white", no_wrap=True)
-    for i, run_summary in enumerate(run_summaries):
-        pm = run_summary.get("prompt_metrics") or {}
+    table.add_column(_metric_label(metric), style="white", no_wrap=True)
+    if metric_kind != "ordinal":
+        table.add_column("Pass rate", style="white", no_wrap=True)
+    for run_summary in comparison["runs"]:
+        pm = (run_summary.get("quality") or {}).get("prompt") or {}
         total = pm.get("total", 0)
         ok = pm.get("scored_total", 0)
         fail_rate = pm.get("judge_failure_rate")
         dim_rate = _dimension_rate(pm, metric)
         pass_rate = (1.0 - dim_rate) if dim_rate is not None else None
-        table.add_row(
-            labels[i],
+        row = [
+            run_summary["label"],
             str(total),
             str(ok),
             _fmt_percent(fail_rate),
-            _fmt_percent(dim_rate),
-            _fmt_percent(pass_rate),
-        )
+            _comparison_metric_text(pm, metric),
+        ]
+        if metric_kind != "ordinal":
+            row.append(_fmt_percent(pass_rate))
+        table.add_row(*row)
     console.print(table)
     console.print()
 
@@ -1636,16 +1296,22 @@ def results_compare_suites(
     struct_table.add_column("Messages", style="white", no_wrap=True)
     struct_table.add_column("Tool events", style="white", no_wrap=True)
     struct_table.add_column("With tools", style="white", no_wrap=True)
-    for s in structural:
+    for run_summary in comparison["runs"]:
+        structural = run_summary.get("structural") or {}
         struct_table.add_row(
-            s["label"],
-            str(s["inference_rows"]),
-            str(s["total_events"]),
-            str(s["msg_events"]),
-            str(s["tool_events"]),
-            f"{s['with_tools']}/{s['inference_rows']}",
+            run_summary["label"],
+            str(structural.get("inference_rows", 0)),
+            str(structural.get("total_events", 0)),
+            str(structural.get("message_events", 0)),
+            str(structural.get("tool_events", 0)),
+            (
+                f"{structural.get('rows_with_tools', 0)}/"
+                f"{structural.get('inference_rows', 0)}"
+            ),
         )
     console.print(struct_table)
+    for warning in comparison["warnings"]:
+        console.print(f"Warning: {warning}", style="yellow")
 
 
 @cli.group(cls=SuggestingGroup, short_help="Generate and validate ACS policies from ASSERT findings")

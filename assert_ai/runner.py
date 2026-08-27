@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -13,12 +14,12 @@ import socket
 import sys
 import time
 import warnings
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
-from dotenv import find_dotenv, load_dotenv
 
 from assert_ai.config import (
     ConfigError,
@@ -27,10 +28,13 @@ from assert_ai.config import (
     load_runtime_context,
 )
 from assert_ai.core.artifact_cache import (
+    ARTIFACTS_DIR,
     activate_latest_artifacts,
     activate_artifact_plan,
     discard_artifact_plan,
     finalize_artifact_plan,
+    file_sha256,
+    find_reusable_artifact_plan,
     is_cacheable_stage,
     override_cacheable_output_paths,
     prepare_artifact_plan,
@@ -38,9 +42,8 @@ from assert_ai.core.artifact_cache import (
     supports_artifact_cache,
     update_latest,
 )
-from assert_ai.core.azure_auth import refresh_azure_auth_mode
 from assert_ai.core.config_model import RunManifest, SuiteMetadata
-from assert_ai.core.io import write_json
+from assert_ai.core.io import write_json, write_text_atomic
 from assert_ai.core.model_client import (
     LLMAuthError,
     LLMInputError,
@@ -49,28 +52,49 @@ from assert_ai.core.model_client import (
     UsageAccumulator,
     track_usage,
 )
+from assert_ai.core.run_control import (
+    PipelineFinished,
+    PipelineStarted,
+    RunCancelled,
+    RunControl,
+    RunObserver,
+    StageFinished,
+    StagePlanned,
+    StageProgress,
+    StageStarted,
+)
 from assert_ai.core.runtime_safety import (
     ManifestHeartbeat,
     PipelineWatchdog,
     run_stage_coro,
 )
+from assert_ai.core.run_result import RunResult, RunState
+from assert_ai.core.run_plan import resolve_forced_stages
+from assert_ai.core.yaml_io import dump_yaml
 from assert_ai.display import label_metric
+from assert_ai.services.result_metadata import (
+    refresh_stage_indexes,
+    write_run_summary,
+    write_suite_summary,
+)
+
+_PINNED_ARTIFACT_FILES = {
+    "systematize": {
+        "taxonomy": "taxonomy.json",
+        "systematization": "systematization.json",
+    },
+    "test_set": {
+        "test_set": "test_set.jsonl",
+        "stratification": "stratification.json",
+    },
+}
 from assert_ai.stages import STAGES
 
-# Walk up from cwd so the user's project `.env` is found when assert-ai is
-# installed as a wheel. Bare `load_dotenv()` walks up from this file's
-# directory, which lives inside the venv's site-packages and misses the
-# project `.env`.
-load_dotenv(find_dotenv(usecwd=True))
-
-# Force-resolve the Azure auth mode now that ``.env`` has populated the
-# environment. Without this, ``model_client``'s lazy resolution would
-# fire on the first request (which is fine) — but doing it here lets
-# entrypoints log the resolved mode up-front and surfaces missing
-# ``azure-identity`` early.
-refresh_azure_auth_mode(force=True)
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 log = logging.getLogger(__name__)
+_OBSERVER_PROGRESS_INTERVAL_SECONDS = 0.5
 
 
 def _set_nested(raw: dict[str, Any], path: list[str], value: Any) -> None:
@@ -113,11 +137,35 @@ def _load_context(
     *,
     config: str,
     overrides: list[str] | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    config_document: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load one config file into runtime context."""
-    cfg_path = Path(config).resolve()
-    raw = _apply_config_overrides(load_config(cfg_path), overrides)
-    return load_runtime_context(raw, cfg_path, stage_modules=STAGES)
+    cfg_path = (
+        path_policy.resolve_config_path(
+            config,
+            must_exist=config_document is None,
+        )
+        if path_policy is not None
+        else Path(config).resolve()
+    )
+    raw = _apply_config_overrides(
+        (
+            deepcopy(config_document)
+            if config_document is not None
+            else load_config(cfg_path)
+        ),
+        overrides,
+    )
+    ctx = load_runtime_context(
+        raw,
+        cfg_path,
+        stage_modules=STAGES,
+        path_policy=path_policy,
+    )
+    if config_document is not None:
+        ctx["_config_snapshot_document"] = raw
+    return ctx
 
 
 def _write_suite_metadata(ctx: dict[str, Any]) -> None:
@@ -160,6 +208,18 @@ def _write_manifest(manifest: RunManifest, run_root: Path) -> None:
     write_json(manifest_path, manifest.to_dict())
 
 
+def _write_active_manifest(
+    manifest: RunManifest,
+    run_root: Path,
+    heartbeat: ManifestHeartbeat | None,
+) -> None:
+    """Write without racing the heartbeat's atomic manifest replacement."""
+    if heartbeat is not None:
+        heartbeat.write_now()
+    else:
+        _write_manifest(manifest, run_root)
+
+
 def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: Path) -> None:
     """Copy resolved artifact references into the run manifest and sidecar."""
 
@@ -174,6 +234,59 @@ def _record_run_artifacts(manifest: RunManifest, ctx: dict[str, Any], run_root: 
             "artifacts": artifacts,
         },
     )
+
+
+def _refresh_stage_indexes(
+    ctx: dict[str, Any],
+    stage_name: str,
+    stage_result: dict[str, Any] | None = None,
+) -> None:
+    try:
+        refresh_stage_indexes(ctx, stage_name, stage_result)
+    except Exception:  # noqa: BLE001
+        log.warning(
+            "[%s] Failed to refresh the derived JSONL index",
+            stage_name,
+            exc_info=True,
+        )
+
+
+def _refresh_run_summary(
+    ctx: dict[str, Any],
+    manifest: RunManifest,
+    *,
+    stage_usage: dict[str, dict[str, Any]] | None = None,
+    elapsed_s: float | None = None,
+    rebuild_indexes: bool,
+) -> None:
+    try:
+        metrics = (
+            _build_run_metrics(stage_usage or {}, elapsed_s)
+            if elapsed_s is not None
+            else None
+        )
+        write_run_summary(
+            ctx,
+            manifest,
+            stage_summaries=ctx.get("_stage_summaries"),
+            metrics=metrics,
+            rebuild_indexes=rebuild_indexes,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to refresh run_summary.json", exc_info=True)
+
+
+def _refresh_suite_summary(
+    ctx: dict[str, Any],
+    *,
+    rebuild_indexes: bool,
+) -> None:
+    if ctx.get("_suite_summary_blocked"):
+        return
+    try:
+        write_suite_summary(ctx, rebuild_indexes=rebuild_indexes)
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to refresh suite_summary.json", exc_info=True)
 
 
 def _print_stage_start(stage_name: str, ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
@@ -612,8 +725,269 @@ def run_pipeline(
     strict: bool = False,
     overrides: list[str] | None = None,
     concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
 ) -> int:
-    """Execute the configured stages sequentially and persist suite/run metadata."""
+    """Execute configured stages and return the legacy process exit code."""
+    return run_pipeline_result(
+        config=config,
+        force_stages=force_stages,
+        strict=strict,
+        overrides=overrides,
+        concurrency=concurrency,
+        path_policy=path_policy,
+        control=control,
+        observer=observer,
+    ).exit_code
+
+
+def run_pipeline_result(
+    *,
+    config: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    overrides: list[str] | None = None,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
+) -> RunResult:
+    """Execute configured stages and return a structured terminal outcome."""
+    try:
+        return _run_pipeline_result(
+            config=config,
+            force_stages=force_stages,
+            strict=strict,
+            overrides=overrides,
+            concurrency=concurrency,
+            path_policy=path_policy,
+            control=control,
+            observer=observer,
+        )
+    except RunCancelled as exc:
+        result = RunResult(
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=exc.stage,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+            ),
+        )
+        return result
+    except Exception:  # noqa: BLE001
+        log.error("[runner] Unexpected pipeline setup error", exc_info=True)
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="INTERNAL",
+            error_message="Unexpected pipeline setup error",
+        )
+
+
+def run_pipeline_document_result(
+    *,
+    document: dict[str, Any],
+    config_path: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
+    expected_artifacts: dict[str, dict[str, Any]] | None = None,
+) -> RunResult:
+    """Execute an immutable config document using its original path as a base."""
+    try:
+        return _run_pipeline_result(
+            config=config_path,
+            force_stages=force_stages,
+            strict=strict,
+            concurrency=concurrency,
+            path_policy=path_policy,
+            config_document=document,
+            control=control,
+            observer=observer,
+            expected_artifacts=expected_artifacts,
+        )
+    except RunCancelled as exc:
+        result = RunResult(
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=exc.stage,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+            ),
+        )
+        return result
+    except Exception:  # noqa: BLE001
+        log.error("[runner] Unexpected pipeline setup error", exc_info=True)
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="INTERNAL",
+            error_message="Unexpected pipeline setup error",
+        )
+
+
+def _pinned_artifact_error(
+    ctx: dict[str, Any],
+    expected_artifacts: dict[str, dict[str, Any]],
+    forced_stages: set[str],
+) -> str | None:
+    if not expected_artifacts:
+        return None
+    if not supports_artifact_cache(ctx):
+        return "The preflight-selected artifact versions are no longer available"
+
+    activate_latest_artifacts(ctx, repair=False)
+    configured = {stage_name: raw_cfg for stage_name, raw_cfg in ctx["stages"]}
+    suite_root = Path(ctx["suite_root"])
+    path_policy = ctx.get("path_policy")
+    for stage_name in PIPELINE_STAGE_ORDER:
+        expected = expected_artifacts.get(stage_name)
+        if expected is None:
+            continue
+        expected_version = expected["version"]
+        raw_cfg = configured.get(stage_name)
+        reusable = None
+        if isinstance(raw_cfg, dict) and raw_cfg.get("enabled", True):
+            if stage_name in forced_stages or not is_cacheable_stage(stage_name):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} is no longer reusable"
+                )
+            reusable = find_reusable_artifact_plan(
+                ctx=ctx,
+                stage_name=stage_name,
+                raw_cfg=raw_cfg,
+            )
+            if reusable is None or reusable.version != expected_version:
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while the job was queued"
+                )
+            artifact_dir = reusable.artifact_dir
+            output_paths = reusable.output_paths
+        else:
+            active = (ctx.get("artifact_versions") or {}).get(stage_name)
+            if (
+                not isinstance(active, dict)
+                or active.get("version") != expected_version
+            ):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while the job was queued"
+                )
+            artifact_dir = suite_root / ARTIFACTS_DIR / stage_name / expected_version
+            if path_policy is not None:
+                artifact_dir = path_policy.resolve_managed_output(
+                    artifact_dir,
+                    field_name=f"pinned {stage_name} artifact",
+                    expected_root=suite_root,
+                    reject_links=True,
+                )
+            output_paths = {
+                key: artifact_dir / filename
+                for key, filename in _PINNED_ARTIFACT_FILES[stage_name].items()
+            }
+        metadata_path = artifact_dir / "artifact.json"
+        if path_policy is not None:
+            metadata_path = path_policy.resolve_managed_output(
+                metadata_path,
+                field_name=f"pinned {stage_name} artifact metadata",
+                expected_root=artifact_dir,
+                reject_links=True,
+            )
+        try:
+            with metadata_path.open("rb") as handle:
+                metadata_bytes = handle.read(1024 * 1024 + 1)
+            if len(metadata_bytes) > 1024 * 1024:
+                raise ValueError("metadata is too large")
+            metadata = json.loads(metadata_bytes.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return (
+                f"The preflight-selected {stage_name} artifact "
+                f"{expected_version} metadata is unavailable"
+            )
+        metadata_sha256 = (
+            "sha256:" + hashlib.sha256(metadata_bytes).hexdigest()
+        )
+        if (
+            metadata_sha256 != expected["metadata_sha256"]
+            or not isinstance(metadata, dict)
+            or metadata.get("version") != expected_version
+            or metadata.get("file_hashes") != expected["file_hashes"]
+        ):
+            return (
+                f"The preflight-selected {stage_name} artifact "
+                f"{expected_version} metadata changed while the job was queued"
+            )
+        for output_key, expected_hash in expected["file_hashes"].items():
+            output_path = output_paths.get(output_key)
+            if output_path is not None and path_policy is not None:
+                output_path = path_policy.resolve_managed_output(
+                    output_path,
+                    field_name=f"pinned {stage_name} artifact file",
+                    expected_root=artifact_dir,
+                    reject_links=True,
+                )
+            try:
+                before = output_path.stat()
+                actual_hash = file_sha256(output_path)
+                after = output_path.stat()
+            except (AttributeError, OSError):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} is incomplete"
+                )
+            if (
+                before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+            ):
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} changed while it was being verified"
+                )
+            if actual_hash != expected_hash:
+                return (
+                    f"The preflight-selected {stage_name} artifact "
+                    f"{expected_version} failed its integrity check"
+                )
+        if reusable is not None:
+            activate_artifact_plan(ctx, reusable)
+    return None
+
+
+def _run_pipeline_result(
+    *,
+    config: str,
+    force_stages: list[str] | None = None,
+    strict: bool = False,
+    overrides: list[str] | None = None,
+    concurrency: int | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    config_document: dict[str, Any] | None = None,
+    control: RunControl | None = None,
+    observer: RunObserver | None = None,
+    expected_artifacts: dict[str, dict[str, Any]] | None = None,
+) -> RunResult:
+    """Execute configured stages.
+
+    Programmatic callers are responsible for any desired dotenv bootstrap.
+    """
     # Suppress litellm's internal async logging warnings — they fire because
     # litellm creates async coroutines for logging callbacks that never get
     # awaited in our synchronous runner context. Harmless but alarming.
@@ -638,11 +1012,32 @@ def run_pipeline(
     _install_async_cleanup_filters()
 
     try:
-        ctx = _load_context(config=config, overrides=overrides)
+        ctx = _load_context(
+            config=config,
+            overrides=overrides,
+            path_policy=path_policy,
+            config_document=config_document,
+        )
         ctx["strict"] = strict
     except (ConfigError, ValueError) as exc:
         log.error(f"[config error] {exc}")
-        return 1
+        return RunResult(
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="CONFIG_INVALID",
+            error_message=_result_error_message(str(exc), path_policy=path_policy),
+        )
+
+    ctx["_run_control"] = control
+    _notify_observer(
+        observer,
+        "pipeline_started",
+        PipelineStarted(
+            suite_id=ctx.get("suite_id"),
+            run_id=ctx.get("run_id"),
+            stages=tuple(name for name, _ in ctx["stages"]),
+        ),
+    )
 
     # CLI --concurrency wins over the YAML-resolved value so a single run can be
     # widened or narrowed without editing the config. We mutate the live
@@ -659,51 +1054,84 @@ def run_pipeline(
                 "[runner] --concurrency ignored: this config has no inference stage to override."
             )
 
-    requested_force_stages = set(force_stages or [])
     configured_stage_names = {stage_name for stage_name, _ in ctx["stages"]}
-    invalid_forced = sorted(requested_force_stages.difference(configured_stage_names))
-    if invalid_forced:
-        joined = ", ".join(invalid_forced)
-        log.error(f"[config error] --force-stage stage(s) not present in config: {joined}")
-        return 1
-
-    # Cascade: forcing an upstream stage logically invalidates every stage
-    # downstream of it. Without this, `--force-stage test_set` regenerates test_set
-    # but inference silently keeps the old inference rows (its resume cache keys on
-    # test_case_id, and test case ids are deterministic so they collide with the prior
-    # run's content). Same hazard for judge against scores.jsonl. Computing
-    # the closure here keeps the workflow `--force-stage <upstream>` honest
-    # without forcing users to remember the full downstream chain.
-    if requested_force_stages:
-        forced_indices = [
-            PIPELINE_STAGE_ORDER.index(name)
-            for name in requested_force_stages
-            if name in PIPELINE_STAGE_ORDER
-        ]
-        if forced_indices:
-            min_forced_index = min(forced_indices)
-            cascade = {
-                name
-                for name in PIPELINE_STAGE_ORDER[min_forced_index:]
-                if name in configured_stage_names
-            }
-            requested_force_stages = requested_force_stages.union(cascade)
+    try:
+        requested_force_stages = set(
+            resolve_forced_stages(
+                configured_stage_names,
+                force_stages or (),
+            )
+        )
+    except ValueError as exc:
+        message = str(exc).replace("Forced stage", "--force-stage stage", 1)
+        log.error(f"[config error] {message}")
+        return _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="CONFIG_INVALID",
+            error_message=message,
+        )
 
     suite_root = Path(ctx["suite_root"])
+    path_policy = ctx.get("path_policy")
+    if path_policy is not None:
+        suite_root = path_policy.resolve_managed_output(
+            suite_root,
+            field_name="suite root",
+            expected_root=path_policy.results_root,
+            reject_links=True,
+        )
+        ctx["suite_root"] = suite_root
+    pinned_artifact_error = _pinned_artifact_error(
+        ctx,
+        expected_artifacts or {},
+        requested_force_stages,
+    )
+    if pinned_artifact_error is not None:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            error_code="PREFLIGHT_FAILED",
+            error_message=pinned_artifact_error,
+        )
+        _notify_observer(
+            observer,
+            "pipeline_finished",
+            PipelineFinished(
+                state=result.state.value,
+                exit_code=result.exit_code,
+                failed_stage=result.failed_stage,
+                error_code=result.error_code,
+                error_message=result.error_message,
+            ),
+        )
+        return result
     suite_root.mkdir(parents=True, exist_ok=True)
     _write_suite_metadata(ctx)
     ctx.setdefault("artifact_versions", {})
+    ctx.setdefault("_stage_summaries", {})
     artifact_plans: dict[str, Any] = {}
     cache_supported = supports_artifact_cache(ctx)
     if cache_supported:
         activate_latest_artifacts(ctx)
+    _refresh_suite_summary(ctx, rebuild_indexes=False)
 
     stages_to_run: list[tuple[str, Any, dict[str, Any]]] = []
     for stage_name, raw_cfg in ctx["stages"]:
-        if not raw_cfg.get("enabled", True):
-            continue
-
         module = STAGES[stage_name]
+        if not raw_cfg.get("enabled", True):
+            _notify_observer(
+                observer,
+                "stage_planned",
+                StagePlanned(
+                    name=stage_name,
+                    scope=module.SCOPE,
+                    action="disabled",
+                ),
+            )
+            continue
 
         if module.SCOPE == "suite":
             if cache_supported and is_cacheable_stage(stage_name):
@@ -719,9 +1147,20 @@ def run_pipeline(
                 if plan.reused:
                     refresh_compatibility_files(ctx, stage_name, plan.output_paths)
                     update_latest(ctx, stage_name, ref)
+                    _refresh_stage_indexes(ctx, stage_name)
+                    _refresh_suite_summary(ctx, rebuild_indexes=True)
                     log.info(
                         f"[{stage_name}] Reused artifact {plan.version} "
                         f"(input hashes match, use --force-stage {stage_name} to regenerate)"
+                    )
+                    _notify_observer(
+                        observer,
+                        "stage_planned",
+                        StagePlanned(
+                            name=stage_name,
+                            scope=module.SCOPE,
+                            action="reused",
+                        ),
                     )
                     continue
                 # Force cacheable stages to write into their versioned artifact
@@ -740,20 +1179,83 @@ def run_pipeline(
                     log.info(
                         f"[{stage_name}] Skipped (output exists, use --force-stage {stage_name} to regenerate)"
                     )
+                    _notify_observer(
+                        observer,
+                        "stage_planned",
+                        StagePlanned(
+                            name=stage_name,
+                            scope=module.SCOPE,
+                            action="skipped",
+                        ),
+                    )
                     continue
 
+        _notify_observer(
+            observer,
+            "stage_planned",
+            StagePlanned(
+                name=stage_name,
+                scope=module.SCOPE,
+                action="pending",
+            ),
+        )
         stages_to_run.append((stage_name, module, raw_cfg))
 
     run_root = Path(ctx["run_root"]) if ctx.get("run_root") else None
+    if run_root is not None and path_policy is not None:
+        run_root = path_policy.resolve_managed_output(
+            run_root,
+            field_name="run root",
+            expected_root=suite_root,
+            reject_links=True,
+        )
+        ctx["run_root"] = run_root
     selected_run_stage = any(module.SCOPE == "run" for _, module, _ in stages_to_run)
     manifest = None
     if selected_run_stage and run_root is not None:
         run_root.mkdir(parents=True, exist_ok=True)
         manifest = _build_manifest(ctx)
         config_path = ctx.get("config_path")
-        if config_path is not None and Path(config_path).is_file():
-            shutil.copy2(config_path, run_root / "config.yaml")
-    failed_stage: str | None = None
+        snapshot_document = ctx.get("_config_snapshot_document")
+        if (
+            isinstance(snapshot_document, dict)
+            or (
+                config_path is not None
+                and Path(config_path).is_file()
+            )
+        ):
+            config_snapshot = (
+                path_policy.resolve_managed_output(
+                    run_root / "config.yaml",
+                    field_name="run config snapshot",
+                    expected_root=run_root,
+                    reject_links=True,
+                )
+                if path_policy is not None
+                else run_root / "config.yaml"
+            )
+            if isinstance(snapshot_document, dict):
+                write_text_atomic(
+                    config_snapshot,
+                    dump_yaml(snapshot_document),
+                )
+            else:
+                config_path = (
+                    path_policy.resolve_config_path(
+                        config_path,
+                        must_exist=True,
+                    )
+                    if path_policy is not None
+                    else Path(config_path)
+                )
+                shutil.copy2(config_path, config_snapshot)
+        _record_run_artifacts(manifest, ctx, run_root)
+        _write_manifest(manifest, run_root)
+        _refresh_run_summary(
+            ctx,
+            manifest,
+            rebuild_indexes=False,
+        )
     pipeline_start = time.monotonic()
     stage_usage: dict[str, dict[str, Any]] = {}
 
@@ -779,10 +1281,12 @@ def run_pipeline(
             check_interval_s=60.0,
         )
         heartbeat.attach_watchdog(watchdog)
-        ctx["_heartbeat"] = heartbeat
         ctx["_watchdog"] = watchdog
         heartbeat.start()
         watchdog.start()
+    progress = _RunProgress(heartbeat=heartbeat, observer=observer)
+    if heartbeat is not None or observer is not None:
+        ctx["_heartbeat"] = progress
 
     try:
         return _run_stages_inner(
@@ -797,6 +1301,9 @@ def run_pipeline(
             stage_usage=stage_usage,
             heartbeat=heartbeat,
             watchdog=watchdog,
+            control=control,
+            observer=observer,
+            progress=progress,
         )
     finally:
         if heartbeat is not None:
@@ -818,10 +1325,16 @@ def _run_stages_inner(
     stage_usage: dict[str, dict[str, Any]],
     heartbeat: ManifestHeartbeat | None,
     watchdog: PipelineWatchdog | None,
-) -> int:
+    control: RunControl | None,
+    observer: RunObserver | None,
+    progress: "_RunProgress",
+) -> RunResult:
     """Stage execution loop. Extracted so the outer function can manage
     heartbeat/watchdog lifecycle in a single try/finally."""
     failed_stage: str | None = None
+    failed_error_code: str | None = None
+    failed_error_message: str | None = None
+    cancelled = False
 
     for stage_name, module, raw_cfg in stages_to_run:
         if manifest is not None and module.SCOPE == "run":
@@ -830,10 +1343,22 @@ def _run_stages_inner(
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }
             _record_run_artifacts(manifest, ctx, run_root)
-            _write_manifest(manifest, run_root)
+            _write_active_manifest(manifest, run_root, heartbeat)
+            _refresh_run_summary(
+                ctx,
+                manifest,
+                stage_usage=stage_usage,
+                elapsed_s=time.monotonic() - pipeline_start,
+                rebuild_indexes=False,
+            )
         _print_stage_start(stage_name, ctx, raw_cfg)
         stage_start = time.monotonic()
         stage_result: dict[str, Any] = {}
+        _notify_observer(
+            observer,
+            "stage_started",
+            StageStarted(name=stage_name, scope=module.SCOPE),
+        )
         # Tick the watchdog so it doesn't fire mid-stage on the previous
         # stage's idle clock, and reset the heartbeat's progress payload
         # so a stage that doesn't report progress (e.g. systematize, test_set)
@@ -841,9 +1366,8 @@ def _run_stages_inner(
         # in the manifest.
         if watchdog is not None:
             watchdog.tick()
-        if heartbeat is not None:
-            heartbeat.clear_progress()
-            heartbeat.set_progress(stage=stage_name)
+        progress.clear_progress()
+        progress.set_progress(stage=stage_name)
         # Pass the per-stage "was this forced" flag through ctx so stages
         # like inference/judge can distinguish a real cache-mismatch warning
         # from a redundant one (the user already opted into discarding via
@@ -852,6 +1376,8 @@ def _run_stages_inner(
         ctx["_stage_forced"] = stage_name in requested_force_stages
         usage_acc: UsageAccumulator | None = None
         try:
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
             with track_usage() as usage_acc:
                 # run_stage_coro replaces asyncio.run with bounded teardown:
                 # if the stage's event loop can't shut down its default
@@ -865,8 +1391,16 @@ def _run_stages_inner(
                     module.run(ctx, raw_cfg),
                     cleanup_timeout_s=300.0,
                 ) or {}
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
+            stage_summary = (stage_result or {}).get("_summary")
+            if isinstance(stage_summary, dict):
+                ctx["_stage_summaries"][stage_name] = stage_summary
+            if control is not None:
+                control.raise_if_cancelled(stage=stage_name)
+            _refresh_stage_indexes(ctx, stage_name, stage_result)
             stage_errored_count = int(
-                ((stage_result or {}).get("_summary") or {}).get("errored_count", 0) or 0
+                (stage_summary or {}).get("errored_count", 0) or 0
             )
             if (
                 cache_supported
@@ -892,14 +1426,27 @@ def _run_stages_inner(
                         "Re-run to fill the gap.",
                         stage_name, stage_errored_count,
                     )
+                    ctx["_suite_summary_blocked"] = True
                 else:
+                    if control is not None:
+                        control.raise_if_cancelled(stage=stage_name)
                     finalize_artifact_plan(ctx, artifact_plans[stage_name])
             ok = True
+        except RunCancelled:
+            ok = False
+            cancelled = True
+            stage_error_code = None
+            stage_error_message = None
         except (LLMAuthError, LLMInputError, LLMRateLimitError, LLMProviderError) as exc:
             # Classified LLM errors already carry a clean, actionable message.
             # Print just that message; suppress the multi-screen litellm/httpx
             # traceback unless the user opts into verbose output.
             ok = False
+            stage_error_code = "RUN_FAILED"
+            stage_error_message = _result_error_message(
+                str(exc),
+                path_policy=ctx.get("path_policy"),
+            )
             log.error(f"[{stage_name}] {exc}")
             if os.environ.get("ASSERT_VERBOSE_ERRORS") == "1":
                 log.debug("Full traceback:", exc_info=True)
@@ -907,6 +1454,8 @@ def _run_stages_inner(
                 log.info("(set ASSERT_VERBOSE_ERRORS=1 to see the full traceback)")
         except Exception:  # noqa: BLE001
             ok = False
+            stage_error_code = "RUN_FAILED"
+            stage_error_message = f"Unexpected error while running {stage_name}"
             log.error(f"[{stage_name}] Unexpected error", exc_info=True)
 
         if not ok and stage_name in artifact_plans:
@@ -937,24 +1486,61 @@ def _run_stages_inner(
         # that owned it.
         if watchdog is not None:
             watchdog.tick()
-        if heartbeat is not None:
-            heartbeat.clear_progress()
+        progress.clear_progress()
 
         if manifest is not None and module.SCOPE == "run":
-            manifest.stages[stage_name] = "completed" if ok else "failed"
-            manifest.status = "running" if ok else "failed"
+            manifest.stages[stage_name] = (
+                "completed"
+                if ok
+                else ("cancelled" if cancelled else "failed")
+            )
+            manifest.status = (
+                "running"
+                if ok
+                else ("cancelled" if cancelled else "failed")
+            )
             existing_timing = manifest.stage_timings.get(stage_name) or {}
             existing_timing["ended_at"] = datetime.now(timezone.utc).isoformat()
             existing_timing["duration_secs"] = round(elapsed, 3)
             manifest.stage_timings[stage_name] = existing_timing
             _record_run_artifacts(manifest, ctx, run_root)
-            _write_manifest(manifest, run_root)
+            _write_active_manifest(manifest, run_root, heartbeat)
+            _refresh_run_summary(
+                ctx,
+                manifest,
+                stage_usage=stage_usage,
+                elapsed_s=time.monotonic() - pipeline_start,
+                rebuild_indexes=ok,
+            )
 
         if ok and module.SCOPE == "suite":
             _write_suite_metadata(ctx)
+            _refresh_suite_summary(ctx, rebuild_indexes=True)
+
+        _notify_observer(
+            observer,
+            "stage_finished",
+            StageFinished(
+                name=stage_name,
+                scope=module.SCOPE,
+                state=(
+                    "completed"
+                    if ok
+                    else ("cancelled" if cancelled else "failed")
+                ),
+                duration_seconds=round(elapsed, 3),
+                summary=(
+                    dict(stage_result.get("_summary") or {})
+                    if isinstance(stage_result, dict)
+                    else {}
+                ),
+            ),
+        )
 
         if not ok:
             failed_stage = stage_name
+            failed_error_code = stage_error_code
+            failed_error_message = stage_error_message
             break
 
     total_elapsed = time.monotonic() - pipeline_start
@@ -978,7 +1564,9 @@ def _run_stages_inner(
         except Exception:  # noqa: BLE001
             log.debug("Failed to write metrics.json", exc_info=True)
 
-    if failed_stage is None:
+    if cancelled:
+        log.info(f"Pipeline cancelled ({total_elapsed:.1f}s)")
+    elif failed_stage is None:
         log.info(f"Pipeline completed ({total_elapsed:.1f}s)")
         if run_root is not None:
             _log_run_headline(run_root)
@@ -1000,11 +1588,174 @@ def _run_stages_inner(
     else:
         log.error(f"Pipeline failed at {failed_stage} ({total_elapsed:.1f}s)")
 
-    if manifest is None:
-        return 0 if failed_stage is None else 1
+    if manifest is not None:
+        manifest.ended_at = datetime.now(timezone.utc).isoformat()
+        manifest.status = (
+            "cancelled"
+            if cancelled
+            else ("completed" if failed_stage is None else "failed")
+        )
+        _record_run_artifacts(manifest, ctx, run_root)
+        _write_active_manifest(manifest, run_root, heartbeat)
+        _refresh_run_summary(
+            ctx,
+            manifest,
+            stage_usage=stage_usage,
+            elapsed_s=total_elapsed,
+            rebuild_indexes=failed_stage is None and not cancelled,
+        )
+    _refresh_suite_summary(
+        ctx,
+        rebuild_indexes=failed_stage is None and not cancelled,
+    )
 
-    manifest.ended_at = datetime.now(timezone.utc).isoformat()
-    manifest.status = "completed" if failed_stage is None else "failed"
-    _record_run_artifacts(manifest, ctx, run_root)
-    _write_manifest(manifest, run_root)
-    return 0 if failed_stage is None else 1
+    if cancelled:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.CANCELLED,
+            exit_code=130,
+            failed_stage=failed_stage,
+        )
+    elif failed_stage is None:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.COMPLETED,
+            exit_code=0,
+        )
+    else:
+        result = _run_result_from_context(
+            ctx,
+            state=RunState.FAILED,
+            exit_code=1,
+            failed_stage=failed_stage,
+            error_code=failed_error_code or "RUN_FAILED",
+            error_message=failed_error_message or f"Pipeline failed at {failed_stage}",
+        )
+    _notify_observer(
+        observer,
+        "pipeline_finished",
+        PipelineFinished(
+            state=result.state.value,
+            exit_code=result.exit_code,
+            failed_stage=result.failed_stage,
+            error_code=result.error_code,
+            error_message=result.error_message,
+        ),
+    )
+    return result
+
+
+class _RunProgress:
+    """Fan progress updates out to manifests and run observers."""
+
+    def __init__(
+        self,
+        *,
+        heartbeat: ManifestHeartbeat | None,
+        observer: RunObserver | None,
+    ) -> None:
+        self._heartbeat = heartbeat
+        self._observer = observer
+        self._last_observer_update = 0.0
+        self._pending_observer_event: StageProgress | None = None
+
+    def set_progress(self, **fields: Any) -> None:
+        if self._heartbeat is not None:
+            self._heartbeat.set_progress(**fields)
+        stage = fields.get("stage")
+        if isinstance(stage, str) and stage:
+            event = StageProgress(name=stage, values=dict(fields))
+            now = time.monotonic()
+            completed = fields.get("completed")
+            total = fields.get("total")
+            terminal_update = (
+                isinstance(completed, int)
+                and not isinstance(completed, bool)
+                and isinstance(total, int)
+                and not isinstance(total, bool)
+                and completed >= total
+            )
+            if (
+                self._last_observer_update == 0.0
+                or terminal_update
+                or now - self._last_observer_update
+                >= _OBSERVER_PROGRESS_INTERVAL_SECONDS
+            ):
+                self._emit_observer_progress(event, now=now)
+            else:
+                self._pending_observer_event = event
+
+    def clear_progress(self) -> None:
+        if self._pending_observer_event is not None:
+            self._emit_observer_progress(
+                self._pending_observer_event,
+                now=time.monotonic(),
+            )
+        if self._heartbeat is not None:
+            self._heartbeat.clear_progress()
+
+    def _emit_observer_progress(
+        self,
+        event: StageProgress,
+        *,
+        now: float,
+    ) -> None:
+        _notify_observer(
+            self._observer,
+            "stage_progress",
+            event,
+        )
+        self._last_observer_update = now
+        self._pending_observer_event = None
+
+
+def _notify_observer(
+    observer: RunObserver | None,
+    method_name: str,
+    event: Any,
+) -> None:
+    if observer is None:
+        return
+    try:
+        getattr(observer, method_name)(event)
+    except Exception:  # noqa: BLE001 - diagnostics must not fail a run
+        log.warning(
+            "Run observer failed while handling %s",
+            method_name,
+            exc_info=True,
+        )
+
+
+def _run_result_from_context(
+    ctx: dict[str, Any],
+    *,
+    state: RunState,
+    exit_code: int,
+    failed_stage: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> RunResult:
+    suite_root = ctx.get("suite_root")
+    run_root = ctx.get("run_root")
+    return RunResult(
+        state=state,
+        exit_code=exit_code,
+        suite_id=ctx.get("suite_id"),
+        run_id=ctx.get("run_id"),
+        suite_root=Path(suite_root) if suite_root is not None else None,
+        run_root=Path(run_root) if run_root is not None else None,
+        failed_stage=failed_stage,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
+def _result_error_message(
+    message: str,
+    *,
+    path_policy: RuntimePathPolicy | None,
+) -> str:
+    if path_policy is None:
+        return message
+    workspace = str(path_policy.workspace_root)
+    return message.replace(workspace, ".")

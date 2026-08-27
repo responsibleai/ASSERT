@@ -11,7 +11,7 @@ import json
 import logging
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +24,12 @@ from assert_ai.core.judge import (
     run_transcript_judge as run_llm_judge,
 )
 from assert_ai.core.model_client import LLMAuthError, LLMContentFilterError, LLMInputError, LLMRateLimitError, LLMProviderError
+from assert_ai.core.run_control import RunCancelled, RunControl
 from assert_ai.core.transcript import Transcript, TranscriptEvent, TranscriptMetadata
 from assert_ai.viewer_read_model import build_run_viewer_artifacts
+
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
 
 SCOPE = "run"
 SUITE_OUTPUT = None
@@ -45,6 +49,7 @@ _UNSCORABLE_STOP_REASONS = frozenset({
     "target_input_refused",
     "target_error",
     "tester_error",
+    "trace_empty",
 })
 
 
@@ -95,6 +100,10 @@ async def run_judge(
     disabled_dimensions: list[str] | None = None,
     forced: bool = False,
     heartbeat: Any = None,
+    run_control: RunControl | None = None,
+    path_policy: RuntimePathPolicy | None = None,
+    config_path: Path | None = None,
+    managed_output_root: Path | None = None,
 ) -> dict[str, Any]:
     """Score inference rows and write score artifacts."""
     judge_model = str(evaluation.judge.model.name)
@@ -112,16 +121,62 @@ async def run_judge(
         if disabled_dimensions is not None
         else getattr(evaluation.judge, "disabled_dimensions", [])
     )
-    resolved_inference_set_path = resolve_path(inference_set_path)
+    resolved_inference_set_path = (
+        path_policy.resolve_input(
+            inference_set_path,
+            base_dir=(
+                config_path.parent
+                if config_path is not None
+                else path_policy.config_root
+            ),
+            field_name="judge inference set",
+            must_exist=True,
+            file_only=True,
+        )
+        if path_policy is not None
+        else resolve_path(inference_set_path)
+    )
     rows = load_jsonl(resolved_inference_set_path)
     if not rows:
         raise ValueError(f"No inference rows found in {inference_set_path}")
 
-    out_dir = resolve_path(save_dir or str(resolved_inference_set_path.parent))
+    if path_policy is not None:
+        if managed_output_root is None:
+            raise ValueError(
+                "managed_output_root is required when a runtime path policy is active"
+            )
+        out_dir = path_policy.resolve_managed_output(
+            save_dir or str(resolved_inference_set_path.parent),
+            field_name="judge output directory",
+            expected_root=managed_output_root,
+            reject_links=True,
+        )
+    else:
+        out_dir = resolve_path(save_dir or str(resolved_inference_set_path.parent))
     out_dir.mkdir(parents=True, exist_ok=True)
+    if path_policy is not None:
+        path_policy.require_managed_tree(
+            out_dir,
+            field_name="judge output directory",
+            expected_root=managed_output_root,
+        )
     if not taxonomy_path:
         raise ValueError("judge stage requires taxonomy_path")
-    resolved_taxonomy_path = resolve_path(taxonomy_path)
+    resolved_taxonomy_path = (
+        path_policy.resolve_input(
+            taxonomy_path,
+            base_dir=(
+                config_path.parent
+                if config_path is not None
+                else path_policy.config_root
+            ),
+            field_name="judge taxonomy",
+            must_exist=True,
+            file_only=True,
+        )
+        if path_policy is not None
+        else resolve_path(taxonomy_path)
+    )
     if not resolved_taxonomy_path.exists():
         raise ValueError(f"Taxonomy file not found: {taxonomy_path}")
     try:
@@ -165,6 +220,9 @@ async def run_judge(
             dimensions = row_factors(row)
             if dimensions:
                 skipped["dimensions"] = dimensions
+            trace_refs = row.get("trace_refs")
+            if isinstance(trace_refs, list):
+                skipped["trace_refs"] = trace_refs
             return skipped
         transcript_metadata = TranscriptMetadata(
             kind=str(row.get("type") or ""),
@@ -228,6 +286,9 @@ async def run_judge(
         dimensions = row_factors(row)
         if dimensions:
             score_row["dimensions"] = dimensions
+        trace_refs = row.get("trace_refs")
+        if isinstance(trace_refs, list):
+            score_row["trace_refs"] = trace_refs
         if judge_result.get("multi_judge") is not None:
             score_row["multi_judge"] = judge_result["multi_judge"]
         return score_row
@@ -245,10 +306,17 @@ async def run_judge(
         """
         output_index, row = item
         try:
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="judge")
+            score = await score_row(row)
+            if run_control is not None:
+                run_control.raise_if_cancelled(stage="judge")
             return {
                 "output_index": output_index,
-                "score_row": await score_row(row),
+                "score_row": score,
             }
+        except RunCancelled:
+            raise
         except LLMContentFilterError as exc:
             # Adversarial-eval workloads routinely send transcripts the
             # judge's content filter will reject (XPIA payloads, PII
@@ -303,6 +371,9 @@ async def run_judge(
                 score_row_filter_skipped["dimension_scales"] = judge_contract["dimension_scales"]
             if dimensions:
                 score_row_filter_skipped["dimensions"] = dimensions
+            trace_refs = row.get("trace_refs")
+            if isinstance(trace_refs, list):
+                score_row_filter_skipped["trace_refs"] = trace_refs
             return {
                 "output_index": output_index,
                 "score_row": score_row_filter_skipped,
@@ -339,6 +410,13 @@ async def run_judge(
             }
 
     scores_path = out_dir / SCORES_FILE
+    if path_policy is not None:
+        scores_path = path_policy.resolve_managed_output(
+            scores_path,
+            field_name="judge scores output",
+            expected_root=out_dir,
+            reject_links=True,
+        )
 
     # Resume: load already-scored (kind, test_case_id) pairs and skip them, but only
     # if the judge configuration and inference-set file hasn't changed since the
@@ -357,6 +435,13 @@ async def run_judge(
         inference_set_path=resolved_inference_set_path,
     )
     config_hash_path = out_dir / _JUDGE_CONFIG_HASH_FILE
+    if path_policy is not None:
+        config_hash_path = path_policy.resolve_managed_output(
+            config_hash_path,
+            field_name="judge config hash",
+            expected_root=out_dir,
+            reject_links=True,
+        )
     if scores_path.exists():
         if forced:
             # User explicitly forced this stage (directly or via the runner's
@@ -410,12 +495,21 @@ async def run_judge(
             )
         except Exception:  # noqa: BLE001
             heartbeat = None
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="judge")
     errors: list[Exception] = []
     written_rows = 0
     for completed_task in asyncio.as_completed(tasks):
         result = await completed_task
         score = result.get("score_row")
         if score is not None:
+            if path_policy is not None:
+                scores_path = path_policy.resolve_managed_output(
+                    scores_path,
+                    field_name="judge scores output",
+                    expected_root=out_dir,
+                    reject_links=True,
+                )
             append_jsonl_row(scores_path, score)
             written_rows += 1
         error = result.get("error")
@@ -431,9 +525,19 @@ async def run_judge(
                 )
             except Exception:  # noqa: BLE001
                 heartbeat = None
+        if run_control is not None:
+            run_control.raise_if_cancelled(stage="judge")
 
     # Always rebuild viewer artifacts so the on-disk read model reflects the
     # current scores.jsonl, even when a row failed and we are about to raise.
+    if path_policy is not None:
+        path_policy.require_managed_tree(
+            out_dir,
+            field_name="judge output directory",
+            expected_root=managed_output_root,
+        )
+    if run_control is not None:
+        run_control.raise_if_cancelled(stage="judge")
     build_run_viewer_artifacts(out_dir)
     # Per-row failures should not kill the stage as long as *some* rows
     # succeeded. The errors are surfaced via judge_failures in the
@@ -507,6 +611,8 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         },
         cfg_path=ctx["config_path"],
         artifacts_root=ctx["artifacts_root"],
+        path_policy=ctx.get("path_policy"),
+        managed_output_root=Path(ctx["run_root"]),
     )
     result = await run_judge(
         inference_set_path=cfg["inference_set_path"],
@@ -517,6 +623,10 @@ async def run(ctx: dict[str, Any], raw_cfg: dict[str, Any]) -> dict[str, str]:
         disabled_dimensions=disabled_dimensions,
         forced=bool(ctx.get("_stage_forced", False)),
         heartbeat=ctx.get("_heartbeat") if isinstance(ctx, dict) else None,
+        run_control=ctx.get("_run_control") if isinstance(ctx, dict) else None,
+        path_policy=ctx.get("path_policy"),
+        config_path=Path(ctx["config_path"]),
+        managed_output_root=Path(ctx["run_root"]),
     )
     return {
         "scores_path": result["scores_path"],

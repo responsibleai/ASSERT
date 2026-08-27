@@ -37,6 +37,35 @@ def _done_response(yaml_str: str = _MINIMAL_VALID_YAML) -> str:
 
 
 class InitCommandTest(unittest.TestCase):
+    @patch("assert_ai.core.environment.bootstrap_environment")
+    @patch("assert_ai.init._design_agent.chat_completion")
+    @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
+    def test_uses_shared_environment_bootstrap(
+        self,
+        _mock_sys,
+        mock_llm,
+        bootstrap_environment,
+    ) -> None:
+        mock_llm.return_value = _done_response()
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            env_file = Path("credentials.env")
+            env_file.write_text("AZURE_API_KEY=placeholder\n", encoding="utf-8")
+            result = runner.invoke(
+                cli,
+                [
+                    "init",
+                    "--describe",
+                    "A chatbot",
+                    "--non-interactive",
+                    "--env-file",
+                    str(env_file),
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        bootstrap_environment.assert_called_once_with(env_file=env_file)
+
     @patch("assert_ai.init._design_agent.chat_completion")
     @patch("assert_ai.init._design_agent.build_system_message", return_value="sys")
     def test_non_interactive_generates_file(self, _mock_sys, mock_llm) -> None:

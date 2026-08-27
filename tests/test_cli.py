@@ -164,6 +164,10 @@ class CliAuthModeLoggingTest(unittest.TestCase):
             call_order: list[str] = []
             runner_mock = self._make_runner_mock()
 
+            def _bootstrap_environment(*, discover_from_cwd=False):
+                self.assertTrue(discover_from_cwd)
+                call_order.append("bootstrap_env")
+
             def _load_runner_module():
                 call_order.append("load_runner")
                 return runner_mock
@@ -171,7 +175,10 @@ class CliAuthModeLoggingTest(unittest.TestCase):
             def _log_auth_mode():
                 call_order.append("log_auth")
 
-            with patch("assert_ai.cli._load_runner_module", side_effect=_load_runner_module), \
+            with patch(
+                "assert_ai.core.environment.bootstrap_environment",
+                side_effect=_bootstrap_environment,
+            ), patch("assert_ai.cli._load_runner_module", side_effect=_load_runner_module), \
                  patch(
                      "assert_ai.core.azure_auth.log_resolved_azure_auth_mode",
                      side_effect=_log_auth_mode,
@@ -181,9 +188,8 @@ class CliAuthModeLoggingTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertEqual(
             call_order,
-            ["load_runner", "log_auth"],
-            msg="auth-mode log must fire AFTER runner.py loads (runner.py "
-                "triggers load_dotenv + refresh_azure_auth_mode).",
+            ["bootstrap_env", "load_runner", "log_auth"],
+            msg="environment bootstrap must precede runner import and auth logging.",
         )
 
     def test_run_respects_subcommand_quiet_flag(self) -> None:

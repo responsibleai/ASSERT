@@ -14,7 +14,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from assert_ai.core.async_utils import invoke_callable
 from assert_ai.core.model_client import (
@@ -29,34 +29,19 @@ from assert_ai.core.model_client import (
     normalize_response,
     summarize_response,
 )
+from assert_ai.core.security import sanitize_text
 from assert_ai.core.tool_backend import load_tool_module
 from assert_ai.core.tools import build_target_tools
 
+if TYPE_CHECKING:
+    from assert_ai.core.runtime_path_policy import RuntimePathPolicy
+
 log = logging.getLogger(__name__)
-
-# Regex patterns for common credential formats in plain text
-_CREDENTIAL_PATTERNS = re.compile(
-    r"("
-    # Bearer/Basic tokens
-    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"
-    r"|Basic\s+[A-Za-z0-9+/]+=*"
-    # Common API key formats (sk-..., key-..., etc.)
-    r"|(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9\-._]{20,}"
-    # Generic long hex/base64 secrets following key-like prefixes
-    r"|(?:api[_-]?key|auth[_-]?token|secret|password|access[_-]?token|refresh[_-]?token"
-    r"|client[_-]?secret|authorization)[\"':\s=]+[A-Za-z0-9\-._~+/]{16,}"
-    r")",
-    re.IGNORECASE,
-)
-
-_RESPONSE_REDACTED = "[REDACTED]"
 
 
 def _sanitize_response_text(text: str) -> str:
     """Redact credential-like patterns from response text before persisting."""
-    if not text:
-        return text
-    sanitized = _CREDENTIAL_PATTERNS.sub(_RESPONSE_REDACTED, text)
+    sanitized = sanitize_text(text)
     if sanitized != text:
         log.warning(
             "Credential-like patterns detected and redacted from HTTP endpoint response"
@@ -82,6 +67,7 @@ def _sanitize_endpoint_value(value: Any) -> Any:
 
 
 # ── Adapter types and helpers ──────────────────────────────────
+
 
 @dataclass
 class AdapterEvent:
@@ -517,11 +503,13 @@ class CallableSession:
         system_prompt: str | None = None,
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         self._callable_ref = callable_ref
         self._system_prompt = system_prompt
         self._message_timeout_s = message_timeout_s
         self._config_path = config_path
+        self._path_policy = path_policy
         self._callable = None
         self._supports_history = False
 
@@ -535,7 +523,11 @@ class CallableSession:
 
         validate_callable_ref(self._callable_ref)
         module_path, func_name = self._callable_ref.rsplit(":", 1)
-        mod = import_callable_module(module_path, config_path=self._config_path)
+        mod = import_callable_module(
+            module_path,
+            config_path=self._config_path,
+            path_policy=self._path_policy,
+        )
         try:
             self._callable = getattr(mod, func_name)
         except AttributeError as exc:
@@ -855,11 +847,18 @@ class ExternalSession:
         startup_timeout_s: float | None = None,
         message_timeout_s: float | None = None,
         config_path: Path | None = None,
+        path_policy: RuntimePathPolicy | None = None,
     ) -> None:
         from assert_ai.core.security import validate_module_ref
 
         validate_module_ref(connector_ref, config_path=config_path)
-        connector_cls = _discover_connector_class(load_tool_module(connector_ref, config_path=config_path))
+        connector_cls = _discover_connector_class(
+            load_tool_module(
+                connector_ref,
+                config_path=config_path,
+                path_policy=path_policy,
+            )
+        )
         self._startup_timeout_s = startup_timeout_s
         self._message_timeout_s = message_timeout_s
         self._connector = connector_cls(scenario)

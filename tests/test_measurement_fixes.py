@@ -1150,7 +1150,15 @@ class MeasurementFixesTest(unittest.TestCase):
                             edit=AddMessageEdit(message=Message(role="assistant", content=body)),
                         )
                     )
-                    handle.write(json.dumps(transcript.to_dict(), ensure_ascii=False) + "\n")
+                    row = transcript.to_dict()
+                    if sid == "seed-refused":
+                        row["trace_refs"] = [
+                            {
+                                "trace_id": "a" * 32,
+                                "span_ids": ["b" * 16],
+                            }
+                        ]
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
             with patch("assert_ai.core.judge._run_judge_attempts", new=fake_run_judge_attempts):
                 result = asyncio.run(
@@ -1180,6 +1188,10 @@ class MeasurementFixesTest(unittest.TestCase):
         self.assertEqual(refused["judge_status"], "filter_skipped")
         self.assertIn("judge_input_refused", refused["judge_error"])
         self.assertEqual(refused["verdict"], {})
+        self.assertEqual(
+            refused["trace_refs"],
+            [{"trace_id": "a" * 32, "span_ids": ["b" * 16]}],
+        )
         for ok_seed in ("seed-ok", "seed-ok-2"):
             self.assertEqual(by_test_case[ok_seed]["judge_status"], "ok")
 

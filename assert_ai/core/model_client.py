@@ -1784,7 +1784,7 @@ async def generate_with_tools(
     return result
 
 
-# ── Import-time AZURE_API_BASE normalization ───────────────────
+# ── Environment-driven client settings ────────────────────────
 # LiteLLM appends the OpenAI-API path itself (``/openai/deployments/…``
 # or ``/openai/v1/responses``), so AZURE_API_BASE must be the bare
 # account endpoint. A trailing ``/openai/...`` or ``/openai/v1/...``
@@ -1816,18 +1816,20 @@ def _normalize_azure_api_base() -> None:
         os.environ["AZURE_API_BASE"] = normalized
 
 
-_normalize_azure_api_base()
+def refresh_environment_settings() -> None:
+    """Apply environment-driven client settings after explicit dotenv loading."""
+    _normalize_azure_api_base()
+    if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        _activate_chat_completions_fallback(
+            "ASSERT_PREFER_CHAT_COMPLETIONS env var set",
+            proactive=True,
+        )
 
 
-# ── Import-time env-var seed ───────────────────────────────────
-# Users in Azure regions known to lack Responses API support
-# (e.g. West Europe at time of writing) can pre-arm the fallback
-# by exporting ``ASSERT_PREFER_CHAT_COMPLETIONS=1``. This avoids
-# the one wasted Responses API round-trip + the user-visible WARN
-# on every cold start, while keeping the reactive fallback as a
-# safety net for regions that lose support later.
-if os.environ.get("ASSERT_PREFER_CHAT_COMPLETIONS", "").strip().lower() in ("1", "true", "yes"):
-    _activate_chat_completions_fallback(
-        "ASSERT_PREFER_CHAT_COMPLETIONS env var set",
-        proactive=True,
-    )
+# Preserve direct-library-import behavior while allowing entry points that load
+# dotenv later to refresh the same settings explicitly.
+refresh_environment_settings()
