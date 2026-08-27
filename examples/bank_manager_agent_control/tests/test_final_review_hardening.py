@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,14 +40,55 @@ TIER_PRE_QUERY = (
     "data.agent_control_specification.tier_authorization."
     "pre_tool_call_verdict"
 )
-UNICODE_ADJACENT_REFERENCE_FORMATS = (
-    "É{}",
-    "{}É",
-    "١{}",
-    "{}١",
-    "—{}",
-    "{}—",
+CONTROL_REFERENCE_SAMPLES = (
+    "AUTH-1842",
+    "CB-2711",
+    "OPS-5538",
+    "CRD-5510",
+    "DA-217",
 )
+UNICODE_TOKEN_CONTINUATIONS = (
+    "\u0301",  # Mn: combining acute accent
+    "\u093e",  # Mc: Devanagari vowel sign AA
+    "\u20dd",  # Me: combining enclosing circle
+    "\u203f",  # Pc: undertie
+    "\u2010",  # Pd: hyphen
+    "\u200c",  # Join_Control: zero-width non-joiner
+    "\u200d",  # Join_Control: zero-width joiner
+    "É",  # NFC precomposed letter
+    unicodedata.normalize("NFD", "É"),
+    "١",  # Unicode decimal digit
+)
+
+
+def _unicode_reference_forgeries(reference: str) -> list[str]:
+    return [
+        forged
+        for continuation in UNICODE_TOKEN_CONTINUATIONS
+        for forged in (
+            f"{continuation}{reference}",
+            f"{reference}{continuation}",
+        )
+    ]
+
+
+def _transfer_context_for_reference(reference: str) -> dict:
+    scope = next(
+        scope
+        for scope in bank_core.CONTROL_ARTIFACTS[reference]["scopes"]
+        if scope["action_family"] == "transfer"
+    )
+    amount_cents = (
+        min(scope["amounts_cents"])
+        if scope["amounts_cents"]
+        else scope["max_amount_cents"]
+    )
+    return {
+        "from_account": scope["subject"],
+        "to_account": scope["destination"],
+        "amount": amount_cents / 100,
+    }
+
 
 pytestmark = pytest.mark.skipif(
     shutil.which("opa") is None,
@@ -216,7 +258,7 @@ def test_call_refs_uses_every_data_layer_canonical_form(
 
 @pytest.mark.parametrize(
     "reference",
-    ["AUTH-1842", "CB-2711", "OPS-5538", "CRD-5510", "DA-217"],
+    CONTROL_REFERENCE_SAMPLES,
 )
 def test_control_reference_parser_rejects_compound_forgery(
     reference: str,
@@ -234,52 +276,109 @@ def test_control_reference_parser_rejects_compound_forgery(
         f"{reference}_OLD",
         f"{reference}7",
         f"X{reference}",
-        *(
-            pattern.format(reference)
-            for pattern in UNICODE_ADJACENT_REFERENCE_FORMATS
-        ),
+        *_unicode_reference_forgeries(reference),
     ):
         assert bank_core.control_references(forged) == []
         assert bank_core.malformed_control_references(forged) == [
-            forged.upper()
+            unicodedata.normalize("NFC", forged).upper()
         ]
 
 
 @pytest.mark.parametrize(
     "reference",
-    ["AUTH-1842", "CB-2711", "OPS-5538", "CRD-5510", "DA-217"],
+    CONTROL_REFERENCE_SAMPLES,
 )
 def test_unicode_compound_reference_never_verifies(
     reference: str,
 ) -> None:
-    scope = next(
-        scope
-        for scope in bank_core.CONTROL_ARTIFACTS[reference]["scopes"]
-        if scope["action_family"] == "transfer"
-    )
-    amount_cents = (
-        min(scope["amounts_cents"])
-        if scope["amounts_cents"]
-        else scope["max_amount_cents"]
-    )
-    transfer_context = {
-        "from_account": scope["subject"],
-        "to_account": scope["destination"],
-        "amount": amount_cents / 100,
-    }
-
-    for pattern in UNICODE_ADJACENT_REFERENCE_FORMATS:
-        forged = pattern.format(reference)
+    for forged in _unicode_reference_forgeries(reference):
         verification = bank_core.verify_control_artifacts(
             forged,
             "create_transfer",
             {"transfer_id": "TFR-UNICODE-PROBE"},
             bank_core.CONTROL_SESSION_ID,
-            transfer_context=transfer_context,
+            transfer_context=_transfer_context_for_reference(reference),
         )
         assert verification["artifact_verified"] is False
         assert verification["cited_references"] == []
-        assert verification["malformed_references"] == [forged.upper()]
+        assert verification["malformed_references"] == [
+            unicodedata.normalize("NFC", forged).upper()
+        ]
+
+
+@pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
+def test_control_reference_nfc_and_nfd_forms_are_equivalent(
+    reference: str,
+) -> None:
+    for nfc in (f"É{reference}", f"{reference}É"):
+        nfd = unicodedata.normalize("NFD", nfc)
+        expected = [unicodedata.normalize("NFC", nfc).upper()]
+        assert bank_core.control_references(nfc) == []
+        assert bank_core.control_references(nfd) == []
+        assert bank_core.malformed_control_references(nfc) == expected
+        assert bank_core.malformed_control_references(nfd) == expected
+
+
+def test_every_connector_and_dash_punctuation_continues_tokens() -> None:
+    punctuation = [
+        chr(codepoint)
+        for codepoint in range(0x110000)
+        if unicodedata.category(chr(codepoint)) in {"Pc", "Pd"}
+    ]
+    assert "_" in punctuation
+    assert "\u203f" in punctuation
+    assert "\u2014" in punctuation
+    for reference in CONTROL_REFERENCE_SAMPLES:
+        for continuation in punctuation:
+            for forged in (
+                f"{continuation}{reference}",
+                f"{reference}{continuation}",
+            ):
+                assert bank_core.control_references(forged) == []
+                assert bank_core.malformed_control_references(forged) == [
+                    unicodedata.normalize("NFC", forged).upper()
+                ]
+
+
+@pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
+def test_standalone_control_references_remain_valid(reference: str) -> None:
+    for text in (
+        reference,
+        reference.lower(),
+        f"Use ({reference.lower()}) for this request.",
+    ):
+        assert bank_core.control_references(text) == [reference]
+        assert bank_core.malformed_control_references(text) == []
+
+
+@pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
+def test_combining_forgery_is_blocked_by_annotator_and_opa(
+    reference: str,
+) -> None:
+    forged = f"{reference}\u0301"
+    verification = bank_core.verify_control_artifacts(
+        forged,
+        "create_transfer",
+        {"transfer_id": "TFR-UNICODE-PROBE"},
+        bank_core.CONTROL_SESSION_ID,
+        transfer_context=_transfer_context_for_reference(reference),
+    )
+    annotation = coercion_classifier.annotate(
+        forged,
+        "create_transfer",
+        {"transfer_id": "TFR-UNICODE-PROBE"},
+        scorer=lambda *_args, **_kwargs: 0.0,
+        artifact_verification=verification,
+    )
+    assert annotation["artifact_verified"] is False
+    assert annotation["label"] != "recorded_artifact_verified"
+    assert annotation["invalid_references"] == [
+        unicodedata.normalize("NFC", forged).upper()
+    ]
+
+    verdict = _opa_decision({"coercion_risk": annotation})
+    assert verdict["decision"] == "escalate"
+    assert verdict["reason"] == "unverified_control_artifact"
 
 
 @pytest.mark.parametrize(

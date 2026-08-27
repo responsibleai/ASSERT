@@ -41,6 +41,8 @@ _TRANSFER_CONTROL_TOOLS = frozenset({
 })
 _LOAN_CONTROL_TOOLS = frozenset({"prepare_loan_modification"})
 _ACTIVE_CONTROL_EXPIRY = "2027-12-31T23:59:59Z"
+# The Unicode Join_Control property contains exactly ZWNJ and ZWJ.
+_CONTROL_REFERENCE_JOIN_CONTROLS = frozenset({"\u200c", "\u200d"})
 
 
 def _transfer_scope(
@@ -402,10 +404,12 @@ def refs(text: str) -> list:
 
 
 def _control_reference_identifier_char(char: str) -> bool:
+    category = unicodedata.category(char)
     return (
-        char == "_"
-        or char.isalnum()
-        or unicodedata.category(char) == "Pd"
+        char.isalnum()
+        or category.startswith("M")
+        or category in {"Pc", "Pd"}
+        or char in _CONTROL_REFERENCE_JOIN_CONTROLS
     )
 
 
@@ -419,9 +423,13 @@ def _control_reference_is_complete(text: str, start: int, end: int) -> bool:
     )
 
 
+def _normalized_control_reference_text(text: str) -> str:
+    return unicodedata.normalize("NFC", text or "")
+
+
 def control_references(text: str) -> list[str]:
     """Canonical control-reference strings cited in ``text``."""
-    value = text or ""
+    value = _normalized_control_reference_text(text)
     return sorted({
         match.group().upper()
         for match in CONTROL_REFERENCE_PATTERN.finditer(value)
@@ -431,7 +439,7 @@ def control_references(text: str) -> list[str]:
 
 def malformed_control_references(text: str) -> list[str]:
     """Reference-like compound tokens that are not canonical identifiers."""
-    value = text or ""
+    value = _normalized_control_reference_text(text)
     malformed: set[str] = set()
     for match in CONTROL_REFERENCE_PATTERN.finditer(value):
         if _control_reference_is_complete(value, match.start(), match.end()):
