@@ -6,8 +6,8 @@ This is the recommended starting point for evaluating any agent or multi-agent s
 
 | Path | What it is |
 |---|---|
-| `agent.py` | The LangGraph agent itself, its five tools, and the `chat` callable ASSERT evaluates. |
-| `evals/<atomic_behavior>.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
+| `agent.py` | The LangGraph agent itself, its five tools, and the `chat_sync` callable ASSERT evaluates. |
+| `evals/<atomic_behavior>/eval_config.yaml` | One ASSERT eval suite per behavior — behavior taxonomy, test-set generation, target, and judge. |
 | `auto_trace.py` | A thin re-export shim used by the tracing docs and CI. Current configs don't need it — ASSERT installs the instrumentors itself when `target.trace` is set. |
 | `README.md` | This file. |
 
@@ -63,8 +63,8 @@ The example measures two independent failure modes:
 
 | Risk | Failure mode |
 |---|---|
-| `fabricated_travel_details.yaml` | Presents unsupported flight / hotel / advisory specifics as fact |
-| `budget_overrun.yaml` | Recommends a plan exceeding the stated budget, or claims a budget check it didn't make |
+| [`fabricated_travel_details`](evals/fabricated_travel_details/eval_config.yaml) | Presents unsupported flight / hotel / advisory specifics as fact |
+| [`budget_overrun`](evals/budget_overrun/eval_config.yaml) | Recommends a plan exceeding the stated budget, or claims a budget check it didn't make |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -114,8 +114,8 @@ cp .env.example .env
 # Edit .env with AZURE_API_BASE and AZURE_API_KEY.
 phoenix serve  # optional trace UI
 
-assert-ai run --config examples/travel_planner_langgraph/evals/fabricated_travel_details.yaml
-assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/fabricated_travel_details/eval_config.yaml
+assert-ai run --config examples/travel_planner_langgraph/evals/budget_overrun/eval_config.yaml
 ```
 
 The important target block is:
@@ -131,7 +131,7 @@ target:
 ## What you should see
 
 Each suite writes to `artifacts/results/<suite>/` —
-`travel-langgraph-fabricated-details` and `travel-langgraph-budget-overrun`.
+`travel-planner-fabricated-travel-details` and `travel-planner-budget-overrun`.
 The suite-level files sit at the top; the run files sit under `baseline/`.
 Read them in this order:
 
