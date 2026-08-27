@@ -21,6 +21,7 @@ from examples.bank_manager_agent_control.runtime import (
     acs_annotator_shim,
     acs_shim,
     bank_core,
+    coercion_annotator,
     coercion_classifier,
     feature_policy,
     tier_authz_core,
@@ -48,6 +49,19 @@ CONTROL_REFERENCE_SAMPLES = (
     "CRD-5510",
     "DA-217",
 )
+NORMATIVE_UNICODE_WHITE_SPACE = frozenset({
+    *(chr(codepoint) for codepoint in range(0x0009, 0x000E)),
+    "\u0020",
+    "\u0085",
+    "\u00a0",
+    "\u1680",
+    *(chr(codepoint) for codepoint in range(0x2000, 0x200B)),
+    "\u2028",
+    "\u2029",
+    "\u202f",
+    "\u205f",
+    "\u3000",
+})
 FORMAT_CONTROL_SAMPLES = (
     "\u00ad",  # soft hyphen
     "\u200b",  # zero-width space
@@ -62,6 +76,10 @@ OTHER_UNTRUSTED_INVISIBLE_SAMPLES = (
     "\x00",  # NUL
     "\x08",  # backspace
     "\x1b",  # escape
+    "\x1c",  # file separator; Python whitespace, not Unicode White_Space
+    "\x1d",  # group separator; Python whitespace, not Unicode White_Space
+    "\x1e",  # record separator; Python whitespace, not Unicode White_Space
+    "\x1f",  # unit separator; Python whitespace, not Unicode White_Space
     "\x7f",  # delete
     "\x9b",  # CSI
     "\u2065",  # unassigned between bidi isolates
@@ -374,7 +392,7 @@ def test_every_control_connector_dash_and_format_char_continues_tokens() -> None
             unicodedata.category(chr(codepoint)) in {"Pc", "Pd", "Cf"}
             or (
                 unicodedata.category(chr(codepoint)) == "Cc"
-                and not chr(codepoint).isspace()
+                and chr(codepoint) not in NORMATIVE_UNICODE_WHITE_SPACE
             )
         )
     ]
@@ -382,9 +400,17 @@ def test_every_control_connector_dash_and_format_char_continues_tokens() -> None
     assert "\u203f" in continuations
     assert "\u2014" in continuations
     assert set(FORMAT_CONTROL_SAMPLES) <= set(continuations)
-    assert {"\x00", "\x08", "\x1b", "\x7f", "\x9b"} <= set(
-        continuations
-    )
+    assert {
+        "\x00",
+        "\x08",
+        "\x1b",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x1f",
+        "\x7f",
+        "\x9b",
+    } <= set(continuations)
     for reference in CONTROL_REFERENCE_SAMPLES:
         for continuation in continuations:
             for forged in (
@@ -435,13 +461,12 @@ def test_visible_delimiters_remain_valid_boundaries(reference: str) -> None:
 def test_all_unicode_whitespace_remains_a_valid_boundary(
     reference: str,
 ) -> None:
-    whitespace = [
-        chr(codepoint)
-        for codepoint in range(0x110000)
-        if chr(codepoint).isspace()
-    ]
-    assert {" ", "\t", "\n", "\u2003", "\u3000"} <= set(whitespace)
-    for delimiter in whitespace:
+    assert len(NORMATIVE_UNICODE_WHITE_SPACE) == 25
+    assert {" ", "\t", "\n", "\u2003", "\u3000"} <= (
+        NORMATIVE_UNICODE_WHITE_SPACE
+    )
+    assert not set("\x1c\x1d\x1e\x1f") & NORMATIVE_UNICODE_WHITE_SPACE
+    for delimiter in NORMATIVE_UNICODE_WHITE_SPACE:
         for text in (f"{delimiter}{reference}", f"{reference}{delimiter}"):
             assert bank_core.control_references(text) == [reference]
             assert bank_core.malformed_control_references(text) == []
@@ -635,6 +660,115 @@ def test_reference_parser_fails_closed_above_input_bound() -> None:
     assert verification["malformed_references"] == [
         "<CONTROL_REFERENCE_INPUT_TOO_LONG>"
     ]
+    assert verification["input_too_long"] is True
+
+
+def test_oversized_input_skips_native_shim_and_live_classifiers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = "A" * (bank_core.CONTROL_REFERENCE_MAX_TEXT_LENGTH + 1)
+    assert len(message) == 65_537
+    current_binding = bank_core.control_action_context(
+        "create_transfer",
+        {"transfer_id": "TFR-OVERSIZED"},
+        _transfer_context_for_reference("AUTH-1842"),
+    )
+    verification = bank_core.verify_control_artifacts(
+        message,
+        "create_transfer",
+        {"transfer_id": "TFR-OVERSIZED"},
+        bank_core.CONTROL_SESSION_ID,
+        current_action_context=current_binding,
+    )
+    policy_input = {
+        "intervention_point": "pre_tool_call",
+        "snapshot": {
+            "user_message": message,
+            "control_session_id": bank_core.CONTROL_SESSION_ID,
+            "current_action_binding": current_binding,
+            "control_artifact_verification": verification,
+        },
+        "tool": {"name": "create_transfer"},
+        "policy_target": {"value": {"transfer_id": "TFR-OVERSIZED"}},
+    }
+    annotator_config = {
+        "type": "classifier",
+        "module": "coercion_classifier",
+        "entrypoint": "annotate",
+        "calibration": "../runtime/coercion_calibration.json",
+    }
+    scorer_calls: list[tuple] = []
+
+    def scorer(*args, **kwargs):
+        scorer_calls.append((args, kwargs))
+        return 0.0
+
+    native_dispatcher = coercion_annotator.CoercionAnnotatorDispatcher(
+        scorer=scorer
+    )
+    native_annotation = native_dispatcher.dispatch(
+        "coercion_risk",
+        annotator_config,
+        policy_input,
+    )
+
+    shim = acs_annotator_shim.AnnotatingAgentControl.from_path(
+        str(EXAMPLE / "acs" / "manifest_coercion.yaml"),
+        scorer=scorer,
+    )
+    shim_annotation = shim._annotate(
+        "pre_tool_call",
+        policy_input,
+    )["annotations"]["coercion_risk"]
+    assert scorer_calls == []
+
+    def fail_live_model(*_args, **_kwargs):
+        raise AssertionError("oversized input reached the live classifier")
+
+    monkeypatch.setattr(
+        coercion_classifier,
+        "calibrated_score",
+        fail_live_model,
+    )
+    live_annotation = coercion_classifier.annotate(
+        message,
+        "create_transfer",
+        {"transfer_id": "TFR-OVERSIZED"},
+        artifact_verification=verification,
+    )
+
+    required = {
+        "label",
+        "score",
+        "escalate_lo",
+        "deny_hi",
+        "artifact_verified",
+        "cited_references",
+        "verified_references",
+        "invalid_references",
+        "artifact_verification",
+        "classifier_provenance",
+        "raw",
+    }
+    for annotation in (
+        native_annotation,
+        shim_annotation,
+        live_annotation,
+    ):
+        assert required <= set(annotation)
+        assert annotation["label"] == "ambiguous"
+        assert annotation["artifact_verified"] is False
+        assert annotation["invalid_references"] == [
+            bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG
+        ]
+        assert annotation["classifier_provenance"]["classifier_invoked"] is False
+        assert annotation["raw"]["skipped"] is True
+        assert annotation["raw"]["reason"] == (
+            "control_reference_input_too_long"
+        )
+        verdict = _opa_decision({"coercion_risk": annotation})
+        assert verdict["decision"] == "escalate"
+        assert verdict["reason"] == "unverified_control_artifact"
 
 
 @pytest.mark.parametrize(

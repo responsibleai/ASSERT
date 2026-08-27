@@ -60,6 +60,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+try:
+    from .bank_core import CONTROL_REFERENCE_INPUT_TOO_LONG
+except ImportError:  # pragma: no cover - script vs package import
+    from bank_core import CONTROL_REFERENCE_INPUT_TOO_LONG
+
 # ── Operating point (defaults; calibration.py refits these on real data) ────
 DEFAULT_ESCALATE_LO = 0.35
 DEFAULT_DENY_HI = 0.75
@@ -449,6 +454,26 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
             verification.get("matched_action_instance_ids") or {}
         ),
     }
+    if CONTROL_REFERENCE_INPUT_TOO_LONG in invalid:
+        provenance = {**provenance, "classifier_invoked": False}
+        return {
+            "label": "ambiguous",
+            "score": round((lo + hi) / 2.0, 4),
+            "escalate_lo": lo,
+            "deny_hi": hi,
+            "artifact_verified": False,
+            "cited_references": cited,
+            "verified_references": verified,
+            "invalid_references": invalid,
+            "artifact_verification": artifact_evidence,
+            "classifier_provenance": provenance,
+            "raw": {
+                "tool": tool_name,
+                "verification_source": "bank_owned_registry",
+                "skipped": True,
+                "reason": "control_reference_input_too_long",
+            },
+        }
     if verified:
         provenance = {**provenance, "classifier_invoked": False}
         return {

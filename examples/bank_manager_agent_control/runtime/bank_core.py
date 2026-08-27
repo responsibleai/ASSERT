@@ -31,7 +31,20 @@ CONTROL_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE | re.ASCII,
 )
 CONTROL_REFERENCE_MAX_TEXT_LENGTH = 65_536
-_CONTROL_REFERENCE_INPUT_TOO_LONG = "<CONTROL_REFERENCE_INPUT_TOO_LONG>"
+CONTROL_REFERENCE_INPUT_TOO_LONG = "<CONTROL_REFERENCE_INPUT_TOO_LONG>"
+_UNICODE_WHITE_SPACE_CODEPOINTS = frozenset({
+    *range(0x0009, 0x000E),
+    0x0020,
+    0x0085,
+    0x00A0,
+    0x1680,
+    *range(0x2000, 0x200B),
+    0x2028,
+    0x2029,
+    0x202F,
+    0x205F,
+    0x3000,
+})
 # Only whitespace and these visible characters split trusted tokens. Everything
 # else stays in the span, so an invisible or unknown boundary makes it invalid.
 _TRUSTED_VISIBLE_REFERENCE_DELIMITERS = frozenset(
@@ -414,7 +427,10 @@ def _normalized_control_reference_text(text: str) -> str:
 
 
 def _trusted_control_reference_delimiter(char: str) -> bool:
-    return char.isspace() or char in _TRUSTED_VISIBLE_REFERENCE_DELIMITERS
+    return (
+        ord(char) in _UNICODE_WHITE_SPACE_CODEPOINTS
+        or char in _TRUSTED_VISIBLE_REFERENCE_DELIMITERS
+    )
 
 
 def _reference_like_span(span: str) -> bool:
@@ -443,10 +459,10 @@ def _classify_control_reference_span(
 def _parse_control_references(text: str) -> tuple[list[str], list[str]]:
     raw = text or ""
     if len(raw) > CONTROL_REFERENCE_MAX_TEXT_LENGTH:
-        return [], [_CONTROL_REFERENCE_INPUT_TOO_LONG]
+        return [], [CONTROL_REFERENCE_INPUT_TOO_LONG]
     value = _normalized_control_reference_text(raw)
     if len(value) > CONTROL_REFERENCE_MAX_TEXT_LENGTH:
-        return [], [_CONTROL_REFERENCE_INPUT_TOO_LONG]
+        return [], [CONTROL_REFERENCE_INPUT_TOO_LONG]
 
     valid: set[str] = set()
     malformed: set[str] = set()
@@ -688,6 +704,7 @@ def verify_control_artifacts(
         "wrong_session_references": wrong_session,
         "expired_references": expired,
         "matched_action_instance_ids": matched_action_instance_ids,
+        "input_too_long": CONTROL_REFERENCE_INPUT_TOO_LONG in malformed,
         "artifact_verified": bool(verified),
     }
 
