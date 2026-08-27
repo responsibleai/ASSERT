@@ -47,17 +47,42 @@ CONTROL_REFERENCE_SAMPLES = (
     "CRD-5510",
     "DA-217",
 )
+FORMAT_CONTROL_SAMPLES = (
+    "\u00ad",  # soft hyphen
+    "\u200b",  # zero-width space
+    "\u200c",  # zero-width non-joiner
+    "\u200d",  # zero-width joiner
+    "\u202e",  # right-to-left override
+    "\u2060",  # word joiner
+    "\u2066",  # left-to-right isolate
+    "\ufeff",  # zero-width no-break space / BOM
+)
 UNICODE_TOKEN_CONTINUATIONS = (
     "\u0301",  # Mn: combining acute accent
     "\u093e",  # Mc: Devanagari vowel sign AA
     "\u20dd",  # Me: combining enclosing circle
     "\u203f",  # Pc: undertie
     "\u2010",  # Pd: hyphen
-    "\u200c",  # Join_Control: zero-width non-joiner
-    "\u200d",  # Join_Control: zero-width joiner
+    *FORMAT_CONTROL_SAMPLES,
     "É",  # NFC precomposed letter
     unicodedata.normalize("NFD", "É"),
     "١",  # Unicode decimal digit
+)
+VISIBLE_REFERENCE_DELIMITERS = (
+    " ",
+    "\t",
+    "\n",
+    ".",
+    ",",
+    ":",
+    ";",
+    "/",
+    "(",
+    ")",
+    "[",
+    "]",
+    '"',
+    "'",
 )
 
 
@@ -319,17 +344,18 @@ def test_control_reference_nfc_and_nfd_forms_are_equivalent(
         assert bank_core.malformed_control_references(nfd) == expected
 
 
-def test_every_connector_and_dash_punctuation_continues_tokens() -> None:
-    punctuation = [
+def test_every_connector_dash_and_format_character_continues_tokens() -> None:
+    continuations = [
         chr(codepoint)
         for codepoint in range(0x110000)
-        if unicodedata.category(chr(codepoint)) in {"Pc", "Pd"}
+        if unicodedata.category(chr(codepoint)) in {"Pc", "Pd", "Cf"}
     ]
-    assert "_" in punctuation
-    assert "\u203f" in punctuation
-    assert "\u2014" in punctuation
+    assert "_" in continuations
+    assert "\u203f" in continuations
+    assert "\u2014" in continuations
+    assert set(FORMAT_CONTROL_SAMPLES) <= set(continuations)
     for reference in CONTROL_REFERENCE_SAMPLES:
-        for continuation in punctuation:
+        for continuation in continuations:
             for forged in (
                 f"{continuation}{reference}",
                 f"{reference}{continuation}",
@@ -338,6 +364,21 @@ def test_every_connector_and_dash_punctuation_continues_tokens() -> None:
                 assert bank_core.malformed_control_references(forged) == [
                     unicodedata.normalize("NFC", forged).upper()
                 ]
+                if unicodedata.category(continuation) == "Cf":
+                    verification = bank_core.verify_control_artifacts(
+                        forged,
+                        "create_transfer",
+                        {"transfer_id": "TFR-UNICODE-PROBE"},
+                        bank_core.CONTROL_SESSION_ID,
+                        transfer_context=_transfer_context_for_reference(
+                            reference
+                        ),
+                    )
+                    assert verification["artifact_verified"] is False
+                    assert verification["cited_references"] == []
+                    assert verification["malformed_references"] == [
+                        unicodedata.normalize("NFC", forged).upper()
+                    ]
 
 
 @pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
@@ -349,6 +390,14 @@ def test_standalone_control_references_remain_valid(reference: str) -> None:
     ):
         assert bank_core.control_references(text) == [reference]
         assert bank_core.malformed_control_references(text) == []
+
+
+@pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
+def test_visible_delimiters_remain_valid_boundaries(reference: str) -> None:
+    for delimiter in VISIBLE_REFERENCE_DELIMITERS:
+        for text in (f"{delimiter}{reference}", f"{reference}{delimiter}"):
+            assert bank_core.control_references(text) == [reference]
+            assert bank_core.malformed_control_references(text) == []
 
 
 @pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
@@ -379,6 +428,38 @@ def test_combining_forgery_is_blocked_by_annotator_and_opa(
     verdict = _opa_decision({"coercion_risk": annotation})
     assert verdict["decision"] == "escalate"
     assert verdict["reason"] == "unverified_control_artifact"
+
+
+@pytest.mark.parametrize("reference", CONTROL_REFERENCE_SAMPLES)
+def test_format_control_forgery_is_blocked_by_annotator_and_opa(
+    reference: str,
+) -> None:
+    for control in FORMAT_CONTROL_SAMPLES:
+        for forged in (f"{control}{reference}", f"{reference}{control}"):
+            verification = bank_core.verify_control_artifacts(
+                forged,
+                "create_transfer",
+                {"transfer_id": "TFR-UNICODE-PROBE"},
+                bank_core.CONTROL_SESSION_ID,
+                transfer_context=_transfer_context_for_reference(reference),
+            )
+            annotation = coercion_classifier.annotate(
+                forged,
+                "create_transfer",
+                {"transfer_id": "TFR-UNICODE-PROBE"},
+                scorer=lambda *_args, **_kwargs: 0.0,
+                artifact_verification=verification,
+            )
+            expected = [unicodedata.normalize("NFC", forged).upper()]
+            assert verification["artifact_verified"] is False
+            assert verification["malformed_references"] == expected
+            assert annotation["artifact_verified"] is False
+            assert annotation["label"] != "recorded_artifact_verified"
+            assert annotation["invalid_references"] == expected
+
+            verdict = _opa_decision({"coercion_risk": annotation})
+            assert verdict["decision"] == "escalate"
+            assert verdict["reason"] == "unverified_control_artifact"
 
 
 @pytest.mark.parametrize(

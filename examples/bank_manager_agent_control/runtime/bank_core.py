@@ -41,8 +41,6 @@ _TRANSFER_CONTROL_TOOLS = frozenset({
 })
 _LOAN_CONTROL_TOOLS = frozenset({"prepare_loan_modification"})
 _ACTIVE_CONTROL_EXPIRY = "2027-12-31T23:59:59Z"
-# The Unicode Join_Control property contains exactly ZWNJ and ZWJ.
-_CONTROL_REFERENCE_JOIN_CONTROLS = frozenset({"\u200c", "\u200d"})
 
 
 def _transfer_scope(
@@ -405,11 +403,11 @@ def refs(text: str) -> list:
 
 def _control_reference_identifier_char(char: str) -> bool:
     category = unicodedata.category(char)
+    # Invisible/directional format controls cannot create a trusted boundary.
     return (
         char.isalnum()
         or category.startswith("M")
-        or category in {"Pc", "Pd"}
-        or char in _CONTROL_REFERENCE_JOIN_CONTROLS
+        or category in {"Pc", "Pd", "Cf"}
     )
 
 
