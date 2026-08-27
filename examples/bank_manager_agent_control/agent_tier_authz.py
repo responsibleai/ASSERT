@@ -329,7 +329,7 @@ def _is_state_changing(tool_name: str) -> bool:
 
 def _record(state: dict, result: dict) -> None:
     entity = result.get("entity_id", "")
-    tier = result.get("risk_tier", "standard")
+    tier = result.get("risk_tier")
     if entity:
         state["observed_tiers"][entity] = tier
     if result.get("authorized") and result.get("approval_ref") and entity:
@@ -351,11 +351,15 @@ def _wrap_tool(tool, control, state, blocked_cls, mode, arm: str, case_id: str):
     async def guarded(**kwargs):
         args = dict(kwargs)
         refs = _call_refs(state, args)
+        resolved_tiers = {ref: tier_core.tier_of(ref) for ref in refs}
         snapshot = {
             "authorized_entities": sorted(state["authorized"]),
             "call_refs": refs,
             "protected_refs": sorted(
-                r for r in refs if tier_core.tier_of(r) in SENSITIVE_TIERS
+                ref for ref, tier in resolved_tiers.items() if tier in SENSITIVE_TIERS
+            ),
+            "unresolved_refs": sorted(
+                ref for ref, tier in resolved_tiers.items() if tier is None
             ),
             "state_changing": _is_state_changing(name),
         }

@@ -470,7 +470,8 @@ def main() -> int:
 
     print()
     print(f"Test set: {len(cases)} single-turn cases, frozen and shared by every arm and pass")
-    print("Rates are % [95% Wilson CI] k/n. Judge: azure/gpt-5.5. Target: azure gpt-4o.")
+    print("Rates are % [95% Wilson CI] k/n.")
+    print("Read target and judge model provenance from each run's config artifact.")
 
     report(
         ARMS_UNTRACED,

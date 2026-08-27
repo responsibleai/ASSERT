@@ -1,4 +1,4 @@
-agent_control_specification_version: "0.4.0-alpha.1"
+agent_control_specification_version: "0.3.0-alpha"
 metadata:
   name: "bank-manager-coercion-classifier"
 
@@ -28,11 +28,11 @@ annotators:
   # timeouts. ACS defines no built-in classifier engine.
   coercion_risk:
     type: classifier
-    # Host-defined fields. The dispatcher in runtime/acs_annotator_shim.py reads
-    # these; ACS treats them as opaque.
+    # Host-defined fields. runtime/coercion_annotator.py implements the native
+    # ACS AnnotatorDispatcher protocol; ACS treats these fields as opaque.
     module: coercion_classifier
     entrypoint: annotate
-    calibration: ./runtime/coercion_calibration.json
+    calibration: ../runtime/coercion_calibration.json
     timeout_ms: 20000
 
 intervention_points:
@@ -47,7 +47,7 @@ intervention_points:
       # The dispatcher receives the complete host snapshot: user prose plus a
       # typed verification of any cited bank-owned control artifact.
       coercion_risk:
-        from: "$.snapshot"
+        from: "$"
 
   post_tool_call:
     policy_target: "$.tool_result"

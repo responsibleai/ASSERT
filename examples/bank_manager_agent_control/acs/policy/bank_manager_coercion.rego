@@ -48,8 +48,13 @@ label := object.get(coercion, "label", null)
 raw_annotation := object.get(coercion, "raw", null)
 artifact_evidence := object.get(coercion, "artifact_verification", null)
 matched_action_instances := object.get(artifact_evidence, "matched_action_instance_ids", null)
+classifier_provenance := object.get(coercion, "classifier_provenance", null)
 
 tool_name := object.get(object.get(input, "tool", {}), "name", "")
+snapshot := object.get(input, "snapshot", {})
+current_action_binding := object.get(snapshot, "current_action_binding", null)
+current_session_id := object.get(snapshot, "control_session_id", null)
+current_target := object.get(object.get(input, "policy_target", {}), "value", {})
 
 # Only actions where skipping a recorded control step actually changes state.
 # Reads stay ungated: an over-broad learned gate is how you buy back the
@@ -91,16 +96,87 @@ artifact_verification_consistent if {
 	label == "recorded_artifact_verified"
 }
 
+amount_valid(amount) if {
+	amount == null
+}
+
+amount_valid(amount) if {
+	is_number(amount)
+}
+
+action_binding_valid(binding) if {
+	is_object(binding)
+	is_string(object.get(binding, "action_family", null))
+	is_string(object.get(binding, "tool_name", null))
+	is_string(object.get(binding, "action_instance", null))
+	is_string(object.get(binding, "subject", null))
+	is_string(object.get(binding, "to_account", null))
+	amount := object.get(binding, "amount", null)
+	amount_valid(amount)
+	is_object(object.get(binding, "parameters", null))
+}
+
+verified_action_binding_complete(binding) if {
+	object.get(binding, "action_family", "") == "transfer"
+	object.get(binding, "subject", "") != ""
+	object.get(binding, "to_account", "") != ""
+	amount := object.get(binding, "amount", null)
+	is_number(amount)
+	amount > 0
+}
+
+verified_action_binding_complete(binding) if {
+	object.get(binding, "action_family", "") == "loan_modification"
+	object.get(binding, "subject", "") != ""
+	object.get(binding, "to_account", null) == ""
+	object.get(binding, "amount", "invalid") == null
+}
+
+target_action_instance := object.get(current_target, "transfer_id", null) if {
+	tool_name in {"create_transfer", "request_customer_approval"}
+}
+
+target_action_instance := object.get(current_target, "loan_id", null) if {
+	tool_name == "prepare_loan_modification"
+}
+
+target_action_instance := object.get(current_target, "portfolio_id", null) if {
+	tool_name == "place_trade"
+}
+
+target_action_instance := object.get(current_target, "account_id", null) if {
+	tool_name == "freeze_account"
+}
+
+verified_binding_matches_current_call if {
+	action_binding := object.get(artifact_evidence, "action_context", null)
+	action_binding_valid(action_binding)
+	action_binding_valid(current_action_binding)
+	verified_action_binding_complete(action_binding)
+	verified_action_binding_complete(current_action_binding)
+	action_binding == current_action_binding
+	is_string(current_session_id)
+	current_session_id != ""
+	object.get(artifact_evidence, "session_id", null) == current_session_id
+	object.get(current_action_binding, "tool_name", "") == tool_name
+	object.get(current_action_binding, "action_instance", null) == target_action_instance
+}
+
+artifact_binding_consistent if {
+	artifact_verified == false
+}
+
+artifact_binding_consistent if {
+	artifact_verified == true
+	verified_binding_matches_current_call
+}
+
 artifact_evidence_valid if {
 	is_object(artifact_evidence)
 	is_string(object.get(artifact_evidence, "session_id", null))
 	object.get(artifact_evidence, "session_id", "") != ""
 	action_context := object.get(artifact_evidence, "action_context", null)
-	is_object(action_context)
-	is_string(object.get(action_context, "action_family", null))
-	is_string(object.get(action_context, "tool_name", null))
-	is_string(object.get(action_context, "action_instance", null))
-	is_string(object.get(action_context, "subject", null))
+	action_binding_valid(action_context)
 	is_object(matched_action_instances)
 	every _, action_ids in matched_action_instances {
 		string_array(action_ids)
@@ -108,12 +184,30 @@ artifact_evidence_valid if {
 	}
 }
 
+classifier_provenance_valid if {
+	is_object(classifier_provenance)
+	is_string(object.get(classifier_provenance, "classifier_mode", null))
+	object.get(classifier_provenance, "classifier_mode", "") in {"live_model", "injected_scorer"}
+	is_boolean(object.get(classifier_provenance, "classifier_invoked", null))
+	is_string(object.get(classifier_provenance, "classifier_deployment", null))
+	object.get(classifier_provenance, "classifier_deployment", "") != ""
+	is_string(object.get(classifier_provenance, "calibration_model", null))
+	is_string(object.get(classifier_provenance, "calibration_artifact", null))
+	object.get(classifier_provenance, "calibration_artifact", "") != ""
+	hash := object.get(classifier_provenance, "calibration_sha256", "")
+	is_string(hash)
+	regex.match("^sha256:[0-9a-f]{64}$", hash)
+	is_number(object.get(classifier_provenance, "calibration_schema_version", null))
+	is_string(object.get(classifier_provenance, "threshold_version", null))
+	object.get(classifier_provenance, "threshold_version", "") != ""
+	object.get(classifier_provenance, "escalate_lo", null) == escalate_lo
+	object.get(classifier_provenance, "deny_hi", null) == deny_hi
+}
+
 reference_sets_consistent if {
 	verified := {ref | some ref in verified_references}
-	invalid := {ref | some ref in invalid_references}
 	cited := {ref | some ref in cited_references}
 	count(verified - cited) == 0
-	count(invalid - cited) == 0
 }
 
 annotation_valid if {
@@ -134,7 +228,9 @@ annotation_valid if {
 	string_array(verified_references)
 	string_array(invalid_references)
 	artifact_evidence_valid
+	classifier_provenance_valid
 	artifact_verification_consistent
+	artifact_binding_consistent
 	reference_sets_consistent
 }
 

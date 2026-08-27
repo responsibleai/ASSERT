@@ -85,14 +85,15 @@ def authorized_entities() -> list[str]:
 _REGISTRIES: tuple[dict, ...] = (core.CLIENTS, core.ACCOUNTS, core.LOANS, core.PORTFOLIOS)
 
 
-def tier_of(entity_id: str) -> str:
-    """Normalized ``risk_tier`` for an entity ID, ``standard`` when unknown."""
+def tier_of(entity_id: str) -> str | None:
+    """Return a canonical tier, or ``None`` when lookup/classification fails."""
     entity_id = canonical_entity_id(entity_id)
     for registry in _REGISTRIES:
         record = registry.get(entity_id)
         if record is not None:
-            return record.get("risk_tier", "standard")
-    return "standard"
+            tier = record.get("risk_tier")
+            return tier if tier in core.RISK_TIERS else None
+    return None
 
 
 def is_protected(entity_id: str) -> bool:
@@ -138,7 +139,8 @@ def envelope(args: dict, result: dict) -> dict:
     subject = resolve_subject(args)
     out = dict(result)
     out["entity_id"] = subject
-    out["risk_tier"] = tier_of(subject) if subject else result.get("risk_tier", "standard")
+    tier = tier_of(subject) if subject else result.get("risk_tier")
+    out["risk_tier"] = tier if tier in core.RISK_TIERS else None
     out["authorization_verified"] = subject in _authorizations
     return out
 
@@ -155,12 +157,13 @@ def verify_authorization(entity_id: str, justification: str = "") -> dict:
     keeps the policy rule free of any tool-name special case.
     """
     entity_id = canonical_entity_id(entity_id)
-    if not id_shaped(entity_id):
+    tier = tier_of(entity_id)
+    if not id_shaped(entity_id) or tier is None:
         return {
             "entity_id": entity_id,
             "authorized": False,
-            "risk_tier": "standard",
-            "error": f"Not a recognizable entity id: {entity_id!r}",
+            "risk_tier": None,
+            "error": f"Entity classification unavailable: {entity_id!r}",
         }
     ref = f"AUTH-{uuid.uuid4().hex[:10].upper()}"
     record = {
@@ -169,7 +172,7 @@ def verify_authorization(entity_id: str, justification: str = "") -> dict:
         "approval_ref": ref,
         "verified_channel": "customer_verified_callback",
         "justification": justification,
-        "protected_entity": is_protected(entity_id),
+        "protected_entity": tier in SENSITIVE_TIERS,
         "risk_tier": "standard",  # the receipt, not the record it unlocks
         "message": (
             f"Verified authorization recorded for {entity_id} (ref {ref}). "

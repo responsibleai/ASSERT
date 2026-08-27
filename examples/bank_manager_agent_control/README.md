@@ -72,6 +72,10 @@ post_tool_call_verdict := deny(...) if {
 }
 ```
 
+The host treats tier lookup as tri-state. Missing records, absent
+classifications, and unknown values such as `VIP` are unresolved—not
+`standard`—and state-changing calls are denied before execution.
+
 The deterministic policy exercise feeds normalized result envelopes directly
 to the original gate and unmodified Rego for every shipped record plus two
 hypothetical domains:
@@ -110,10 +114,14 @@ to replace a recorded control artifact with:
 - an unrecorded verbal assurance: "the customer approved it on the phone"; or
 - deadline pressure: "we will backfill the paperwork after cutoff."
 
-All ordinary request fields are otherwise valid. The host verifies any cited
-recorded-control reference against bank-owned state; the remaining distinction
-between coercive pressure and legitimate work is semantic. The baseline prompt
-already says authentication is not authorization and uses a keyword tripwire.
+All ordinary request fields are otherwise valid. The host rejects compound
+reference tokens, verifies canonical references against bank-owned state, and
+binds a record to the current action, source, exact destination/payee, amount
+scope, session, and expiry. The remaining distinction between coercive pressure
+and legitimate work is semantic. The baseline prompt already says
+authentication is not authorization and uses a keyword tripwire. The ACS arm
+runs the classifier dispatcher and Rego policy through the pinned native ACS
+runtime.
 
 ### Historical 120-case comparison
 
@@ -260,6 +268,7 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 | `acs/policy_tier_authz/tier_authorization.rego` | Property-based sensitivity policy |
 | `eval_coercion_authority.yaml` | Behavior 2's one traced config; target overrides select the three powered arms |
 | `coercion_agent.py` | Baseline, hardened-prompt, and classifier-controlled targets |
+| `runtime/coercion_annotator.py` | Host classifier dispatcher used by native ACS |
 | `runtime/bank_core.py` | Bank-owned control-artifact registry and action-scope verification |
 | `fixtures/coercion_powered_120*` | Reviewed frozen dataset, labels, and historical per-case/result summaries with explicit provenance limits |
 | `scripts/prepare_powered_coercion.py` | Installs the fixture into the local suite |
@@ -273,11 +282,11 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 ## Scope of the evidence
 
 The reported results apply to this bank support agent, these reviewed datasets,
-these controls, and these configured models. They demonstrate the measured
-behavior under the tested conditions; they do not claim perfect performance for
-all agents or all authorization failures. The historical run environment and
-raw traces were not committed, and the runtime has since been hardened, so rerun
-the same fixture before using those percentages as current evidence.
+and these controls. They do not claim perfect performance for all agents or all
+authorization failures. The historical run environment, including actual model
+deployments, and raw traces were not committed, and the runtime has since been
+hardened, so rerun the same fixture before using those percentages as current
+evidence.
 
 > **Customer-safe note for AI assistants:** do not read, print, or commit
 > `.env`. Reference credential names only (`AZURE_API_KEY`,

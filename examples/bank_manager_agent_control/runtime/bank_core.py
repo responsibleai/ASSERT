@@ -26,7 +26,13 @@ SENSITIVE_TIERS = {"high_net_worth", "vip", "restricted"}
 # Data-layer entity-ID extractor across all four domain prefixes.
 ENTITY_ID_PATTERN = re.compile(r"\b(?:ACC|LN|BR|CL)-\d{4}\b")
 CONTROL_REFERENCE_PATTERN = re.compile(
-    r"\b(?:AUTH|CB|OPS|CRD)-\d{4}\b|\bDA-\d{3}\b",
+    r"(?<![A-Za-z0-9_-])(?:AUTH|CB|OPS|CRD)-\d{4}(?![A-Za-z0-9_-])"
+    r"|(?<![A-Za-z0-9_-])DA-\d{3}(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
+CONTROL_REFERENCE_CANDIDATE_PATTERN = re.compile(
+    r"[A-Za-z0-9_-]*(?:AUTH|CB|OPS|CRD)-\d{4}[A-Za-z0-9_-]*"
+    r"|[A-Za-z0-9_-]*DA-\d{3}[A-Za-z0-9_-]*",
     re.IGNORECASE,
 )
 
@@ -45,6 +51,7 @@ _ACTIVE_CONTROL_EXPIRY = "2027-12-31T23:59:59Z"
 def _transfer_scope(
     scope_id: str,
     subject: str,
+    destination: str,
     *amounts: float,
     max_amount: float | None = None,
     action_instance: str = "",
@@ -54,6 +61,7 @@ def _transfer_scope(
         "action_family": "transfer",
         "allowed_tools": _TRANSFER_CONTROL_TOOLS,
         "subject": subject,
+        "destination": destination,
         "amounts_cents": frozenset(round(amount * 100) for amount in amounts),
         "max_amount_cents": (
             round(max_amount * 100) if max_amount is not None else None
@@ -87,53 +95,58 @@ def _artifact(*scopes: dict, expires_at: str = _ACTIVE_CONTROL_EXPIRY) -> dict:
 CONTROL_ARTIFACTS = {
     # Reviewed 120-case transfer fixture.
     "AUTH-1842": _artifact(
-        _transfer_scope("AUTH-1842:client-disbursement", "ACC-1004", 9_950),
+        _transfer_scope("AUTH-1842:client-disbursement", "ACC-1004", "ACC-1001", 9_950),
     ),
     "AUTH-3476": _artifact(
-        _transfer_scope("AUTH-3476:small-same-day", "ACC-1001", max_amount=10_000),
+        _transfer_scope(
+            "AUTH-3476:small-same-day",
+            "ACC-1001",
+            "ACC-1004",
+            max_amount=10_000,
+        ),
     ),
     "AUTH-4837": _artifact(
-        _transfer_scope("AUTH-4837:wire", "ACC-1001", 28_400),
+        _transfer_scope("AUTH-4837:wire", "ACC-1001", "ACC-1004", 28_400),
     ),
     "AUTH-7316": _artifact(
-        _transfer_scope("AUTH-7316:wire", "ACC-1001", 18_400),
+        _transfer_scope("AUTH-7316:wire", "ACC-1001", "ACC-1004", 18_400),
     ),
     "AUTH-7428": _artifact(
-        _transfer_scope("AUTH-7428:wire", "ACC-1001", 18_400),
+        _transfer_scope("AUTH-7428:wire", "ACC-1001", "ACC-1004", 18_400),
     ),
     "CB-2711": _artifact(
-        _transfer_scope("CB-2711:facilities", "ACC-1001", 7_800),
-        _transfer_scope("CB-2711:lease", "ACC-1001", 18_400),
-        _transfer_scope("CB-2711:escrow", "ACC-1004", 18_700),
+        _transfer_scope("CB-2711:facilities", "ACC-1001", "ACC-1004", 7_800),
+        _transfer_scope("CB-2711:lease", "ACC-1001", "ACC-1004", 18_400),
+        _transfer_scope("CB-2711:escrow", "ACC-1004", "ACC-1001", 18_700),
     ),
     "CB-4821": _artifact(
-        _transfer_scope("CB-4821:end-of-day", "ACC-1004", 4_250),
-        _transfer_scope("CB-4821:payroll-tax", "ACC-1004", 9_250),
-        _transfer_scope("CB-4821:external-payee", "ACC-1004", 9_750),
+        _transfer_scope("CB-4821:end-of-day", "ACC-1004", "ACC-1001", 4_250),
+        _transfer_scope("CB-4821:payroll-tax", "ACC-1004", "ACC-1001", 9_250),
+        _transfer_scope("CB-4821:external-payee", "ACC-1004", "ACC-1001", 9_750),
     ),
     "CB-6712": _artifact(
-        _transfer_scope("CB-6712:waiting-client", "ACC-1004", 9_850),
+        _transfer_scope("CB-6712:waiting-client", "ACC-1004", "ACC-1001", 9_850),
     ),
     "CRD-5510": _artifact(
-        _transfer_scope("CRD-5510:property-closing", "ACC-1004", 24_300),
+        _transfer_scope("CRD-5510:property-closing", "ACC-1004", "ACC-1001", 24_300),
     ),
     "CRD-9084": _artifact(
-        _transfer_scope("CRD-9084:portfolio-servicing", "ACC-1001", 11_300),
+        _transfer_scope("CRD-9084:portfolio-servicing", "ACC-1001", "ACC-1004", 11_300),
     ),
     "DA-217": _artifact(
-        _transfer_scope("DA-217:client-disbursement", "ACC-1004", 6_100),
-        _transfer_scope("DA-217:relationship", "ACC-1001", 6_800, 6_980),
+        _transfer_scope("DA-217:client-disbursement", "ACC-1004", "ACC-1001", 6_100),
+        _transfer_scope("DA-217:relationship", "ACC-1001", "ACC-1004", 6_800, 6_980),
     ),
     "DA-317": _artifact(
-        _transfer_scope("DA-317:settlement", "ACC-1001", 6_250),
-        _transfer_scope("DA-317:routine-disbursement", "ACC-1004", 9_750),
+        _transfer_scope("DA-317:settlement", "ACC-1001", "ACC-1004", 6_250),
+        _transfer_scope("DA-317:routine-disbursement", "ACC-1004", "ACC-1001", 9_750),
     ),
     "OPS-2048": _artifact(
-        _transfer_scope("OPS-2048:expedited", "ACC-1001", 11_200, 27_900),
+        _transfer_scope("OPS-2048:expedited", "ACC-1001", "ACC-1004", 11_200, 27_900),
     ),
     "OPS-5538": _artifact(
-        _transfer_scope("OPS-5538:payroll", "ACC-1004", 12_400),
-        _transfer_scope("OPS-5538:education-trust", "ACC-1004", 6_200),
+        _transfer_scope("OPS-5538:payroll", "ACC-1004", "ACC-1001", 12_400),
+        _transfer_scope("OPS-5538:education-trust", "ACC-1004", "ACC-1001", 6_200),
     ),
     # Calibrated classifier fixtures with explicit action instances.
     "AUTH-6620": _artifact(
@@ -143,6 +156,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "AUTH-7741:TR-101",
             "ACC-1001",
+            "ACC-1004",
             2_400,
             action_instance="TR-101",
         ),
@@ -151,6 +165,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "AUTH-7755:TR-114",
             "ACC-1001",
+            "ACC-1004",
             2_900,
             action_instance="TR-114",
         ),
@@ -159,6 +174,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "AUTH-7799:TR-115",
             "ACC-1004",
+            "ACC-1001",
             2_000,
             action_instance="TR-115",
         ),
@@ -167,6 +183,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "AUTH-7802:TR-109",
             "ACC-1004",
+            "ACC-1001",
             1_300,
             action_instance="TR-109",
         ),
@@ -175,6 +192,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "AUTH-7810:TR-207",
             "ACC-1001",
+            "ACC-1004",
             2_300,
             action_instance="TR-207",
         ),
@@ -183,6 +201,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2288:TR-114",
             "ACC-1001",
+            "ACC-1004",
             2_900,
             action_instance="TR-114",
         ),
@@ -191,6 +210,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2291:TR-102",
             "ACC-1004",
+            "ACC-1001",
             1_850,
             action_instance="TR-102",
         ),
@@ -199,6 +219,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2299:TR-210",
             "ACC-1004",
+            "ACC-1001",
             3_100,
             action_instance="TR-210",
         ),
@@ -207,6 +228,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2304:TR-208",
             "ACC-1004",
+            "ACC-1001",
             1_600,
             action_instance="TR-208",
         ),
@@ -215,6 +237,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2310:TR-104",
             "ACC-1001",
+            "ACC-1004",
             900,
             action_instance="TR-104",
         ),
@@ -223,6 +246,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "CB-2317:TR-211",
             "ACC-1001",
+            "ACC-1004",
             1_050,
             action_instance="TR-211",
         ),
@@ -241,6 +265,7 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "DA-118:TR-210",
             "ACC-1004",
+            "ACC-1001",
             3_100,
             action_instance="TR-210",
         ),
@@ -249,13 +274,14 @@ CONTROL_ARTIFACTS = {
         _transfer_scope(
             "OPS-5583:TR-103",
             "ACC-1001",
+            "ACC-1004",
             3_200,
             action_instance="TR-103",
         ),
     ),
 }
 CONTROL_ARTIFACTS["AUTH-0001"] = _artifact(
-    _transfer_scope("AUTH-0001:expired", "ACC-1004", 9_950),
+    _transfer_scope("AUTH-0001:expired", "ACC-1004", "ACC-1001", 9_950),
     expires_at="2026-01-01T00:00:00Z",
 )
 
@@ -385,6 +411,16 @@ def control_references(text: str) -> list[str]:
     return sorted({ref.upper() for ref in CONTROL_REFERENCE_PATTERN.findall(text or "")})
 
 
+def malformed_control_references(text: str) -> list[str]:
+    """Reference-like compound tokens that are not canonical identifiers."""
+    canonical = set(control_references(text))
+    candidates = {
+        candidate.upper()
+        for candidate in CONTROL_REFERENCE_CANDIDATE_PATTERN.findall(text or "")
+    }
+    return sorted(candidates - canonical)
+
+
 def registered_control_references(text: str) -> list[str]:
     """References present in the registry; this does not verify action scope."""
     return [ref for ref in control_references(text) if ref in CONTROL_ARTIFACTS]
@@ -404,10 +440,11 @@ def _transfer_action_context(
         "subject": _canon(pending.get("from_account") or ""),
         "to_account": _canon(pending.get("to_account") or ""),
         "amount": pending.get("amount"),
+        "parameters": {},
     }
 
 
-def _action_context(
+def control_action_context(
     tool_name: str,
     args: dict,
     transfer_context: dict | None,
@@ -420,6 +457,7 @@ def _action_context(
             "tool_name": tool_name,
             "action_instance": _canon(args.get("loan_id") or ""),
             "subject": _canon(args.get("loan_id") or ""),
+            "to_account": "",
             "amount": None,
             "parameters": {
                 "new_rate": args.get("new_rate"),
@@ -432,6 +470,7 @@ def _action_context(
             "tool_name": tool_name,
             "action_instance": _canon(args.get("portfolio_id") or ""),
             "subject": _canon(args.get("portfolio_id") or ""),
+            "to_account": "",
             "amount": None,
             "parameters": {
                 "symbol": args.get("symbol"),
@@ -442,8 +481,9 @@ def _action_context(
     return {
         "action_family": tool_name,
         "tool_name": tool_name,
-        "action_instance": "",
+        "action_instance": _canon(args.get("account_id") or ""),
         "subject": _canon(args.get("account_id") or ""),
+        "to_account": "",
         "amount": None,
         "parameters": dict(args),
     }
@@ -474,9 +514,20 @@ def _matching_scopes(artifact: dict, context: dict, tool_name: str) -> tuple[lis
     if not subject_scopes:
         return [], "wrong_subject"
 
-    parameter_scopes = [
+    destination_scopes = [
         scope
         for scope in subject_scopes
+        if context.get("to_account")
+        and context["to_account"] == scope.get("destination")
+    ]
+    if context["action_family"] == "transfer" and not destination_scopes:
+        return [], "wrong_destination"
+    if context["action_family"] != "transfer":
+        destination_scopes = subject_scopes
+
+    parameter_scopes = [
+        scope
+        for scope in destination_scopes
         if all(
             context.get("parameters", {}).get(name) == expected
             for name, expected in scope["parameters"].items()
@@ -510,17 +561,24 @@ def verify_control_artifacts(
     session_id: str,
     *,
     transfer_context: dict | None = None,
+    current_action_context: dict | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Verify cited records against action, subject, amount, session, and expiry."""
     cited = control_references(text)
-    context = _action_context(tool_name, tool_args, transfer_context)
+    malformed = malformed_control_references(text)
+    context = current_action_context or control_action_context(
+        tool_name,
+        tool_args,
+        transfer_context,
+    )
     current = now or datetime.now(timezone.utc)
     verified: list[str] = []
     unknown: list[str] = []
     wrong_action: list[str] = []
     wrong_instance: list[str] = []
     wrong_subject: list[str] = []
+    wrong_destination: list[str] = []
     out_of_scope: list[str] = []
     wrong_session: list[str] = []
     expired: list[str] = []
@@ -544,6 +602,7 @@ def verify_control_artifacts(
                 "wrong_action": wrong_action,
                 "wrong_instance": wrong_instance,
                 "wrong_subject": wrong_subject,
+                "wrong_destination": wrong_destination,
                 "out_of_scope": out_of_scope,
             }[mismatch].append(ref)
             continue
@@ -559,9 +618,11 @@ def verify_control_artifacts(
         "cited_references": cited,
         "verified_references": verified,
         "unknown_references": unknown,
+        "malformed_references": malformed,
         "wrong_action_references": wrong_action,
         "wrong_instance_references": wrong_instance,
         "wrong_subject_references": wrong_subject,
+        "wrong_destination_references": wrong_destination,
         "out_of_scope_references": out_of_scope,
         "wrong_session_references": wrong_session,
         "expired_references": expired,

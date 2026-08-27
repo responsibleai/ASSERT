@@ -27,7 +27,8 @@ the control changes.
 
   Arm 3  chat_coercion_acs_classifier
          Arm 1's prompt exactly, with the keyword tripwire REPLACED by the
-         calibrated classifier wired as an ACS `classifier` annotator at
+         calibrated classifier wired through the pinned native ACS runtime as a
+         `classifier` annotator at
          pre_tool_call (acs/manifest_coercion.yaml -> acs/policy/
          bank_manager_coercion.rego). Same position in the stack, learned
          instead of hand-written, and three-valued: allow / escalate to a human
@@ -59,10 +60,12 @@ load_dotenv()
 from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 from langchain_core.tools import ToolException  # noqa: E402
 from langgraph.prebuilt import create_react_agent  # noqa: E402
+from opentelemetry import trace  # noqa: E402
 
 from .runtime import bank_core  # noqa: E402
 
 _TRACE_LOCK = __import__("threading").Lock()
+_TRACER = trace.get_tracer("assert.bank_manager.acs")
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
@@ -175,15 +178,90 @@ async def _run_prompt_arm(message: str, prompt: str, *, heuristic: bool) -> str:
 # ── ACS-guarded runner (Arm 3 + the naive-gate diagnostic) ─────────────────
 
 def _load_control(scorer):
-    """Build the annotating ACS decision point from the coercion manifest."""
-    from .bank_agent_common import _acs_manifest_with_absolute_bundle
-    from .runtime import acs_annotator_shim as shim
+    """Build the classifier control on the pinned native ACS runtime."""
+    from agent_control_specification import (
+        AgentControl,
+        AgentControlBlocked,
+        EnforcementMode,
+    )
 
-    return shim.AnnotatingAgentControl.from_path(
-        str(_acs_manifest_with_absolute_bundle(ACS_MANIFEST_COERCION)), scorer=scorer), shim
+    from .runtime.coercion_annotator import CoercionAnnotatorDispatcher
+
+    dispatcher = CoercionAnnotatorDispatcher(scorer=scorer)
+    control = AgentControl.from_path(
+        str(ACS_MANIFEST_COERCION),
+        annotator_dispatcher=dispatcher,
+    )
+    return control, dispatcher, AgentControlBlocked, EnforcementMode.ENFORCE
 
 
-def _wrap_tool(tool, control, state, shim):
+def _mcp_text(value):
+    if isinstance(value, tuple) and value:
+        value = value[0]
+    if isinstance(value, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in value
+        )
+    return value
+
+
+def _record_policy_span(span, policy_result, tool_name: str) -> None:
+    policy_input = policy_result.policy_input or {}
+    annotations = policy_input.get("annotations") or {}
+    annotation = annotations.get("coercion_risk") or {}
+    provenance = annotation.get("classifier_provenance") or {}
+    decision = policy_result.verdict.decision
+    decision_value = getattr(decision, "value", str(decision))
+
+    span.set_attribute("openinference.span.kind", "TOOL")
+    span.set_attribute("tool.name", "acs_policy")
+    span.set_attribute(
+        "input.value",
+        json.dumps(
+            {
+                "intervention_point": policy_input.get("intervention_point"),
+                "tool_name": tool_name,
+                "current_action_binding": (
+                    (policy_input.get("snapshot") or {}).get(
+                        "current_action_binding"
+                    )
+                ),
+                "annotations": annotations,
+            },
+            sort_keys=True,
+        ),
+    )
+    span.set_attribute(
+        "output.value",
+        json.dumps(
+            {
+                "decision": decision_value,
+                "reason": policy_result.verdict.reason,
+                "tool_name": tool_name,
+            },
+            sort_keys=True,
+        ),
+    )
+    span.set_attribute("acs.decision", decision_value)
+    if policy_result.verdict.reason:
+        span.set_attribute("acs.reason", policy_result.verdict.reason)
+    for key in (
+        "classifier_deployment",
+        "classifier_mode",
+        "calibration_artifact",
+        "calibration_sha256",
+        "threshold_version",
+    ):
+        value = provenance.get(key)
+        if value:
+            span.set_attribute(f"acs.classifier.{key}", value)
+    invoked = provenance.get("classifier_invoked")
+    if isinstance(invoked, bool):
+        span.set_attribute("acs.classifier.classifier_invoked", invoked)
+
+
+def _wrap_tool(tool, control, state, dispatcher, blocked_cls, mode):
     """Wrap an MCP tool so every call passes through the ACS intervention points."""
     from .runtime import feature_policy as fpol
 
@@ -195,26 +273,71 @@ def _wrap_tool(tool, control, state, shim):
 
     async def guarded(**kwargs):
         args = dict(kwargs)
+        transfer_context = state["transfer_context"].get(
+            args.get("transfer_id", "")
+        )
+        current_action_binding = bank_core.control_action_context(
+            tool_name,
+            args,
+            transfer_context,
+        )
         snapshot = {
             **fpol.pre_call_snapshot(state, tool_name, args),
             "user_message": state["user_message"],
+            "control_session_id": state["control_session_id"],
+            "current_action_binding": current_action_binding,
             "control_artifact_verification": bank_core.verify_control_artifacts(
                 state["user_message"],
                 tool_name,
                 args,
                 state["control_session_id"],
-                transfer_context=state["transfer_context"].get(
-                    args.get("transfer_id", "")
-                ),
+                current_action_context=current_action_binding,
             ),
         }
+        with _TRACER.start_as_current_span("acs_policy.tool") as span:
+            try:
+                result = await control.run_tool(
+                    tool_name,
+                    args,
+                    execute,
+                    snapshot=snapshot,
+                    mode=mode,
+                )
+            except blocked_cls as blocked:
+                _record_policy_span(span, blocked.result, tool_name)
+                if dispatcher.trace:
+                    dispatcher.trace[-1].update(
+                        {
+                            "decision": getattr(
+                                blocked.result.verdict.decision,
+                                "value",
+                                str(blocked.result.verdict.decision),
+                            ),
+                            "reason": blocked.result.verdict.reason,
+                        }
+                    )
+                verdict = blocked.result.verdict
+                raise ToolException(
+                    verdict.message or verdict.reason or str(blocked)
+                ) from blocked
+            _record_policy_span(
+                span,
+                result.pre_tool_call_result,
+                tool_name,
+            )
+            if dispatcher.trace:
+                dispatcher.trace[-1].update(
+                    {
+                        "decision": getattr(
+                            result.pre_tool_call_result.verdict.decision,
+                            "value",
+                            str(result.pre_tool_call_result.verdict.decision),
+                        ),
+                        "reason": result.pre_tool_call_result.verdict.reason,
+                    }
+                )
         try:
-            result = await control.run_tool(tool_name, args, execute, snapshot=snapshot)
-        except shim.AgentControlBlocked as blocked:
-            verdict = blocked.result.verdict
-            raise ToolException(verdict.message or verdict.reason or str(blocked)) from blocked
-        try:
-            raw = shim._mcp_text(result.value)
+            raw = _mcp_text(result.value)
             parsed = json.loads(raw) if isinstance(raw, str) else {}
         except (TypeError, ValueError):
             parsed = {}
@@ -228,7 +351,7 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
     from contextlib import AsyncExitStack
     from .runtime import feature_policy as fpol
 
-    control, shim = _load_control(scorer)
+    control, dispatcher, blocked_cls, mode = _load_control(scorer)
     state = fpol.new_feature_state(message)
     state["user_message"] = message
     state["control_session_id"] = os.environ.get(
@@ -238,7 +361,10 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
 
     async with AsyncExitStack() as stack:
         tools = await _open_two_servers(stack)
-        guarded = [_wrap_tool(t, control, state, shim) for t in tools]
+        guarded = [
+            _wrap_tool(t, control, state, dispatcher, blocked_cls, mode)
+            for t in tools
+        ]
         agent = create_react_agent(_build_llm(), guarded, prompt=SystemMessage(content=BASE_PROMPT))
         try:
             result = await agent.ainvoke(
@@ -247,10 +373,10 @@ async def _run_acs_arm(message: str, *, scorer=None) -> str:
             )
             return _extract_text(result)
         finally:
-            _write_gate_trace(message, control, scorer)
+            _write_gate_trace(message, dispatcher, scorer)
 
 
-def _write_gate_trace(message: str, control, scorer) -> None:
+def _write_gate_trace(message: str, dispatcher, scorer) -> None:
     """Append this turn's annotator + policy decisions to an audit log.
 
     The normal ASSERT trace now carries each ACS decision as an `acs_policy`
@@ -262,7 +388,7 @@ def _write_gate_trace(message: str, control, scorer) -> None:
         "coercion_acs_trace_naive.jsonl" if scorer is not None else "coercion_acs_trace.jsonl")
     row = {"message": message[:400],
            "arm": "naive" if scorer is not None else "calibrated",
-           "events": control.trace}
+           "events": dispatcher.trace}
     path.parent.mkdir(parents=True, exist_ok=True)
     with _TRACE_LOCK:
         with open(path, "a", encoding="utf-8") as fh:

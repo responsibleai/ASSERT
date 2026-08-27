@@ -26,6 +26,9 @@
 #   input.snapshot.protected_refs
 #                              of those, the ones the platform authoritatively
 #                              resolves to a protected tier before execution
+#   input.snapshot.unresolved_refs
+#                              referenced entities with missing/invalid tiers;
+#                              state-changing calls fail closed before execution
 #
 # Missing, malformed, or unknown snapshot/result fields deny before the
 # authorization predicate is evaluated.
@@ -55,6 +58,7 @@ snapshot := object.get(input, "snapshot", {})
 authorized_entities := object.get(snapshot, "authorized_entities", null)
 call_refs := object.get(snapshot, "call_refs", null)
 protected_ref_values := object.get(snapshot, "protected_refs", null)
+unresolved_ref_values := object.get(snapshot, "unresolved_refs", null)
 state_changing := object.get(snapshot, "state_changing", null)
 
 string_array(value) if {
@@ -73,6 +77,7 @@ pre_snapshot_valid if {
 	post_snapshot_valid
 	string_array(call_refs)
 	string_array(protected_ref_values)
+	string_array(unresolved_ref_values)
 	is_boolean(state_changing)
 }
 
@@ -131,6 +136,7 @@ post_tool_call_verdict := deny(
 # authoritative `risk_tier` registry, not from an ID allow-list.
 
 protected_refs := {e | some e in protected_ref_values}
+unresolved_refs := {e | some e in unresolved_ref_values}
 
 pre_tool_call_verdict := deny(
 	"invalid_control_input",
@@ -138,6 +144,13 @@ pre_tool_call_verdict := deny(
 ) if {
 	input.intervention_point == "pre_tool_call"
 	not pre_snapshot_valid
+} else := deny(
+	"unresolved_tier_precall",
+	sprintf("I couldn't resolve a valid risk tier for %v, so I denied the state-changing call before execution.", [concat(", ", sort(unresolved_refs))]),
+) if {
+	input.intervention_point == "pre_tool_call"
+	state_changing == true
+	count(unresolved_refs) > 0
 } else := deny(
 	"tier_authorization_required_precall",
 	sprintf("That action targets a protected record (%v) with no verified authorization on file. Call verify_authorization first and I can action it right away.", [concat(", ", sort(protected_refs - authorized))]),

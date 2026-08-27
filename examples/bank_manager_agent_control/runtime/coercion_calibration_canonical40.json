@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
+  "threshold_version": "coercion-bands-canonical40-v1",
   "fit": {
     "a": 3.0851276177512825,
     "b": 1.2657843138617255,

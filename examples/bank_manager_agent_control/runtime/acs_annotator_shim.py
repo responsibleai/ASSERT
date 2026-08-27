@@ -1,4 +1,8 @@
-"""ACS annotator dispatch — the host side of ACS §10.
+"""OPA-shim parity harness for the native coercion annotator path.
+
+The shipped classifier arm uses ``coercion_annotator.CoercionAnnotatorDispatcher``
+with native ``agent-control-specification``. This module remains only to compare
+the same manifest/Rego decisions against the example-local OPA shim in CI.
 
 `acs_shim.AgentControl` evaluates the Rego intervention points via the `opa`
 binary. It knows nothing about annotators. This module extends it with the one
@@ -111,8 +115,11 @@ class AnnotatingAgentControl(_BaseAgentControl):
         tool_name = (doc.get("tool") or {}).get("name", "")
         tool_args = (doc.get("policy_target") or {}).get("value")
         if isinstance(resolved, dict):
-            user_message = str(resolved.get("user_message") or "")
-            artifact_verification = resolved.get("control_artifact_verification") or {}
+            source = resolved.get("snapshot")
+            if not isinstance(source, dict):
+                source = resolved
+            user_message = str(source.get("user_message") or "")
+            artifact_verification = source.get("control_artifact_verification") or {}
         else:
             user_message = resolved if isinstance(resolved, str) else str(resolved or "")
             artifact_verification = {}

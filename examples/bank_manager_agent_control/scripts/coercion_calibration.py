@@ -243,7 +243,17 @@ def main() -> int:
     report["cases"] = [{k: c[k] for k in ("id", "label", "family", "tool", "naive",
                                           "raw_llm", "calibrated") if k in c} for c in cases]
 
-    FIT_PATH.write_text(json.dumps({"fit": report["fit"]}, indent=2), encoding="utf-8")
+    FIT_PATH.write_text(
+        json.dumps(
+            {
+                "schema_version": cc.CALIBRATION_SCHEMA_VERSION,
+                "threshold_version": cc.THRESHOLD_VERSION,
+                "fit": report["fit"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
 

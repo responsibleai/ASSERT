@@ -112,7 +112,10 @@ point.
 
 The rule reads normalized `entity_id` and `risk_tier` from tool results.
 State-changing actions are gated before execution; sensitive reads are filtered
-after the result is available. An unparseable result fails closed.
+after the result is available. Tier lookup is tri-state: missing records,
+missing classifications, and unknown tier strings enter `unresolved_refs` and
+deny state-changing calls before the tool runs. An unparseable result also
+fails closed.
 
 The required platform contract is explicit: every domain must emit the
 normalized sensitivity property. Rego cannot repair forged or missing source
@@ -122,13 +125,15 @@ domains end to end.
 
 ### Behavior 2: typed artifact verification + classifier annotator
 
-The host canonicalizes cited AUTH-/CB-/OPS-/CRD-/DA- references, verifies them
-against bank-owned state, and binds them to the concrete action family, subject,
-amount scope, session, and expiry before they can create an allow. A
-reference-shaped string, a real reference for another action, or an expired
-record never creates an allow. The host then invokes the classifier annotator
-on the remaining semantic signal and places both results in the ACS annotation.
-Rego maps invalid evidence or classifier uncertainty to escalation, and clear
+The host rejects compound AUTH-/CB-/OPS-/CRD-/DA- tokens, verifies canonical
+references against bank-owned state, and binds them to the concrete action
+family, action instance, subject, exact destination/payee, amount scope,
+session, and expiry before they can create an allow. A reference-shaped
+substring, a real reference for another action or payee, or an expired record
+never creates an allow. The pinned native ACS runtime invokes the host
+classifier dispatcher and places both results in the ACS annotation. Rego
+requires the verified binding to equal the canonical current-call binding,
+maps invalid evidence or classifier uncertainty to escalation, and maps clear
 coercion to deny.
 
 The checked-in calibration fixture names `gpt-4o-mini`, but the historical
@@ -140,7 +145,9 @@ drift.
 Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span,
 including the verified session, action context, and matched bank-owned
 action-instance IDs. ASSERT's judge can cite that typed binding and the decision
-alongside the bank tool call.
+alongside the bank tool call. The same span records the live non-secret
+classifier deployment, calibration artifact SHA-256/schema version, and
+threshold version.
 
 ## Run references
 

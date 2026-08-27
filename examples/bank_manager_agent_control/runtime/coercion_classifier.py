@@ -51,10 +51,13 @@ never ALLOW. A throttled classifier collapses to a constant, which
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 # ── Operating point (defaults; calibration.py refits these on real data) ────
@@ -62,6 +65,9 @@ DEFAULT_ESCALATE_LO = 0.35
 DEFAULT_DENY_HI = 0.75
 _FAILSAFE_SCORE = 0.50  # inside the escalate band -> route to a human, never allow
 _LAST_CALL_FAILED = False  # set by raw_llm_score so calibrated_score can fail-safe correctly
+CALIBRATION_SCHEMA_VERSION = 1
+THRESHOLD_VERSION = "coercion-bands-v1"
+CALIBRATION_ARTIFACT = "runtime/coercion_calibration.json"
 
 
 def _ensure_env() -> None:
@@ -294,7 +300,15 @@ def fit_platt(raw_scores: list[float], labels: list[int], *, iters: int = 6000,
 
 # ── Fitted parameters, loaded from disk when calibration.py has run ────────
 
-_FIT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coercion_calibration.json")
+_FIT_PATH = Path(__file__).resolve().with_name("coercion_calibration.json")
+
+
+def _load_calibration_document() -> dict:
+    try:
+        document = json.loads(_FIT_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return document if isinstance(document, dict) else {}
 
 
 def load_fit() -> dict:
@@ -303,13 +317,72 @@ def load_fit() -> dict:
     Falls back to the identity map and the default bands so the gate still
     functions (conservatively) before a calibration run exists.
     """
-    import json
-    try:
-        with open(_FIT_PATH, encoding="utf-8") as fh:
-            return json.load(fh)["fit"]
-    except (OSError, KeyError, ValueError):
+    document = _load_calibration_document()
+    fit = document.get("fit")
+    if not isinstance(fit, dict):
         return {"a": 1.0, "b": 0.0,
                 "escalate_lo": DEFAULT_ESCALATE_LO, "deny_hi": DEFAULT_DENY_HI}
+    return fit
+
+
+def classifier_provenance(
+    *,
+    fit_override: dict | None,
+    model: str | None,
+    scorer,
+    escalate_lo: float,
+    deny_hi: float,
+) -> dict:
+    deployment = model or os.environ.get(
+        "COERCION_CLASSIFIER_MODEL",
+        "gpt-4o-mini",
+    )
+    if fit_override is None:
+        document = _load_calibration_document()
+        try:
+            artifact_bytes = _FIT_PATH.read_bytes()
+        except OSError:
+            artifact_bytes = b""
+        calibration_model = str((document.get("fit") or {}).get("model") or "")
+        schema_version = document.get("schema_version")
+        threshold_version = str(document.get("threshold_version") or "")
+        artifact = CALIBRATION_ARTIFACT
+    else:
+        document = {"fit": fit_override}
+        artifact_bytes = json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        calibration_model = str(fit_override.get("model") or "")
+        schema_version = fit_override.get(
+            "schema_version",
+            CALIBRATION_SCHEMA_VERSION,
+        )
+        threshold_version = str(
+            fit_override.get("threshold_version") or "runtime-override"
+        )
+        artifact = "runtime-override"
+
+    scorer_name = (
+        getattr(scorer, "__name__", scorer.__class__.__name__)
+        if scorer
+        else ""
+    )
+    return {
+        "classifier_mode": "injected_scorer" if scorer else "live_model",
+        "classifier_invoked": True,
+        "classifier_deployment": (
+            f"injected:{scorer_name}" if scorer else deployment
+        ),
+        "calibration_model": calibration_model,
+        "calibration_artifact": artifact,
+        "calibration_sha256": f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}",
+        "calibration_schema_version": schema_version,
+        "threshold_version": threshold_version,
+        "escalate_lo": escalate_lo,
+        "deny_hi": deny_hi,
+    }
 
 
 def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = None,
@@ -337,22 +410,34 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
     ``label`` and ``raw``; we add ``score`` plus the two band edges so the Rego
     policy reads its thresholds from the annotation instead of hardcoding them.
     """
-    fit = fit or load_fit()
+    fit_override = fit if fit is not None else None
+    fit = fit if fit is not None else load_fit()
     lo = float(fit.get("escalate_lo", DEFAULT_ESCALATE_LO))
     hi = float(fit.get("deny_hi", DEFAULT_DENY_HI))
+    provenance = classifier_provenance(
+        fit_override=fit_override,
+        model=model,
+        scorer=scorer,
+        escalate_lo=lo,
+        deny_hi=hi,
+    )
 
     if tool_name and tool_name not in GATED_TOOLS:
+        provenance = {**provenance, "classifier_invoked": False}
         return {"label": "not_applicable", "score": 0.0, "escalate_lo": lo, "deny_hi": hi,
+                "classifier_provenance": provenance,
                 "raw": {"skipped": True, "reason": "tool_not_gated"}}
 
     verification = artifact_verification or {}
     cited = list(verification.get("cited_references") or [])
     verified = list(verification.get("verified_references") or [])
     invalid = sorted(
-        set(verification.get("unknown_references") or [])
+        set(verification.get("malformed_references") or [])
+        | set(verification.get("unknown_references") or [])
         | set(verification.get("wrong_action_references") or [])
         | set(verification.get("wrong_instance_references") or [])
         | set(verification.get("wrong_subject_references") or [])
+        | set(verification.get("wrong_destination_references") or [])
         | set(verification.get("out_of_scope_references") or [])
         | set(verification.get("wrong_session_references") or [])
         | set(verification.get("expired_references") or [])
@@ -365,6 +450,7 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         ),
     }
     if verified:
+        provenance = {**provenance, "classifier_invoked": False}
         return {
             "label": "recorded_artifact_verified",
             "score": 0.0,
@@ -375,12 +461,21 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
             "verified_references": verified,
             "invalid_references": invalid,
             "artifact_verification": artifact_evidence,
+            "classifier_provenance": provenance,
             "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
         }
 
-    score_fn = scorer or calibrated_score
     try:
-        score = float(score_fn(user_message, tool_name, tool_args))
+        if scorer is not None:
+            score = float(scorer(user_message, tool_name, tool_args))
+        else:
+            score = calibrated_score(
+                user_message,
+                tool_name,
+                tool_args,
+                fit=fit,
+                model=provenance["classifier_deployment"],
+            )
     except Exception:  # noqa: BLE001 - errors escalate, never allow
         score = _FAILSAFE_SCORE
     if cited and not verified:
@@ -398,6 +493,7 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         "verified_references": verified,
         "invalid_references": invalid,
         "artifact_verification": artifact_evidence,
+        "classifier_provenance": provenance,
         "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
     }
 
