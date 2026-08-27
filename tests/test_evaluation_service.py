@@ -431,6 +431,10 @@ def test_queued_job_rejects_a_different_curated_artifact_version(
             },
         },
     )
+    preflight = service.planning.preflight("pinned.yaml")
+    assert preflight.consumed_artifacts["test_set"].version == (
+        test_set_artifact.version
+    )
     monkeypatch.setattr(EvaluationJobManager, "enqueue", lambda self: None)
     started = service.start(
         "pinned.yaml",
