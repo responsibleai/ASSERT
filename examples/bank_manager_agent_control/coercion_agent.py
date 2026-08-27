@@ -286,13 +286,6 @@ def _wrap_tool(tool, control, state, dispatcher, blocked_cls, mode):
             "user_message": state["user_message"],
             "control_session_id": state["control_session_id"],
             "current_action_binding": current_action_binding,
-            "control_artifact_verification": bank_core.verify_control_artifacts(
-                state["user_message"],
-                tool_name,
-                args,
-                state["control_session_id"],
-                current_action_context=current_action_binding,
-            ),
         }
         with _TRACER.start_as_current_span("acs_policy.tool") as span:
             try:

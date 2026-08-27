@@ -57,13 +57,14 @@ import math
 import os
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 try:
-    from .bank_core import CONTROL_REFERENCE_INPUT_TOO_LONG
+    from . import bank_core
 except ImportError:  # pragma: no cover - script vs package import
-    from bank_core import CONTROL_REFERENCE_INPUT_TOO_LONG
+    import bank_core
 
 # ── Operating point (defaults; calibration.py refits these on real data) ────
 DEFAULT_ESCALATE_LO = 0.35
@@ -73,6 +74,18 @@ _LAST_CALL_FAILED = False  # set by raw_llm_score so calibrated_score can fail-s
 CALIBRATION_SCHEMA_VERSION = 1
 THRESHOLD_VERSION = "coercion-bands-v1"
 CALIBRATION_ARTIFACT = "runtime/coercion_calibration.json"
+ARTIFACT_VERIFICATION_MISSING = "<ARTIFACT_VERIFICATION_MISSING>"
+ARTIFACT_VERIFICATION_BINDING_MISMATCH = (
+    "<ARTIFACT_VERIFICATION_BINDING_MISMATCH>"
+)
+
+
+def _normalized_user_message(user_message: str) -> tuple[str, bool]:
+    normalized = unicodedata.normalize("NFC", user_message or "")
+    return (
+        normalized,
+        len(normalized) <= bank_core.CONTROL_REFERENCE_MAX_TEXT_LENGTH,
+    )
 
 
 def _ensure_env() -> None:
@@ -155,7 +168,10 @@ _NAIVE_MISS_P = 0.05
 
 def authority_keyword_hits(text: str) -> list[str]:
     """Patterns that fired. This IS Arm 1's heuristic — shared, not a copy."""
-    return [r.pattern for r in _AUTHORITY_RE if r.search(text or "")]
+    text, within_bound = _normalized_user_message(text)
+    if not within_bound:
+        return []
+    return [r.pattern for r in _AUTHORITY_RE if r.search(text)]
 
 
 def naive_keyword_score(user_message: str, tool_name: str = "", tool_args: Any = None,
@@ -165,7 +181,10 @@ def naive_keyword_score(user_message: str, tool_name: str = "", tool_args: Any =
     Deterministic, free, and passes a recall-only test. See calibration.py for
     what it does to the false-positive rate and the Brier score.
     """
-    return _NAIVE_HIT_P if authority_keyword_hits(user_message) else _NAIVE_MISS_P
+    normalized, within_bound = _normalized_user_message(user_message)
+    if not within_bound:
+        return _FAILSAFE_SCORE
+    return _NAIVE_HIT_P if authority_keyword_hits(normalized) else _NAIVE_MISS_P
 
 
 # ── The calibrated LLM judge-as-classifier ─────────────────────────────────
@@ -222,6 +241,10 @@ def raw_llm_score(user_message: str, tool_name: str = "", tool_args: Any = None,
     """Raw, UNCALIBRATED model output mapped to [0, 1]. Fail-safe on error."""
     global _LAST_CALL_FAILED
     _LAST_CALL_FAILED = False
+    user_message, within_bound = _normalized_user_message(user_message)
+    if not within_bound:
+        _LAST_CALL_FAILED = True
+        return _FAILSAFE_SCORE
     model = model or os.environ.get("COERCION_CLASSIFIER_MODEL", "gpt-4o-mini")
     content = (f"Request: {user_message}\n"
                f"Tool about to run: {tool_name}({tool_args if tool_args is not None else '{}'})")
@@ -393,7 +416,15 @@ def classifier_provenance(
 def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = None,
                      *, fit: dict | None = None, model: str | None = None) -> float:
     """Calibrated P(coercive): raw LLM score pushed through the fitted Platt map."""
+    global _LAST_CALL_FAILED
+    user_message, within_bound = _normalized_user_message(user_message)
     fit = fit or load_fit()
+    if not within_bound:
+        _LAST_CALL_FAILED = True
+        return (
+            float(fit.get("escalate_lo", DEFAULT_ESCALATE_LO))
+            + float(fit.get("deny_hi", DEFAULT_DENY_HI))
+        ) / 2.0
     raw = raw_llm_score(user_message, tool_name, tool_args, model=model)
     if raw == _FAILSAFE_SCORE and _LAST_CALL_FAILED:
         # A failed call must land in the escalate band (route to a human), not be
@@ -406,15 +437,136 @@ def calibrated_score(user_message: str, tool_name: str = "", tool_args: Any = No
 
 # ── ACS annotator dispatcher entry point ───────────────────────────────────
 
-def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
-             *, fit: dict | None = None, model: str | None = None,
-             scorer=None, artifact_verification: dict | None = None) -> dict:
+_VERIFICATION_FIELDS = (
+    "tool_name",
+    "session_id",
+    "action_context",
+    "cited_references",
+    "verified_references",
+    "unknown_references",
+    "malformed_references",
+    "wrong_action_references",
+    "wrong_instance_references",
+    "wrong_subject_references",
+    "wrong_destination_references",
+    "out_of_scope_references",
+    "wrong_session_references",
+    "expired_references",
+    "matched_action_instance_ids",
+    "input_too_long",
+    "artifact_verified",
+)
+
+
+def _verification_failure(
+    marker: str,
+    tool_name: str,
+    tool_args: Any,
+    supplied: dict | None = None,
+) -> dict:
+    supplied = supplied if isinstance(supplied, dict) else {}
+    action_context = supplied.get("action_context")
+    if not isinstance(action_context, dict):
+        args = dict(tool_args) if isinstance(tool_args, dict) else {}
+        action_context = bank_core.control_action_context(
+            tool_name,
+            args,
+            None,
+        )
+    return {
+        "tool_name": tool_name,
+        "session_id": str(supplied.get("session_id") or ""),
+        "action_context": action_context,
+        "cited_references": [],
+        "verified_references": [],
+        "unknown_references": [],
+        "malformed_references": [marker],
+        "wrong_action_references": [],
+        "wrong_instance_references": [],
+        "wrong_subject_references": [],
+        "wrong_destination_references": [],
+        "out_of_scope_references": [],
+        "wrong_session_references": [],
+        "expired_references": [],
+        "matched_action_instance_ids": {},
+        "input_too_long": (
+            marker == bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG
+        ),
+        "artifact_verified": False,
+    }
+
+
+def _revalidate_artifact_verification(
+    user_message: str,
+    tool_name: str,
+    tool_args: Any,
+    supplied: dict | None,
+) -> dict:
+    if not isinstance(supplied, dict):
+        return _verification_failure(
+            ARTIFACT_VERIFICATION_MISSING,
+            tool_name,
+            tool_args,
+        )
+    session_id = supplied.get("session_id")
+    action_context = supplied.get("action_context")
+    if not isinstance(session_id, str) or not session_id:
+        return _verification_failure(
+            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
+            tool_name,
+            tool_args,
+            supplied,
+        )
+    if not isinstance(action_context, dict):
+        return _verification_failure(
+            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
+            tool_name,
+            tool_args,
+            supplied,
+        )
+    args = dict(tool_args) if isinstance(tool_args, dict) else {}
+    recomputed = bank_core.verify_control_artifacts(
+        user_message,
+        tool_name,
+        args,
+        session_id,
+        current_action_context=action_context,
+    )
+    if all(supplied.get(field) == recomputed.get(field)
+           for field in _VERIFICATION_FIELDS):
+        return recomputed
+    return _verification_failure(
+        ARTIFACT_VERIFICATION_BINDING_MISMATCH,
+        tool_name,
+        tool_args,
+        recomputed,
+    )
+
+
+def _annotate_trusted(
+    user_message: str,
+    tool_name: str = "",
+    tool_args: Any = None,
+    *,
+    fit: dict | None = None,
+    model: str | None = None,
+    scorer=None,
+    artifact_verification: dict | None = None,
+) -> dict:
     """Produce the ACS annotation object placed at ``annotations.coercion_risk``.
 
     ACS §10 normalizes annotator output to a JSON annotation and SHOULD include
     ``label`` and ``raw``; we add ``score`` plus the two band edges so the Rego
     policy reads its thresholds from the annotation instead of hardcoding them.
     """
+    user_message, within_bound = _normalized_user_message(user_message)
+    if not within_bound:
+        artifact_verification = _verification_failure(
+            bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
+            tool_name,
+            tool_args,
+            artifact_verification,
+        )
     fit_override = fit if fit is not None else None
     fit = fit if fit is not None else load_fit()
     lo = float(fit.get("escalate_lo", DEFAULT_ESCALATE_LO))
@@ -454,7 +606,23 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
             verification.get("matched_action_instance_ids") or {}
         ),
     }
-    if CONTROL_REFERENCE_INPUT_TOO_LONG in invalid:
+    fail_closed_markers = {
+        bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG:
+            "control_reference_input_too_long",
+        ARTIFACT_VERIFICATION_MISSING:
+            "artifact_verification_missing",
+        ARTIFACT_VERIFICATION_BINDING_MISMATCH:
+            "artifact_verification_binding_mismatch",
+    }
+    failure = next(
+        (
+            reason
+            for marker, reason in fail_closed_markers.items()
+            if marker in invalid
+        ),
+        "",
+    )
+    if failure:
         provenance = {**provenance, "classifier_invoked": False}
         return {
             "label": "ambiguous",
@@ -471,7 +639,7 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
                 "tool": tool_name,
                 "verification_source": "bank_owned_registry",
                 "skipped": True,
-                "reason": "control_reference_input_too_long",
+                "reason": failure,
             },
         }
     if verified:
@@ -521,6 +689,36 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
         "classifier_provenance": provenance,
         "raw": {"tool": tool_name, "verification_source": "bank_owned_registry"},
     }
+
+
+def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
+             *, fit: dict | None = None, model: str | None = None,
+             scorer=None, artifact_verification: dict | None = None) -> dict:
+    """Fail-closed public annotator; trusted dispatchers recompute verification."""
+    user_message, within_bound = _normalized_user_message(user_message)
+    if within_bound:
+        verification = _revalidate_artifact_verification(
+            user_message,
+            tool_name,
+            tool_args,
+            artifact_verification,
+        )
+    else:
+        verification = _verification_failure(
+            bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
+            tool_name,
+            tool_args,
+            artifact_verification,
+        )
+    return _annotate_trusted(
+        user_message,
+        tool_name,
+        tool_args,
+        fit=fit,
+        model=model,
+        scorer=scorer,
+        artifact_verification=verification,
+    )
 
 
 # ── Pre-flight: catch a throttled / collapsed (constant) classifier ─────────

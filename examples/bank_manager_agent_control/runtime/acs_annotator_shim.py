@@ -38,6 +38,7 @@ from .acs_shim import AgentControl as _BaseAgentControl  # noqa: E402
 from .acs_shim import AgentControlBlocked, EnforcementMode, Verdict, _Result, _Value  # noqa: E402,F401
 from .acs_shim import mcp_text as _mcp_text  # noqa: E402
 
+from . import bank_core  # noqa: E402
 from . import coercion_classifier as cc  # noqa: E402
 
 _TRACER = trace.get_tracer("assert.bank_manager.acs")
@@ -118,18 +119,49 @@ class AnnotatingAgentControl(_BaseAgentControl):
             source = resolved.get("snapshot")
             if not isinstance(source, dict):
                 source = resolved
-            user_message = str(source.get("user_message") or "")
-            artifact_verification = source.get("control_artifact_verification") or {}
+            user_message, within_bound = cc._normalized_user_message(
+                str(source.get("user_message") or "")
+            )
         else:
-            user_message = resolved if isinstance(resolved, str) else str(resolved or "")
-            artifact_verification = {}
-        try:
-            return cc.annotate(
+            user_message, within_bound = cc._normalized_user_message(
+                resolved if isinstance(resolved, str) else str(resolved or "")
+            )
+            source = {}
+        args = dict(tool_args) if isinstance(tool_args, dict) else {}
+        session_id = source.get("control_session_id")
+        action_context = source.get("current_action_binding")
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(action_context, dict)
+        ):
+            verification = cc._verification_failure(
+                cc.ARTIFACT_VERIFICATION_MISSING,
+                tool_name,
+                args,
+            )
+        else:
+            verification = bank_core.verify_control_artifacts(
                 user_message,
                 tool_name,
-                tool_args,
+                args,
+                session_id,
+                current_action_context=action_context,
+            )
+        if not within_bound:
+            verification = cc._verification_failure(
+                bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
+                tool_name,
+                args,
+                verification,
+            )
+        try:
+            return cc._annotate_trusted(
+                user_message,
+                tool_name,
+                args,
                 scorer=self.scorer,
-                artifact_verification=artifact_verification,
+                artifact_verification=verification,
             )
         except Exception:  # noqa: BLE001 - fail closed into the escalate band
             fit = cc.load_fit()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from . import bank_core
 from . import coercion_classifier as cc
 
 
@@ -38,6 +39,9 @@ class CoercionAnnotatorDispatcher:
         snapshot = preliminary_policy_input.get("snapshot")
         if not isinstance(snapshot, Mapping):
             raise TypeError("native ACS preliminary input is missing snapshot")
+        user_message, within_bound = cc._normalized_user_message(
+            str(snapshot.get("user_message") or "")
+        )
         tool = preliminary_policy_input.get("tool")
         policy_target = preliminary_policy_input.get("policy_target")
         if not isinstance(tool, Mapping) or not isinstance(policy_target, Mapping):
@@ -45,16 +49,41 @@ class CoercionAnnotatorDispatcher:
 
         tool_name = str(tool.get("name") or "")
         tool_args = policy_target.get("value")
-        verification = snapshot.get("control_artifact_verification")
-        if not isinstance(verification, Mapping):
-            verification = {}
+        args = dict(tool_args) if isinstance(tool_args, Mapping) else {}
+        session_id = snapshot.get("control_session_id")
+        action_context = snapshot.get("current_action_binding")
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(action_context, Mapping)
+        ):
+            verification = cc._verification_failure(
+                cc.ARTIFACT_VERIFICATION_MISSING,
+                tool_name,
+                args,
+            )
+        else:
+            verification = bank_core.verify_control_artifacts(
+                user_message,
+                tool_name,
+                args,
+                session_id,
+                current_action_context=dict(action_context),
+            )
+        if not within_bound:
+            verification = cc._verification_failure(
+                bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
+                tool_name,
+                args,
+                verification,
+            )
 
-        annotation = cc.annotate(
-            str(snapshot.get("user_message") or ""),
+        annotation = cc._annotate_trusted(
+            user_message,
             tool_name,
-            tool_args,
+            args,
             scorer=self.scorer,
-            artifact_verification=dict(verification),
+            artifact_verification=verification,
         )
         self.trace.append(
             {
