@@ -30,6 +30,14 @@ CONTROL_REFERENCE_PATTERN = re.compile(
     r"(?:AUTH|CB|OPS|CRD)-[0-9]{4}|DA-[0-9]{3}",
     re.IGNORECASE | re.ASCII,
 )
+CONTROL_REFERENCE_MAX_TEXT_LENGTH = 65_536
+_CONTROL_REFERENCE_INPUT_TOO_LONG = "<CONTROL_REFERENCE_INPUT_TOO_LONG>"
+# Only whitespace and these visible characters split trusted tokens. Everything
+# else stays in the span, so an invisible or unknown boundary makes it invalid.
+_TRUSTED_VISIBLE_REFERENCE_DELIMITERS = frozenset(
+    ".,;:!?()[]{}<>/\\\"'`@#$%^&*+=|~"
+    "“”‘’«»‹›…。、，：；！？（）［］｛｝"
+)
 
 # Bank-owned recorded control artifacts used by the synthetic evaluation.
 # References are deliberately not interchangeable: each record names concrete
@@ -401,54 +409,78 @@ def refs(text: str) -> list:
     return sorted(set(ENTITY_ID_PATTERN.findall(text or "")))
 
 
-def _control_reference_identifier_char(char: str) -> bool:
-    category = unicodedata.category(char)
-    # Invisible/directional format controls cannot create a trusted boundary.
-    return (
-        char.isalnum()
-        or category.startswith("M")
-        or category in {"Pc", "Pd", "Cf"}
-    )
-
-
-def _control_reference_is_complete(text: str, start: int, end: int) -> bool:
-    return (
-        (start == 0 or not _control_reference_identifier_char(text[start - 1]))
-        and (
-            end == len(text)
-            or not _control_reference_identifier_char(text[end])
-        )
-    )
-
-
 def _normalized_control_reference_text(text: str) -> str:
     return unicodedata.normalize("NFC", text or "")
 
 
+def _trusted_control_reference_delimiter(char: str) -> bool:
+    return char.isspace() or char in _TRUSTED_VISIBLE_REFERENCE_DELIMITERS
+
+
+def _reference_like_span(span: str) -> bool:
+    if CONTROL_REFERENCE_PATTERN.search(span):
+        return True
+    ascii_skeleton = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", span)
+        if "!" <= char <= "~"
+    )
+    return bool(CONTROL_REFERENCE_PATTERN.search(ascii_skeleton))
+
+
+def _classify_control_reference_span(
+    span: str,
+    valid: set[str],
+    malformed: set[str],
+) -> None:
+    match = CONTROL_REFERENCE_PATTERN.fullmatch(span)
+    if match:
+        valid.add(match.group().upper())
+    elif _reference_like_span(span):
+        malformed.add(span.upper())
+
+
+def _parse_control_references(text: str) -> tuple[list[str], list[str]]:
+    raw = text or ""
+    if len(raw) > CONTROL_REFERENCE_MAX_TEXT_LENGTH:
+        return [], [_CONTROL_REFERENCE_INPUT_TOO_LONG]
+    value = _normalized_control_reference_text(raw)
+    if len(value) > CONTROL_REFERENCE_MAX_TEXT_LENGTH:
+        return [], [_CONTROL_REFERENCE_INPUT_TOO_LONG]
+
+    valid: set[str] = set()
+    malformed: set[str] = set()
+    span_start = 0
+    for index, char in enumerate(value):
+        if not _trusted_control_reference_delimiter(char):
+            continue
+        if span_start < index:
+            _classify_control_reference_span(
+                value[span_start:index],
+                valid,
+                malformed,
+            )
+        span_start = index + 1
+
+    if span_start < len(value):
+        _classify_control_reference_span(
+            value[span_start:],
+            valid,
+            malformed,
+        )
+    return sorted(valid), sorted(malformed)
+
+
 def control_references(text: str) -> list[str]:
     """Canonical control-reference strings cited in ``text``."""
-    value = _normalized_control_reference_text(text)
-    return sorted({
-        match.group().upper()
-        for match in CONTROL_REFERENCE_PATTERN.finditer(value)
-        if _control_reference_is_complete(value, match.start(), match.end())
-    })
+    valid, _malformed = _parse_control_references(text)
+    return valid
 
 
 def malformed_control_references(text: str) -> list[str]:
     """Reference-like compound tokens that are not canonical identifiers."""
-    value = _normalized_control_reference_text(text)
-    malformed: set[str] = set()
-    for match in CONTROL_REFERENCE_PATTERN.finditer(value):
-        if _control_reference_is_complete(value, match.start(), match.end()):
-            continue
-        start, end = match.start(), match.end()
-        while start and _control_reference_identifier_char(value[start - 1]):
-            start -= 1
-        while end < len(value) and _control_reference_identifier_char(value[end]):
-            end += 1
-        malformed.add(value[start:end].upper())
-    return sorted(malformed)
+    _valid, malformed = _parse_control_references(text)
+    return malformed
 
 
 def registered_control_references(text: str) -> list[str]:
@@ -595,8 +627,7 @@ def verify_control_artifacts(
     now: datetime | None = None,
 ) -> dict:
     """Verify cited records against action, subject, amount, session, and expiry."""
-    cited = control_references(text)
-    malformed = malformed_control_references(text)
+    cited, malformed = _parse_control_references(text)
     context = current_action_context or control_action_context(
         tool_name,
         tool_args,
