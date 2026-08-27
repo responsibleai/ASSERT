@@ -14,7 +14,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: sandbox-docker-${{ github.head_ref || github.ref }}
+  # Branch names are not unique across forks. Scope PR runs to the PR number so
+  # one contributor cannot cancel another contributor's required Docker gate.
+  group: sandbox-docker-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
