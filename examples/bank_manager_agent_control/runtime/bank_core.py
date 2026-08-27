@@ -16,7 +16,11 @@ domain/ID-prefix the entity uses (the generalization premise).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
+import secrets
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -62,6 +66,7 @@ _TRANSFER_CONTROL_TOOLS = frozenset({
 })
 _LOAN_CONTROL_TOOLS = frozenset({"prepare_loan_modification"})
 _ACTIVE_CONTROL_EXPIRY = "2027-12-31T23:59:59Z"
+_CONTROL_ACTION_BINDING_KEY = secrets.token_bytes(32)
 
 
 def _transfer_scope(
@@ -565,6 +570,110 @@ def control_action_context(
         "amount": None,
         "parameters": dict(args),
     }
+
+
+def _canonical_binding_value(value):
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_binding_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_binding_value(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    raise TypeError(f"unsupported action-binding value: {type(value).__name__}")
+
+
+def canonical_control_action_binding(
+    user_message: str,
+    tool_name: str,
+    tool_args: dict,
+    session_id: str,
+    *,
+    transfer_context: dict | None = None,
+) -> dict:
+    args = _canonical_binding_value(dict(tool_args))
+    context = control_action_context(tool_name, args, transfer_context)
+    normalized_message = _normalized_control_reference_text(user_message)
+    return {
+        **context,
+        "destination": context["to_account"],
+        "parameters": args,
+        "message_sha256": (
+            "sha256:"
+            + hashlib.sha256(normalized_message.encode("utf-8")).hexdigest()
+        ),
+        "session_id": session_id,
+    }
+
+
+def _control_action_binding_payload(binding: dict) -> bytes:
+    return json.dumps(
+        _canonical_binding_value(binding),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _seal_control_action_binding(binding: dict) -> str:
+    digest = hmac.new(
+        _CONTROL_ACTION_BINDING_KEY,
+        _control_action_binding_payload(binding),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"hmac-sha256:{digest}"
+
+
+def _validate_control_action_binding(
+    binding: dict,
+    seal: str,
+    user_message: str,
+    tool_name: str,
+    tool_args: dict,
+    session_id: str,
+) -> bool:
+    try:
+        expected_seal = _seal_control_action_binding(binding)
+        args = _canonical_binding_value(dict(tool_args))
+        derived = control_action_context(tool_name, args, None)
+        message_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                _normalized_control_reference_text(user_message).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+        )
+    except (TypeError, ValueError):
+        return False
+    if not hmac.compare_digest(seal, expected_seal):
+        return False
+    if binding.get("message_sha256") != message_sha256:
+        return False
+    if binding.get("session_id") != session_id:
+        return False
+    if binding.get("tool_name") != tool_name:
+        return False
+    if binding.get("parameters") != args:
+        return False
+    if binding.get("action_instance") != derived["action_instance"]:
+        return False
+    if binding.get("action_family") != derived["action_family"]:
+        return False
+    if binding.get("destination") != binding.get("to_account"):
+        return False
+    if derived["subject"] and binding.get("subject") != derived["subject"]:
+        return False
+    if derived["to_account"] and binding.get("to_account") != derived["to_account"]:
+        return False
+    if derived["amount"] is not None and binding.get("amount") != derived["amount"]:
+        return False
+    return True
 
 
 def _matching_scopes(artifact: dict, context: dict, tool_name: str) -> tuple[list[dict], str]:

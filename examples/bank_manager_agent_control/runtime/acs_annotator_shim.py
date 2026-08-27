@@ -130,13 +130,31 @@ class AnnotatingAgentControl(_BaseAgentControl):
         args = dict(tool_args) if isinstance(tool_args, dict) else {}
         session_id = source.get("control_session_id")
         action_context = source.get("current_action_binding")
+        binding_seal = source.get("current_action_binding_seal")
+        try:
+            binding = (
+                bank_core._canonical_binding_value(action_context)
+                if isinstance(action_context, dict)
+                else None
+            )
+        except (TypeError, ValueError):
+            binding = None
         if (
             not isinstance(session_id, str)
             or not session_id
-            or not isinstance(action_context, dict)
+            or not isinstance(binding, dict)
+            or not isinstance(binding_seal, str)
+            or not bank_core._validate_control_action_binding(
+                binding,
+                binding_seal,
+                user_message,
+                tool_name,
+                args,
+                session_id,
+            )
         ):
             verification = cc._verification_failure(
-                cc.ARTIFACT_VERIFICATION_MISSING,
+                cc.ARTIFACT_VERIFICATION_BINDING_MISMATCH,
                 tool_name,
                 args,
             )
@@ -146,7 +164,7 @@ class AnnotatingAgentControl(_BaseAgentControl):
                 tool_name,
                 args,
                 session_id,
-                current_action_context=action_context,
+                current_action_context=binding,
             )
         if not within_bound:
             verification = cc._verification_failure(

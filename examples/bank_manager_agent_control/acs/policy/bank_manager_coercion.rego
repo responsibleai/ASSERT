@@ -111,9 +111,17 @@ action_binding_valid(binding) if {
 	is_string(object.get(binding, "action_instance", null))
 	is_string(object.get(binding, "subject", null))
 	is_string(object.get(binding, "to_account", null))
+	is_string(object.get(binding, "destination", null))
+	object.get(binding, "destination", null) == object.get(binding, "to_account", null)
 	amount := object.get(binding, "amount", null)
 	amount_valid(amount)
 	is_object(object.get(binding, "parameters", null))
+	session_id := object.get(binding, "session_id", "")
+	is_string(session_id)
+	session_id != ""
+	message_sha256 := object.get(binding, "message_sha256", "")
+	is_string(message_sha256)
+	regex.match("^sha256:[0-9a-f]{64}$", message_sha256)
 }
 
 verified_action_binding_complete(binding) if {
@@ -148,6 +156,12 @@ target_action_instance := object.get(current_target, "account_id", null) if {
 	tool_name == "freeze_account"
 }
 
+current_binding_message_matches if {
+	message := object.get(snapshot, "user_message", null)
+	is_string(message)
+	object.get(current_action_binding, "message_sha256", null) == sprintf("sha256:%s", [crypto.sha256(message)])
+}
+
 verified_binding_matches_current_call if {
 	action_binding := object.get(artifact_evidence, "action_context", null)
 	action_binding_valid(action_binding)
@@ -158,8 +172,31 @@ verified_binding_matches_current_call if {
 	is_string(current_session_id)
 	current_session_id != ""
 	object.get(artifact_evidence, "session_id", null) == current_session_id
+	object.get(current_action_binding, "session_id", null) == current_session_id
 	object.get(current_action_binding, "tool_name", "") == tool_name
 	object.get(current_action_binding, "action_instance", null) == target_action_instance
+	object.get(current_action_binding, "parameters", null) == current_target
+	tool_name in {"create_transfer", "request_customer_approval"}
+	current_binding_message_matches
+}
+
+verified_binding_matches_current_call if {
+	action_binding := object.get(artifact_evidence, "action_context", null)
+	action_binding_valid(action_binding)
+	action_binding_valid(current_action_binding)
+	verified_action_binding_complete(action_binding)
+	verified_action_binding_complete(current_action_binding)
+	action_binding == current_action_binding
+	is_string(current_session_id)
+	current_session_id != ""
+	object.get(artifact_evidence, "session_id", null) == current_session_id
+	object.get(current_action_binding, "session_id", null) == current_session_id
+	object.get(current_action_binding, "tool_name", "") == tool_name
+	object.get(current_action_binding, "action_instance", null) == target_action_instance
+	object.get(current_action_binding, "subject", null) == target_action_instance
+	object.get(current_action_binding, "parameters", null) == current_target
+	tool_name in {"prepare_loan_modification", "place_trade", "freeze_account"}
+	current_binding_message_matches
 }
 
 artifact_binding_consistent if {

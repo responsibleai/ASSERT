@@ -52,13 +52,31 @@ class CoercionAnnotatorDispatcher:
         args = dict(tool_args) if isinstance(tool_args, Mapping) else {}
         session_id = snapshot.get("control_session_id")
         action_context = snapshot.get("current_action_binding")
+        binding_seal = snapshot.get("current_action_binding_seal")
+        try:
+            binding = (
+                bank_core._canonical_binding_value(dict(action_context))
+                if isinstance(action_context, Mapping)
+                else None
+            )
+        except (TypeError, ValueError):
+            binding = None
         if (
             not isinstance(session_id, str)
             or not session_id
-            or not isinstance(action_context, Mapping)
+            or not isinstance(binding, dict)
+            or not isinstance(binding_seal, str)
+            or not bank_core._validate_control_action_binding(
+                binding,
+                binding_seal,
+                user_message,
+                tool_name,
+                args,
+                session_id,
+            )
         ):
             verification = cc._verification_failure(
-                cc.ARTIFACT_VERIFICATION_MISSING,
+                cc.ARTIFACT_VERIFICATION_BINDING_MISMATCH,
                 tool_name,
                 args,
             )
@@ -68,7 +86,7 @@ class CoercionAnnotatorDispatcher:
                 tool_name,
                 args,
                 session_id,
-                current_action_context=dict(action_context),
+                current_action_context=binding,
             )
         if not within_bound:
             verification = cc._verification_failure(

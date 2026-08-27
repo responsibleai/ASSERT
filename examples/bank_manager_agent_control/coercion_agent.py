@@ -276,16 +276,26 @@ def _wrap_tool(tool, control, state, dispatcher, blocked_cls, mode):
         transfer_context = state["transfer_context"].get(
             args.get("transfer_id", "")
         )
-        current_action_binding = bank_core.control_action_context(
+        normalized_message, _within_bound = cc._normalized_user_message(
+            state["user_message"]
+        )
+        current_action_binding = bank_core.canonical_control_action_binding(
+            normalized_message,
             tool_name,
             args,
-            transfer_context,
+            state["control_session_id"],
+            transfer_context=transfer_context,
         )
         snapshot = {
             **fpol.pre_call_snapshot(state, tool_name, args),
-            "user_message": state["user_message"],
+            "user_message": normalized_message,
             "control_session_id": state["control_session_id"],
             "current_action_binding": current_action_binding,
+            "current_action_binding_seal": (
+                bank_core._seal_control_action_binding(
+                    current_action_binding
+                )
+            ),
         }
         with _TRACER.start_as_current_span("acs_policy.tool") as span:
             try:

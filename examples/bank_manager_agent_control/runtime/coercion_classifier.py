@@ -501,39 +501,58 @@ def _revalidate_artifact_verification(
     tool_name: str,
     tool_args: Any,
     supplied: dict | None,
+    current_action_binding: dict | None,
+    current_action_binding_seal: str,
+    session_id: str,
 ) -> dict:
-    if not isinstance(supplied, dict):
-        return _verification_failure(
-            ARTIFACT_VERIFICATION_MISSING,
-            tool_name,
-            tool_args,
-        )
-    session_id = supplied.get("session_id")
-    action_context = supplied.get("action_context")
-    if not isinstance(session_id, str) or not session_id:
-        return _verification_failure(
-            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-            tool_name,
-            tool_args,
-            supplied,
-        )
-    if not isinstance(action_context, dict):
-        return _verification_failure(
-            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
-            tool_name,
-            tool_args,
-            supplied,
-        )
     args = dict(tool_args) if isinstance(tool_args, dict) else {}
+    try:
+        binding = (
+            bank_core._canonical_binding_value(current_action_binding)
+            if isinstance(current_action_binding, dict)
+            else None
+        )
+    except (TypeError, ValueError):
+        binding = None
+    if (
+        not isinstance(binding, dict)
+        or not isinstance(current_action_binding_seal, str)
+        or not isinstance(session_id, str)
+        or not session_id
+        or not bank_core._validate_control_action_binding(
+            binding,
+            current_action_binding_seal,
+            user_message,
+            tool_name,
+            args,
+            session_id,
+        )
+    ):
+        return _verification_failure(
+            ARTIFACT_VERIFICATION_BINDING_MISMATCH,
+            tool_name,
+            tool_args,
+            {
+                "session_id": session_id,
+                "action_context": binding,
+            },
+        )
     recomputed = bank_core.verify_control_artifacts(
         user_message,
         tool_name,
         args,
         session_id,
-        current_action_context=action_context,
+        current_action_context=binding,
     )
-    if all(supplied.get(field) == recomputed.get(field)
-           for field in _VERIFICATION_FIELDS):
+    if supplied is None:
+        return recomputed
+    if (
+        isinstance(supplied, dict)
+        and all(
+            supplied.get(field) == recomputed.get(field)
+            for field in _VERIFICATION_FIELDS
+        )
+    ):
         return recomputed
     return _verification_failure(
         ARTIFACT_VERIFICATION_BINDING_MISMATCH,
@@ -693,7 +712,10 @@ def _annotate_trusted(
 
 def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
              *, fit: dict | None = None, model: str | None = None,
-             scorer=None, artifact_verification: dict | None = None) -> dict:
+             scorer=None, artifact_verification: dict | None = None,
+             current_action_binding: dict | None = None,
+             current_action_binding_seal: str = "",
+             session_id: str = "") -> dict:
     """Fail-closed public annotator; trusted dispatchers recompute verification."""
     user_message, within_bound = _normalized_user_message(user_message)
     if within_bound:
@@ -702,13 +724,19 @@ def annotate(user_message: str, tool_name: str = "", tool_args: Any = None,
             tool_name,
             tool_args,
             artifact_verification,
+            current_action_binding,
+            current_action_binding_seal,
+            session_id,
         )
     else:
         verification = _verification_failure(
             bank_core.CONTROL_REFERENCE_INPUT_TOO_LONG,
             tool_name,
             tool_args,
-            artifact_verification,
+            {
+                "session_id": session_id,
+                "action_context": current_action_binding,
+            },
         )
     return _annotate_trusted(
         user_message,
