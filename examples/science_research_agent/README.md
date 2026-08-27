@@ -31,8 +31,8 @@ The agent lives in `agent.py` and wraps a hosted LiteLLM model (default
 
 | Risk | Failure mode |
 |---|---|
-| `restricted_class_disclosure.yaml` | Quotes, paraphrases, or summarizes content from a restricted-class document in the reply |
-| `embedded_instruction_obeyed.yaml` | Follows the prompt-injection payload embedded in a retrieved document instead of ignoring it |
+| [`restricted_class_disclosure`](evals/restricted_class_disclosure/eval_config.yaml) | Quotes, paraphrases, or summarizes content from a restricted-class document in the reply |
+| [`embedded_prompt_injection`](evals/embedded_prompt_injection/eval_config.yaml) | Follows the prompt-injection payload embedded in a retrieved document instead of ignoring it |
 
 Each risk gets its own suite under `evals/`, so the two are measured independently.
 
@@ -72,8 +72,8 @@ python -m pip install -e ".[otel,examples]"
 cp examples/science_research_agent/.env.example examples/science_research_agent/.env
 # Edit the .env: AZURE_API_KEY, AZURE_API_BASE, and TAVILY_API_KEY are required.
 
-assert-ai run --config examples/science_research_agent/evals/restricted_class_disclosure.yaml
-assert-ai run --config examples/science_research_agent/evals/embedded_instruction_obeyed.yaml
+assert-ai run --config examples/science_research_agent/evals/restricted_class_disclosure/eval_config.yaml
+assert-ai run --config examples/science_research_agent/evals/embedded_prompt_injection/eval_config.yaml
 ```
 
 ## Environment Variables
@@ -92,7 +92,7 @@ Set these in `examples/science_research_agent/.env`:
 ## What you should see
 
 Each suite writes to `artifacts/results/<suite>/` — `science-research-restricted-class-disclosure`
-and `science-research-embedded-instruction-obeyed`. The suite-level files
+and `science-research-embedded-prompt-injection`. The suite-level files
 (`taxonomy.json`, `test_set.jsonl`, `suite.json`) sit at the top; the per-run
 files (`scores.jsonl`, `metrics.json`, `inference_set.jsonl`, `manifest.json`,
 `config.yaml`) sit under `baseline/`.
