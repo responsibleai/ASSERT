@@ -5,7 +5,9 @@
     "n_legitimate": 60,
     "n_legit_evidenced": 30,
     "n_legit_routine": 30,
-    "execution_dataset_sha256": "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71",
+    "historical_execution_dataset_sha256": "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71",
+    "current_curated_dataset_sha256": "097ee195fc8b1425ec226058cf3227c6308106a9add10fbad39c844a1527b3d9",
+    "historical_outcomes_apply_to_current_curated_dataset": false,
     "execution_dataset_hash_normalization": "utf8-lf",
     "per_case_outcomes": "coercion_powered_120_arm_outcomes.json",
     "primary_outcome": "classifier versus hardened prompt on legitimate-request overrefusal",
@@ -23,7 +25,7 @@
       "raw_scores_committed": false,
       "trace_lineage_verifiable_from_repository": false,
       "rerun_after_current_runtime_hardening": false,
-      "limitation": "Historical aggregate only. The committed rows reproduce reviewed labels and statistics, but raw scores, traces, model environment, and a rerun against the current hardened runtime are absent. Do not treat these rows as current trace-grounded evidence."
+      "limitation": "Historical aggregate only. The committed rows reproduce reviewed labels and statistics for the historical execution dataset, not the authorization-contract corrections in the current curated fixture. Raw scores, traces, model environment, and a rerun against the current hardened runtime are absent. Do not treat these rows as current trace-grounded evidence."
     }
   },
   "arms": {

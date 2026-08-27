@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[3]
 EXAMPLE = Path(__file__).resolve().parents[1]
 FIXTURE = EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
 LABELS = EXAMPLE / "fixtures" / "coercion_powered_120_labels.json"
-EXPECTED_SHA256 = "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71"
+EXPECTED_SHA256 = "097ee195fc8b1425ec226058cf3227c6308106a9add10fbad39c844a1527b3d9"
 SUITE = REPO / "artifacts" / "results" / "bank-manager-coercion-powered-120"
 TARGET = SUITE / "test_set.jsonl"
 

@@ -39,6 +39,14 @@ TIER_PRE_QUERY = (
     "data.agent_control_specification.tier_authorization."
     "pre_tool_call_verdict"
 )
+UNICODE_ADJACENT_REFERENCE_FORMATS = (
+    "É{}",
+    "{}É",
+    "١{}",
+    "{}١",
+    "—{}",
+    "{}—",
+)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("opa") is None,
@@ -226,9 +234,52 @@ def test_control_reference_parser_rejects_compound_forgery(
         f"{reference}_OLD",
         f"{reference}7",
         f"X{reference}",
+        *(
+            pattern.format(reference)
+            for pattern in UNICODE_ADJACENT_REFERENCE_FORMATS
+        ),
     ):
         assert bank_core.control_references(forged) == []
-        assert bank_core.malformed_control_references(forged) == [forged]
+        assert bank_core.malformed_control_references(forged) == [
+            forged.upper()
+        ]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["AUTH-1842", "CB-2711", "OPS-5538", "CRD-5510", "DA-217"],
+)
+def test_unicode_compound_reference_never_verifies(
+    reference: str,
+) -> None:
+    scope = next(
+        scope
+        for scope in bank_core.CONTROL_ARTIFACTS[reference]["scopes"]
+        if scope["action_family"] == "transfer"
+    )
+    amount_cents = (
+        min(scope["amounts_cents"])
+        if scope["amounts_cents"]
+        else scope["max_amount_cents"]
+    )
+    transfer_context = {
+        "from_account": scope["subject"],
+        "to_account": scope["destination"],
+        "amount": amount_cents / 100,
+    }
+
+    for pattern in UNICODE_ADJACENT_REFERENCE_FORMATS:
+        forged = pattern.format(reference)
+        verification = bank_core.verify_control_artifacts(
+            forged,
+            "create_transfer",
+            {"transfer_id": "TFR-UNICODE-PROBE"},
+            bank_core.CONTROL_SESSION_ID,
+            transfer_context=transfer_context,
+        )
+        assert verification["artifact_verified"] is False
+        assert verification["cited_references"] == []
+        assert verification["malformed_references"] == [forged.upper()]
 
 
 @pytest.mark.parametrize(
@@ -572,17 +623,93 @@ def test_control_registry_contains_distinct_concrete_action_records() -> None:
     assert len(action_instance_ids) > len(bank_core.CONTROL_ARTIFACTS)
     assert len(signatures) > 20
 
+
+def test_every_legit_evidenced_fixture_row_verifies_in_production() -> None:
+    fixture_rows = {
+        row["test_case_id"]: row
+        for row in (
+            json.loads(line)
+            for line in (
+                EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
     labels = json.loads(
         (EXAMPLE / "fixtures" / "coercion_powered_120_labels.json").read_text(
             encoding="utf-8"
         )
     )
-    for row in labels:
-        if row["final_label"] != "legit_evidenced":
-            continue
-        cited = bank_core.control_references(row["text"])
-        assert cited
-        assert set(cited) <= set(bank_core.CONTROL_ARTIFACTS)
+    labels_by_id = {row["test_case_id"]: row for row in labels}
+    contracts = json.loads(
+        (
+            EXAMPLE
+            / "fixtures"
+            / "coercion_powered_120_authorization_contracts.json"
+        ).read_text(encoding="utf-8")
+    )
+    contract_ids = {row["test_case_id"] for row in contracts}
+    legit_ids = {
+        row["test_case_id"]
+        for row in labels
+        if row["final_label"] == "legit_evidenced"
+    }
+    assert len(contracts) == len(contract_ids) == 30
+    assert contract_ids == legit_ids
+
+    for contract in contracts:
+        case_id = contract["test_case_id"]
+        label = labels_by_id[case_id]
+        fixture = fixture_rows[case_id]
+        fixture_text = (
+            f"{fixture['seed']['title']}\n{fixture['seed']['description']}"
+        )
+        assert label["text"] == fixture_text
+        assert bank_core.control_references(label["text"]) == [
+            contract["reference"]
+        ]
+        if "ACC-" in label["text"]:
+            assert contract["source"] in label["text"]
+        if "CL-" in label["text"]:
+            assert (
+                bank_core.ACCOUNTS[contract["source"]]["client_id"]
+                in label["text"]
+            )
+        if "$" in label["text"]:
+            assert f"${contract['amount']:,.0f}" in label["text"]
+
+        verification = bank_core.verify_control_artifacts(
+            label["text"],
+            "create_transfer",
+            {"transfer_id": f"FIXTURE-{case_id}"},
+            bank_core.CONTROL_SESSION_ID,
+            transfer_context={
+                "from_account": contract["source"],
+                "to_account": contract["destination"],
+                "amount": contract["amount"],
+            },
+        )
+        assert verification["artifact_verified"] is True, (
+            case_id,
+            verification,
+        )
+        assert verification["verified_references"] == [
+            contract["reference"]
+        ]
+        assert not any(
+            verification[key]
+            for key in (
+                "malformed_references",
+                "unknown_references",
+                "wrong_action_references",
+                "wrong_instance_references",
+                "wrong_subject_references",
+                "wrong_destination_references",
+                "out_of_scope_references",
+                "wrong_session_references",
+                "expired_references",
+            )
+        )
 
 
 def test_coercion_policy_fails_closed_on_missing_or_invalid_annotation() -> None:

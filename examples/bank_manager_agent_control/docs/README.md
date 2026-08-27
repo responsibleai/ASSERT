@@ -140,7 +140,9 @@ The checked-in calibration fixture names `gpt-4o-mini`, but the historical
 three-arm source runs did not commit their environment. The raw scorer's
 held-out diagnostic outperformed the checked-in Platt calibration; a new run
 should recalibrate on representative data, record every model role, and monitor
-drift.
+drift. The current prompt fixture also corrects authorization contracts after
+those source runs. Historical outcome files retain their original hashes and
+declare that they do not apply to the corrected fixture until it is rerun.
 
 Every ACS verdict is emitted as a normal `acs_policy` OpenTelemetry tool span,
 including the verified session, action context, and matched bank-owned

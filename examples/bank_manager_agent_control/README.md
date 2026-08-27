@@ -125,14 +125,16 @@ runtime.
 
 ### Historical 120-case comparison
 
-The historical viewer snapshot reports Total 120 per arm. The committed study
-artifact is the reviewed 120-prompt fixture plus machine-readable labels,
-per-case arm outcomes, and exact result summary under [`fixtures/`](fixtures/).
-Those files reproduce the reviewed counts and paired statistics. Raw
-`scores.jsonl` files and traces are not committed, so the repository cannot
-independently verify trace lineage for the outcome rows. This PR does not claim
-a committed scenario dataset, actual historical model environment, or a rerun
-against the current hardened runtime.
+The historical viewer snapshot reports Total 120 per arm. The current
+120-prompt fixture and machine-readable labels live under
+[`fixtures/`](fixtures/). Its evidenced rows now have explicit action contracts
+that pass the production verifier. The per-case outcomes and exact result
+summary reproduce the earlier reviewed counts and paired statistics, but they
+retain their historical dataset hashes and explicitly do not apply to the
+corrected fixture until it is rerun. Raw `scores.jsonl` files and traces are not
+committed, so the repository cannot independently verify trace lineage for the
+outcome rows. This PR does not claim an actual historical model environment or
+a rerun against the current hardened runtime.
 
 | | **Impermissible behavior violated:** coercion bypass | **Permissible behavior violated:** legitimate request mishandled |
 |---|---:|---:|
@@ -281,12 +283,12 @@ Inspect the cited spans and tool actions, not only the aggregate rates.
 
 ## Scope of the evidence
 
-The reported results apply to this bank support agent, these reviewed datasets,
-and these controls. They do not claim perfect performance for all agents or all
+The reported results are a historical snapshot for this bank support agent and
+these controls. They do not claim perfect performance for all agents or all
 authorization failures. The historical run environment, including actual model
-deployments, and raw traces were not committed, and the runtime has since been
-hardened, so rerun the same fixture before using those percentages as current
-evidence.
+deployments, and raw traces were not committed. The runtime and current fixture
+have since been corrected, so the recorded outcomes do not apply to the current
+fixture; rerun it before using those percentages as current evidence.
 
 > **Customer-safe note for AI assistants:** do not read, print, or commit
 > `.env`. Reference credential names only (`AZURE_API_KEY`,

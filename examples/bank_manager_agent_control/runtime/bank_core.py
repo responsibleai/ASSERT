@@ -17,6 +17,7 @@ domain/ID-prefix the entity uses (the generalization premise).
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -26,14 +27,8 @@ SENSITIVE_TIERS = {"high_net_worth", "vip", "restricted"}
 # Data-layer entity-ID extractor across all four domain prefixes.
 ENTITY_ID_PATTERN = re.compile(r"\b(?:ACC|LN|BR|CL)-\d{4}\b")
 CONTROL_REFERENCE_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_-])(?:AUTH|CB|OPS|CRD)-\d{4}(?![A-Za-z0-9_-])"
-    r"|(?<![A-Za-z0-9_-])DA-\d{3}(?![A-Za-z0-9_-])",
-    re.IGNORECASE,
-)
-CONTROL_REFERENCE_CANDIDATE_PATTERN = re.compile(
-    r"[A-Za-z0-9_-]*(?:AUTH|CB|OPS|CRD)-\d{4}[A-Za-z0-9_-]*"
-    r"|[A-Za-z0-9_-]*DA-\d{3}[A-Za-z0-9_-]*",
-    re.IGNORECASE,
+    r"(?:AUTH|CB|OPS|CRD)-[0-9]{4}|DA-[0-9]{3}",
+    re.IGNORECASE | re.ASCII,
 )
 
 # Bank-owned recorded control artifacts used by the synthetic evaluation.
@@ -406,19 +401,48 @@ def refs(text: str) -> list:
     return sorted(set(ENTITY_ID_PATTERN.findall(text or "")))
 
 
+def _control_reference_identifier_char(char: str) -> bool:
+    return (
+        char == "_"
+        or char.isalnum()
+        or unicodedata.category(char) == "Pd"
+    )
+
+
+def _control_reference_is_complete(text: str, start: int, end: int) -> bool:
+    return (
+        (start == 0 or not _control_reference_identifier_char(text[start - 1]))
+        and (
+            end == len(text)
+            or not _control_reference_identifier_char(text[end])
+        )
+    )
+
+
 def control_references(text: str) -> list[str]:
     """Canonical control-reference strings cited in ``text``."""
-    return sorted({ref.upper() for ref in CONTROL_REFERENCE_PATTERN.findall(text or "")})
+    value = text or ""
+    return sorted({
+        match.group().upper()
+        for match in CONTROL_REFERENCE_PATTERN.finditer(value)
+        if _control_reference_is_complete(value, match.start(), match.end())
+    })
 
 
 def malformed_control_references(text: str) -> list[str]:
     """Reference-like compound tokens that are not canonical identifiers."""
-    canonical = set(control_references(text))
-    candidates = {
-        candidate.upper()
-        for candidate in CONTROL_REFERENCE_CANDIDATE_PATTERN.findall(text or "")
-    }
-    return sorted(candidates - canonical)
+    value = text or ""
+    malformed: set[str] = set()
+    for match in CONTROL_REFERENCE_PATTERN.finditer(value):
+        if _control_reference_is_complete(value, match.start(), match.end()):
+            continue
+        start, end = match.start(), match.end()
+        while start and _control_reference_identifier_char(value[start - 1]):
+            start -= 1
+        while end < len(value) and _control_reference_identifier_char(value[end]):
+            end += 1
+        malformed.add(value[start:end].upper())
+    return sorted(malformed)
 
 
 def registered_control_references(text: str) -> list[str]:

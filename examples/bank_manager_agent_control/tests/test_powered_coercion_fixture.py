@@ -13,7 +13,10 @@ FIXTURE = EXAMPLE / "fixtures" / "coercion_powered_120.jsonl"
 LABELS = EXAMPLE / "fixtures" / "coercion_powered_120_labels.json"
 RESULTS = EXAMPLE / "fixtures" / "coercion_powered_120_results.json"
 OUTCOMES = EXAMPLE / "fixtures" / "coercion_powered_120_arm_outcomes.json"
-EXPECTED_SHA256 = "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71"
+CURATED_SHA256 = "097ee195fc8b1425ec226058cf3227c6308106a9add10fbad39c844a1527b3d9"
+CURRENT_LABELS_SHA256 = "32a6c75ab9e1f376e93ecc484c8ec3c6bffa327d92220fba5264ff02ac6581c2"
+HISTORICAL_SHA256 = "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71"
+HISTORICAL_LABELS_SHA256 = "1a653d754b04af2cf992774871bc3a989462fc8be59b236ca44a7e1ea5b3d3d1"
 CONFIG = EXAMPLE / "eval_coercion_authority.yaml"
 
 
@@ -23,7 +26,7 @@ def _text_sha256(path: Path) -> str:
 
 
 def test_powered_fixture_hash_and_balance() -> None:
-    assert _text_sha256(FIXTURE) == EXPECTED_SHA256
+    assert _text_sha256(FIXTURE) == CURATED_SHA256
     rows = [
         json.loads(line)
         for line in FIXTURE.read_text(encoding="utf-8").splitlines()
@@ -78,7 +81,20 @@ def test_historical_result_summary_is_internally_consistent() -> None:
     assert results["design"]["n_total"] == 120
     assert results["design"]["n_coercive"] == 60
     assert results["design"]["n_legitimate"] == 60
-    assert results["design"]["execution_dataset_sha256"] == EXPECTED_SHA256
+    assert (
+        results["design"]["historical_execution_dataset_sha256"]
+        == HISTORICAL_SHA256
+    )
+    assert (
+        results["design"]["current_curated_dataset_sha256"]
+        == CURATED_SHA256
+    )
+    assert (
+        results["design"][
+            "historical_outcomes_apply_to_current_curated_dataset"
+        ]
+        is False
+    )
     assert results["design"]["execution_dataset_hash_normalization"] == "utf8-lf"
     assert results["design"]["per_case_outcomes"] == OUTCOMES.name
     model_config = results["design"]["model_configuration"]
@@ -125,9 +141,21 @@ def test_historical_result_summary_is_internally_consistent() -> None:
 
 def test_per_case_outcomes_recompute_published_statistics() -> None:
     payload = json.loads(OUTCOMES.read_text(encoding="utf-8"))
-    assert payload["dataset_sha256"] == EXPECTED_SHA256
+    assert (
+        payload["historical_execution_dataset_sha256"]
+        == HISTORICAL_SHA256
+    )
+    assert payload["current_curated_dataset_sha256"] == CURATED_SHA256
     assert payload["fixture_hash_normalization"] == "utf8-lf"
-    assert payload["labels_sha256"] == _text_sha256(LABELS)
+    assert payload["historical_labels_sha256"] == HISTORICAL_LABELS_SHA256
+    assert payload["current_labels_sha256"] == CURRENT_LABELS_SHA256
+    assert payload["current_labels_sha256"] == _text_sha256(LABELS)
+    assert (
+        payload["sources"][
+            "historical_outcomes_apply_to_current_curated_dataset"
+        ]
+        is False
+    )
     assert payload["sources"]["raw_score_artifacts_committed"] is False
     assert payload["sources"]["trace_lineage_verifiable_from_repository"] is False
     assert payload["sources"]["rerun_after_current_runtime_hardening"] is False

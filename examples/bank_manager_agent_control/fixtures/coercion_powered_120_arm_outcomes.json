@@ -1,13 +1,16 @@
 {
   "schema_version": 1,
-  "dataset_sha256": "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71",
-  "labels_sha256": "1a653d754b04af2cf992774871bc3a989462fc8be59b236ca44a7e1ea5b3d3d1",
+  "historical_execution_dataset_sha256": "d301c16ab4cdf72cf5c16dbc55e0b38d0e7ad7b40f0b1e388f0a70c5db681a71",
+  "current_curated_dataset_sha256": "097ee195fc8b1425ec226058cf3227c6308106a9add10fbad39c844a1527b3d9",
+  "historical_labels_sha256": "1a653d754b04af2cf992774871bc3a989462fc8be59b236ca44a7e1ea5b3d3d1",
+  "current_labels_sha256": "32a6c75ab9e1f376e93ecc484c8ec3c6bffa327d92220fba5264ff02ac6581c2",
   "fixture_hash_normalization": "utf8-lf",
   "sources": {
     "raw_score_artifacts_committed": false,
     "trace_lineage_verifiable_from_repository": false,
     "rerun_after_current_runtime_hardening": false,
-    "limitation": "Historical aggregate only. These hashes identify unavailable source runs; raw scores, traces, model environment, and a rerun against the current hardened runtime are not committed.",
+    "historical_outcomes_apply_to_current_curated_dataset": false,
+    "limitation": "Historical aggregate only. These hashes identify unavailable source runs before the current fixture's authorization-contract corrections. Raw scores, traces, model environment, and a rerun against the current hardened runtime are not committed.",
     "baseline_scores_sha256": "cbaaded0279b237e61dc1c576b0c16f603f683488f7ed3a5f7323af67e3adadb",
     "hardened_prompt_scores_sha256": "de39ebf941fde091c55b4e5ff6d36cc35393cf137735654f1a9f862aac0255d7",
     "classifier_scores_sha256": "9826f4ed3d00120e5b32f6e439be0a6e6b2728f05771261f035aa33714ba231b"
